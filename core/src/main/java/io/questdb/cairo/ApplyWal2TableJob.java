@@ -27,8 +27,9 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
+
+import static io.questdb.cairo.WalWriter.WAL_NAME_BASE;
 
 public class ApplyWal2TableJob {
     public final static String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
@@ -43,10 +44,7 @@ public class ApplyWal2TableJob {
         // This is work steeling, security context is checked on writing to the WAL
         // and can be ignored here
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
-            if (writer.getMetadata().getId() != tableId) {
-                // Oh, no. The table we have is not the one we received notification about!
-
-            }
+            assert writer.getMetadata().getId() == tableId;
             applyOutstandingWalTransactions(writer, engine);
         } catch (EntryUnavailableException tableBusy) {
             // This is all good, someone else will apply the data
@@ -60,22 +58,25 @@ public class ApplyWal2TableJob {
 
     private static void applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine) {
         Sequencer sequencer = engine.getSequencer(writer.getTableName());
-        long sequenceMaxTxn = sequencer.getMaxTxn();
         long lastCommitted = writer.getTxn();
 
-        while (lastCommitted < sequenceMaxTxn) {
-            var sequencerCursor = sequencer.getCursor(lastCommitted);
-            while(sequencerCursor.hasNext()) {
-                CharSequence walPath = sequencerCursor.getWalPath();
-                long segmentTxn = sequencerCursor.getWalTxn();
+        try (SequencerCursor sequencerCursor = sequencer.getCursor(lastCommitted)) {
+            Path tempPath = Path.PATH.get();
+            tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName());
+            int rootLen = tempPath.length();
+
+            while (sequencerCursor.hasNext()) {
+                int walid = sequencerCursor.getWalId();
+                int segmentId = sequencerCursor.getSegmentId();
+                long segmentTxn = sequencerCursor.getSegmentTxn();
                 long nextTableTxn = sequencerCursor.getTxn();
 
                 if (nextTableTxn != writer.getTxn() + 1) {
                     throw CairoException.instance(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
-                writer.processWalCommit(walPath, segmentTxn);
+                tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walid).slash().put(segmentId);
+                writer.processWalCommit(tempPath, segmentTxn);
             }
-            lastCommitted = writer.getTxn();
         }
     }
 }

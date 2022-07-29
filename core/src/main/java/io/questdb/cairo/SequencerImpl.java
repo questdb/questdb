@@ -116,7 +116,7 @@ public class SequencerImpl implements Sequencer {
 
     @Override
     public SequencerCursor getCursor(long lastCommittedTxn) {
-        return null;
+        return catalog.getCursor(lastCommittedTxn);
     }
 
     @Override
@@ -150,7 +150,7 @@ public class SequencerImpl implements Sequencer {
         return txn;
     }
 
-    void create( int tableId, TableStructure model) {
+    void create(int tableId, TableStructure model) {
         schemaLock.writeLock().lock();
         try {
             metadata.create(model, path, rootLen, tableId);

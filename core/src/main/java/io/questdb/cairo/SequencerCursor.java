@@ -24,14 +24,19 @@
 
 package io.questdb.cairo;
 
-public interface SequencerCursor {
-    int getSegment();
+import java.io.Closeable;
+
+public interface SequencerCursor extends Closeable {
+    @Override
+    void close();
 
     boolean hasNext();
 
-    CharSequence getWalPath();
+    int getSegmentId();
 
-    long getWalTxn();
+    long getSegmentTxn();
 
     long getTxn();
+
+    int getWalId();
 }

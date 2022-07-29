@@ -27,8 +27,14 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
-import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.vm.MemoryFMCRImpl;
+import io.questdb.cairo.vm.NullMapWriter;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
@@ -1074,13 +1080,12 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void processWalCommit(CharSequence walPath, long segmentTxn) {
-        Path path = Path.getThreadLocal(walPath);
-        var walCursor = walEventReader.of(path, WalWriter.WAL_FORMAT_VERSION, segmentTxn);
+    public void processWalCommit(Path walPath, long segmentTxn) {
+        var walCursor = walEventReader.of(walPath, WalWriter.WAL_FORMAT_VERSION, segmentTxn);
         var dataInfo = walCursor.getDataInfo();
 
         processWalCommit(
-                path,
+                walPath,
                 !dataInfo.isOutOfOrder(),
                 dataInfo.getStartRowID(),
                 dataInfo.getEndRowID(),

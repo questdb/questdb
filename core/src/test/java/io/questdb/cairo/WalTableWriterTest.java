@@ -31,14 +31,10 @@ import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import static org.junit.Assert.assertEquals;
 
 public class WalTableWriterTest extends AbstractGriffinTest {
 
@@ -131,7 +127,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             ) {
 
                 long start = now;
-                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3, null};
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
                 for (int i = 0; i < 5; i++) {
                     boolean inOrder = rnd.nextBoolean();
@@ -169,8 +165,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             long tsIncrement;
             long now = Os.currentTimeMicros();
             LOG.info().$("now :").$(now).$();
-            long ts = 1657816077895390L;//now;
-            Rnd rnd = new Rnd(300984185140125L, 1657816077895L);// TestUtils.generateRandom(LOG);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             int releaseWriterSeed = 3;
             int overlapSeed = 3;
@@ -181,8 +176,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
 
-                long start = ts;
-                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3, null};
+                long start = now;
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
                 for (int i = 0; i < 20; i++) {
                     boolean inOrder = rnd.nextBoolean();
@@ -361,10 +356,13 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
     @SuppressWarnings("SameParameterValue")
     private void addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
+        int tableId;
+        long walTxn;
         try (
                 TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "test");
                 TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply wal")
         ) {
+            tableId = tableWriter.getMetadata().getId();
             if (!inOrder) {
                 startTs += (rowsToInsertTotal - 1) * tsIncrement;
                 tsIncrement = -tsIncrement;
@@ -380,28 +378,16 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     rowTs += rnd.nextLong(2 * tsIncrement);
                 }
 
-                TableWriter.Row walRow = walWriter != null ? walWriter.newRow(rowTs) : tableWriter.newRow(rowTs);
+                TableWriter.Row walRow = walWriter.newRow(rowTs);
                 addRowRwAllTypes(iteration, walRow, i, symbol, rndStr);
                 addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr);
                 startTs += tsIncrement;
             }
 
             copyWriter.commit();
-            if (walWriter != null) {
-                walWriter.commit();
-
-                assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
-
-                try (
-                        Path path = new Path()
-                ) {
-                    path.of(configuration.getRoot()).concat(tableWriter.getTableName()).concat(walWriter.getWalName()).slash().put(walWriter.getSegment());
-                    tableWriter.processWalCommit(path, walWriter.getLastSegmentTxn());
-                }
-            } else {
-                tableWriter.commit();
-            }
+            walTxn = walWriter.commit();
         }
+        ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, walTxn, engine);
     }
 
     @SuppressWarnings("SameParameterValue")
