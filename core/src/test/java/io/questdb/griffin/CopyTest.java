@@ -398,7 +398,7 @@ public class CopyTest extends AbstractGriffinTest {
                         "ATTACH_PARTITIONS\tSTARTED\tNaN\tNaN\t0\n" +
                         "ATTACH_PARTITIONS\tFINISHED\tNaN\tNaN\t0\n" +
                         "\tFINISHED\t1000\t1000\t0\n",
-                "select stage, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log",
+                "select stage, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                 null,
                 true,
                 true
@@ -427,7 +427,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         CopyRunnable test = () -> assertQuery("message\n" +
                         "partition by unit must be set when importing to new table\n",
-                "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log",
+                "select message from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                 null,
                 true
         );
@@ -549,7 +549,7 @@ public class CopyTest extends AbstractGriffinTest {
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
 
         CopyRunnable test = () -> assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
-                "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true
         );
@@ -589,7 +589,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         drainProcessingQueue();
         assertQuery("status\nCANCELLED\n",
-                "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true );
     }
@@ -615,9 +615,8 @@ public class CopyTest extends AbstractGriffinTest {
         }
 
         drainProcessingQueue();
-        drainProcessingQueue();
         assertQuery("status\nCANCELLED\n",
-                "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true );
     }
@@ -671,7 +670,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
-            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log" , sqlExecutionContext);
+            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "text_import_log" , sqlExecutionContext);
             try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
 
                 Thread processingThread = createJobThread(processingJob, processed);

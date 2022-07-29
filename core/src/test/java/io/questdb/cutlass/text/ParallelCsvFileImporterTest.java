@@ -688,7 +688,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     private void testStatusLogCleanup(int daysToGenerate, int daysToKeep) throws SqlException, IOException {
-        String backlogTableName = configuration.getSystemTableNamePrefix() + "parallel_text_import_log";
+        String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         compiler.compile("create table " + backlogTableName + " as " +
                 "(" +
                 "select" +
