@@ -22,37 +22,50 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.SingleValueRecordCursor;
 
-public class ShowMaxIdentifierLengthCursorFactory extends AbstractRecordCursorFactory {
-    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final static IntValueRecord RECORD = new IntValueRecord(63);
-    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
+public class SingleValueRecordCursor implements RecordCursor {
+    private final Record record;
+    private int remaining = 1;
 
-    public ShowMaxIdentifierLengthCursorFactory() {
-        super(METADATA);
+    public SingleValueRecordCursor(Record record) {
+        this.record = record;
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+    public void close() {
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
+    public Record getRecord() {
+        return record;
     }
 
-    static {
-        METADATA.add(new TableColumnMetadata("max_identifier_length", 1, ColumnType.INT));
+    @Override
+    public boolean hasNext() {
+        return remaining-- > 0;
+    }
+
+    @Override
+    public Record getRecordB() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void toTop() {
+        remaining = 1;
+    }
+
+    @Override
+    public long size() {
+        return 1;
     }
 }

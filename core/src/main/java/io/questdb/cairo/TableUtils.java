@@ -74,6 +74,7 @@ public final class TableUtils {
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
     public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
+    public static final long META_OFFSET_WAL_ENABLED = 40; // INT
     public static final long WAL_META_OFFSET_VERSION = 0;
     public static final long WAL_META_OFFSET_COLUMN_COUNT = 4;
     public static final long WAL_META_OFFSET_TIMESTAMP_INDEX = 8;
@@ -257,6 +258,8 @@ public final class TableUtils {
             mem.putInt(tableId);
             mem.putInt(structure.getMaxUncommittedRows());
             mem.putLong(structure.getCommitLag());
+            mem.putLong(0); // Structure version.
+            mem.putInt(structure.isWallEnabled() ? 1 : 0);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             assert count > 0;

@@ -213,6 +213,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getWallEnabledDefault() {
+        return conf.getWallEnabledDefault();
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return conf.getDoubleToStrCastScale();
     }
@@ -790,5 +795,10 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return conf.isIOURingEnabled();
+    }
+
+    @Override
+    public int getMaxCrashFiles() {
+        return conf.getMaxCrashFiles();
     }
 }

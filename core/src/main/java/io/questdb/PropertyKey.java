@@ -164,6 +164,7 @@ public enum PropertyKey {
     CAIRO_O3_ENABLED("cairo.o3.enabled"),
     CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),
     CAIRO_IO_URING_ENABLED("cairo.iouring.enabled"),
+    CAIRO_MAX_CRASH_FILES("cairo.max.crash.files"),
     CIRCUIT_BREAKER_THROTTLE("circuit.breaker.throttle"),
     CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     CONFIG_VALIDATION_STRICT("config.validation.strict"),
@@ -364,7 +365,8 @@ public enum PropertyKey {
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
-    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation");
+    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
+    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

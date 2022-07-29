@@ -46,6 +46,8 @@ public interface Barrier {
 
     Barrier root();
 
+    Barrier getBarrier();
+
     void setBarrier(Barrier barrier);
 
     Barrier then(Barrier barrier);

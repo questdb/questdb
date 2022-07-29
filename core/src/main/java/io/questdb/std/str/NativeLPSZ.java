@@ -22,46 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.std.str;
 
-import org.jetbrains.annotations.TestOnly;
+import io.questdb.std.Unsafe;
 
-import java.io.Closeable;
-
-public interface IOURing extends Closeable {
+/**
+ * Represents C LPSZ as Java' CharSequence. Bytes in native memory are interpreted as ASCII characters. Multi-byte
+ * characters are NOT decoded.
+ */
+public class NativeLPSZ extends AbstractCharSequence {
+    private long address;
+    private int len;
 
     @Override
-    void close();
+    public int length() {
+        return len;
+    }
 
-    long enqueueRead(long fd, long offset, long bufPtr, int len);
+    @Override
+    public char charAt(int index) {
+        return (char) Unsafe.getUnsafe().getByte(address + index);
+    }
 
-    long getCqeId();
-
-    int getCqeRes();
-
-    /**
-     * Checks if a cqe is ready and, if so, reads its data. Read data is
-     * then available via {@link #getCqeId} and {@link #getCqeRes} methods.
-     *
-     * @return true - if cqe was read; false - otherwise.
-     */
-    boolean nextCqe();
-
-    /**
-     * Submits pending sqes, if any.
-     *
-     * @return number of submitted sqes.
-     */
-    int submit();
-
-    /**
-     * Submits pending sqes, if any, and blocks until at least one operation result
-     * becomes available as a cqe.
-     *
-     * @return number of submitted sqes.
-     */
-    int submitAndWait();
-
-    @TestOnly
-    long enqueueNop();
+    @SuppressWarnings("StatementWithEmptyBody")
+    public NativeLPSZ of(long address) {
+        this.address = address;
+        long p = address;
+        while (Unsafe.getUnsafe().getByte(p++) != 0) ;
+        this.len = (int) (p - address - 1);
+        return this;
+    }
 }

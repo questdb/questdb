@@ -383,7 +383,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     "1\tx1\tts\tDAY\t150\t0\n"
@@ -397,7 +397,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     "1\tx1\tts\tDAY\t150\t0\n"
@@ -441,7 +441,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     expected
@@ -455,7 +455,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     expected

@@ -42,6 +42,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
 
@@ -64,6 +65,8 @@ public class HttpQueryTestBuilder {
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private FilesFacade filesFacade = new FilesFacadeImpl();
     private QueryFutureUpdateListener queryFutureUpdateListener;
+    private String copyInputRoot;
+    private MicrosecondClock microsecondClock;
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -106,6 +109,16 @@ public class HttpQueryTestBuilder {
                     @Override
                     public int getSqlJitMode() {
                         return jitMode;
+                    }
+
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
+                    }
+
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
                     }
                 };
             }
@@ -267,6 +280,11 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withCopyInputRoot(String copyInputRoot) {
+        this.copyInputRoot = copyInputRoot;
+        return this;
+    }
+
     public HttpQueryTestBuilder withWorkerCount(int workerCount) {
         this.workerCount = workerCount;
         return this;
@@ -279,6 +297,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withJitMode(int jitMode) {
         this.jitMode = jitMode;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
+        this.microsecondClock = clock;
         return this;
     }
 

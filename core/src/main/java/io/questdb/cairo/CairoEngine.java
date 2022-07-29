@@ -73,7 +73,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableRegistry tableRegistry;
 
 
-    private final TextImportExecutionContext textImportExecutionContext = new TextImportExecutionContext();
+    private final TextImportExecutionContext textImportExecutionContext;
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
@@ -82,6 +82,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         this.configuration = configuration;
+        this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
         this.tableRegistry = new TableRegistry(this);
         this.messageBus = new MessageBusImpl(configuration);

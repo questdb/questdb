@@ -560,6 +560,9 @@ io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 io.questdb.griffin.engine.functions.str.LeftFunctionFactory
 io.questdb.griffin.engine.functions.str.RightFunctionFactory
 
+# substring()
+io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
+
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 
