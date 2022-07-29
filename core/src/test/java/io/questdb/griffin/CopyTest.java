@@ -408,6 +408,27 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSerialCopyLogTableStats() throws Exception {
+        CopyRunnable stmt = () -> compiler.compile(
+                "copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true delimiter ',';",
+                sqlExecutionContext
+        );
+
+        CopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
+                        "\tSTARTED\tNaN\tNaN\t0\n" +
+                        "PARTITION_IMPORT\tSTARTED\tNaN\tNaN\t0\n" +
+                        "PARTITION_IMPORT\tFINISHED\tNaN\tNaN\t0\n" +
+                        "\tFINISHED\t1000\t1000\t0\n",
+                "select stage, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
+                null,
+                true,
+                true
+        );
+
+        testCopy(stmt, test);
+    }
+
+    @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         ioURingEnabled = false;
