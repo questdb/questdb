@@ -296,7 +296,7 @@ public class CopyTest extends AbstractGriffinTest {
                         true
                 );
             };
-            testParallelCopy(insert, assertion);
+            testCopy(insert, assertion);
     }
 
     @Test
@@ -318,7 +318,7 @@ public class CopyTest extends AbstractGriffinTest {
                     true
             );
         };
-        testParallelCopy(insert, assertion);
+        testCopy(insert, assertion);
     }
 
     @Test
@@ -341,7 +341,7 @@ public class CopyTest extends AbstractGriffinTest {
                     true
             );
         };
-        testParallelCopy(insert, assertion);
+        testCopy(insert, assertion);
     }
 
     @Test
@@ -354,7 +354,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         CopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test);
+        testCopy(stmt, test);
     }
 
     @Test
@@ -367,7 +367,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         CopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test);
+        testCopy(stmt, test);
     }
 
     @Test
@@ -404,7 +404,7 @@ public class CopyTest extends AbstractGriffinTest {
                 true
         );
 
-        testParallelCopy(stmt, test);
+        testCopy(stmt, test);
     }
 
     @Test
@@ -417,7 +417,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         CopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test);
+        testCopy(stmt, test);
     }
 
     @Test
@@ -432,7 +432,7 @@ public class CopyTest extends AbstractGriffinTest {
                 true
         );
 
-        testParallelCopy(stmt, test);
+        testCopy(stmt, test);
     }
 
     @Test
@@ -554,7 +554,7 @@ public class CopyTest extends AbstractGriffinTest {
                 true
         );
 
-        testParallelCopy(stmt, test);
+        testCopy(stmt, test);
 
         inputRoot = inputRootTmp;
         inputWorkRoot = inputWorkRootTmp;
@@ -666,7 +666,7 @@ public class CopyTest extends AbstractGriffinTest {
         }
     }
 
-    private void testParallelCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
+    private void testCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
