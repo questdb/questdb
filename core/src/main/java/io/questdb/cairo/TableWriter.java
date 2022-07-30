@@ -90,6 +90,7 @@ public class TableWriter implements Closeable {
     private MemoryMR detachedMetaMem;
     private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
+    private final CharSequenceHashSet detachedDeleteExtraColNames = new CharSequenceHashSet();
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int rootLen;
@@ -1685,6 +1686,33 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void deleteDetachedExtraColumnFiles() {
+        // all we know is the name, possibly the extension, but not the .txn
+        if (detachedDeleteExtraColNames.size() > 0) {
+            int other2len = other2.length();
+            ff.walk(other2.$(), (pUtf8NameZ, type) -> {
+                fileNameSink.clear();
+                Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
+                if (!(Chars.equals(fileNameSink, COLUMN_VERSION_FILE_NAME) || Chars.equals(fileNameSink, META_FILE_NAME))) {
+                    int dotIdx = fileNameSink.length() - 1;
+                    while (dotIdx > 0 && fileNameSink.charAt(dotIdx) != '.') {
+                        dotIdx--;
+                    }
+                    if (dotIdx > 0) {
+                        fileNameSink.clear(dotIdx);
+                    }
+                    if (detachedDeleteExtraColNames.remove(fileNameSink) != -1) {
+                        try {
+                            removeFileAndOrLog(ff, other2.trimTo(other2len).concat(pUtf8NameZ).$());
+                        } finally {
+                            other2.trimTo(other2len);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     private void checkDetachedMetadata(long timestamp) {
         // load/check _meta
         other2.of(detachedPath).concat(META_FILE_NAME).$();
@@ -1707,6 +1735,7 @@ public class TableWriter implements Closeable {
             }
             // check column name, type and isIndexed
             boolean colsMismatch = false;
+            detachedDeleteExtraColNames.clear();
             for (int i = 0; i < columnCount; i++) {
                 int colIdx = metadata.getWriterIndex(i);
                 String columnName = metadata.getColumnName(colIdx);
@@ -1720,8 +1749,7 @@ public class TableWriter implements Closeable {
                 if (colType != detColType) {
                     if (colType == -detColType) { // a column was deleted
                         if (colType < detColType) {
-                            // column does not exist in table, but does in attaching
-                            // TODO: delete the column from attaching
+                            detachedDeleteExtraColNames.add(columnName);
                         } else {
                             // column was added to the table, and does not exist in attaching
                             // TODO: the column does not exist in attaching, have to add it and
@@ -1736,6 +1764,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "is_indexed");
                 }
             }
+
             // check structure version
             if (colsMismatch) {
                 if (metadata.getStructureVersion() == detachedMetadata.getStructureVersion()) {
@@ -1744,14 +1773,12 @@ public class TableWriter implements Closeable {
             } else if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
                 throw CairoException.detachedMetadataMismatch("structure_version");
             }
+
+            deleteDetachedExtraColumnFiles();
         } finally {
             Misc.free(detachedMetadata);
             // remove _meta
-            if (!ff.remove(other2)) {
-                LOG.error().$("cannot remove [errno=").$(ff.errno())
-                        .$(", path=").$(other2)
-                        .I$();
-            }
+            removeFileAndOrLog(ff, other2);
         }
 
         // load/check _cv, updating local column tops
@@ -1785,11 +1812,7 @@ public class TableWriter implements Closeable {
         } finally {
             Misc.free(detachedColumnVersionReader);
             // remove _cv
-            if (!ff.remove(other2)) {
-                LOG.error().$("cannot remove [errno=").$(ff.errno())
-                        .$(", path=").$(other2)
-                        .I$();
-            }
+            removeFileAndOrLog(ff, other2);
         }
     }
 
