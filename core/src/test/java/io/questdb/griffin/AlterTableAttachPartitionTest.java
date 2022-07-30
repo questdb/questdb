@@ -1087,6 +1087,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             partitionsIn.put(partition);
             partitionsIn.put("'");
 
+            engine.clear();
             copyPartitionToAttachable(src.getName(), partition, dst.getName(), partition);
         }
 
@@ -1095,6 +1096,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         int rowCount = readAllRows(dst.getName());
 
         // Alter table
+        engine.clear();
         compile(
                 "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";",
                 sqlExecutionContext
@@ -1125,6 +1127,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         // Check table is writable after partition attach
+        engine.clear();
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
             TableWriter.Row row = writer.newRow(timestamp);
             row.putInt(1, 1);
