@@ -282,8 +282,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachPartitionInWrongDirectoryName() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src77", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst77", PartitionBy.DAY)) {
 
                 createPopulateTable(
                         src.col("l", ColumnType.LONG)
@@ -300,10 +300,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 copyPartitionToAttachable(src.getName(), "2020-01-01", dst.getName(), "COCONUTS");
                 try {
-                    compile("ALTER TABLE dst ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
+                    compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                     Assert.fail();
                 } catch (io.questdb.griffin.SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[23] failed to attach partition '2020-01-02': PARTITION_CANNOT_ATTACH_MISSING");
+                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': PARTITION_CANNOT_ATTACH_MISSING");
                 }
             }
         });
@@ -312,7 +312,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachPartitionMissingColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src99", PartitionBy.DAY)) {
 
                 createPopulateTable(
                         src.col("l", ColumnType.LONG)
@@ -322,20 +322,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                assertSchemaMismatch(src, "dst1", dst -> dst.col("str", ColumnType.STRING), "[-100] Detached partition metadata [missing_column=str]");
-                assertSchemaMismatch(src, "dst2", dst -> dst.col("sym", ColumnType.SYMBOL), "[-100] Detached partition metadata [missing_column=sym]");
-                assertSchemaMismatch(src, "dst3", dst -> dst.col("l1", ColumnType.LONG), "[-100] Detached partition metadata [missing_column=l1]");
-                assertSchemaMismatch(src, "dst4", dst -> dst.col("i1", ColumnType.INT), "[-100] Detached partition metadata [missing_column=i1]");
-                assertSchemaMismatch(src, "dst5", dst -> dst.col("b", ColumnType.BOOLEAN), "[-100] Detached partition metadata [missing_column=b]");
-                assertSchemaMismatch(src, "dst6", dst -> dst.col("db", ColumnType.DOUBLE), "[-100] Detached partition metadata [missing_column=db]");
-                assertSchemaMismatch(src, "dst7", dst -> dst.col("fl", ColumnType.FLOAT), "[-100] Detached partition metadata [missing_column=fl]");
-                assertSchemaMismatch(src, "dst8", dst -> dst.col("dt", ColumnType.DATE), "[-100] Detached partition metadata [missing_column=dt]");
-                assertSchemaMismatch(src, "dst9", dst -> dst.col("tss", ColumnType.TIMESTAMP), "[-100] Detached partition metadata [missing_column=tss]");
-                assertSchemaMismatch(src, "dst10", dst -> dst.col("l256", ColumnType.LONG256), "[-100] Detached partition metadata [missing_column=l256]");
-                assertSchemaMismatch(src, "dst11", dst -> dst.col("bin", ColumnType.BINARY), "[-100] Detached partition metadata [missing_column=bin]");
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("byt", ColumnType.BYTE), "[-100] Detached partition metadata [missing_column=byt]");
-                assertSchemaMismatch(src, "dst13", dst -> dst.col("chr", ColumnType.CHAR), "[-100] Detached partition metadata [missing_column=chr]");
-                assertSchemaMismatch(src, "dst14", dst -> dst.col("shrt", ColumnType.SHORT), "[-100] Detached partition metadata [missing_column=shrt]");
+                assertSchemaMismatch(src, "dst541", dst -> dst.col("str", ColumnType.STRING), "[-100] Detached partition metadata [missing_column=str]");
+                assertSchemaMismatch(src, "dst542", dst -> dst.col("sym", ColumnType.SYMBOL), "[-100] Detached partition metadata [missing_column=sym]");
+                assertSchemaMismatch(src, "dst543", dst -> dst.col("l1", ColumnType.LONG), "[-100] Detached partition metadata [missing_column=l1]");
+                assertSchemaMismatch(src, "dst544", dst -> dst.col("i1", ColumnType.INT), "[-100] Detached partition metadata [missing_column=i1]");
+                assertSchemaMismatch(src, "dst545", dst -> dst.col("b", ColumnType.BOOLEAN), "[-100] Detached partition metadata [missing_column=b]");
+                assertSchemaMismatch(src, "dst546", dst -> dst.col("db", ColumnType.DOUBLE), "[-100] Detached partition metadata [missing_column=db]");
+                assertSchemaMismatch(src, "dst547", dst -> dst.col("fl", ColumnType.FLOAT), "[-100] Detached partition metadata [missing_column=fl]");
+                assertSchemaMismatch(src, "dst548", dst -> dst.col("dt", ColumnType.DATE), "[-100] Detached partition metadata [missing_column=dt]");
+                assertSchemaMismatch(src, "dst549", dst -> dst.col("tss", ColumnType.TIMESTAMP), "[-100] Detached partition metadata [missing_column=tss]");
+                assertSchemaMismatch(src, "dst5410", dst -> dst.col("l256", ColumnType.LONG256), "[-100] Detached partition metadata [missing_column=l256]");
+                assertSchemaMismatch(src, "dst5411", dst -> dst.col("bin", ColumnType.BINARY), "[-100] Detached partition metadata [missing_column=bin]");
+                assertSchemaMismatch(src, "dst5412", dst -> dst.col("byt", ColumnType.BYTE), "[-100] Detached partition metadata [missing_column=byt]");
+                assertSchemaMismatch(src, "dst5413", dst -> dst.col("chr", ColumnType.CHAR), "[-100] Detached partition metadata [missing_column=chr]");
+                assertSchemaMismatch(src, "dst5414", dst -> dst.col("shrt", ColumnType.SHORT), "[-100] Detached partition metadata [missing_column=shrt]");
             }
         });
     }
@@ -542,18 +542,19 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAttachPartitionWithColumnTypes() throws Exception {
-        assertSchemaMatch(dst -> dst.col("str", ColumnType.STRING));
-        assertSchemaMatch(dst -> dst.col("l1", ColumnType.LONG));
-        assertSchemaMatch(dst -> dst.col("i1", ColumnType.INT));
-        assertSchemaMatch(dst -> dst.col("b", ColumnType.BOOLEAN));
-        assertSchemaMatch(dst -> dst.col("db", ColumnType.DOUBLE));
-        assertSchemaMatch(dst -> dst.col("fl", ColumnType.FLOAT));
-        assertSchemaMatch(dst -> dst.col("dt", ColumnType.DATE));
-        assertSchemaMatch(dst -> dst.col("ts1", ColumnType.TIMESTAMP));
-        assertSchemaMatch(dst -> dst.col("l256", ColumnType.LONG256));
-        assertSchemaMatch(dst -> dst.col("byt", ColumnType.BYTE));
-        assertSchemaMatch(dst -> dst.col("ch", ColumnType.CHAR));
-        assertSchemaMatch(dst -> dst.col("sh", ColumnType.SHORT));
+        int idx = 0;
+        assertSchemaMatch(dst -> dst.col("str", ColumnType.STRING), idx++);
+        assertSchemaMatch(dst -> dst.col("l1", ColumnType.LONG), idx++);
+        assertSchemaMatch(dst -> dst.col("i1", ColumnType.INT), idx++);
+        assertSchemaMatch(dst -> dst.col("b", ColumnType.BOOLEAN), idx++);
+        assertSchemaMatch(dst -> dst.col("db", ColumnType.DOUBLE), idx++);
+        assertSchemaMatch(dst -> dst.col("fl", ColumnType.FLOAT), idx++);
+        assertSchemaMatch(dst -> dst.col("dt", ColumnType.DATE), idx++);
+        assertSchemaMatch(dst -> dst.col("ts1", ColumnType.TIMESTAMP), idx++);
+        assertSchemaMatch(dst -> dst.col("l256", ColumnType.LONG256), idx++);
+        assertSchemaMatch(dst -> dst.col("byt", ColumnType.BYTE), idx++);
+        assertSchemaMatch(dst -> dst.col("ch", ColumnType.CHAR), idx++);
+        assertSchemaMatch(dst -> dst.col("sh", ColumnType.SHORT), idx);
     }
 
     @Test
@@ -799,8 +800,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachPartitionsWithSymbolsValueMatchWithNoIndexKeyFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src98", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst98", PartitionBy.DAY)) {
 
                 createPopulateTable(
                         src.col("l", ColumnType.LONG)
@@ -821,7 +822,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-01",
                         10);
 
-                compile("alter table dst drop partition list '2020-01-09'");
+                compile("alter table " + dst.getName() + " drop partition list '2020-01-09'");
 
                 // remove .k
                 Assert.assertTrue(Files.remove(path
@@ -956,8 +957,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         assertMemoryLeak(() -> {
 
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src47", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst47", PartitionBy.DAY)) {
 
                 int partitionRowCount = 5;
                 createPopulateTable(
@@ -1018,11 +1019,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertSchemaMatch(AddColumn tm) throws Exception {
-        setUp();
+    private void assertSchemaMatch(AddColumn tm, int idx) throws Exception {
+        if (idx > 0) {
+            setUp();
+        }
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "srcCM" + idx, PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dstCM" + idx, PartitionBy.DAY)) {
                 src.col("l", ColumnType.LONG)
                         .col("i", ColumnType.INT)
                         .timestamp("ts");
@@ -1043,7 +1046,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyAttachPartition(src, dst, 0, "2020-01-01");
             }
         });
-        tearDown();
+        if (idx > 0) {
+            tearDown();
+        }
     }
 
     private void assertSchemaMismatch(TableModel src, String dstTableName, AddColumn tm, String errorMessage) throws NumericException {
@@ -1087,6 +1092,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             partitionsIn.put(partition);
             partitionsIn.put("'");
 
+            engine.clear();
             copyPartitionToAttachable(src.getName(), partition, dst.getName(), partition);
         }
 
@@ -1155,10 +1161,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                      .put(TableUtils.ATTACHABLE_DIR_MARKER)
                      .slash$()
         ) {
-            if (!Files.exists(attachable)) {
-                Assert.assertEquals(0, Files.mkdirs(attachable, 509));
-            }
-
             copyDirectory(original, attachable);
 
             // copy _meta

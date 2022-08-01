@@ -2620,6 +2620,7 @@ public class TableWriter implements Closeable {
         Misc.free(detachedColumnVersionReader);
         Misc.free(columnVersionWriter);
         Misc.free(o3ColumnTopSink);
+        Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         updateOperator = Misc.free(updateOperator);
         dropIndexOperator = Misc.free(dropIndexOperator);
@@ -2629,7 +2630,9 @@ public class TableWriter implements Closeable {
         } finally {
             Misc.free(txnScoreboard);
             Misc.free(path);
+            Misc.free(o3TimestampMem);
             Misc.free(o3TimestampMemCpy);
+            Misc.free(o3PartitionUpdateQueue);
             Misc.free(ownMessageBus);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
