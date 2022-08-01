@@ -54,7 +54,7 @@ public class SecurityTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpReadOnlyExecutionContext() {
-        inputRoot = new File(".").getAbsolutePath();
+        inputRoot = TestUtils.getCsvRoot();
         CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
             @Override
             public int getSqlJoinMetadataMaxResizes() {
@@ -321,7 +321,7 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testCopyDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("copy testDisallowCopySerial from '/src/test/resources/csv/test-alltypes.csv' with header true", readOnlyExecutionContext);
+                compiler.compile("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.toString(), "permission denied");

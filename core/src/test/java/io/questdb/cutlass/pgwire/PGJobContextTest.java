@@ -92,7 +92,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @BeforeClass
     public static void init() {
-        inputRoot = new File(".").getAbsolutePath();
+        inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -3464,7 +3464,7 @@ nodejs code:
     public void testLocalCopyFrom() throws Exception {
         try (final PGWireServer ignored = createPGServer(2);
              final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
             copyStatement.execute();
 
             TestUtils.runWithTextImportRequestJob(engine, () -> {
@@ -3489,7 +3489,7 @@ nodejs code:
     public void testLocalCopyFromCancellation() throws Exception {
         try (final PGWireServer ignored = createPGServer(1);
              final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
 
             String importId;
             try (final ResultSet rs = copyStatement.executeQuery()) {

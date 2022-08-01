@@ -53,6 +53,8 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -1061,6 +1063,16 @@ public final class TestUtils {
             task.run();
         } finally {
             pool.halt();
+        }
+    }
+
+    public static String getCsvRoot() {
+        URL rootSource = CopyTest.class.getResource("/csv/test-import.csv");
+        try {
+            java.nio.file.Path parent = java.nio.file.Path.of(rootSource.toURI()).getParent();
+            return parent.toAbsolutePath().toString();
+        } catch (URISyntaxException e) {
+            throw new AssertionError("missing test-import.csv", e);
         }
     }
 }

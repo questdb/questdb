@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.postgresql.PGProperty;
@@ -54,7 +55,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @BeforeClass
     public static void init() {
-        inputRoot = new File(".").getAbsolutePath();
+        inputRoot = TestUtils.getCsvRoot();
     }
 
     @Test
@@ -97,7 +98,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowCopy() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryDisallowed("copy testDisallowCopySerial from '/src/test/resources/csv/test-alltypes.csv' with header true");
+            assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true");
         });
     }
 

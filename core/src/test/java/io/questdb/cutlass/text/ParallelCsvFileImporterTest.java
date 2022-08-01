@@ -60,7 +60,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Before
     public void before() throws IOException {
         rnd.reset();
-        inputRoot = new File(".").getAbsolutePath();
+        inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
     }
 
@@ -1854,9 +1854,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy,
                                       String fileName, IndexChunk... expectedChunks) {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+        inputRoot = TestUtils.getCsvRoot();
 
-        try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
+        try (Path path = new Path().of(inputRoot).concat(fileName).$();
              ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
             indexer.setMinChunkSize(1);
             indexer.of("tableName", fileName, partitionBy, (byte) ',', "ts", format, false, sqlExecutionContext.getCairoSecurityContext());
@@ -2014,8 +2014,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenImportingTextIntoBinaryColumn() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-
             compiler.compile("create table tab ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
@@ -2030,8 +2028,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenTimestampColumnIsMissingInInputFile() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-
             compiler.compile("create table tab ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
@@ -2046,8 +2042,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileSetsDateColumnToNullIfCsvStructureCheckCantDetectACommonFormat() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-
             compiler.compile("create table tab ( line string, ts timestamp, d date, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
@@ -2138,7 +2132,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportIsCancelled() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext) -> {
-            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.of("tableName", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true, sqlExecutionContext.getCairoSecurityContext());
                 indexer.process();
@@ -2164,8 +2157,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
         executeWithPool(4, 8, ff, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
-            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine1, sqlExecutionContext1.getWorkerCount())) {
                 indexer.of(tableName, fileName, partitionBy, (byte) ',', tsCol, tsFormat, true, sqlExecutionContext.getCairoSecurityContext());
                 indexer.process();
@@ -2638,10 +2629,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
         executeWithPool(1, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try {
-                compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                compiler.compile("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
                 engine.getTextImportExecutionContext().resetActiveImportId();
-                compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                compiler.compile("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. Another import request may be in progress."));
@@ -2659,8 +2650,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextImportException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-
         try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
              ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
             indexer.setMinChunkSize(1);
@@ -2794,8 +2783,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             CairoConfiguration configuration
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount();
-        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-
         try (final CairoEngine engine = new CairoEngine(configuration);
              final SqlCompiler compiler = new SqlCompiler(engine)) {
 
