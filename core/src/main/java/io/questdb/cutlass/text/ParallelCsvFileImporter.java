@@ -1546,6 +1546,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public boolean isWallEnabled() {
+            return false;
+        }
+
+        @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
         }

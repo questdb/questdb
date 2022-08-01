@@ -108,6 +108,7 @@ public class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
+    protected static int defaultTableWriteMode = -1;
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -333,6 +334,11 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public boolean getWallEnabledDefault() {
+                return defaultTableWriteMode < 0 ? super.getWallEnabledDefault() : defaultTableWriteMode == 1;
+            }
+
+            @Override
             public boolean isIOURingEnabled() {
                 return ioURingEnabled != null ? ioURingEnabled : super.isIOURingEnabled();
             }
@@ -400,6 +406,7 @@ public class AbstractCairoTest {
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
+        defaultTableWriteMode = -1;
     }
 
     protected static void configureForBackups() throws IOException {

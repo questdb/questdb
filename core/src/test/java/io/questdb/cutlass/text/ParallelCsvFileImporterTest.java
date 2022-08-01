@@ -1481,10 +1481,13 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportWithSkipRowAtomicityImportsNoRowsWhenNonTimestampColumnCantBeParsed() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab ( ts timestamp, line symbol, description double, d double, s symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            // the StrSym should be 'symbol' and DoubleCol should be 'double'
+            // we intentionally create these columns with a wrong type so the ParallelCsvFileImporter fails to parse these columns
+            // the subsequent assert checks no row was imported - as the atomicity level is set to SKIP_ROW
+            compiler.compile("create table tab (StrSym int, Int symbol,Int_Col int, DoubleCol int,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ROW);
+                importer.of("tab", "test-import.csv", PartitionBy.MONTH, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false, null, Atomicity.SKIP_ROW);
                 importer.process();
             }
 

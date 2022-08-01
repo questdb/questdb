@@ -376,7 +376,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColum2() throws Exception {
         final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:30:00.000000Z\n";
+                "1\t2021-01-03T03:30:00.000000Z\n";
 
         assertInsertTimestamp(
                 expected,
@@ -399,7 +399,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" +
-                "1\t2021-01-03T01:00:00.000000Z\n";
+                "1\t2021-01-02T23:00:00.000000Z\n";
 
         assertInsertTimestamp(
                 expected,

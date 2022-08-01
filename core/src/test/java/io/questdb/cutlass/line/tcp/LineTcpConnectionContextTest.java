@@ -1744,7 +1744,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     TestUtils.assertSql(
                             compiler,
                             context,
-                            "tables()",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n"
                     );
