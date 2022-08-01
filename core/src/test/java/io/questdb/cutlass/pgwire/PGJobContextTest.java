@@ -2319,6 +2319,25 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testRustExecutingDDLAsPreparedStatement() throws Exception {
+        // Rust executing DDL. From what I observed before, the message sequence is P/D/S/B
+        // the issue was that P was a named statement, for which we created wrapper. Then B was trying to
+        // bind variables and re-execute statement.
+        String script = ">0000002900030000636c69656e745f656e636f64696e67005554463800757365720061646d696e0000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">5000000021733000637265617465207461626c65207879286120696e74293b0000004400000008537330005300000004\n" +
+                "<3100000004740000000600006e000000045a0000000549\n" +
+                ">42000000120073300000010001000000010001450000000900000000005300000004\n" +
+                "<320000000443000000074f4b005a0000000549\n" +
+                ">4300000008537330005300000004\n" +
+                "<33000000045a0000000549\n" +
+                ">5800000004\n";
+        assertHexScript(script);
+    }
+
+    @Test
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (

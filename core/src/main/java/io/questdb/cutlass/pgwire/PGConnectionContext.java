@@ -1172,6 +1172,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
+            wrapper.canExecuteAgain = queryTag != TAG_OK;
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -2497,7 +2498,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (compileQuery(compiler) && typesAndSelect != null) {
+        if (wrapper.canExecuteAgain && compileQuery(compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
     }
@@ -2549,6 +2550,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         public final IntList bindVariableTypes = new IntList();
         public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
+        public boolean canExecuteAgain = false;
 
         @Override
         public void clear() {
