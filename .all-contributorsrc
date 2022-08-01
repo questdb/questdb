@@ -961,6 +961,16 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "EmmettM",
+      "name": "EmmettM",
+      "avatar_url": "https://avatars.githubusercontent.com/u/4196372?v=4",
+      "profile": "https://github.com/EmmettM",
+      "contributions": [
+        "bug",
+        "test"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
