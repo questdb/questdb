@@ -1008,6 +1008,16 @@
         "bug",
         "ideas"
       ]
+    },
+    {
+      "login": "huuhait",
+      "name": "Hữu Hà",
+      "avatar_url": "https://avatars.githubusercontent.com/u/40519768?v=4",
+      "profile": "https://www.zsmart.tech/",
+      "contributions": [
+        "bug",
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
