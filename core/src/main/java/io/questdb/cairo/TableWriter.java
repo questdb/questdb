@@ -649,12 +649,6 @@ public class TableWriter implements Closeable {
             return StatusCode.PARTITION_ALREADY_ATTACHED;
         }
 
-        if (inTransaction()) {
-            LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
-                    .$(", partition=").$ts(timestamp).I$();
-            commit();
-        }
-
         boolean rollbackRename = false;
         try {
             // final name of partition folder after attach
@@ -687,8 +681,13 @@ public class TableWriter implements Closeable {
             CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
             final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
             if (partitionSize > 0L) {
+                if (inTransaction()) {
+                    LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
+                            .$(", partition=").$ts(timestamp).I$();
+                    commit();
+                }
                 if (validateDataFiles) {
-                    attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
+                    attachPartitionCheckFilesMatchMetadata(ff, path, partitionSize);
                 }
 
                 long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
@@ -716,7 +715,7 @@ public class TableWriter implements Closeable {
             if (rollbackRename) {
                 // rename back to .detached
                 // otherwise it can be deleted on writer re-open
-                if (ff.rename(path, detachedPath) == Files.FILES_RENAME_OK) {
+                if (ff.rename(path.slash$(), detachedPath) == Files.FILES_RENAME_OK) {
                     LOG.info().$("moved partition dir after failed attach attempt: ").$(path).$(" to ").$(detachedPath).$();
                 } else {
                     LOG.info().$("fs error renaming partition folder [errno=").$(ff.errno())
@@ -732,6 +731,10 @@ public class TableWriter implements Closeable {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
+
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return StatusCode.TABLE_NOT_PARTITIONED;
+        }
 
         // check timestamp
         long minTimestamp = txWriter.getMinTimestamp();
@@ -2044,7 +2047,7 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
-    private void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
+    private void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, long partitionSize) throws CairoException {
         // for each column, check that file exists in the partition folder
         int rootLen = path.length();
         for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
