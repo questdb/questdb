@@ -1115,7 +1115,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void attachFromSrcIntoDst(TableModel src, TableModel dst, String... partitionList) throws SqlException, NumericException {
-        engine.clear();
         partitions.clear();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
@@ -1138,13 +1137,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         int pathLen = path.length();
         other.of(configuration.getDetachedRoot()).concat(dst.getName());
         int otherLen = other.length();
-        Files.mkdirs(other.slash$(), DIR_MODE);
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
 
             path.trimTo(pathLen).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
             other.trimTo(otherLen).concat(partition).put(TableUtils.ATTACHABLE_DIR_MARKER).$();
-            Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, other));
+            TestUtils.copyDirectory(path, other, DIR_MODE);
 
             // copy _meta
             Files.copy(
@@ -1160,6 +1158,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         int rowCount = readAllRows(dst.getName());
 
+        engine.clear();
         compile(
                 "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";",
                 sqlExecutionContext
@@ -1180,6 +1179,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         // Check table is writable after partition attach
+        engine.clear();
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
             TableWriter.Row row = writer.newRow(timestamp);
             row.putInt(1, 1);
