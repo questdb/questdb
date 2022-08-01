@@ -980,6 +980,15 @@
       "contributions": [
         "ideas"
       ]
+    },
+    {
+      "login": "AllenEdison",
+      "name": "AllenEdison",
+      "avatar_url": "https://avatars.githubusercontent.com/u/46532217?v=4",
+      "profile": "https://github.com/AllenEdison",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
