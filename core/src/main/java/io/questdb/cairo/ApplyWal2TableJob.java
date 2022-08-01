@@ -27,16 +27,24 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.WalTxnNotificationTask;
 
 import static io.questdb.cairo.WalWriter.WAL_NAME_BASE;
 
-public class ApplyWal2TableJob {
+public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> {
     public final static String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+    private final CairoEngine engine;
+
+    public ApplyWal2TableJob(CairoEngine engine) {
+        super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
+        this.engine = engine;
+    }
 
     public static void processWalTxnNotification(
-            String tableName,
+            CharSequence tableName,
             int tableId,
             long txn,
             CairoEngine engine
@@ -78,5 +86,19 @@ public class ApplyWal2TableJob {
                 writer.processWalCommit(tempPath, segmentTxn);
             }
         }
+    }
+
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        try {
+            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
+            int tableId = walTxnNotificationTask.getTableId();
+            CharSequence tableName = walTxnNotificationTask.getTableName();
+            long txn = walTxnNotificationTask.getTxn();
+            processWalTxnNotification(tableName, tableId, txn, engine);
+        } finally {
+            subSeq.done(cursor);
+        }
+        return true;
     }
 }

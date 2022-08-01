@@ -66,7 +66,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements Closeable {
+public class TableWriter implements TableWriterFrontend, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
@@ -710,24 +710,25 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void commit() {
-        commit(defaultCommitMode);
+    public long commit(int commitMode) {
+        return commit(commitMode, 0);
     }
 
-    public void commit(int commitMode) {
-        commit(commitMode, 0);
+    public long commitWithLag() {
+        return commit(defaultCommitMode, metadata.getCommitLag());
     }
 
-    public void commitWithLag() {
-        commit(defaultCommitMode, metadata.getCommitLag());
+    public long commitWithLag(long lagMicros) {
+        return commit(defaultCommitMode, lagMicros);
     }
 
-    public void commitWithLag(long lagMicros) {
-        commit(defaultCommitMode, lagMicros);
+    @Override
+    public TableWriterMetadata getMetadata() {
+        return metadata;
     }
 
-    public void commitWithLag(int commitMode) {
-        commit(commitMode, metadata.getCommitLag());
+    public long commit() {
+        return commit(defaultCommitMode);
     }
 
     public void dropIndex(CharSequence columnName) {
@@ -825,8 +826,8 @@ public class TableWriter implements Closeable {
         return txWriter.getMaxTimestamp();
     }
 
-    public TableWriterMetadata getMetadata() {
-        return metadata;
+    public long commitWithLag(int commitMode) {
+        return commit(commitMode, metadata.getCommitLag());
     }
 
     public long getO3RowCount() {
@@ -2216,12 +2217,12 @@ public class TableWriter implements Closeable {
      * @param commitMode commit durability mode.
      * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
-    private void commit(int commitMode, long commitLag) {
+    private long commit(int commitMode, long commitLag) {
         checkDistressed();
 
         if (o3InError) {
             rollback();
-            return;
+            return Sequencer.NO_TXN;
         }
 
         if ((masterRef & 1) != 0) {
@@ -2233,7 +2234,7 @@ public class TableWriter implements Closeable {
             if (o3 && o3Commit(commitLag)) {
                 // Bookmark masterRef to track how many rows is in uncommitted state
                 this.committedMasterRef = masterRef;
-                return;
+                return getTxn();
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -2258,7 +2259,10 @@ public class TableWriter implements Closeable {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
                 addPhysicallyWrittenRows(rowsAdded);
             }
+
+            return getTxn();
         }
+        return Sequencer.NO_TXN;
     }
 
     private void configureAppendPosition() {

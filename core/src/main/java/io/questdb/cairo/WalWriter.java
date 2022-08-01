@@ -24,10 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,11 +38,9 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
 import static io.questdb.cairo.TableUtils.*;
 
-public class WalWriter implements Closeable {
+public class WalWriter implements TableWriterFrontend {
     static final String WAL_NAME_BASE = "wal";
     static final int WAL_FORMAT_VERSION = 0;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
@@ -58,7 +58,7 @@ public class WalWriter implements Closeable {
     private final FilesFacade ff;
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
     private final int mkDirMode;
-    private final String tableName;
+    private final CharSequence tableName;
     private final String walName;
     private final int walId;
     private final WalWriterMetadata metadata;
@@ -69,7 +69,7 @@ public class WalWriter implements Closeable {
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
     private long lockFd = -1;
-    private int columnCount;
+    private final int columnCount;
     private long startRowCount = -1;
     private long rowCount = -1;
     private long segmentId = -1;
@@ -82,7 +82,7 @@ public class WalWriter implements Closeable {
     };
     private long lastSegmentTxn = -1L;
 
-    public WalWriter(CairoEngine engine, String tableName, int walId, Sequencer sequencer) {
+    public WalWriter(CairoEngine engine, CharSequence tableName, int walId, Sequencer sequencer) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.sequencer = sequencer;
         this.engine = engine;
@@ -176,12 +176,27 @@ public class WalWriter implements Closeable {
         }
     }
 
-    public String getTableName() {
-        return tableName;
+    @Override
+    public long commitWithLag(long commitLag) {
+        return commit();
+    }
+
+    @Override
+    public BaseRecordMetadata getMetadata() {
+        return metadata;
     }
 
     public String getWalName() {
         return walName;
+    }
+
+    @Override
+    public void rollback() {
+
+    }
+
+    public CharSequence getTableName() {
+        return tableName;
     }
 
     public TableWriter.Row newRow() {
@@ -338,24 +353,43 @@ public class WalWriter implements Closeable {
         // what if the wal is created on a node where the table itself is not present?
         // maybe copying symbols from existing table is not the best or sequencer needs an API for it
         // but then sequencer will have to keep track of all symbol tables
-        int columnReaderIndex = 0;
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (
+                TxReader txReader = new TxReader(ff);
+                ColumnVersionReader columnVersionReader = new ColumnVersionReader()
+        ) {
+            MillisecondClock milliClock = configuration.getMillisecondClock();
+            long spinLockTimeout = configuration.getSpinLockTimeout();
+            Path path = Path.PATH2.get();
+
+            path.of(configuration.getRoot()).concat(tableName);
+
+            // Doesn't matter what partition is by, as long as it's partitioned
+            // All WAL tables must be partitioned
+            txReader.ofRO(path, PartitionBy.DAY);
+            path.of(configuration.getRoot()).concat(tableName).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+            columnVersionReader.ofRO(ff, path);
+
+            do {
+                TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
+                columnVersionReader.readSafe(milliClock, spinLockTimeout);
+            } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+            int denseSymbolIndex = 0;
+
             for (int i = 0; i < columnCount; i++) {
                 int columnType = metadata.getColumnType(i);
                 if (!ColumnType.isSymbol(columnType)) {
                     // maintain sparse list of symbol writers
                     symbolMapReaders.extendAndSet(i, null);
                     initialSymbolCounts.extendAndSet(i, -1);
-                    symbolMaps.extendAndSet(i,null);
+                    symbolMaps.extendAndSet(i, null);
                 } else {
-                    SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnReaderIndex);
-                    int symbolCount = symbolMapReader.getSymbolCount();
-                    long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(i);
-                    configureSymbolMapWriter(i, descriptor.getColumnName(i), symbolCount, columnNameTxn);
+                    int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
+                    long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
+                    configureSymbolMapWriter(i, descriptor.getColumnName(i), symbolValueCount, columnNameTxn);
                 }
 
-                if (columnType > 0) {
-                    columnReaderIndex++;
+                if (columnType == ColumnType.SYMBOL || columnType == -ColumnType.SYMBOL) {
+                    denseSymbolIndex++;
                 }
             }
         }

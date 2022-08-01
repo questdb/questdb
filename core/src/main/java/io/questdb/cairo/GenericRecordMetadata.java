@@ -58,6 +58,22 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         }
     }
 
+    public static GenericRecordMetadata copyDense(BaseRecordMetadata writerMetadata) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        int columnCount = writerMetadata.getColumnCount();
+        int timestampIndex = writerMetadata.getTimestampIndex();
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata column = writerMetadata.getColumnQuick(i);
+            if (column.getType() >= 0) {
+                metadata.add(column);
+                if (i == timestampIndex) {
+                    metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+                }
+            }
+        }
+        return metadata;
+    }
+
     public static GenericRecordMetadata copyOf(RecordMetadata that) {
         if (that != null) {
             if (that instanceof GenericRecordMetadata) {

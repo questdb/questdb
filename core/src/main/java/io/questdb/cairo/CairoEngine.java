@@ -28,11 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.pool.ReaderPool;
-import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.pool.WalWriterSource;
+import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -188,7 +184,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 mem,
                 path,
                 struct,
-                (int) tableIdGenerator.getNextId()
+                tableId
         );
     }
 
@@ -253,7 +249,23 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return tableIdGenerator;
     }
 
-    public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
+    public TableWriterFrontend getTableWriterFrontEnd(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            @Nullable String lockReason
+    ) {
+        securityContext.checkWritePermission();
+        String tableNameStr = Chars.toString(tableName);
+        if (tableRegistry.hasSequencer(tableNameStr)) {
+            // This is WAL table because sequencer exists
+            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
+            return sequencer.createWal();
+        }
+
+        return getWriter(securityContext, tableName, lockReason);
+    }
+
+    public void notifyWalTxnCommitted(int tableId, CharSequence tableName, long txn) {
         Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         int steelingAttempts = 10;
         while (true) {
@@ -272,7 +284,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                         while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
                             if (cursor > -1L) {
                                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                                String taskTableName = task.getTableName();
+                                CharSequence taskTableName = task.getTableName();
                                 int taskTableId = task.getTableId();
                                 long taskTxn = task.getTxn();
 

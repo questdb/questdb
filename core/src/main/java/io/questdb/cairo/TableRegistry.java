@@ -26,10 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 import java.util.Map;
 import java.util.Set;
+
+import static io.questdb.cairo.Sequencer.SEQ_DIR;
 
 public class TableRegistry implements Closeable {
     private final ConcurrentHashMap<Sequencer> tableRegistry = new ConcurrentHashMap<>();
@@ -38,6 +41,19 @@ public class TableRegistry implements Closeable {
 
     TableRegistry(CairoEngine engine) {
         this.engine = engine;
+    }
+
+    public boolean hasSequencer(String tableNameStr) {
+        Sequencer sequencer = tableRegistry.get(tableNameStr);
+        if (sequencer != null) {
+            return true;
+        }
+
+        // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
+        Path tempPath = Path.PATH2.get();
+        CairoConfiguration configuration = engine.getConfiguration();
+        tempPath.of(configuration.getRoot()).concat(tableNameStr).concat(SEQ_DIR);
+        return configuration.getFilesFacade().exists(tempPath);
     }
 
     // expected that caller holds the lock on the table

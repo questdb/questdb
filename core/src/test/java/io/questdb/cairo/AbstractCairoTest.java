@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -448,5 +447,12 @@ public class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
+    }
+
+    protected static void drainWalQueue() {
+        ApplyWal2TableJob job = new ApplyWal2TableJob(engine);
+        while (job.run(0)) {
+            // run until empty
+        }
     }
 }

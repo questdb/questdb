@@ -22,28 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.tasks;
+package io.questdb.cairo;
 
-public class WalTxnNotificationTask {
-    private CharSequence tableName;
-    private int tableId;
-    private long txn;
+import java.io.Closeable;
 
-    public int getTableId() {
-        return tableId;
-    }
+public interface TableWriterFrontend extends Closeable {
+    @Override
+    void close();
 
-    public CharSequence getTableName() {
-        return tableName;
-    }
+    long commit();
 
-    public long getTxn() {
-        return txn;
-    }
+    long commitWithLag(long commitLag);
 
-    public void of(CharSequence tableName, int tableId, long txn) {
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.txn = txn;
-    }
+    BaseRecordMetadata getMetadata();
+
+    TableWriter.Row newRow();
+
+    TableWriter.Row newRow(long timestamp);
+
+    void rollback();
 }

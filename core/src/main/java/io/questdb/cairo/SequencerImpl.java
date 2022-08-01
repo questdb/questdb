@@ -38,14 +38,14 @@ public class SequencerImpl implements Sequencer {
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
 
     private final CairoEngine engine;
-    private final String tableName;
+    private final CharSequence tableName;
     private Path path;
     private final int rootLen;
     private final SequencerMetadata metadata;
     private final TxnCatalog catalog;
     private final IDGenerator walIdGenerator;
 
-    SequencerImpl(CairoEngine engine, String tableName) {
+    SequencerImpl(CairoEngine engine, CharSequence tableName) {
         this.engine = engine;
         this.tableName = tableName;
 
