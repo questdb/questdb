@@ -675,10 +675,10 @@ public final class IntervalUtils {
         int tzSign;
         switch (seq.charAt(p)) {
             case '+':
-                tzSign = 1;
+                tzSign = -1;
                 break;
             case '-':
-                tzSign = -1;
+                tzSign = 1;
                 break;
             default:
                 throw NumericException.INSTANCE;
