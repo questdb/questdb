@@ -414,7 +414,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         } catch (TextImportException e) {
             LOG.error()
-                    .$("could not import [phase=").$(TextImportTask.getPhaseNameLowerCase(e.getPhase()))
+                    .$("could not import [phase=").$(TextImportTask.getPhaseName(e.getPhase()))
                     .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             throw e;
@@ -926,7 +926,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         throwErrorIfNotOk();
         long endMs = getCurrentTimeMs();
         LOG.info()
-                .$("finished [phase=").$(TextImportTask.getPhaseNameLowerCase(phase))
+                .$("finished [phase=").$(TextImportTask.getPhaseName(phase))
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
                 .$(", errors=").$(phaseErrors)
@@ -1058,7 +1058,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePrologue(byte phase) {
         phaseErrors = 0;
         LOG.info()
-                .$("started [phase=").$(TextImportTask.getPhaseNameLowerCase(phase))
+                .$("started [phase=").$(TextImportTask.getPhaseName(phase))
                 .$(", file=`").$(inputFilePath).$('`')
                 .$(", workerCount=").$(workerCount)
                 .I$();

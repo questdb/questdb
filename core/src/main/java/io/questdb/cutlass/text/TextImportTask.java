@@ -65,7 +65,6 @@ public class TextImportTask {
 
     private static final Log LOG = LogFactory.getLog(TextImportTask.class);
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
-    private static final IntObjHashMap<String> PHASE_NAME_LOWER_CASE_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
 
     private final PhaseBoundaryCheck phaseBoundaryCheck = new PhaseBoundaryCheck();
@@ -82,10 +81,6 @@ public class TextImportTask {
 
     public static String getPhaseName(byte phase) {
         return PHASE_NAME_MAP.get(phase);
-    }
-
-    public static String getPhaseNameLowerCase(byte phase) {
-        return PHASE_NAME_LOWER_CASE_MAP.get(phase);
     }
 
     public static String getStatusName(byte status) {
@@ -256,7 +251,7 @@ public class TextImportTask {
             Path p2
     ) {
         try {
-            LOG.debug().$("starting [phase=").$(getPhaseNameLowerCase(phase)).$(",index=").$(chunkIndex).I$();
+            LOG.debug().$("starting [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
 
             this.status = STATUS_STARTED;
             this.errorMessage = null;
@@ -279,15 +274,15 @@ public class TextImportTask {
                 throw TextException.$("Unexpected phase ").put(phase);
             }
 
-            LOG.debug().$("finished [phase=").$(getPhaseNameLowerCase(phase)).$(",index=").$(chunkIndex).I$();
+            LOG.debug().$("finished [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
         } catch (TextImportException e) {
             this.status = STATUS_CANCELLED;
             this.errorMessage = e.getMessage();
-            LOG.error().$("Import cancelled [phase=").$(getPhaseNameLowerCase(e.getPhase())).I$();
+            LOG.error().$("Import cancelled [phase=").$(getPhaseName(e.getPhase())).I$();
             return false;
         } catch (Throwable t) {
             LOG.error()
-                    .$("could not import [phase=").$(getPhaseNameLowerCase(phase))
+                    .$("could not import [phase=").$(getPhaseName(phase))
                     .$(", ex=").$(t)
                     .I$();
             this.status = STATUS_FAILED;
@@ -1422,25 +1417,21 @@ public class TextImportTask {
     }
 
     static {
-        PHASE_NAME_MAP.put(PHASE_SETUP, "SETUP");
-        PHASE_NAME_LOWER_CASE_MAP.put(PHASE_SETUP, Chars.toLowerCaseAscii(PHASE_NAME_MAP.get(PHASE_SETUP)));
-        PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "BOUNDARY_CHECK");
-        PHASE_NAME_MAP.put(PHASE_INDEXING, "INDEXING");
-        PHASE_NAME_MAP.put(PHASE_PARTITION_IMPORT, "PARTITION_IMPORT");
-        PHASE_NAME_MAP.put(PHASE_SYMBOL_TABLE_MERGE, "SYMBOL_TABLE_MERGE");
-        PHASE_NAME_MAP.put(PHASE_UPDATE_SYMBOL_KEYS, "UPDATE_SYMBOL_KEYS");
-        PHASE_NAME_MAP.put(PHASE_BUILD_SYMBOL_INDEX, "BUILD_SYMBOL_INDEX");
-        PHASE_NAME_MAP.put(PHASE_MOVE_PARTITIONS, "MOVE_PARTITIONS");
-        PHASE_NAME_MAP.put(PHASE_ATTACH_PARTITIONS, "ATTACH_PARTITIONS");
-        PHASE_NAME_MAP.put(PHASE_ANALYZE_FILE_STRUCTURE, "ANALYZE_FILE_STRUCTURE");
-        PHASE_NAME_MAP.put(PHASE_CLEANUP, "CLEANUP");
+        PHASE_NAME_MAP.put(PHASE_SETUP, "setup");
+        PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "boundary_check");
+        PHASE_NAME_MAP.put(PHASE_INDEXING, "indexing");
+        PHASE_NAME_MAP.put(PHASE_PARTITION_IMPORT, "partition_import");
+        PHASE_NAME_MAP.put(PHASE_SYMBOL_TABLE_MERGE, "symbol_table_merge");
+        PHASE_NAME_MAP.put(PHASE_UPDATE_SYMBOL_KEYS, "update_symbol_keys");
+        PHASE_NAME_MAP.put(PHASE_BUILD_SYMBOL_INDEX, "build_symbol_index");
+        PHASE_NAME_MAP.put(PHASE_MOVE_PARTITIONS, "move_partitions");
+        PHASE_NAME_MAP.put(PHASE_ATTACH_PARTITIONS, "attach_partitions");
+        PHASE_NAME_MAP.put(PHASE_ANALYZE_FILE_STRUCTURE, "analyze_file_structure");
+        PHASE_NAME_MAP.put(PHASE_CLEANUP, "cleanup");
 
-        // generate lower case phase names map
-        PHASE_NAME_MAP.forEach((key, value) -> PHASE_NAME_LOWER_CASE_MAP.put(key, Chars.toLowerCaseAscii(value)));
-
-        STATUS_NAME_MAP.put(STATUS_STARTED, "STARTED");
-        STATUS_NAME_MAP.put(STATUS_FINISHED, "FINISHED");
-        STATUS_NAME_MAP.put(STATUS_FAILED, "FAILED");
-        STATUS_NAME_MAP.put(STATUS_CANCELLED, "CANCELLED");
+        STATUS_NAME_MAP.put(STATUS_STARTED, "started");
+        STATUS_NAME_MAP.put(STATUS_FINISHED, "finished");
+        STATUS_NAME_MAP.put(STATUS_FAILED, "failed");
+        STATUS_NAME_MAP.put(STATUS_CANCELLED, "cancelled");
     }
 }

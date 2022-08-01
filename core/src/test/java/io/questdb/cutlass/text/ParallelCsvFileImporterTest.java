@@ -1012,7 +1012,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=BOUNDARY_CHECK, msg=`could not read import file"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=boundary_check, msg=`could not read import file"));
             }
         });
     }
@@ -1037,7 +1037,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=INDEXING, msg=`could not read file"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=indexing, msg=`could not read file"));
             }
         });
     }
@@ -1070,7 +1070,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=PARTITION_IMPORT, msg=`could not read from file"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=partition_import, msg=`could not read from file"));
             }
         });
     }
@@ -1091,7 +1091,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsInPhase(brokenFf, "BOUNDARY_CHECK");
+        assertImportFailsInPhase(brokenFf, "boundary_check");
     }
 
     @Test
@@ -1106,7 +1106,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsInPhase(brokenFf, "INDEXING");
+        assertImportFailsInPhase(brokenFf, "indexing");
     }
 
     @Test
@@ -1122,7 +1122,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsInPhase(brokenFf, "INDEXING");
+        assertImportFailsInPhase(brokenFf, "indexing");
     }
 
     @Test
@@ -1138,7 +1138,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsInPhase(brokenFf, "PARTITION_IMPORT");
+        assertImportFailsInPhase(brokenFf, "partition_import");
     }
 
     @Test
@@ -1153,7 +1153,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsInPhase(brokenFf, "SYMBOL_TABLE_MERGE");
+        assertImportFailsInPhase(brokenFf, "symbol_table_merge");
     }
 
     @Test
@@ -1169,7 +1169,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsInPhase(brokenFf, "UPDATE_SYMBOL_KEYS");
+        assertImportFailsInPhase(brokenFf, "update_symbol_keys");
     }
 
     @Test
@@ -1185,7 +1185,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsInPhase(brokenFf, "BUILD_SYMBOL_INDEX");
+        assertImportFailsInPhase(brokenFf, "build_symbol_index");
     }
 
     private void assertImportFailsInPhase(FilesFacade brokenFf, String phase) throws Exception {
@@ -1473,7 +1473,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=INDEXING, msg=`could not parse timestamp [line=0, column=1]`]"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=indexing, msg=`could not parse timestamp [line=0, column=1]`]"));
             }
         });
     }
@@ -1952,7 +1952,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tableName", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=PARTITION_IMPORT, msg=`name is reserved [tableName=tableName_0]`]");
+        testImportThrowsException(ff, "tableName", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`name is reserved [tableName=tableName_0]`]");
     }
 
     @Test
@@ -1977,7 +1977,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tableName", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=PARTITION_IMPORT, msg=`[-1] Table remove failed [tableName=tableName_0]`]");
+        testImportThrowsException(ff, "tableName", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`[-1] Table remove failed [tableName=tableName_0]`]");
     }
 
     @Test
@@ -2138,7 +2138,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.of("tableName", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
                 indexer.process();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=BOUNDARY_CHECK, msg=`Cancelled`]"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=boundary_check, msg=`Cancelled`]"));
             }
         });
     }
@@ -2559,7 +2559,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=PARTITION_IMPORT, msg=`bad syntax"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=partition_import, msg=`bad syntax"));
             }
         });
     }

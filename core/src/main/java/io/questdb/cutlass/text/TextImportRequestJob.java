@@ -44,7 +44,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.io.IOException;
 
-import static io.questdb.cutlass.text.TextImportTask.getPhaseNameLowerCase;
+import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
 import static io.questdb.cutlass.text.TextImportTask.getStatusName;
 
 public class TextImportRequestJob extends SynchronizedJob implements Closeable {
@@ -233,7 +233,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         .$(", statusTableName=").$(statusTableName)
                         .$(", tableName=").$(task.getTableName())
                         .$(", fileName=").$(task.getFileName())
-                        .$(", phase=").$(getPhaseNameLowerCase(phase))
+                        .$(", phase=").$(getPhaseName(phase))
                         .$(", status=").$(getStatusName(phase))
                         .$(", msg=").$(msg)
                         .$(", rowsHandled=").$(rowsHandled)

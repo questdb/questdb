@@ -323,8 +323,8 @@ public class CopyTest extends AbstractGriffinTest {
             );
             assertQuery(
                     "phase\tstatus\trows_handled\trows_imported\terrors\n" +
-                            "\tSTARTED\tNaN\tNaN\t0\n" +
-                            "\tFINISHED\t129\t127\t2\n",
+                            "\tstarted\tNaN\tNaN\t0\n" +
+                            "\tfinished\t129\t127\t2\n",
                     "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                     null,
                     true
@@ -481,7 +481,7 @@ public class CopyTest extends AbstractGriffinTest {
     public void testNonExistingFile() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from '/src/test/resources/csv/does-not-exist.csv'", sqlExecutionContext);
 
-        CopyRunnable assertion = () -> assertQuery("status\nFAILED\n",
+        CopyRunnable assertion = () -> assertQuery("status\nfailed\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true );
@@ -578,25 +578,25 @@ public class CopyTest extends AbstractGriffinTest {
         );
 
         CopyRunnable test = () -> assertQuery("phase\tstatus\trows_handled\trows_imported\terrors\n" +
-                        "\tSTARTED\tNaN\tNaN\t0\n" +
-                        "ANALYZE_FILE_STRUCTURE\tSTARTED\tNaN\tNaN\t0\n" +
-                        "ANALYZE_FILE_STRUCTURE\tFINISHED\tNaN\tNaN\t0\n" +
-                        "BOUNDARY_CHECK\tSTARTED\tNaN\tNaN\t0\n" +
-                        "INDEXING\tSTARTED\tNaN\tNaN\t0\n" +
-                        "INDEXING\tFINISHED\tNaN\tNaN\t0\n" +
-                        "PARTITION_IMPORT\tSTARTED\tNaN\tNaN\t0\n" +
-                        "PARTITION_IMPORT\tFINISHED\tNaN\tNaN\t0\n" +
-                        "SYMBOL_TABLE_MERGE\tSTARTED\tNaN\tNaN\t0\n" +
-                        "SYMBOL_TABLE_MERGE\tFINISHED\tNaN\tNaN\t0\n" +
-                        "UPDATE_SYMBOL_KEYS\tSTARTED\tNaN\tNaN\t0\n" +
-                        "UPDATE_SYMBOL_KEYS\tFINISHED\tNaN\tNaN\t0\n" +
-                        "BUILD_SYMBOL_INDEX\tSTARTED\tNaN\tNaN\t0\n" +
-                        "BUILD_SYMBOL_INDEX\tFINISHED\tNaN\tNaN\t0\n" +
-                        "MOVE_PARTITIONS\tSTARTED\tNaN\tNaN\t0\n" +
-                        "MOVE_PARTITIONS\tFINISHED\tNaN\tNaN\t0\n" +
-                        "ATTACH_PARTITIONS\tSTARTED\tNaN\tNaN\t0\n" +
-                        "ATTACH_PARTITIONS\tFINISHED\tNaN\tNaN\t0\n" +
-                        "\tFINISHED\t1000\t1000\t0\n",
+                        "\tstarted\tNaN\tNaN\t0\n" +
+                        "analyze_file_structure\tstarted\tNaN\tNaN\t0\n" +
+                        "analyze_file_structure\tfinished\tNaN\tNaN\t0\n" +
+                        "boundary_check\tstarted\tNaN\tNaN\t0\n" +
+                        "indexing\tstarted\tNaN\tNaN\t0\n" +
+                        "indexing\tfinished\tNaN\tNaN\t0\n" +
+                        "partition_import\tstarted\tNaN\tNaN\t0\n" +
+                        "partition_import\tfinished\tNaN\tNaN\t0\n" +
+                        "symbol_table_merge\tstarted\tNaN\tNaN\t0\n" +
+                        "symbol_table_merge\tfinished\tNaN\tNaN\t0\n" +
+                        "update_symbol_keys\tstarted\tNaN\tNaN\t0\n" +
+                        "update_symbol_keys\tfinished\tNaN\tNaN\t0\n" +
+                        "build_symbol_index\tstarted\tNaN\tNaN\t0\n" +
+                        "build_symbol_index\tfinished\tNaN\tNaN\t0\n" +
+                        "move_partitions\tstarted\tNaN\tNaN\t0\n" +
+                        "move_partitions\tfinished\tNaN\tNaN\t0\n" +
+                        "attach_partitions\tstarted\tNaN\tNaN\t0\n" +
+                        "attach_partitions\tfinished\tNaN\tNaN\t0\n" +
+                        "\tfinished\t1000\t1000\t0\n",
                 "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                 null,
                 true,
@@ -614,8 +614,8 @@ public class CopyTest extends AbstractGriffinTest {
         );
 
         CopyRunnable test = () -> assertQuery("phase\tstatus\trows_handled\trows_imported\terrors\n" +
-                        "\tSTARTED\tNaN\tNaN\t0\n" +
-                        "\tFINISHED\t1000\t1000\t0\n",
+                        "\tstarted\tNaN\tNaN\t0\n" +
+                        "\tfinished\t1000\t1000\t0\n",
                 "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                 null,
                 true,
@@ -797,7 +797,7 @@ public class CopyTest extends AbstractGriffinTest {
         compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
 
         TestUtils.drainTextImportJobQueue(engine);
-        assertQuery("status\nCANCELLED\n",
+        assertQuery("status\ncancelled\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true );
@@ -820,7 +820,7 @@ public class CopyTest extends AbstractGriffinTest {
         compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
 
         TestUtils.drainTextImportJobQueue(engine);
-        assertQuery("status\nCANCELLED\n",
+        assertQuery("status\ncancelled\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true );
@@ -844,7 +844,7 @@ public class CopyTest extends AbstractGriffinTest {
         compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
 
         TestUtils.drainTextImportJobQueue(engine);
-        assertQuery("status\nCANCELLED\n",
+        assertQuery("status\ncancelled\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true );
