@@ -136,24 +136,15 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean useParallelImport() {
-        String ts = task.getTimestampColumnName();
-        String name = task.getTableName();
-        if (ts != null) {
-            LOG.info().$("Using ParallelImport strategy. [table=").$(name).$(", timestamp=").$(ts).I$();
+        if (task.getTimestampColumnName() != null) {
             return true;
         }
-        if (engine.getStatus(task.getSecurityContext(), path, name) != TableUtils.TABLE_EXISTS) {
-            LOG.info().$("Target table does not exist. Using SerialImport strategy. [table=").$(name).I$();
+        if (engine.getStatus(task.getSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
             return false;
         }
         try (TableReader reader = engine.getReader(task.getSecurityContext(), task.getTableName())) {
-            if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
-                LOG.info().$("Target table exist and is partitioned. Using ParallelImport strategy. [table=").$(name).I$();
-                return true;
-            }
+            return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }
-        LOG.info().$("Target table exist and is not partitioned. Using SerialImport strategy. [table=").$(name).I$();
-        return false;
     }
 
     @Override
@@ -163,6 +154,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             task = requestQueue.get(cursor);
             try {
                 if (useParallelImport()) {
+                    LOG.info().$("Using ParallelImport strategy. [table=").$(task.getTableName()).$(", timestamp=").$(task.getTimestampColumnName()).I$();
                     parallelImporter.of(
                             task.getTableName(),
                             task.getFileName(),
@@ -177,6 +169,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                     parallelImporter.setStatusReporter(updateStatusRef);
                     parallelImporter.process();
                 } else {
+                    LOG.info().$("Using SerialImport strategy. [table=").$(task.getTableName()).$(", timestamp=").$(task.getTimestampColumnName()).I$();
                     serialImporter.of(
                             task.getTableName(),
                             task.getFileName(),
