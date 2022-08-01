@@ -353,8 +353,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-01",
                         10);
 
-                long value = 0L;
-                writeToStrIndexFile(src, "str.i", value, 16L);
+                writeToStrIndexFile(src, "str.i", 0L, 16L);
 
                 assertSchemaMismatch(
                         src,
@@ -426,6 +425,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
+                engine.clear();
                 path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.i").$();
                 long fd = Files.openRW(path);
                 Files.truncate(fd, Files.length(fd) / 4);
@@ -495,6 +495,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         2);
 
                 // .v file
+                engine.clear();
                 path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.v").$();
                 long fd = Files.openRW(path);
                 Files.truncate(fd, Files.length(fd) / 2);
@@ -572,6 +573,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         2);
 
                 // .d file
+                engine.clear();
                 path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.d").$();
                 long fd = Files.openRW(path);
                 Files.truncate(fd, Files.length(fd) / 2);
@@ -589,7 +591,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAttachPartitionsNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src21", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst22", PartitionBy.NONE)) {
+                 TableModel dst = new TableModel(configuration, "dst21", PartitionBy.NONE)) {
 
                 createPopulateTable(
                         src.timestamp("ts")
@@ -825,11 +827,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 compile("alter table " + dst.getName() + " drop partition list '2020-01-09'");
 
                 // remove .k
-                Assert.assertTrue(Files.remove(path
-                        .of(configuration.getRoot()).concat(src.getName())
-                        .concat("2020-01-09").concat("s")
-                        .put(".k")
-                        .$()));
+                engine.clear();
+                Assert.assertTrue(Files.remove(
+                        path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("s.k").$()
+                ));
 
                 try {
                     copyAttachPartition(src, dst, 9000, "2020-01-09");
@@ -1078,6 +1079,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     ) throws SqlException, NumericException {
         partitions.clear();
         partitionsIn.clear();
+        engine.clear();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
             if (i > 0) {
@@ -1218,7 +1220,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                 .col("l", ColumnType.LONG),
                         100,
                         "2020-01-01",
-                        1);
+                        2);
 
                 CairoTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -1245,6 +1247,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             // .i file
+            engine.clear();
             path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat(columnFileName).$();
             fd = ff.openRW(path, CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);
