@@ -59,12 +59,6 @@ public class CopyTest extends AbstractGriffinTest {
         AbstractGriffinTest.setUpStatic();
     }
 
-    @Test
-    public void testSequentialCopyDoesntAcceptNewKeywords() {
-        assertFailsWith("copy x from 'somefile.csv' with partition by HOUR;");
-        assertFailsWith("copy x from 'somefile.csv' with format 'XYZ';");
-    }
-
     private void assertFailsWith(String sql) {
         try {
             compiler.compile(sql, sqlExecutionContext);
@@ -824,6 +818,39 @@ public class CopyTest extends AbstractGriffinTest {
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true );
+    }
+
+    @Test
+    public void testParallelCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
+        CopyRunnable stmt = () -> {
+            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
+        };
+
+        CopyRunnable test = this::assertQuotesTableContent;
+
+        testCopy(stmt, test);
+    }
+
+    @Test
+    public void testSerialCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
+        CopyRunnable stmt = () -> {
+            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts);", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
+        };
+
+        CopyRunnable test = () -> assertQuery("phase\tstatus\trows_handled\trows_imported\terrors\n" +
+                        "\tstarted\tNaN\tNaN\t0\n" +
+                        "\tfinished\t1000\t1000\t0\n",
+                "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
+                null,
+                true,
+                true
+        );
+
+        testCopy(stmt, test);
     }
 
     @Test
