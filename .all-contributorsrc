@@ -971,6 +971,15 @@
         "bug",
         "test"
       ]
+    },
+    {
+      "login": "robd003",
+      "name": "Robert Palmer",
+      "avatar_url": "https://avatars.githubusercontent.com/u/571328?v=4",
+      "profile": "https://allfactors.com",
+      "contributions": [
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
