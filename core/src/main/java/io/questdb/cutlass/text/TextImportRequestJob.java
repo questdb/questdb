@@ -91,7 +91,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
                         "ts timestamp, " + // 0
-                        "id symbol, " + // 1
+                        "id string, " + // 1
                         "table symbol, " + // 2
                         "file symbol, " + // 3
                         "phase symbol, " + // 4
@@ -217,7 +217,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             Numbers.appendHex(stringSink, task.getImportId(), true);
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putSym(1, stringSink);
+                row.putStr(1, stringSink);
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
                 row.putSym(4, TextImportTask.getPhaseName(phase));
