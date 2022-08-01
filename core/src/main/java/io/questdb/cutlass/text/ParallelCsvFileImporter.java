@@ -91,6 +91,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool;
+    private final CairoSecurityContext securityContext;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final TextDelimiterScanner textDelimiterScanner;
@@ -99,7 +100,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final TableStructureAdapter targetTableStructure;
     private final TextImportJob localImportJob;
-    private CairoSecurityContext securityContext;
     private int taskCount;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     //input params end
@@ -160,6 +160,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.collectSeq = bus.getTextImportColSeq();
         this.localImportJob = new TextImportJob(bus);
 
+        this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
         this.configuration = cairoEngine.getConfiguration();
 
         CairoConfiguration cfg = this.cairoEngine.getConfiguration();
@@ -264,7 +265,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         atomicity = Atomicity.SKIP_COL;
         taskCount = -1;
         createdWorkDir = false;
-        securityContext = null;
     }
 
     @Override
@@ -287,11 +287,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             CharSequence tsFormat,
             boolean forceHeader,
             ExecutionCircuitBreaker circuitBreaker,
-            int atomicity,
-            CairoSecurityContext securityContext
+            int atomicity
     ) {
         clear();
-        this.securityContext = securityContext;
+
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
         this.importRoot = tmpPath.of(inputWorkRoot).concat(tableName).toString();
@@ -323,8 +322,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             CharSequence timestampColumn,
             CharSequence tsFormat,
             boolean forceHeader,
-            ExecutionCircuitBreaker circuitBreaker,
-            CairoSecurityContext securityContext
+            ExecutionCircuitBreaker circuitBreaker
     ) {
         of(
                 tableName,
@@ -335,8 +333,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 tsFormat,
                 forceHeader,
                 circuitBreaker,
-                Atomicity.SKIP_COL,
-                securityContext
+                Atomicity.SKIP_COL
         );
     }
 
@@ -348,8 +345,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             byte columnDelimiter,
             CharSequence timestampColumn,
             CharSequence tsFormat,
-            boolean forceHeader,
-            CairoSecurityContext securityContext
+            boolean forceHeader
     ) {
         of(
                 tableName,
@@ -360,8 +356,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 tsFormat,
                 forceHeader,
                 null,
-                Atomicity.SKIP_COL,
-                securityContext
+                Atomicity.SKIP_COL
         );
     }
 

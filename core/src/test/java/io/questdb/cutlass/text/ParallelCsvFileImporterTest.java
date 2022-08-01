@@ -27,7 +27,6 @@ package io.questdb.cutlass.text;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
@@ -799,7 +798,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         "ts",
                         "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
                         true,
-                        sqlExecutionContext.getCairoSecurityContext()
+                        null
                 );
                 indexer.process();
             } catch (TextImportException e) {
@@ -815,7 +814,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null);
                 indexer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -854,7 +853,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     "  ge geohash(20b)" +
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("alltypes", "test-alltypes-with-gaps.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("alltypes", "test-alltypes-with-gaps.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, null);
                 indexer.process();
             }
 
@@ -893,7 +892,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     "  ge geohash(20b)" +
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("alltypes", "test-alltypes-with-gaps.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("alltypes", "test-alltypes-with-gaps.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
             }
 
@@ -919,7 +918,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -946,7 +945,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-small.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-small.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
                 indexer.process();
             }
             assertQuery("other\ttxt\tline\tts\td\n" +
@@ -963,7 +962,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportCsvWithTimestampNotMatchingInputFormatFails() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -984,7 +983,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, ff, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -1009,7 +1008,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1034,7 +1033,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1067,7 +1066,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1194,7 +1193,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("create table tab ( line symbol index, ts timestamp, d double, description string) timestamp(ts) partition by YEAR;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1220,7 +1219,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, context.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -1234,7 +1233,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(2, 0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -1335,8 +1334,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 tsFormat,
                 forceHeader,
                 null,
-                Atomicity.SKIP_COL,
-                context.getCairoSecurityContext()
+                Atomicity.SKIP_COL
         );
         importer.process();
         importer.clear();
@@ -1391,7 +1389,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1428,7 +1426,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1456,7 +1454,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1471,7 +1469,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportWithSkipAllAtomicityFailsWhenTimestampCantBeParsedAtIndexingPhase() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true, null, Atomicity.SKIP_ALL, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true, null, Atomicity.SKIP_ALL);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -1489,7 +1487,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("create table tab (StrSym int, Int symbol,Int_Col int, DoubleCol int,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab", "test-import.csv", PartitionBy.MONTH, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false, null, Atomicity.SKIP_ROW, sqlExecutionContext.getCairoSecurityContext());
+                importer.of("tab", "test-import.csv", PartitionBy.MONTH, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false, null, Atomicity.SKIP_ROW);
                 importer.process();
             }
 
@@ -1518,7 +1516,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("alltypes", "test-errors.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ROW, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("alltypes", "test-errors.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ROW);
                 indexer.process();
             }
 
@@ -1555,7 +1553,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("alltypes", "test-errors.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_COL, sqlExecutionContext.getCairoSecurityContext());
+                importer.of("alltypes", "test-errors.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_COL);
                 importer.process();
             }
 
@@ -1569,7 +1567,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of("t", "test-badheadernames.csv", PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-badheadernames.csv", PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
             assertQuery("Line\tTs\tD\tDescRipTION\n" +
@@ -1596,7 +1594,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             final String tableName = "tableName";
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
             assertQuery("cnt\n" +
@@ -1633,7 +1631,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             final String tableName = "tableName";
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
             assertQuery("cnt\n" +
@@ -1719,7 +1717,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             final String tableName = "tableName";
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.setMinChunkSize(10);
-                importer.of(tableName, "test-quotes-big-reverseorder.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                importer.of(tableName, "test-quotes-big-reverseorder.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -1769,7 +1767,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             final String tableName = "tableName";
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -1806,7 +1804,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             final String tableName = "tableName";
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -1841,7 +1839,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     final String tableName = "tableName";
                     try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                         indexer.setMinChunkSize(10);
-                        indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                        indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                         indexer.process();
                         Assert.fail();
                     } catch (TextImportException e) {
@@ -1859,7 +1857,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         try (Path path = new Path().of(inputRoot).concat(fileName).$();
              ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
             indexer.setMinChunkSize(1);
-            indexer.of("tableName", fileName, partitionBy, (byte) ',', "ts", format, false, sqlExecutionContext.getCairoSecurityContext());
+            indexer.of("tableName", fileName, partitionBy, (byte) ',', "ts", format, false);
 
             long fd = TableUtils.openRO(ff, path, LOG);
             try (TableWriter ignored = indexer.parseStructure(fd)) {
@@ -2017,7 +2015,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("create table tab ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
                 indexer.process();
             } catch (Exception e) {
                 assertThat(e.getMessage(), containsString("cannot import text into BINARY column [index=3]"));
@@ -2031,7 +2029,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("create table tab ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
                 indexer.process();
             } catch (Exception e) {
                 assertThat(e.getMessage(), containsString("invalid timestamp column [name='ts']"));
@@ -2045,7 +2043,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("create table tab ( line string, ts timestamp, d date, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tab", "test-quotes-small.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-small.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
                 indexer.process();
             }
 
@@ -2133,7 +2131,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportIsCancelled() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tableName", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tableName", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
                 indexer.process();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=boundary_check, msg=`Cancelled`]"));
@@ -2158,7 +2156,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
         executeWithPool(4, 8, ff, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine1, sqlExecutionContext1.getWorkerCount())) {
-                indexer.of(tableName, fileName, partitionBy, (byte) ',', tsCol, tsFormat, true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of(tableName, fileName, partitionBy, (byte) ',', tsCol, tsFormat, true);
                 indexer.process();
                 Assert.fail("exception expected");
             } catch (Exception e) {
@@ -2172,7 +2170,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table someTable ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -2186,7 +2184,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table someTable ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("someTable", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("someTable", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -2200,7 +2198,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table someTable ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("someTable", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("someTable", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -2213,7 +2211,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWithHeaderButPartitionBySetToNone() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tableName", "test-quotes-big.csv", PartitionBy.NONE, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tableName", "test-quotes-big.csv", PartitionBy.NONE, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -2226,7 +2224,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableDoesntExist() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tableName", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tableName", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -2239,7 +2237,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWithHeaderWhenTargetTableDoesntExistSuccess() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
 
                 assertQuery("count\n1000\n",
@@ -2254,7 +2252,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("create table t ( ts timestamp, line string, d double, description string ) timestamp(ts) partition by month;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", null, true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", null, true);
                 indexer.process();
             }
 
@@ -2270,7 +2268,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("insert into t select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -2284,7 +2282,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table t ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', null, null, false, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', null, null, false);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -2297,7 +2295,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWithNoHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -2311,7 +2309,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWithNoHeaderIntoNewTableSucceedsBecauseSyntheticColumnNameIsUsed() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                 indexer.process();
             }
             assertQuery("count\n3\n", "select count(*) from t", null, false, false, true);
@@ -2322,7 +2320,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileWithHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-quotes-oneline.csv", PartitionBy.DAY, (byte) ',', "ts2", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-quotes-oneline.csv", PartitionBy.DAY, (byte) ',', "ts2", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -2336,7 +2334,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table t ( s string, ts timestamp, d double, s2 string ) timestamp(ts) partition by day;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', null, null, false, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', null, null, false);
                 indexer.process();
             }
             assertQuery("count\n3\n", "select count(*) from t", null, false, false, true);
@@ -2348,7 +2346,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table t ( line string, ts timestamp, d double, description string, i int, l long ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
             }
 
@@ -2362,7 +2360,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table someTable ( line string, ts timestamp, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
                 Assert.fail("exception expected");
             } catch (Exception e) {
@@ -2389,7 +2387,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     private void importAllIntoNew(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
         try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-            indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+            indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
             indexer.process();
         }
 
@@ -2457,7 +2455,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 "  ge geohash(20b)" +
                 ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
         try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-            indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+            indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
             indexer.process();
         }
 
@@ -2495,7 +2493,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     "  ge geohash(20b)" +
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
             }
 
@@ -2533,7 +2531,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
 
                 assertQuery("count\n1000\n", "select count(*) from t",
@@ -2551,7 +2549,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             compiler.compile("create table tab ( ts timestamp, line string, description double, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ALL, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ALL);
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
@@ -2569,7 +2567,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -2595,7 +2593,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 indexer.setMinChunkSize(10);
-                indexer.of("tab", "test-row-over-65k.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true, sqlExecutionContext.getCairoSecurityContext());
+                indexer.of("tab", "test-row-over-65k.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
                 indexer.process();
             }
             assertQuery("ts\tdescription\n" +
@@ -2653,7 +2651,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
              ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
             indexer.setMinChunkSize(1);
-            indexer.of("table", fileName, PartitionBy.DAY, (byte) ',', "unknown", null, false, sqlExecutionContext.getCairoSecurityContext());
+            indexer.of("table", fileName, PartitionBy.DAY, (byte) ',', "unknown", null, false);
 
             long fd = ff.openRO(path);
             long length = ff.length(fd);

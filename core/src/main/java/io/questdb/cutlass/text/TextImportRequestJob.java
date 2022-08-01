@@ -142,10 +142,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         if (task.getTimestampColumnName() != null) {
             return true;
         }
-        if (engine.getStatus(task.getSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
+        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
             return false;
         }
-        try (TableReader reader = engine.getReader(task.getSecurityContext(), task.getTableName())) {
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
             return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }
     }
@@ -166,8 +166,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getTimestampColumnName(),
                             task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            textImportExecutionContext.getCircuitBreaker(),
-                            task.getSecurityContext()
+                            textImportExecutionContext.getCircuitBreaker()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
                     parallelImporter.process();
@@ -178,9 +177,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getFileName(),
                             task.isHeaderFlag(),
                             task.getAtomicity(),
-                            textImportExecutionContext.getCircuitBreaker(),
-                            task.getSecurityContext()
-
+                            textImportExecutionContext.getCircuitBreaker()
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
                     serialImporter.process();
