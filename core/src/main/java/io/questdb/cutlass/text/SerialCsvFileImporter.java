@@ -51,7 +51,7 @@ public final class SerialCsvFileImporter implements Closeable {
     private final FilesFacade ff;
     private final CairoEngine cairoEngine;
     private Path path;
-    private final CairoSecurityContext securityContext;
+    private CairoSecurityContext securityContext;
     private TextLoader textLoader;
     private CharSequence tableName;
     private CharSequence fileName;
@@ -66,7 +66,6 @@ public final class SerialCsvFileImporter implements Closeable {
         this.path = new Path();
         this.ff = configuration.getFilesFacade();
         this.textLoader = new TextLoader(cairoEngine);
-        this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
         this.cairoEngine = cairoEngine;
     }
 
@@ -74,14 +73,16 @@ public final class SerialCsvFileImporter implements Closeable {
     public void close() {
         path = Misc.free(path);
         textLoader = Misc.free(textLoader);
+        securityContext = null;
     }
 
-    public void of(String tableName, String fileName, boolean isHeaderFlag, int atomicity, ExecutionCircuitBreaker circuitBreaker) {
+    public void of(String tableName, String fileName, boolean isHeaderFlag, int atomicity, ExecutionCircuitBreaker circuitBreaker, CairoSecurityContext securityContext) {
         this.tableName = tableName;
         this.fileName = fileName;
         this.isHeaderFlag = isHeaderFlag;
         this.atomicity = atomicity;
         this.circuitBreaker = circuitBreaker;
+        this.securityContext = securityContext;
     }
 
     public void process() throws TextImportException {

@@ -1889,7 +1889,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
                 }
                 if (model.isCancel()) {
-                    addTextImportRequest(model, null);
+                    addTextImportRequest(model, null, executionContext.getCairoSecurityContext());
                     return null;
                 } else {
                     if (model.getTimestampColumnName() == null &&
@@ -1902,7 +1902,7 @@ public class SqlCompiler implements Closeable {
                     if (model.getDelimiter() < 0) {
                         model.setDelimiter((byte) ',');
                     }
-                    long importId = addTextImportRequest(model, fileName);
+                    long importId = addTextImportRequest(model, fileName, executionContext.getCairoSecurityContext());
                     importIdSink.clear();
                     Numbers.appendHex(importIdSink, importId, true);
                     return new CopyFactory(importIdSink.toString());
@@ -1913,7 +1913,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private long addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
+    private long addTextImportRequest(CopyModel model, @Nullable CharSequence fileName, @NotNull CairoSecurityContext securityContext) throws SqlException {
         final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
         final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
         final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
@@ -1965,7 +1965,8 @@ public class SqlCompiler implements Closeable {
                             model.getDelimiter(),
                             Chars.toString(model.getTimestampFormat()),
                             model.getPartitionBy(),
-                            model.getAtomicity()
+                            model.getAtomicity(),
+                            securityContext
                     );
 
                     circuitBreaker.reset();

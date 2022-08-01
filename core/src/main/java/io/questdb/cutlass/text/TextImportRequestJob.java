@@ -142,11 +142,11 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             LOG.info().$("Using ParallelImport strategy. [table=").$(name).$(", timestamp=").$(ts).I$();
             return true;
         }
-        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, name) != TableUtils.TABLE_EXISTS) {
+        if (engine.getStatus(task.getSecurityContext(), path, name) != TableUtils.TABLE_EXISTS) {
             LOG.info().$("Target table does not exist. Using SerialImport strategy. [table=").$(name).I$();
             return false;
         }
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
+        try (TableReader reader = engine.getReader(task.getSecurityContext(), task.getTableName())) {
             if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
                 LOG.info().$("Target table exist and is partitioned. Using ParallelImport strategy. [table=").$(name).I$();
                 return true;
@@ -171,7 +171,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getTimestampColumnName(),
                             task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            textImportExecutionContext.getCircuitBreaker()
+                            textImportExecutionContext.getCircuitBreaker(),
+                            task.getSecurityContext()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
                     parallelImporter.process();
@@ -181,7 +182,9 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getFileName(),
                             task.isHeaderFlag(),
                             task.getAtomicity(),
-                            textImportExecutionContext.getCircuitBreaker()
+                            textImportExecutionContext.getCircuitBreaker(),
+                            task.getSecurityContext()
+
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
                     serialImporter.process();
