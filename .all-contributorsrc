@@ -989,6 +989,15 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "CSharpDummy",
+      "name": "CSharpDummy",
+      "avatar_url": "https://avatars.githubusercontent.com/u/7610502?v=4",
+      "profile": "https://github.com/CSharpDummy",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
