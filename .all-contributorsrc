@@ -952,6 +952,15 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "salsasepp",
+      "name": "Stefan S",
+      "avatar_url": "https://avatars.githubusercontent.com/u/4884807?v=4",
+      "profile": "https://github.com/salsasepp",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
