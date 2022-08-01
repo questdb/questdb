@@ -55,6 +55,7 @@ import org.junit.Assert;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.FileSystems;
 import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -1069,8 +1070,8 @@ public final class TestUtils {
     public static String getCsvRoot() {
         URL rootSource = CopyTest.class.getResource("/csv/test-import.csv");
         try {
-            java.nio.file.Path parent = java.nio.file.Path.of(rootSource.toURI()).getParent();
-            return parent.toAbsolutePath().toString();
+            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
+            return new File(rootSource.toURI()).getParent();
         } catch (URISyntaxException e) {
             throw new AssertionError("missing test-import.csv", e);
         }
