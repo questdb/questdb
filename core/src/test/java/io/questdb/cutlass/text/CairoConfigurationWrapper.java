@@ -213,6 +213,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getWallEnabledDefault() {
+        return conf.getWallEnabledDefault();
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return conf.getDoubleToStrCastScale();
     }

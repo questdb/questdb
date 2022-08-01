@@ -80,7 +80,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);
-        for (long lo = loRow; lo < hiRow; lo++) {
+        for (long lo = Math.max(loRow,  columnTop); lo < hiRow; lo++) {
             writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
         }
         writer.setMaxValue(hiRow - 1);

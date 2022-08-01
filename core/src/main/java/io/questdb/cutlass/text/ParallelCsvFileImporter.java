@@ -124,6 +124,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte status = TextImportTask.STATUS_STARTED;
     private byte phase = TextImportTask.PHASE_SETUP;
     private CharSequence errorMessage;
+    //incremented in phase 2
+    private long linesIndexed;
+    //row stats are incremented in phase 3
+    private long rowsHandled;
+    private long rowsImported;
+    private long errors;
+    private long phaseErrors;
     private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
     private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
@@ -237,6 +244,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         textMetadataDetector.clear();
         otherToTimestampAdapterPool.clear();
         partitions.clear();
+        linesIndexed = 0;
+        rowsHandled = 0;
+        rowsImported = 0;
+        errors = 0;
+        phaseErrors = 0;
         inputFileName = null;
         tableName = null;
         timestampColumn = null;
@@ -354,6 +366,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         long fd = -1;
         try {
             try {
+                updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+
                 try {
                     fd = TableUtils.openRO(ff, inputFilePath, LOG);
                 } catch (CairoException e) {
@@ -379,6 +393,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         cleanUp(writer);
                         throw t;
                     }
+                    updateImportStatus(TextImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
                     cleanUp();
                     throw t;
@@ -417,9 +432,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.statusReporter = reporter;
     }
 
-    public void updateStatus(byte phase, byte status, @Nullable final CharSequence msg) {
+    public void updateImportStatus(byte status, long rowsHandled, long rowsImported, long errors) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(phase, status, msg);
+            this.statusReporter.report(TextImportTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
+        }
+    }
+
+    public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
+        if (this.statusReporter != null) {
+            this.statusReporter.report(phase, status, msg, Numbers.LONG_NaN, Numbers.LONG_NaN, phaseErrors);
         }
     }
 
@@ -547,6 +568,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int i = 0, n = rows.size(); i < n; i += 2) {
             partitions.get((int) rows.get(i)).importedRows = rows.get(i + 1);
         }
+        rowsHandled += stage.getRowsHandled();
+        rowsImported += stage.getRowsImported();
+        phaseErrors += stage.getErrors();
+        errors += stage.getErrors();
     }
 
     private void collectIndexStats(final TextImportTask task) {
@@ -554,6 +579,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         final TextImportTask.PhaseIndexing phaseIndexing = task.getBuildPartitionIndexStage();
         final LongList keys = phaseIndexing.getPartitionKeysAndSizes();
         this.partitionKeysAndSizes.add(keys);
+        this.linesIndexed += phaseIndexing.getLineCount();
+        this.phaseErrors += phaseIndexing.getErrorCount();
+        this.errors += phaseIndexing.getErrorCount();
     }
 
     private void collectStub(final TextImportTask task) {
@@ -901,8 +929,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 .$("finished [phase=").$(phase)
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
+                .$(", errors=").$(phaseErrors)
                 .I$();
-        updateStatus(phase, TextImportTask.STATUS_FINISHED, null);
+        updatePhaseStatus(phase, TextImportTask.STATUS_FINISHED, null);
     }
 
     void phaseIndexing() throws TextException {
@@ -962,7 +991,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
-            throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "No partitions to merge and load found");
+            if (linesIndexed > 0) {
+                throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT,
+                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
+            } else {
+                throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT,
+                        "No rows in input file to import.");
+            }
         }
 
         phasePrologue(TextImportTask.PHASE_PARTITION_IMPORT);
@@ -1021,8 +1056,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void phasePrologue(byte phase) {
+        phaseErrors = 0;
         LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').$(", workerCount=").$(workerCount).I$();
-        updateStatus(phase, TextImportTask.STATUS_STARTED, null);
+        updatePhaseStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }
 
@@ -1388,7 +1424,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @FunctionalInterface
     public interface PhaseStatusReporter {
-        void report(byte phase, byte status, @Nullable final CharSequence msg);
+        void report(byte phase, byte status, @Nullable final CharSequence msg, long rowsHandled, long rowsImported, long errors);
     }
 
     static class PartitionInfo {
@@ -1503,6 +1539,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getTimestampIndex() {
             return timestampColumnIndex;
+        }
+
+        @Override
+        public boolean isWallEnabled() {
+            return false;
         }
 
         @Override

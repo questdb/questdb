@@ -109,7 +109,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.ROLLBACK, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.COPY_LOCAL, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.COPY_LOCAL, this::executeCopy);
         this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
@@ -525,6 +525,29 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (CairoException ex) {
             state.setQueryCacheable(ex.isCacheable());
             throw ex;
+        }
+    }
+
+    private void executeCopy(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        final RecordCursorFactory factory = cq.getRecordCursorFactory();
+        if (factory == null) {
+            // COPY 'id' CANCEL; case
+            updateMetricsAndSendConfirmation(state, cq, keepAliveHeader);
+            return;
+        }
+        // new import case
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        // Make sure to mark the query as non-cacheable.
+        if (state.of(factory, false, sqlExecutionContext)) {
+            header(context.getChunkedResponseSocket(), keepAliveHeader, 200);
+            doResumeSend(state, context);
+            metrics.jsonQuery().markComplete();
+        } else {
+            readyForNextRequest(context);
         }
     }
 
