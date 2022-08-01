@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 
 public class CopyFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
@@ -40,7 +42,9 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     public CopyFactory(long importId) {
         super(METADATA);
-        record.setValue(importId);
+        StringSink importIdSink = new StringSink();
+        Numbers.appendHex(importIdSink, importId, true);
+        record.setValue(importIdSink);
     }
 
     @Override
@@ -55,19 +59,30 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     }
 
     private static class LongValueRecord implements Record {
-        private long value;
+        private CharSequence value;
 
-        public void setValue(long value) {
+        public void setValue(CharSequence value) {
             this.value = value;
         }
 
         @Override
-        public long getLong(int col) {
+        public CharSequence getStr(int col) {
             return value;
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return value.length();
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            // the sink is immutable
+            return getStr(col);
         }
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("id", 1, ColumnType.LONG));
+        METADATA.add(new TableColumnMetadata("id", 1, ColumnType.STRING));
     }
 }

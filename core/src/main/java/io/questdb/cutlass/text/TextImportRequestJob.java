@@ -37,8 +37,10 @@ import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -57,6 +59,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final int logRetentionDays;
     private final LongList partitionsToRemove = new LongList();
     private final TextImportExecutionContext textImportExecutionContext;
+    private final StringSink stringSink = new StringSink();
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -88,7 +91,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
                         "ts timestamp, " + // 0
-                        "id long, " + // 1
+                        "id symbol, " + // 1
                         "table symbol, " + // 2
                         "file symbol, " + // 3
                         "phase symbol, " + // 4
@@ -210,9 +213,11 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             long errors
     ) {
         if (writer != null) {
+            stringSink.clear();
+            Numbers.appendHex(stringSink, task.getImportId(), true);
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putLong(1, task.getImportId());
+                row.putSym(1, stringSink);
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
                 row.putSym(4, TextImportTask.getPhaseName(phase));

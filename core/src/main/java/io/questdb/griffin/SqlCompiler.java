@@ -1931,7 +1931,7 @@ public class SqlCompiler implements Closeable {
                     start = 1;
                     end--;
                 }
-                importId = Numbers.parseLong(idString, start, end);
+                importId = Numbers.parseHexLong(idString, start, end);
             } catch (NumericException e) {
                 throw SqlException.$(0, "Provided id has invalid format.");
             }
