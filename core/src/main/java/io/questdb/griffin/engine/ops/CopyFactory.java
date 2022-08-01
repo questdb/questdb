@@ -37,7 +37,7 @@ import io.questdb.std.str.StringSink;
 
 public class CopyFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final LongValueRecord record = new LongValueRecord();
+    private final ImportIdRecord record = new ImportIdRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
 
     public CopyFactory(long importId) {
@@ -58,7 +58,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private static class LongValueRecord implements Record {
+    private static class ImportIdRecord implements Record {
         private CharSequence value;
 
         public void setValue(CharSequence value) {
