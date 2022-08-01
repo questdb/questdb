@@ -110,7 +110,6 @@ public class SqlCompiler implements Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final IndexBuilder rebuildIndex = new IndexBuilder();
     private final VacuumColumnVersions vacuumColumnVersions;
-    private final StringSink importIdSink = new StringSink();
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -1903,9 +1902,7 @@ public class SqlCompiler implements Closeable {
                         model.setDelimiter((byte) ',');
                     }
                     long importId = addTextImportRequest(model, fileName, executionContext.getCairoSecurityContext());
-                    importIdSink.clear();
-                    Numbers.appendHex(importIdSink, importId, true);
-                    return new CopyFactory(importIdSink.toString());
+                    return new CopyFactory(importId);
                 }
         } catch (TextImportException | TextException e) {
             LOG.error().$((Throwable) e).$();
@@ -1934,7 +1931,7 @@ public class SqlCompiler implements Closeable {
                     start = 1;
                     end--;
                 }
-                importId = Numbers.parseHexLong(idString, start, end);
+                importId = Numbers.parseLong(idString, start, end);
             } catch (NumericException e) {
                 throw SqlException.$(0, "Provided id has invalid format.");
             }
@@ -1954,10 +1951,8 @@ public class SqlCompiler implements Closeable {
                     final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
 
                     long importId = textImportExecutionContext.assignActiveImportId();
-                    importIdSink.clear();
-                    Numbers.appendHex(importIdSink, importId, true);
                     task.of(
-                            Chars.toString(importIdSink),
+                            importId,
                             Chars.toString(tableName),
                             Chars.toString(fileName),
                             model.isHeader(),
@@ -1976,11 +1971,9 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
                 }
             } else {
-                importIdSink.clear();
-                Numbers.appendHex(importIdSink, inProgressImportId, true);
                 throw SqlException.$(0, "Another import request is in progress. ")
                         .put("[activeImportId=")
-                        .put(importIdSink)
+                        .put(inProgressImportId)
                         .put(']');
             }
         }

@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.std.Mutable;
 
 public class TextImportRequestTask implements Mutable {
-    private String importId;
+    private long importId;
     private String tableName;
     private String fileName;
     private boolean headerFlag;
@@ -39,7 +39,7 @@ public class TextImportRequestTask implements Mutable {
     private int atomicity;
     private CairoSecurityContext securityContext;
 
-    public void of(String importId,
+    public void of(long importId,
                    String tableName,
                    String fileName,
                    boolean headerFlag,
@@ -65,7 +65,7 @@ public class TextImportRequestTask implements Mutable {
 
     @Override
     public void clear() {
-        this.importId = null;
+        this.importId = -1;
         this.tableName = null;
         this.fileName = null;
         this.headerFlag = false;
@@ -77,7 +77,7 @@ public class TextImportRequestTask implements Mutable {
         this.securityContext = null;
     }
 
-    public String getImportId() {
+    public long getImportId() {
         return importId;
     }
 

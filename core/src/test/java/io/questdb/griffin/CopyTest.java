@@ -729,7 +729,7 @@ public class CopyTest extends AbstractGriffinTest {
     public void testParallelCopyCancelThrowsExceptionOnNoActiveImport() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("copy 'foobar' cancel;", sqlExecutionContext);
+                compiler.compile("copy '543523' cancel;", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("No active import to cancel."));
@@ -782,12 +782,12 @@ public class CopyTest extends AbstractGriffinTest {
     public void testSerialCopyCancelChecksTableName() throws Exception {
         // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
         sqlCopyBufferSize = 1024;
-        String importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-import.csv' with header true delimiter ',' " +
+        long importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-import.csv' with header true delimiter ',' " +
                 "on error ABORT;");
 
         // this one should be rejected
         try {
-            compiler.compile("copy 'ffffffffffffffff' cancel", sqlExecutionContext);
+            compiler.compile("copy '5435345432' cancel", sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "Active import has different id.");
@@ -805,12 +805,12 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyCancelChecksTableName() throws Exception {
-        String importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+        long importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;");
 
         // this one should be rejected
         try {
-            compiler.compile("copy 'ffffffffffffffff' cancel", sqlExecutionContext);
+            compiler.compile("copy '5433245' cancel", sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "Active import has different id.");
@@ -828,7 +828,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
-        String importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+        long importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;");
 
         // this import should be rejected
@@ -887,11 +887,11 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
-    private String runAndFetchImportId(String copySql) throws SqlException {
+    private long runAndFetchImportId(String copySql) throws SqlException {
         CompiledQuery cq = compiler.compile(copySql, sqlExecutionContext);
         try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
             Assert.assertTrue(cursor.hasNext());
-            return cursor.getRecord().getStr(0).toString();
+            return cursor.getRecord().getLong(0);
         }
     }
 

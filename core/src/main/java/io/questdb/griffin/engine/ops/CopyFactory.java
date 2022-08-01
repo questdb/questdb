@@ -35,10 +35,10 @@ import io.questdb.griffin.engine.SingleValueRecordCursor;
 
 public class CopyFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final StringValueRecord record = new StringValueRecord();
+    private final LongValueRecord record = new LongValueRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
 
-    public CopyFactory(String importId) {
+    public CopyFactory(long importId) {
         super(METADATA);
         record.setValue(importId);
     }
@@ -54,30 +54,20 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private static class StringValueRecord implements Record {
-        private String value;
+    private static class LongValueRecord implements Record {
+        private long value;
 
-        public void setValue(String value) {
+        public void setValue(long value) {
             this.value = value;
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public long getLong(int col) {
             return value;
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            return getStr(col);
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return value.length();
         }
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("id", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("id", 1, ColumnType.LONG));
     }
 }
