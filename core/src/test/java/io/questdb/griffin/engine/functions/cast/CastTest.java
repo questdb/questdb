@@ -55,6 +55,78 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToFloatConstant() throws Exception {
+        assertQuery(
+                "cast\n0.0000\n",
+                "select cast(false as float)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0.0000\n",
+                "select cast((150 < 100) as float)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToDoubleConstant() throws Exception {
+        assertQuery(
+                "cast\n0.0\n",
+                "select cast(false as double)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0.0\n",
+                "select cast((150 < 0) as double)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToIntConstant() throws Exception {
+        assertQuery(
+                "cast\n0\n",
+                "select cast(false as int)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0\n",
+                "select cast((150 < 0) as int)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n1\n",
+                "select cast((150 < 250) as int)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testNullToBinary() throws Exception {
         assertQuery(
                 "a\n",
