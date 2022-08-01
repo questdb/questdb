@@ -998,6 +998,16 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "shimondoodkin",
+      "name": "Shimon Doodkin",
+      "avatar_url": "https://avatars.githubusercontent.com/u/314464?v=4",
+      "profile": "https://github.com/shimondoodkin",
+      "contributions": [
+        "bug",
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
