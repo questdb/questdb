@@ -95,15 +95,6 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         return values[-index - 1];
     }
 
-    public void forEach(IntObjConsumer<V> action) {
-        for (int i = 0, n = values.length; i < n; i++) {
-            if (keys[i] == noEntryKeyValue) {
-                continue;
-            }
-            action.accept(keys[i], values[i]);
-        }
-    }
-
     @FunctionalInterface
     public interface IntObjConsumer<V> {
         void accept(int key, V value);

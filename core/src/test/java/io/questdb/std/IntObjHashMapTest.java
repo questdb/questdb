@@ -117,29 +117,4 @@ public class IntObjHashMapTest {
             }
         }
     }
-
-    @Test
-    public void testAddAndIterate() {
-        Rnd rnd = new Rnd();
-
-        IntObjHashMap<String> map = new IntObjHashMap<>();
-        Map<Integer, String> master = new HashMap<>();
-
-        final int n = 1000;
-        for (int i = 0; i < n; i++) {
-            int k = rnd.nextInt();
-            String v = rnd.nextString(rnd.nextPositiveInt() % 20);
-            map.put(k, v);
-            master.put(k, v);
-        }
-
-        AtomicInteger count = new AtomicInteger();
-        map.forEach((key, value) -> {
-            String v = master.get(key);
-            Assert.assertNotNull(v);
-            Assert.assertEquals(value, v);
-            count.incrementAndGet();
-        });
-        Assert.assertEquals(n, count.get());
-    }
 }
