@@ -933,6 +933,16 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "donet5",
+      "name": "果糖网",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12455385?v=4",
+      "profile": "http://www.donet5.com",
+      "contributions": [
+        "ideas",
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
