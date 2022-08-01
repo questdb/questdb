@@ -924,6 +924,15 @@
         "code",
         "doc"
       ]
+    },
+    {
+      "login": "selmanfarukyilmaz",
+      "name": "Selman Faruk Yılmaz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/96119894?v=4",
+      "profile": "https://www.linkedin.com/in/selmanfaruky%C4%B1lmaz/",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
