@@ -239,6 +239,12 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     sink.put(dayOfYear);
                     break;
+                case DateFormatCompiler.OP_WEEK_OF_YEAR:
+                    sink.put(Dates.getWeekOfYear(datetime));
+                    break;
+                case DateFormatCompiler.OP_WEEK_OF_MONTH:
+                    sink.put(Dates.getWeekOfMonth(datetime));
+                    break;
 
                 // MONTH
 
@@ -529,6 +535,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                     pos += Numbers.decodeHighInt(l);
                     break;
 
+                case DateFormatCompiler.OP_WEEK_OF_YEAR:
+                case DateFormatCompiler.OP_WEEK_OF_MONTH:
                 case DateFormatCompiler.OP_DAY_OF_YEAR:
                 case DateFormatCompiler.OP_DAY_OF_WEEK:
                     DateFormatUtils.assertRemaining(pos, hi);

@@ -244,6 +244,16 @@ final public class Dates {
         return 1 + (int) ((d + 4) % 7);
     }
 
+    public static int getWeekOfYear(long millis) {
+        return getDayOfYear(millis) / 7 + 1;
+    }
+
+    public static int getWeekOfMonth(long millis) {
+        int year = getYear(millis);
+        boolean leap = isLeapYear(year);
+        return getDayOfMonth(millis, year, getMonthOfYear(millis, year, leap), leap) / 7 + 1;
+    }
+
     public static long getDaysBetween(long a, long b) {
         if (b < a) {
             return getDaysBetween(b, a);
