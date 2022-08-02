@@ -48,8 +48,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
-import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 
 /**
  * Useful PostgreSQL documentation links:<br>
@@ -67,6 +66,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_UPDATE = "UPDATE";
+    // create as select tag
+    public static final String TAG_CTAS = "CTAS";
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
@@ -633,7 +634,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
             final long a = responseAsciiSink.skip();
-            PG_DATE_MILLI_TIME_Z_FORMAT.format(longValue, null, null, responseAsciiSink);
+            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, null, null, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         } else {
             responseAsciiSink.setNullValue();
@@ -1172,7 +1173,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
-            wrapper.canExecuteAgain = queryTag != TAG_OK;
+            wrapper.canExecuteAgain = !(queryTag == TAG_OK || queryTag == TAG_CTAS || queryTag == TAG_COPY);
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -1902,12 +1903,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 final CharSequence statementName = getStatementName(lo, hi);
                 if (statementName != null) {
                     final int index = namedStatementMap.keyIndex(statementName);
+                    // do not freak out if client is closing statement we don't have
+                    // we could have reported error to client before statement was created
                     if (index < 0) {
                         namedStatementWrapperPool.push(namedStatementMap.valueAt(index));
                         namedStatementMap.removeAt(index);
-                    } else {
-                        LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
-                        throw BadProtocolException.INSTANCE;
                     }
                 }
                 break;
@@ -1938,7 +1938,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         switch (cq.getType()) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                queryTag = TAG_SELECT;
+                queryTag = TAG_CTAS;
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.SELECT:
@@ -2179,6 +2179,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
+        // make sure there are no left-over sync actions
+        // we are starting a new iteration of the parse
+        syncActions.clear();
+
         // 'Parse'
         //message length
         long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");

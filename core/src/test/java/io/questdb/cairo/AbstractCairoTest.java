@@ -402,6 +402,7 @@ public class AbstractCairoTest {
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
         defaultTableWriteMode = -1;
+        sink.clear();
     }
 
     protected static void configureForBackups() throws IOException {
