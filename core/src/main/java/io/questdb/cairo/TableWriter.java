@@ -1779,7 +1779,8 @@ public class TableWriter implements Closeable {
 
             deleteDetachedExtraColumnFiles();
         } finally {
-            Misc.free(detachedMetadata);
+            detachedMetaMem = Misc.free(detachedMetaMem);
+            detachedMetadata = null;
             // remove _meta
             removeFileAndOrLog(ff, other2);
         }

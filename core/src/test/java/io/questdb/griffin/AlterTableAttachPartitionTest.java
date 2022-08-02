@@ -571,7 +571,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         engine.clear();
                         path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.d").$();
                         long fd = Files.openRW(path);
-                        Files.truncate(fd, Files.length(fd) / 2);
+                        Files.truncate(fd, Files.length(fd) / 10);
                         Files.close(fd);
                     },
                     "Column file is too small"
@@ -1106,7 +1106,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             CairoTestUtils.create(dst);
             try {
                 attachFromSrcIntoDst(src, dst, "2022-08-01");
-                Assert.fail();
+                Assert.fail("Expected exception with '" + errorMessage + "' message");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
