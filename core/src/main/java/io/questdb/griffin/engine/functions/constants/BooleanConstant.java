@@ -89,6 +89,17 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
     }
 
     @Override
+    protected String getStr0(Record rec) {
+        return value ? "true" : "false";
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return value ? 1 : 0;
+    }
+
+
+    @Override
     public void toSink(CharSink sink) {
         sink.put(value);
     }

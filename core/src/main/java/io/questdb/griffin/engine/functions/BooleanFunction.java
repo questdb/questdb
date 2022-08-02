@@ -121,7 +121,7 @@ public abstract class BooleanFunction implements ScalarFunction {
 
     @Override
     public final int getStrLen(Record rec) {
-        return getBool(rec) ? "true".length() : "false".length();
+        return getStr0(rec).length();
     }
 
     @Override
@@ -164,7 +164,7 @@ public abstract class BooleanFunction implements ScalarFunction {
         return ColumnType.BOOLEAN;
     }
 
-    private String getStr0(Record rec) {
+    protected String getStr0(Record rec) {
         return getBool(rec) ? "true" : "false";
     }
 }
