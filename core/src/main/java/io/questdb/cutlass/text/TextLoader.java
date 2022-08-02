@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -54,6 +55,9 @@ public class TextLoader extends TextLoaderBase {
     private int state;
     private boolean forceHeaders = false;
     private byte columnDelimiter = -1;
+    private TimestampAdapter timestampAdapter;
+    //index of timestamp column in input file
+    private int timestampIndex = -1;
 
     public TextLoader(CairoEngine engine) {
         super(engine);
@@ -80,6 +84,7 @@ public class TextLoader extends TextLoaderBase {
         forceHeaders = false;
         columnDelimiter = -1;
         typeManager.clear();
+        timestampIndex = -1;
     }
 
     @Override

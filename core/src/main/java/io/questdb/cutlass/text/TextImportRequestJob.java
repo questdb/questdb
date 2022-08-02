@@ -70,7 +70,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final CairoEngine engine;
     private SerialCsvFileImporter serialImporter;
 
-
     public TextImportRequestJob(
             final CairoEngine engine,
             int workerCount,
@@ -139,11 +138,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean useParallelImport() {
-        if (task.getTimestampColumnName() != null) {
-            return true;
-        }
         if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
-            return false;
+            return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
         }
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
             return PartitionBy.isPartitioned(reader.getPartitionedBy());

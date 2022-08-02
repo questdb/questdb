@@ -547,6 +547,16 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSerialCopyNoPartitionBy() throws Exception {
+        CopyRunnable stmt = () -> compiler.compile("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
+
+        CopyRunnable test = this::assertQuotesTableContent;
+
+        testCopy(stmt, test);
+    }
+
+    @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
             compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
@@ -638,21 +648,6 @@ public class CopyTest extends AbstractGriffinTest {
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
 
         CopyRunnable test = this::assertQuotesTableContent;
-
-        testCopy(stmt, test);
-    }
-
-    @Test
-    public void testParallelCopyThrowsExceptionWhenValidationFails() throws Exception {
-        CopyRunnable stmt = () -> compiler.compile("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
-
-        CopyRunnable test = () -> assertQuery("message\n" +
-                        "partition by unit must be set when importing to new table\n",
-                "select message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
-                null,
-                true
-        );
 
         testCopy(stmt, test);
     }

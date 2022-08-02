@@ -45,11 +45,14 @@ public final class SerialCsvFileImporter implements Closeable {
     private TextLoader textLoader;
     private CharSequence tableName;
     private CharSequence inputFileName;
+    private CharSequence timestampColumn;
+    // TODO: use this field
+    private CharSequence timestampFormat;
     private byte columnDelimiter;
     private boolean forceHeader;
+    private int atomicity;
     private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
     private ExecutionCircuitBreaker circuitBreaker;
-    private int atomicity;
 
     public SerialCsvFileImporter(CairoEngine cairoEngine) {
         this.configuration = cairoEngine.getConfiguration();
@@ -79,6 +82,8 @@ public final class SerialCsvFileImporter implements Closeable {
     ) {
         this.tableName = tableName;
         this.inputFileName = inputFileName;
+        this.timestampColumn = timestampColumn;
+        this.timestampFormat = timestampFormat;
         this.columnDelimiter = columnDelimiter;
         this.forceHeader = forceHeader;
         this.circuitBreaker = circuitBreaker;
@@ -150,6 +155,6 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination(tableName, false, false,
-                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW, PartitionBy.NONE,null);
+                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW, PartitionBy.NONE, timestampColumn);
     }
 }
