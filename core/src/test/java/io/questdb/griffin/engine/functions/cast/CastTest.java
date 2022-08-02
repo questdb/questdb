@@ -207,16 +207,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as byte) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -257,16 +257,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as date) from long_sequence(10)",
                 "a\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.000Z\n",
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n",
                 true,
                 true,
                 true
@@ -282,16 +282,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as double) from long_sequence(10)",
                 "a\n" +
-                        "1.0\n" +
-                        "1.0\n" +
-                        "1.0\n" +
-                        "0.0\n" +
-                        "1.0\n" +
-                        "1.0\n" +
                         "0.0\n" +
                         "0.0\n" +
                         "0.0\n" +
-                        "0.0\n",
+                        "1.0\n" +
+                        "0.0\n" +
+                        "0.0\n" +
+                        "1.0\n" +
+                        "1.0\n" +
+                        "1.0\n" +
+                        "1.0\n",
                 true,
                 true,
                 true
@@ -307,16 +307,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as float) from long_sequence(10)",
                 "a\n" +
-                        "1.0000\n" +
-                        "1.0000\n" +
-                        "1.0000\n" +
-                        "0.0000\n" +
-                        "1.0000\n" +
-                        "1.0000\n" +
                         "0.0000\n" +
                         "0.0000\n" +
                         "0.0000\n" +
-                        "0.0000\n",
+                        "1.0000\n" +
+                        "0.0000\n" +
+                        "0.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n",
                 true,
                 true,
                 true
@@ -332,16 +332,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as int) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -357,16 +357,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as long) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -382,16 +382,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as long256) from long_sequence(10)",
                 "a\n" +
-                        "0x01\n" +
-                        "0x01\n" +
-                        "0x01\n" +
-                        "0x00\n" +
-                        "0x01\n" +
-                        "0x01\n" +
                         "0x00\n" +
                         "0x00\n" +
                         "0x00\n" +
-                        "0x00\n",
+                        "0x01\n" +
+                        "0x00\n" +
+                        "0x00\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n",
                 true,
                 true,
                 true
@@ -411,8 +411,8 @@ public class CastTest extends AbstractGriffinTest {
                         "0x00\n" +
                         "0x00\n" +
                         "0x00\n" +
-                        "0x01\n" +
-                        "0x01\n" +
+                        "0x00\n" +
+                        "0x00\n" +
                         "0x01\n" +
                         "0x01\n" +
                         "0x01\n" +
@@ -440,16 +440,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as short) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -631,16 +631,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as timestamp) from long_sequence(10)",
                 "a\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n",
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
                 true,
                 true,
                 true
