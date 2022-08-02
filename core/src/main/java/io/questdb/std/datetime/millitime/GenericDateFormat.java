@@ -542,6 +542,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     DateFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday and day of year
                     Numbers.parseInt(in, pos, ++pos);
+                    break;
 
                 // MONTH
 
