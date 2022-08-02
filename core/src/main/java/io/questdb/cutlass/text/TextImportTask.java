@@ -510,7 +510,7 @@ public class TextImportTask {
                             MemoryCMARW mem = Vm.getSmallCMARWInstance(
                                     ff,
                                     path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
-                                    MemoryTag.MMAP_PARALLEL_IMPORT,
+                                    MemoryTag.MMAP_IMPORT,
                                     cfg.getWriterFileOpenOpts()
                             )
                     ) {
@@ -587,8 +587,8 @@ public class TextImportTask {
                 remapTableMemorySize = ff.length(remapFd);
 
                 if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
-                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
-                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_IMPORT);
+                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_IMPORT);
                     long columnMemSize = partitionSize * Integer.BYTES;
                     long remapMemSize = (long) symbolCount * Integer.BYTES;
                     ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
@@ -601,10 +601,10 @@ public class TextImportTask {
                     ff.close(remapFd);
                 }
                 if (columnMemory > 0) {
-                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_IMPORT);
                 }
                 if (remapTableMemory > 0) {
-                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_IMPORT);
                 }
             }
         }
@@ -1231,7 +1231,7 @@ public class TextImportTask {
                     partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
 
                     fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
-                    mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_IMPORT);
 
                     Vect.mergeLongIndexesAsc(unmergedIndexes.getAddress(), (int) unmergedIndexes.size() / 2, mergeIndexAddr);
                     // release chunk memory because it's been copied to merge area
@@ -1265,7 +1265,7 @@ public class TextImportTask {
                 if (fd > -1) {
                     ff.close(fd);
                 }
-                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);
                 unmap(ff, unmergedIndexes);
             }
         }
@@ -1367,13 +1367,13 @@ public class TextImportTask {
                                 if (size < 1) {
                                     throw TextException.$("index chunk is empty [path='").put(partitionPath).put(']');
                                 }
-                                address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+                                address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_IMPORT);
                                 mergeIndexes.add(address);
                                 mergeIndexes.add(size / CsvFileIndexer.INDEX_ENTRY_SIZE);
                                 mergedIndexSize += size;
                             } catch (Throwable t) {
                                 if (address != -1) { //release mem if it can't be added to mergeIndexes
-                                    ff.munmap(address, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+                                    ff.munmap(address, size, MemoryTag.MMAP_IMPORT);
                                 }
                                 throw t;
                             } finally {
@@ -1398,7 +1398,7 @@ public class TextImportTask {
             for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
                 final long addr = mergeIndexes.get(2 * i);
                 final long size = mergeIndexes.get(2 * i + 1) * CsvFileIndexer.INDEX_ENTRY_SIZE;
-                ff.munmap(addr, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+                ff.munmap(addr, size, MemoryTag.MMAP_IMPORT);
             }
             mergeIndexes.clear();
         }

@@ -78,6 +78,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final LongList indexChunkStats;
     private final LongList partitionKeysAndSizes;
     private final StringSink partitionNameSink;
+    private final StringSink importIdSink;
     private final ObjList<PartitionInfo> partitions;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
@@ -189,6 +190,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.partitionNameSink = new StringSink();
         this.partitions = new ObjList<>();
         this.taskDistribution = new IntList();
+        this.importIdSink = new StringSink();
     }
 
     public static void createTable(
@@ -236,6 +238,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         indexChunkStats.clear();
         partitionKeysAndSizes.clear();
         partitionNameSink.clear();
+        importIdSink.clear();
         taskDistribution.clear();
         utf8Sink.clear();
         typeManager.clear();
@@ -279,6 +282,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void of(
             CharSequence tableName,
             CharSequence inputFileName,
+            long importId,
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
@@ -288,7 +292,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int atomicity
     ) {
         clear();
-
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
         this.importRoot = tmpPath.of(inputWorkRoot).concat(tableName).toString();
@@ -310,12 +313,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.atomicity = Atomicity.isValid(atomicity) ? atomicity : Atomicity.SKIP_COL;
 
         inputFilePath.of(inputRoot).concat(inputFileName).$();
+        Numbers.appendHex(importIdSink, importId, true);
     }
 
     @TestOnly
     public void of(
             CharSequence tableName,
             CharSequence inputFileName,
+            long importId,
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
@@ -326,6 +331,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         of(
                 tableName,
                 inputFileName,
+                importId,
                 partitionBy,
                 columnDelimiter,
                 timestampColumn,
@@ -340,6 +346,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void of(
             CharSequence tableName,
             CharSequence inputFileName,
+            long importId,
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
@@ -349,6 +356,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         of(
                 tableName,
                 inputFileName,
+                importId,
                 partitionBy,
                 columnDelimiter,
                 timestampColumn,
@@ -360,7 +368,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public void process() throws TextImportException {
-        long startMs = getCurrentTimeMs();
+        final long startMs = getCurrentTimeMs();
 
         long fd = -1;
         try {
@@ -420,7 +428,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         long endMs = getCurrentTimeMs();
-        LOG.info().$("import complete [file='").$(inputFileName).$("', time=").$((endMs - startMs) / 1000).$("s").I$();
+        LOG.info()
+                .$("import complete [importId=").$(importIdSink)
+                .$(", file=`").$(inputFilePath).$('`')
+                .$("', time=").$((endMs - startMs) / 1000).$("s").I$();
     }
 
     public void setMinChunkSize(int minChunkSize) {
@@ -926,7 +937,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         throwErrorIfNotOk();
         long endMs = getCurrentTimeMs();
         LOG.info()
-                .$("finished [phase=").$(TextImportTask.getPhaseName(phase))
+                .$("finished [importId=").$(importIdSink)
+                .$(", phase=").$(TextImportTask.getPhaseName(phase))
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
                 .$(", errors=").$(phaseErrors)
@@ -1058,10 +1070,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePrologue(byte phase) {
         phaseErrors = 0;
         LOG.info()
-                .$("started [phase=").$(TextImportTask.getPhaseName(phase))
-                .$(", file=`").$(inputFilePath).$('`')
-                .$(", workerCount=").$(workerCount)
-                .I$();
+                .$("started [importId=").$(importIdSink)
+                .$(", phase=").$(TextImportTask.getPhaseName(phase))
+                .$(", file=`").$(inputFilePath)
+                .$("`, workerCount=").$(workerCount).I$();
         updatePhaseStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }
