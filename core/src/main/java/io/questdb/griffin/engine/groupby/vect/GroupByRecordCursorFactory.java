@@ -306,7 +306,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             for (int j = 0; j < vafCount; j++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(j);
                 for (int i = 0, n = pRosti.length; i < n; i++) {
-                    if (pRostiBig == pRosti[i]) {
+                    if (pRostiBig == pRosti[i] ||
+                            Rosti.getSize(pRosti[i]) < 1) {
                         continue;
                     }
                     long oldSize = Rosti.getAllocMemory(pRostiBig);
