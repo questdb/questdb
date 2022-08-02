@@ -303,6 +303,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                 .timestamp("ts"));
 
                 copyPartitionToAttachable(src.getName(), "2020-01-01", dst.getName(), "COCONUTS");
+
                 try {
                     compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                     Assert.fail();
@@ -628,10 +629,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
                 copyPartitionToAttachable(src.getName(), "2022-08-01", dst.getName(), "2022-08-01");
 
                 // Add 1 row without commit
+                long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
                     long insertTs = TimestampFormatUtils.parseTimestamp("2022-08-01T23:59:59.999z");
                     TableWriter.Row row = writer.newRow(insertTs + 1000L);
@@ -858,7 +859,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                attachFromSrcIntoDst(src, dst,  "2022-08-09");
+                attachFromSrcIntoDst(src, dst, "2022-08-09");
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2022-08-09'";
 
@@ -1016,6 +1017,95 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                 true);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionsDetachedHasExtraColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src48", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst48", PartitionBy.DAY)) {
+
+                int partitionRowCount = 111;
+                createPopulateTable(
+                        1,
+                        src.timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 128),
+                        partitionRowCount,
+                        "2022-08-01",
+                        4);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                copyPartitionToAttachable(src.getName(), "2022-08-01", dst.getName(), "2022-08-01");
+
+                long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+                    writer.attachPartition(timestamp);
+                }
+                path.of(configuration.getRoot()).concat(dst.getName()).concat("2022-08-01");
+                int pathLen = path.length();
+                Assert.assertFalse(Files.exists(path.concat("s.d").$()));
+                Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.i").$()));
+                Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
+                Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
+                Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("l.d").$()));
+            }
+        });
+    }
+
+    @Test
+    // TODO: fix this, you should be able to query the table afterwards
+    public void testAttachPartitionsDeletedColumnFromSrc() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src49", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst49", PartitionBy.DAY)) {
+
+                int partitionRowCount = 17;
+                createPopulateTable(
+                        1,
+                        src.timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 128)
+                                .col("str", ColumnType.STRING),
+                        partitionRowCount,
+                        "2022-08-01",
+                        4);
+
+                createPopulateTable(
+                        1,
+                        dst.timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 128)
+                                .col("str", ColumnType.STRING),
+                        partitionRowCount,
+                        "2022-08-01",
+                        2);
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, src.getName(), "testing")) {
+                    writer.removeColumn("s");
+                    writer.removeColumn("str");
+                }
+
+                copyPartitionToAttachable(src.getName(), "2022-08-03", dst.getName(), "2022-08-03");
+
+                long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-03T00:00:00.000z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+                    writer.attachPartition(timestamp);
+                }
+
+                Assert.assertTrue(Files.exists(path.concat("2022-08-03").concat("s.d").$()));
+                Assert.assertTrue(Files.exists(path.parent().concat("s.k").$()));
+                Assert.assertTrue(Files.exists(path.parent().concat("s.v").$()));
+                Assert.assertTrue(Files.exists(path.parent().concat("str.d").$()));
+                Assert.assertTrue(Files.exists(path.parent().concat("str.i").$()));
             }
         });
     }
