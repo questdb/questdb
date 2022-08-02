@@ -3047,6 +3047,18 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntConstToBoolean() throws Exception {
+        assertQuery(
+                "cast\tcast1\tcast2\tcast3\ntrue\tfalse\ttrue\ttrue\n",
+                "select cast(-1 as boolean), cast(0 as boolean), cast(1 as boolean), cast(2 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testIntToBooleanConst() throws Exception {
         assertQuery(
                 "a\n",

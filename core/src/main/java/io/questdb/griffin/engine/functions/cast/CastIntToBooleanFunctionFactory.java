@@ -59,7 +59,7 @@ public class CastIntToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getInt(rec) == 1;
+            return arg.getInt(rec) != 0;
         }
     }
 }
