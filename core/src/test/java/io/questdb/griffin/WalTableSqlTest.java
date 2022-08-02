@@ -81,4 +81,33 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
         });
     }
+
+    @Test
+    public void createWalAndInsertFromSql() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            executeInsert("insert into " + tableName +
+                    " values (101, 'dfd', '2022-02-24T01', 'asdd')");
+
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "101\tBC2\t2022-02-24T00:00:00.000000Z\tDE2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "102\tBC2\t2022-02-24T00:00:01.000000Z\tFG2\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
+                    "103\tBC2\t2022-02-24T00:00:02.000000Z\tDE2\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+        });
+    }
 }
