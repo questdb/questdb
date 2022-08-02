@@ -204,6 +204,18 @@ final public class Dates {
         return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
     }
 
+    public static int getDayOfYear(long millis) {
+        long mid = (millis >> 1) + HALF_EPOCH_MILLIS;
+        if (mid < 0) {
+            mid = mid - HALF_YEAR_MILLIS + 1;
+        }
+        int year = (int) (mid / HALF_YEAR_MILLIS);
+
+        boolean leap = isLeapYear(year);
+        long yearStart = yearMillis(year, leap);
+        return (int)((millis - yearStart) / DAY_MILLIS) + 1;
+    }
+
     public static int getDayOfWeek(long millis) {
         // 1970-01-01 is Thursday.
         long d;

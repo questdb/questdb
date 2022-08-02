@@ -67,6 +67,7 @@ public class DateFormatCompiler {
     static final int OP_TIME_ZONE_ISO_8601_1 = 26;
     static final int OP_TIME_ZONE_ISO_8601_2 = 27;
     static final int OP_TIME_ZONE_ISO_8601_3 = 28;
+    static final int OP_DAY_OF_YEAR = 36;
     static final int OP_YEAR_GREEDY = 132;
     static final int OP_MONTH_GREEDY = 135;
     static final int OP_DAY_GREEDY = 139;
@@ -92,6 +93,7 @@ public class DateFormatCompiler {
     private static final int FA_YEAR = 7;
     private static final int FA_LEAP = 8;
     private static final int FA_DAY_OF_WEEK = 10;
+    private static final int FA_DAY_OF_YEAR = 11;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_HI = 3;
@@ -125,6 +127,7 @@ public class DateFormatCompiler {
         addOp("MMMM", OP_MONTH_LONG_NAME);
         addOp("d", OP_DAY_ONE_DIGIT);
         addOp("dd", OP_DAY_TWO_DIGITS);
+        addOp("D", OP_DAY_OF_YEAR);
         addOp("E", OP_DAY_NAME_SHORT);
         addOp("EE", OP_DAY_NAME_LONG);
         addOp("u", OP_DAY_OF_WEEK);
@@ -227,7 +230,7 @@ public class DateFormatCompiler {
         asm.istore(LOCAL_POS);
     }
 
-    private void assembleFormatMethod(IntList ops, ObjList<String> delimiters, int getWeekdayIndex, int getShortWeekdayIndex, int getMonthIndex, int getShortMonthIndex, int appendEraIndex, int appendAmPmIndex, int appendHour12Index, int appendHour12PaddedIndex, int appendHour121Index, int appendHour121PaddedIndex, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex, int append000Index, int append00Index, int append0Index, int sinkPutIntIndex, int sinkPutStrIndex, int sinkPutChrIndex, int formatNameIndex, int formatSigIndex) {
+    private void assembleFormatMethod(IntList ops, ObjList<String> delimiters, int getWeekdayIndex, int getShortWeekdayIndex, int getMonthIndex, int getShortMonthIndex, int appendEraIndex, int appendAmPmIndex, int appendHour12Index, int appendHour12PaddedIndex, int appendHour121Index, int appendHour121PaddedIndex, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex, int getDayOfYearIndex, int append000Index, int append00Index, int append0Index, int sinkPutIntIndex, int sinkPutStrIndex, int sinkPutChrIndex, int formatNameIndex, int formatSigIndex) {
         int formatAttributes = computeFormatAttributes(ops);
         asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
 
@@ -241,7 +244,8 @@ public class DateFormatCompiler {
                 getMinuteOfHourIndex,
                 getSecondOfMinuteIndex,
                 getMillisOfSecondIndex,
-                getDayOfWeekIndex
+                getDayOfWeekIndex,
+                getDayOfYearIndex
         );
 
         for (int i = 0, n = ops.size(); i < n; i++) {
@@ -387,6 +391,12 @@ public class DateFormatCompiler {
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
+                case DateFormatCompiler.OP_DAY_OF_YEAR:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_DAY_OF_YEAR]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
                 // MONTH
                 case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
                 case DateFormatCompiler.OP_MONTH_GREEDY:
@@ -488,7 +498,7 @@ public class DateFormatCompiler {
         asm.endMethod();
     }
 
-    private void assembleFormatMethodStack(int formatAttributes, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex) {
+    private void assembleFormatMethodStack(int formatAttributes, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex, int getDayOfYearIndex) {
         int index = FORMAT_METHOD_STACK_START;
         if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {
             fmtAttributeIndex[FA_YEAR] = index++;
@@ -538,6 +548,10 @@ public class DateFormatCompiler {
 
         if (invokeConvertMillis(formatAttributes, FA_DAY_OF_WEEK, getDayOfWeekIndex, index)) {
             fmtAttributeIndex[FA_DAY_OF_WEEK] = index;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_DAY_OF_YEAR, getDayOfYearIndex, index)) {
+            fmtAttributeIndex[FA_DAY_OF_YEAR] = index;
         }
     }
 
@@ -887,6 +901,7 @@ public class DateFormatCompiler {
                     invokeMatch(matchWeekdayIndex);
                     addTempToPos(decodeLenIndex);
                     break;
+                case OP_DAY_OF_YEAR:
                 case OP_DAY_OF_WEEK:
                     // assertRemaining(pos, hi);
                     // // ignore weekday
@@ -1328,6 +1343,7 @@ public class DateFormatCompiler {
         int getSecondOfMinuteIndex = asm.poolMethod(Dates.class, "getSecondOfMinute", "(J)I");
         int getMillisOfSecondIndex = asm.poolMethod(Dates.class, "getMillisOfSecond", "(J)I");
         int getDayOfWeekIndex = asm.poolMethod(Dates.class, "getDayOfWeekSundayFirst", "(J)I");
+        int getDayOfYearIndex = asm.poolMethod(Dates.class, "getDayOfYear", "(J)I");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
         int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;");
@@ -1417,6 +1433,7 @@ public class DateFormatCompiler {
                 getSecondOfMinuteIndex,
                 getMillisOfSecondIndex,
                 getDayOfWeekIndex,
+                getDayOfYearIndex,
                 append000Index,
                 append00Index,
                 append0Index,
@@ -1487,6 +1504,9 @@ public class DateFormatCompiler {
                 case DateFormatCompiler.OP_DAY_NAME_SHORT:
                 case DateFormatCompiler.OP_DAY_OF_WEEK:
                     attributes |= (1 << FA_DAY_OF_WEEK);
+                    break;
+                case DateFormatCompiler.OP_DAY_OF_YEAR:
+                    attributes |= (1 << FA_DAY_OF_YEAR);
                     break;
                 // MONTH
                 case DateFormatCompiler.OP_MONTH_ONE_DIGIT:

@@ -128,6 +128,16 @@ public class DatesTest {
     }
 
     @Test
+    public void testDayOfYear() throws Exception {
+        long millis = DateFormatUtils.parseUTCDate("2020-01-01T17:16:30.192Z");
+        Assert.assertEquals(1, Dates.getDayOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("2019-03-10T07:16:30.192Z");
+        Assert.assertEquals(69, Dates.getDayOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("2020-03-10T07:16:30.192Z");
+        Assert.assertEquals(70, Dates.getDayOfYear(millis));
+    }
+
+    @Test
     public void testDaysBetween() throws Exception {
         Assert.assertEquals(41168,
                 Dates.getDaysBetween(

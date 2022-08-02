@@ -144,6 +144,13 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testFormatDayOfYear() throws Exception {
+        assertFormat("1", "D", "2010-01-01T00:00:00.000Z");
+        assertFormat("69", "D", "2010-03-10T00:00:00.000Z");
+        assertFormat("70", "D", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
     public void testFormatEra() throws Exception {
         assertFormat("AD", "G", "2017-04-09T00:00:00.000Z");
         assertFormat("BC", "G", "-1024-04-09T00:00:00.000Z");

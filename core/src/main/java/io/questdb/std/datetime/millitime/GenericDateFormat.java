@@ -50,6 +50,7 @@ public class GenericDateFormat extends AbstractDateFormat {
         int minute = -1;
         int second = -1;
         int dayOfWeek = -1;
+        int dayOfYear = -1;
         boolean leap = false;
         int millis = -1;
 
@@ -231,6 +232,12 @@ public class GenericDateFormat extends AbstractDateFormat {
                         dayOfWeek = Dates.getDayOfWeekSundayFirst(datetime);
                     }
                     sink.put(dayOfWeek);
+                    break;
+                case DateFormatCompiler.OP_DAY_OF_YEAR:
+                    if (dayOfYear == -1) {
+                        dayOfYear = Dates.getDayOfYear(datetime);
+                    }
+                    sink.put(dayOfYear);
                     break;
 
                 // MONTH
@@ -522,11 +529,11 @@ public class GenericDateFormat extends AbstractDateFormat {
                     pos += Numbers.decodeHighInt(l);
                     break;
 
+                case DateFormatCompiler.OP_DAY_OF_YEAR:
                 case DateFormatCompiler.OP_DAY_OF_WEEK:
                     DateFormatUtils.assertRemaining(pos, hi);
-                    // ignore weekday
+                    // ignore weekday and day of year
                     Numbers.parseInt(in, pos, ++pos);
-                    break;
 
                 // MONTH
 
