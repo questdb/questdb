@@ -165,7 +165,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getTimestampColumnName(),
                             task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            textImportExecutionContext.getCircuitBreaker()
+                            textImportExecutionContext.getCircuitBreaker(),
+                            task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
                     parallelImporter.process();
@@ -174,9 +175,12 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getTableName(),
                             task.getFileName(),
                             task.getImportId(),
+                            task.getDelimiter(),
+                            task.getTimestampColumnName(),
+                            task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            task.getAtomicity(),
-                            textImportExecutionContext.getCircuitBreaker()
+                            textImportExecutionContext.getCircuitBreaker(),
+                            task.getAtomicity()
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
                     serialImporter.process();

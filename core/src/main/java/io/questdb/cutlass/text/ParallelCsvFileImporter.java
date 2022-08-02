@@ -164,11 +164,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
         this.configuration = cairoEngine.getConfiguration();
 
-        CairoConfiguration cfg = this.cairoEngine.getConfiguration();
-
-        this.ff = cfg.getFilesFacade();
-        this.inputRoot = cfg.getSqlCopyInputRoot();
-        this.inputWorkRoot = cfg.getSqlCopyInputWorkRoot();
+        this.ff = configuration.getFilesFacade();
+        this.inputRoot = configuration.getSqlCopyInputRoot();
+        this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
 
         TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
@@ -288,7 +286,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
-            CharSequence tsFormat,
+            CharSequence timestampFormat,
             boolean forceHeader,
             ExecutionCircuitBreaker circuitBreaker,
             int atomicity
@@ -301,8 +299,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.timestampColumn = timestampColumn;
         this.partitionBy = partitionBy;
         this.columnDelimiter = columnDelimiter;
-        if (tsFormat != null) {
-            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(tsFormat);
+        if (timestampFormat != null) {
+            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
             this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
                     configuration.getTextConfiguration().getDefaultDateLocale());
         }
@@ -318,6 +316,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Numbers.appendHex(importIdSink, importId, true);
     }
 
+    @TestOnly
     public void of(
             CharSequence tableName,
             CharSequence inputFileName,
@@ -351,7 +350,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
-            CharSequence tsFormat,
+            CharSequence timestampFormat,
             boolean forceHeader
     ) {
         of(
@@ -361,7 +360,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 partitionBy,
                 columnDelimiter,
                 timestampColumn,
-                tsFormat,
+                timestampFormat,
                 forceHeader,
                 null,
                 Atomicity.SKIP_COL

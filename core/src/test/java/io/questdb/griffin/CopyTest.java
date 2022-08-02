@@ -32,6 +32,7 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
@@ -69,7 +70,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSetParallelParallelCopyOptions() throws SqlException {
+    public void testDefaultCopyOptions() throws SqlException {
         CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
         assertEquals("y", model.getTarget().token.toString());
@@ -135,8 +136,8 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCopyWithSmallBuffer() throws Exception {
-        // Q: This test uses the same input file as testSimpleCopy() yet the expected result has 2 rows missing. How is that possible?
+    public void testSerialCopyWithSmallBuffer() throws Exception {
+        // Q: This test uses the same input file as testSerialCopy() yet the expected result has 2 rows missing. How is that possible?
         // A: It's due to the algorithm for table structure inference in the TextLoader.
         //    The inference algorithm uses only a subset of the input file which fits into a single buffer.
         //    It uses the subset to infer column types. With a large enough buffer all rows fit it and the TextLoader can infer
@@ -318,7 +319,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleCopy() throws Exception {
+    public void testSerialCopy() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-import.csv'", sqlExecutionContext);
 
         final String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
@@ -462,7 +463,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNonExistingFile() throws Exception {
+    public void testCopyNonExistingFile() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'does-not-exist.csv'", sqlExecutionContext);
 
         CopyRunnable assertion = () -> assertQuery("status\nfailed\n",
@@ -473,7 +474,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleCopyForceHeader() throws Exception {
+    public void testSerialCopyForceHeader() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header true", sqlExecutionContext);
 
         final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
@@ -491,7 +492,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNoTimestampAndPartitionByNone() throws Exception {
+    public void testSerialCopyNoTimestampAndPartitionByNone() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header true partition by NONE", sqlExecutionContext);
 
         final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
@@ -509,11 +510,29 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleCopyForceHeader2() throws Exception {
+    public void testSerialCopyForceHeader2() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header false", sqlExecutionContext);
 
         final String expected = "f0\tf1\tf2\tf3\tf4\n" +
                 "type\tvalue\tactive\tdesc\t1\n" +
+                "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
+                "CDE\tbb\tb\tsentence 1\n" +
+                "sentence 2\t12\n";
+
+        CopyRunnable assertion = () -> assertQuery(
+                expected,
+                "x",
+                null,
+                true
+        );
+        testCopy(insert, assertion);
+    }
+
+    @Test
+    public void testSerialCopyColumnDelimiter() throws Exception {
+        CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header true delimiter ','", sqlExecutionContext);
+
+        final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
                 "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
                 "CDE\tbb\tb\tsentence 1\n" +
                 "sentence 2\t12\n";
@@ -663,7 +682,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyThrowsExceptionOnUnexpectedOption() throws Exception {
+    public void testCopyThrowsExceptionOnUnexpectedOption() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from 'test-quotes-big.csv' with YadaYadaYada;", sqlExecutionContext);
@@ -675,7 +694,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyThrowsExceptionOnEmptyDelimiter() throws Exception {
+    public void testCopyThrowsExceptionOnEmptyDelimiter() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from 'test-quotes-big.csv' with delimiter '';", sqlExecutionContext);
@@ -687,7 +706,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyThrowsExceptionOnMultiCharDelimiter() throws Exception {
+    public void testCopyThrowsExceptionOnMultiCharDelimiter() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from 'test-quotes-big.csv' with delimiter '____';", sqlExecutionContext);
@@ -699,7 +718,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyThrowsExceptionOnNonAsciiDelimiter() throws Exception {
+    public void testCopyThrowsExceptionOnNonAsciiDelimiter() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from 'test-quotes-big.csv' with delimiter 'ą';", sqlExecutionContext);
@@ -711,7 +730,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyCancelThrowsExceptionOnNoActiveImport() throws Exception {
+    public void testCopyCancelThrowsExceptionOnNoActiveImport() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy 'foobar' cancel;", sqlExecutionContext);
@@ -759,7 +778,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSerialCopyCancelChecksTableName() throws Exception {
+    public void testSerialCopyCancelChecksImportId() throws Exception {
         // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
         sqlCopyBufferSize = 1024;
         String importId = runAndFetchImportId("copy x from 'test-import.csv' with header true delimiter ',' " +
@@ -784,7 +803,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyCancelChecksTableName() throws Exception {
+    public void testParallelCopyCancelChecksImportId() throws Exception {
         String importId = runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;");
 
@@ -863,6 +882,47 @@ public class CopyTest extends AbstractGriffinTest {
                 true );
     }
 
+    @Test
+    public void testParallelCopyWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
+        testParallelCopyWithAtomicity("SKIP_ROW", 6);
+    }
+
+    @Test
+    public void testParallelCopyWithSkipAllAtomicityImportsNothing() throws Exception {
+        testParallelCopyWithAtomicity("ABORT", 0);
+    }
+
+    private void testParallelCopyWithAtomicity(String atomicity, int expectedCount) throws Exception {
+        CopyRunnable stmt = () -> {
+            compiler.compile("create table alltypes (\n" +
+                    "  bo boolean,\n" +
+                    "  by byte,\n" +
+                    "  sh short,\n" +
+                    "  ch char,\n" +
+                    "  in_ int,\n" +
+                    "  lo long,\n" +
+                    "  dat date, \n" +
+                    "  tstmp timestamp, \n" +
+                    "  ft float,\n" +
+                    "  db double,\n" +
+                    "  str string,\n" +
+                    "  sym symbol,\n" +
+                    "  l256 long256," +
+                    "  ge geohash(20b)" +
+                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            compiler.compile("copy alltypes from 'test-errors.csv' with header true timestamp 'tstmp' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSSSSZ' on error " + atomicity + ";", sqlExecutionContext);
+        };
+
+        CopyRunnable test = () -> assertQuery(
+                "cnt\n" + expectedCount + "\n", "select count(*) cnt from alltypes",
+                null,
+                false
+        );
+
+        testCopy(stmt, test);
+    }
+
     private void assertQuotesTableContent() throws SqlException {
         assertQuery("line\tts\td\tdescription\n" +
                         "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
@@ -891,11 +951,15 @@ public class CopyTest extends AbstractGriffinTest {
 
     private Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
         return new Thread(() -> {
-            while (latch.getCount() > 0) {
-                if (job.run(0)) {
-                    latch.countDown();
+            try {
+                while (latch.getCount() > 0) {
+                    if (job.run(0)) {
+                        latch.countDown();
+                    }
+                    Os.sleep(1);
                 }
-                Os.sleep(1);
+            } finally {
+                Path.clearThreadLocals();
             }
         });
     }

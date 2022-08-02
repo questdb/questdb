@@ -24,22 +24,12 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -50,18 +40,20 @@ public final class SerialCsvFileImporter implements Closeable {
     private final CharSequence inputRoot;
     private final FilesFacade ff;
     private final CairoEngine cairoEngine;
+    private final CairoConfiguration configuration;
     private Path inputFilePath;
     private final CairoSecurityContext securityContext;
     private TextLoader textLoader;
     private CharSequence tableName;
-    private boolean isHeaderFlag;
+    private byte columnDelimiter;
+    private boolean forceHeader;
     private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
     private ExecutionCircuitBreaker circuitBreaker;
     private int atomicity;
     private final StringSink importIdSink = new StringSink();
 
     public SerialCsvFileImporter(CairoEngine cairoEngine) {
-        CairoConfiguration configuration = cairoEngine.getConfiguration();
+        this.configuration = cairoEngine.getConfiguration();
         this.inputRoot = configuration.getSqlCopyInputRoot();
         this.inputFilePath = new Path();
         this.ff = configuration.getFilesFacade();
@@ -76,12 +68,23 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader = Misc.free(textLoader);
     }
 
-    public void of(String tableName, String fileName, long importId, boolean isHeaderFlag, int atomicity, ExecutionCircuitBreaker circuitBreaker) {
+    public void of(
+            String tableName,
+            String inputFileName,
+            long importId,
+            byte columnDelimiter,
+            CharSequence timestampColumn,
+            CharSequence timestampFormat,
+            boolean forceHeader,
+            ExecutionCircuitBreaker circuitBreaker,
+            int atomicity
+    ) {
         this.tableName = tableName;
-        this.isHeaderFlag = isHeaderFlag;
-        this.atomicity = atomicity;
+        this.columnDelimiter = columnDelimiter;
+        this.forceHeader = forceHeader;
         this.circuitBreaker = circuitBreaker;
-        inputFilePath.of(inputRoot).concat(fileName).$();
+        this.atomicity = atomicity;
+        inputFilePath.of(inputRoot).concat(inputFileName).$();
         importIdSink.clear();
         Numbers.appendHex(importIdSink, importId, true);
     }
@@ -91,8 +94,8 @@ public final class SerialCsvFileImporter implements Closeable {
                 .$("started [importId=").$(importIdSink)
                 .$(", file=`").$(inputFilePath).$('`').I$();
         updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
-        int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
-        long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
+        final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
+        final long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         setupTextLoaderFromModel();
         long fd = -1;
         try {
@@ -100,7 +103,8 @@ public final class SerialCsvFileImporter implements Closeable {
             long fileLen = ff.length(fd);
             long n = ff.read(fd, buf, sqlCopyBufferSize, 0);
             if (n > 0) {
-                textLoader.setForceHeaders(isHeaderFlag);
+                textLoader.setDelimiter(columnDelimiter);
+                textLoader.setForceHeaders(forceHeader);
                 textLoader.setSkipRowsWithExtraValues(false);
                 textLoader.parse(buf, buf + n, securityContext);
                 textLoader.setState(TextLoader.LOAD_DATA);
@@ -146,7 +150,6 @@ public final class SerialCsvFileImporter implements Closeable {
             this.statusReporter.report(TextImportTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
         }
     }
-
 
     public void setStatusReporter(ParallelCsvFileImporter.PhaseStatusReporter reporter) {
         this.statusReporter = reporter;
