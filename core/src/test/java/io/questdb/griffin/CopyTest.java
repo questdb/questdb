@@ -58,15 +58,6 @@ public class CopyTest extends AbstractGriffinTest {
         AbstractGriffinTest.setUpStatic();
     }
 
-    private void assertFailsWith(String sql) {
-        try {
-            compiler.compile(sql, sqlExecutionContext);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "invalid option used for import without a designated timestamp (format or partition by)");
-        }
-    }
-
     @Test
     public void testParallelCopyRequiresWithBeforeOptions() {
         try {
@@ -575,6 +566,7 @@ public class CopyTest extends AbstractGriffinTest {
                         "analyze_file_structure\tstarted\tNaN\tNaN\t0\n" +
                         "analyze_file_structure\tfinished\tNaN\tNaN\t0\n" +
                         "boundary_check\tstarted\tNaN\tNaN\t0\n" +
+                        "boundary_check\tfinished\tNaN\tNaN\t0\n" +
                         "indexing\tstarted\tNaN\tNaN\t0\n" +
                         "indexing\tfinished\tNaN\tNaN\t0\n" +
                         "partition_import\tstarted\tNaN\tNaN\t0\n" +

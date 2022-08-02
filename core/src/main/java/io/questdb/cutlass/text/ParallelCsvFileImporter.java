@@ -843,6 +843,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             indexChunkStats.add(0);
             indexChunkStats.add(fileLength);
             indexChunkStats.add(0);
+            phaseEpilogue(TextImportTask.PHASE_BOUNDARY_CHECK);
             return indexChunkStats;
         }
 
