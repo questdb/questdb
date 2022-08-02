@@ -69,7 +69,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSetParallelParallelCopyOptions() throws SqlException {
+    public void testDefaultCopyOptions() throws SqlException {
         CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
         assertEquals("y", model.getTarget().token.toString());
@@ -135,8 +135,8 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCopyWithSmallBuffer() throws Exception {
-        // Q: This test uses the same input file as testSimpleCopy() yet the expected result has 2 rows missing. How is that possible?
+    public void testSerialCopyWithSmallBuffer() throws Exception {
+        // Q: This test uses the same input file as testSerialCopy() yet the expected result has 2 rows missing. How is that possible?
         // A: It's due to the algorithm for table structure inference in the TextLoader.
         //    The inference algorithm uses only a subset of the input file which fits into a single buffer.
         //    It uses the subset to infer column types. With a large enough buffer all rows fit it and the TextLoader can infer
@@ -318,7 +318,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleCopy() throws Exception {
+    public void testSerialCopy() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-import.csv'", sqlExecutionContext);
 
         final String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
@@ -462,7 +462,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNonExistingFile() throws Exception {
+    public void testCopyNonExistingFile() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'does-not-exist.csv'", sqlExecutionContext);
 
         CopyRunnable assertion = () -> assertQuery("status\nfailed\n",
@@ -473,7 +473,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleCopyForceHeader() throws Exception {
+    public void testSerialCopyForceHeader() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header true", sqlExecutionContext);
 
         final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
@@ -491,7 +491,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNoTimestampAndPartitionByNone() throws Exception {
+    public void testSerialCopyNoTimestampAndPartitionByNone() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header true partition by NONE", sqlExecutionContext);
 
         final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
@@ -509,11 +509,29 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleCopyForceHeader2() throws Exception {
+    public void testSerialCopyForceHeader2() throws Exception {
         CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header false", sqlExecutionContext);
 
         final String expected = "f0\tf1\tf2\tf3\tf4\n" +
                 "type\tvalue\tactive\tdesc\t1\n" +
+                "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
+                "CDE\tbb\tb\tsentence 1\n" +
+                "sentence 2\t12\n";
+
+        CopyRunnable assertion = () -> assertQuery(
+                expected,
+                "x",
+                null,
+                true
+        );
+        testCopy(insert, assertion);
+    }
+
+    @Test
+    public void testSerialCopyColumnDelimiter() throws Exception {
+        CopyRunnable insert = () -> compiler.compile("copy x from 'test-numeric-headers.csv' with header true delimiter ','", sqlExecutionContext);
+
+        final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
                 "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
                 "CDE\tbb\tb\tsentence 1\n" +
                 "sentence 2\t12\n";
