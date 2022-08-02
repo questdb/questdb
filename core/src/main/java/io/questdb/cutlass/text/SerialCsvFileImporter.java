@@ -39,31 +39,31 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
 public final class SerialCsvFileImporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SerialCsvFileImporter.class);
-    private final CharSequence sqlCopyInputRoot;
+    private final CharSequence inputRoot;
     private final FilesFacade ff;
     private final CairoEngine cairoEngine;
-    private Path path;
+    private Path inputFilePath;
     private final CairoSecurityContext securityContext;
     private TextLoader textLoader;
     private CharSequence tableName;
-    private CharSequence fileName;
     private boolean isHeaderFlag;
     private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
     private ExecutionCircuitBreaker circuitBreaker;
     private int atomicity;
+    private final StringSink importIdSink = new StringSink();
 
     public SerialCsvFileImporter(CairoEngine cairoEngine) {
         CairoConfiguration configuration = cairoEngine.getConfiguration();
-        this.sqlCopyInputRoot = configuration.getSqlCopyInputRoot();
-        this.path = new Path();
+        this.inputRoot = configuration.getSqlCopyInputRoot();
+        this.inputFilePath = new Path();
         this.ff = configuration.getFilesFacade();
         this.textLoader = new TextLoader(cairoEngine);
         this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
@@ -72,27 +72,31 @@ public final class SerialCsvFileImporter implements Closeable {
 
     @Override
     public void close() {
-        path = Misc.free(path);
+        inputFilePath = Misc.free(inputFilePath);
         textLoader = Misc.free(textLoader);
     }
 
-    public void of(String tableName, String fileName, boolean isHeaderFlag, int atomicity, ExecutionCircuitBreaker circuitBreaker) {
+    public void of(String tableName, String fileName, long importId, boolean isHeaderFlag, int atomicity, ExecutionCircuitBreaker circuitBreaker) {
         this.tableName = tableName;
-        this.fileName = fileName;
         this.isHeaderFlag = isHeaderFlag;
         this.atomicity = atomicity;
         this.circuitBreaker = circuitBreaker;
+        inputFilePath.of(inputRoot).concat(fileName).$();
+        importIdSink.clear();
+        Numbers.appendHex(importIdSink, importId, true);
     }
 
     public void process() throws TextImportException {
+        LOG.info()
+                .$("started [importId=").$(importIdSink)
+                .$(", file=`").$(inputFilePath).$('`').I$();
         updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
         int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
         long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         setupTextLoaderFromModel();
-        path.of(sqlCopyInputRoot).concat(fileName).$();
         long fd = -1;
         try {
-            fd = TableUtils.openRO(ff, path, LOG);
+            fd = TableUtils.openRO(ff, inputFilePath, LOG);
             long fileLen = ff.length(fd);
             long n = ff.read(fd, buf, sqlCopyBufferSize, 0);
             if (n > 0) {
@@ -121,6 +125,9 @@ public final class SerialCsvFileImporter implements Closeable {
                 for (int i = 0, size = columnErrorCounts.size(); i < size; i++) {
                     errorCount += columnErrorCounts.get(i);
                 }
+                LOG.info()
+                        .$("finished [importId=").$(importIdSink)
+                        .$(", file=`").$(inputFilePath).$('`').I$();
                 updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
             }
         } catch (CairoException e) {

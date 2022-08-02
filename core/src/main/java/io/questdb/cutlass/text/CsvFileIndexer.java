@@ -711,7 +711,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long srcAddress = -1;
 
         try {
-            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_IMPORT);
 
             if (sortBufferPtr == -1) {
                 sortBufferPtr = Unsafe.malloc(maxIndexChunkSize, MemoryTag.NATIVE_IMPORT);
@@ -721,7 +721,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, sortBufferPtr);
         } finally {
             if (srcAddress != -1) {
-                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_IMPORT);
             }
         }
     }

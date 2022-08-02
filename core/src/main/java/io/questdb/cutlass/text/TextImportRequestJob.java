@@ -70,7 +70,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final CairoEngine engine;
     private SerialCsvFileImporter serialImporter;
 
-
     public TextImportRequestJob(
             final CairoEngine engine,
             int workerCount,
@@ -157,10 +156,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             task = requestQueue.get(cursor);
             try {
                 if (useParallelImport()) {
-                    LOG.info().$("Using ParallelImport strategy. [table=").$(task.getTableName()).$(", timestamp=").$(task.getTimestampColumnName()).I$();
                     parallelImporter.of(
                             task.getTableName(),
                             task.getFileName(),
+                            task.getImportId(),
                             task.getPartitionBy(),
                             task.getDelimiter(),
                             task.getTimestampColumnName(),
@@ -171,10 +170,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                     parallelImporter.setStatusReporter(updateStatusRef);
                     parallelImporter.process();
                 } else {
-                    LOG.info().$("Using SerialImport strategy. [table=").$(task.getTableName()).$(", timestamp=").$(task.getTimestampColumnName()).I$();
                     serialImporter.of(
                             task.getTableName(),
                             task.getFileName(),
+                            task.getImportId(),
                             task.isHeaderFlag(),
                             task.getAtomicity(),
                             textImportExecutionContext.getCircuitBreaker()
