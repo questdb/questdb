@@ -483,6 +483,7 @@ open module io.questdb {
 
 //                  'first' group by function
             io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstCharGroupByFunctionFactory,
