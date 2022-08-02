@@ -38,8 +38,10 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -723,6 +725,11 @@ public class TableWriter implements TableWriterFrontend, Closeable {
     }
 
     @Override
+    public void executeUpdate(SqlExecutionContextImpl sqlExecutionContext, UpdateOperation op) throws SqlException {
+        updateOperator.executeUpdate(sqlExecutionContext, op);
+    }
+
+    @Override
     public TableWriterMetadata getMetadata() {
         return metadata;
     }
@@ -1104,7 +1111,7 @@ public class TableWriter implements TableWriterFrontend, Closeable {
                 dataInfo.getStartRowID(),
                 dataInfo.getEndRowID(),
                 dataInfo.getMinTimestamp(),
-                dataInfo.getMaxTimestamp() + 1,
+                dataInfo.getMaxTimestamp(),
                 dataInfo
         );
     }

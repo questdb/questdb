@@ -53,7 +53,7 @@ public class TableRegistry implements Closeable {
         Path tempPath = Path.PATH2.get();
         CairoConfiguration configuration = engine.getConfiguration();
         tempPath.of(configuration.getRoot()).concat(tableNameStr).concat(SEQ_DIR);
-        return configuration.getFilesFacade().exists(tempPath);
+        return configuration.getFilesFacade().exists(tempPath.$());
     }
 
     // expected that caller holds the lock on the table

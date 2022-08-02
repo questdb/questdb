@@ -42,6 +42,7 @@ public class TableModel implements TableStructure, Closeable {
     private final Path path = new Path();
     private final CairoConfiguration configuration;
     private int timestampIndex = -1;
+    private int walEnabled = -1;
 
     @Override
     public long getColumnHash(int columnIndex) {
@@ -201,6 +202,18 @@ public class TableModel implements TableStructure, Closeable {
 
     @Override
     public boolean isWallEnabled() {
-        return configuration.getWallEnabledDefault();
+        return walEnabled == -1
+                ? configuration.getWallEnabledDefault()
+                : walEnabled == 1;
+    }
+
+    public TableModel noWal() {
+        walEnabled = 0;
+        return this;
+    }
+
+    public TableModel wal() {
+        walEnabled = 1;
+        return this;
     }
 }

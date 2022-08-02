@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+
 import java.io.Closeable;
 
 public interface TableWriterFrontend extends Closeable {
@@ -34,7 +38,13 @@ public interface TableWriterFrontend extends Closeable {
 
     long commitWithLag(long commitLag);
 
+    void executeUpdate(SqlExecutionContextImpl sqlExecutionContext, UpdateOperation op) throws SqlException;
+
     BaseRecordMetadata getMetadata();
+
+    long getStructureVersion();
+
+    CharSequence getTableName();
 
     TableWriter.Row newRow();
 

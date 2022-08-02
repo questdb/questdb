@@ -175,8 +175,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         int tableId = (int) tableIdGenerator.getNextId();
-
-        tableRegistry.createTable(tableId, struct);
+        if (struct.isWallEnabled()) {
+            tableRegistry.createTable(tableId, struct);
+        }
 
         // only create the table after it has been registered
         TableUtils.createTable(
@@ -249,6 +250,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return tableIdGenerator;
     }
 
+    @Override
     public TableWriterFrontend getTableWriterFrontEnd(
             CairoSecurityContext securityContext,
             CharSequence tableName,
@@ -406,7 +408,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return telemetrySubSeq;
     }
 
-    @Override
     public TableWriter getWriter(
             CairoSecurityContext securityContext,
             CharSequence tableName,

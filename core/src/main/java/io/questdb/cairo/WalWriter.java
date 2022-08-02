@@ -30,6 +30,9 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -182,8 +185,18 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     @Override
+    public void executeUpdate(SqlExecutionContextImpl sqlExecutionContext, UpdateOperation op) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public BaseRecordMetadata getMetadata() {
         return metadata;
+    }
+
+    @Override
+    public long getStructureVersion() {
+        return metadata.getStructureVersion();
     }
 
     public String getWalName() {

@@ -58,7 +58,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
     void create(TableStructure model, Path path, int pathLen, int tableId) {
         reset();
 
-        schemaVersion = 0;
         timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
 
@@ -68,6 +67,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
             addColumn(i, name, type);
         }
 
+        schemaVersion = 0;
         syncToMetaFile(path, pathLen);
     }
 

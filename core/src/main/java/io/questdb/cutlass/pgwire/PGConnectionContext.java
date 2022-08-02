@@ -131,7 +131,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final WeakMutableObjectPool<Portal> namedPortalPool;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
     private final DateLocale locale;
-    private final CharSequenceObjHashMap<TableWriter> pendingWriters;
+    private final CharSequenceObjHashMap<TableWriterFrontend> pendingWriters;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
@@ -361,12 +361,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
-    public TableWriter getWriter(CairoSecurityContext context, CharSequence name, String lockReason) {
+    public TableWriterFrontend getTableWriterFrontEnd(CairoSecurityContext context, CharSequence name, String lockReason) {
         final int index = pendingWriters.keyIndex(name);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getWriter(context, name, lockReason);
+        return engine.getTableWriterFrontEnd(context, name, lockReason);
     }
 
     public void handleClientOperation(
@@ -1259,7 +1259,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void executeInsert() throws SqlException {
-        final TableWriter writer;
+        final TableWriterFrontend writer;
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
@@ -1305,7 +1305,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case COMMIT_TRANSACTION:
                 try {
                     for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriter m = pendingWriters.valueQuick(i);
+                        final TableWriterFrontend m = pendingWriters.valueQuick(i);
                         m.commit();
                         Misc.free(m);
                     }
@@ -1317,7 +1317,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case ROLLING_BACK_TRANSACTION:
                 try {
                     for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriter m = pendingWriters.valueQuick(i);
+                        final TableWriterFrontend m = pendingWriters.valueQuick(i);
                         m.rollback();
                         Misc.free(m);
                     }
@@ -1356,7 +1356,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int index = pendingWriters.keyIndex(op.getTableName());
         if (index < 0) {
             op.withContext(sqlExecutionContext);
-            pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
+            pendingWriters.valueAt(index).executeUpdate(sqlExecutionContext, op);
         } else {
             if (statementTimeout > 0) {
                 circuitBreaker.setTimeout(statementTimeout);

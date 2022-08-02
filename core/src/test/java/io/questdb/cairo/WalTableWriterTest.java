@@ -412,6 +412,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("stringc", ColumnType.STRING)
                 .col("label", ColumnType.SYMBOL)
                 .timestamp("ts")
+                .wal()
         ) {
             engine.createTableUnsafe(
                     AllowAllCairoSecurityContext.INSTANCE,

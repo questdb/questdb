@@ -36,6 +36,7 @@ import static io.questdb.cairo.TableUtils.*;
 class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
     private final FilesFacade ff;
     private final MemoryMAR metaMem = Vm.getMARInstance();
+    private int structureVersion;
 
     WalWriterMetadata(FilesFacade ff) {
         this.ff = ff;
@@ -43,10 +44,15 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
     void of(TableDescriptor descriptor) {
         reset();
 
         timestampIndex = descriptor.getTimestampIndex();
+        structureVersion = descriptor.getSchemaVersion();
 
         for (int i = 0; i < descriptor.getColumnCount(); i++) {
             final CharSequence name = descriptor.getColumnName(i);
