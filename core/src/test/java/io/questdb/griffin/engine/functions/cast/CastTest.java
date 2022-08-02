@@ -3030,16 +3030,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_int(0,66,100) as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
                 true,
                 true,
                 true
