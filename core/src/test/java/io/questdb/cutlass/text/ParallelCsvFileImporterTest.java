@@ -1323,7 +1323,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             CharSequence inputFileName,
             int partitionBy,
             CharSequence timestampColumn,
-            CharSequence tsFormat,
+            CharSequence timestampFormat,
             boolean forceHeader,
             int expectedCount
     ) throws Exception {
@@ -1334,7 +1334,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 partitionBy,
                 (byte) ',',
                 timestampColumn,
-                tsFormat,
+                timestampFormat,
                 forceHeader,
                 null,
                 Atomicity.SKIP_COL

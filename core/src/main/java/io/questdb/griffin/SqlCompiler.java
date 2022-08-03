@@ -2686,7 +2686,7 @@ public class SqlCompiler implements Closeable {
         textLoader.configureDestination(model.getTarget().token, false, false,
                 model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
                 model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
-                model.getTimestampColumnName());
+                model.getTimestampColumnName(), model.getTimestampFormat());
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {

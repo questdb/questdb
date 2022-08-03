@@ -35,14 +35,18 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 
 public class TextLoader extends TextLoaderBase {
+
     private static final Log LOG = LogFactory.getLog(TextLoader.class);
     public static final int LOAD_JSON_METADATA = 0;
     public static final int ANALYZE_STRUCTURE = 1;
     public static final int LOAD_DATA = 2;
+
+    private final TextConfiguration textConfiguration;
     private final TextMetadataDetector textMetadataDetector;
     private final TextMetadataParser textMetadataParser;
     private final JsonLexer jsonLexer;
@@ -51,18 +55,17 @@ public class TextLoader extends TextLoaderBase {
     private final TextDelimiterScanner textDelimiterScanner;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
+    private TimestampAdapter timestampAdapter;
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
     private int state;
     private boolean forceHeaders = false;
     private byte columnDelimiter = -1;
-    private TimestampAdapter timestampAdapter;
-    //index of timestamp column in input file
-    private int timestampIndex = -1;
+    private CharSequence timestampColumn;
 
     public TextLoader(CairoEngine engine) {
         super(engine);
 
-        final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
+        this.textConfiguration = engine.getConfiguration().getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
@@ -84,7 +87,7 @@ public class TextLoader extends TextLoaderBase {
         forceHeaders = false;
         columnDelimiter = -1;
         typeManager.clear();
-        timestampIndex = -1;
+        timestampAdapter = null;
     }
 
     @Override
@@ -103,10 +106,24 @@ public class TextLoader extends TextLoaderBase {
         assert this.columnDelimiter > 0;
     }
 
-    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
-        super.configureDestination(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
-        textDelimiterScanner.setTableName(tableName);
-        textMetadataParser.setTableName(tableName);
+    public void configureDestination(
+            CharSequence tableName,
+            boolean overwrite,
+            boolean durable,
+            int atomicity,
+            int partitionBy,
+            CharSequence timestampColumn,
+            CharSequence timestampFormat
+    ) {
+        super.configureDestination(tableName, overwrite, durable, atomicity, partitionBy, timestampColumn);
+        this.textDelimiterScanner.setTableName(tableName);
+        this.textMetadataParser.setTableName(tableName);
+        this.timestampColumn = timestampColumn;
+        if (timestampFormat != null) {
+            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
+                    textConfiguration.getDefaultDateLocale());
+        }
 
         LOG.info()
                 .$("configured [table=`").$(tableName)
@@ -114,7 +131,8 @@ public class TextLoader extends TextLoaderBase {
                 .$(", durable=").$(durable)
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
-                .$(", timestamp=").$(timestampIndexCol)
+                .$(", timestamp=").$(timestampColumn)
+                .$(", timestampFormat=").$(timestampFormat)
                 .$(']').$();
     }
 
@@ -177,6 +195,11 @@ public class TextLoader extends TextLoaderBase {
             setDelimiter(textDelimiterScanner.scan(lo, hi));
         }
 
+        if (timestampColumn != null && timestampAdapter != null) {
+            textMetadataParser.getColumnNames().add(timestampColumn);
+            textMetadataParser.getColumnTypes().add(timestampAdapter);
+        }
+
         textMetadataDetector.of(
                 getTableName(),
                 textMetadataParser.getColumnNames(),
@@ -192,10 +215,10 @@ public class TextLoader extends TextLoaderBase {
                 textMetadataDetector.getColumnNames(),
                 textMetadataDetector.getColumnTypes(),
                 path,
-                typeManager
+                typeManager,
+                timestampAdapter
         );
         parse(lo, hi, Integer.MAX_VALUE);
         state = LOAD_DATA;
     }
-
 }

@@ -83,6 +83,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         warnings = TextLoadWarning.NONE;
         designatedTimestampColumnName = null;
         designatedTimestampIndex = NO_INDEX;
+        timestampIndex = NO_INDEX;
         importedTimestampColumnName = null;
         remapIndex.clear();
     }
@@ -143,13 +144,20 @@ public class CairoTextWriter implements Closeable, Mutable {
         return writer == null ? 0 : writer.size() - _size;
     }
 
-    public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
+    public void of(
+            CharSequence name,
+            boolean overwrite,
+            boolean durable,
+            int atomicity,
+            int partitionBy,
+            CharSequence timestampColumn
+    ) {
         this.tableName = name;
         this.overwrite = overwrite;
         this.durable = durable;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
-        this.importedTimestampColumnName = timestampIndexCol;
+        this.importedTimestampColumnName = timestampColumn;
     }
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
@@ -310,7 +318,8 @@ public class CairoTextWriter implements Closeable, Mutable {
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
             Path path,
-            TypeManager typeManager
+            TypeManager typeManager,
+            TimestampAdapter timestampAdapter
     ) throws TextException {
         assert writer == null;
 
@@ -367,10 +376,13 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
-        if (timestampIndex != NO_INDEX && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-            timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-        } else {
-            timestampAdapter = null;
+
+        if (timestampIndex != NO_INDEX) {
+            if (timestampAdapter != null) {
+                this.timestampAdapter = timestampAdapter;
+            } else if (ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
+                this.timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
+            }
         }
     }
 

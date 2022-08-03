@@ -115,7 +115,9 @@ public final class SerialCsvFileImporter implements Closeable {
             long fileLen = ff.length(fd);
             long n = ff.read(fd, buf, sqlCopyBufferSize, 0);
             if (n > 0) {
-                textLoader.setDelimiter(columnDelimiter);
+                if (columnDelimiter > 0) {
+                    textLoader.configureColumnDelimiter(columnDelimiter);
+                }
                 textLoader.setForceHeaders(forceHeader);
                 textLoader.setSkipRowsWithExtraValues(false);
                 textLoader.parse(buf, buf + n, securityContext);
@@ -149,6 +151,8 @@ public final class SerialCsvFileImporter implements Closeable {
                         .$(", file=`").$(inputFilePath).$('`')
                         .$("', time=").$((endMs - startMs) / 1000).$("s").I$();
             }
+        } catch (TextException e) {
+            throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage());
         } catch (CairoException e) {
             throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
         } finally {
@@ -174,7 +178,7 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination(tableName, false, false,
-                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW, PartitionBy.NONE, timestampColumn);
+                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW, PartitionBy.NONE, timestampColumn, timestampFormat);
     }
 
     private long getCurrentTimeMs() {

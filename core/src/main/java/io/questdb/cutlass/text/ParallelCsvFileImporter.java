@@ -310,7 +310,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.phase = TextImportTask.PHASE_SETUP;
         this.targetTableStatus = -1;
         this.targetTableCreated = false;
-        this.atomicity = Atomicity.isValid(atomicity) ? atomicity : Atomicity.SKIP_COL;
+        this.atomicity = Atomicity.isValid(atomicity) ? atomicity : Atomicity.SKIP_ROW;
 
         inputFilePath.of(inputRoot).concat(inputFileName).$();
         Numbers.appendHex(importIdSink, importId, true);
