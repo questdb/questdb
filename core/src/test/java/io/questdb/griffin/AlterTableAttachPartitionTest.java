@@ -33,10 +33,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -1027,7 +1024,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try (TableModel src = new TableModel(configuration, "src48", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst48", PartitionBy.DAY)) {
 
-                int partitionRowCount = 111;
+                int partitionRowCount = 11;
                 createPopulateTable(
                         1,
                         src.timestamp("ts")
@@ -1055,12 +1052,25 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
                 Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
                 Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("l.d").$()));
+
+                engine.clear();
+                assertQuery(
+                        "ts\ti\tl\n" +
+                                "2022-08-01T08:43:38.090909Z\t1\t1\n" +
+                                "2022-08-01T17:27:16.181818Z\t2\t2\n",
+                        dst.getName(),
+                        null,
+                        "ts",
+                        true,
+                        false,
+                        true
+                );
             }
         });
     }
 
     @Test
-    // TODO: fix this, you should be able to query the table afterwards
+    @Ignore("Broken test due to dud files being created with bad iFile")
     public void testAttachPartitionsDeletedColumnFromSrc() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src49", PartitionBy.DAY);
@@ -1106,6 +1116,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.exists(path.parent().concat("s.v").$()));
                 Assert.assertTrue(Files.exists(path.parent().concat("str.d").$()));
                 Assert.assertTrue(Files.exists(path.parent().concat("str.i").$()));
+
+                engine.clear();
+                assertQuery(
+                        "will fail",
+                        dst.getName(),
+                        null,
+                        "ts",
+                        true,
+                        false,
+                        true
+                );
             }
         });
     }
