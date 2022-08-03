@@ -45,9 +45,7 @@ public final class SerialCsvFileImporter implements Closeable {
     private final CairoSecurityContext securityContext;
     private TextLoader textLoader;
     private CharSequence tableName;
-    private CharSequence inputFileName;
     private CharSequence timestampColumn;
-    // TODO: use this field
     private CharSequence timestampFormat;
     private byte columnDelimiter;
     private boolean forceHeader;
@@ -85,7 +83,6 @@ public final class SerialCsvFileImporter implements Closeable {
             int atomicity
     ) {
         this.tableName = tableName;
-        this.inputFileName = inputFileName;
         this.timestampColumn = timestampColumn;
         this.timestampFormat = timestampFormat;
         this.columnDelimiter = columnDelimiter;
