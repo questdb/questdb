@@ -34,7 +34,6 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1363,7 +1362,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
 
             // execute against writer from the engine, or async
-            try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
+            try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, false)) {
                 if (statementTimeout > 0) {
                     if (fut.await(statementTimeout) != QUERY_COMPLETE) {
                         // Timeout
@@ -1996,10 +1995,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
-                try (AbstractOperation op = cq.getOperation()) {
-                    try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
-                        fut.await();
-                    }
+                try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, true)) {
+                    fut.await();
                 }
                 // fall thru
             default:

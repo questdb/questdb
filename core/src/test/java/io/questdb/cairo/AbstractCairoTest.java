@@ -412,6 +412,7 @@ public class AbstractCairoTest {
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
         defaultTableWriteMode = -1;
+//        clearWalQueue();
     }
 
     protected static void configureForBackups() throws IOException {
@@ -453,6 +454,14 @@ public class AbstractCairoTest {
         ApplyWal2TableJob job = new ApplyWal2TableJob(engine);
         while (job.run(0)) {
             // run until empty
+        }
+    }
+
+    protected static void clearWalQueue() {
+        MessageBus bus = engine.getMessageBus();
+        long cursor;
+        while((cursor = bus.getWalTxnNotificationSubSequence().next()) > -1L) {
+            bus.getWalTxnNotificationSubSequence().done(cursor);
         }
     }
 }

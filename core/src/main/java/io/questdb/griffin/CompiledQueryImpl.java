@@ -91,43 +91,20 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @Override
     public OperationFuture execute(SCSequence eventSubSeq) throws SqlException {
+        return execute(sqlExecutionContext, eventSubSeq, true);
+    }
+
+    @Override
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
         switch (type) {
             case INSERT:
                 return insertOperation.execute(sqlExecutionContext);
             case UPDATE:
-                throw SqlException.$(0, "UPDATE execution is not supported via careless invocation. UpdateOperation is allocating.");
+                return updateOperationDispatcher.execute(updateOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
-                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq);
+                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
             default:
                 return doneFuture.of(0);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public <T extends AbstractOperation> OperationDispatcher<T> getDispatcher() {
-        switch (type) {
-            case ALTER:
-                return (OperationDispatcher<T>) alterOperationDispatcher;
-            case UPDATE:
-                return (OperationDispatcher<T>) updateOperationDispatcher;
-            default:
-                return null;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public <T extends AbstractOperation> T getOperation() {
-        switch (type) {
-            case INSERT:
-                return (T) insertOperation;
-            case UPDATE:
-                return (T) updateOperation;
-            case ALTER:
-                return (T) alterOperation;
-            default:
-                return null;
         }
     }
 

@@ -31,10 +31,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
-import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
@@ -49,7 +47,6 @@ import org.junit.BeforeClass;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
@@ -1079,16 +1076,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @NotNull
     protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
-        if (cc.getType() == CompiledQuery.UPDATE) {
-            try (UpdateOperation op = cc.getUpdateOperation()) {
-                try (OperationFuture future = cc.getDispatcher().execute(op, sqlExecutionContext, null)) {
-                    future.await();
-                }
-            }
-        } else {
-            try (OperationFuture future = cc.execute(null)) {
-                future.await();
-            }
+        try (OperationFuture future = cc.execute(null)) {
+            future.await();
         }
         return cc;
     }
@@ -1403,18 +1392,13 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
     }
 
-    protected <T extends AbstractOperation> void executeOperation(
+    protected void executeOperation(
             String query,
-            int opType,
-            Function<CompiledQuery, T> op
+            int opType
     ) throws SqlException {
         CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(opType, cq.getType());
-        OperationDispatcher<T> dispatcher = cq.getDispatcher();
-        try (
-                T operation = op.apply(cq);
-                OperationFuture fut = dispatcher.execute(operation, sqlExecutionContext, eventSubSequence)
-        ) {
+        try (OperationFuture fut = cq.execute(eventSubSequence)) {
             fut.await();
         }
     }

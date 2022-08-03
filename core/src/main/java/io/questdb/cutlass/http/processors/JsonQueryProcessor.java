@@ -38,7 +38,6 @@ import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -378,7 +377,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             fut = cq.execute(state.getEventSubSequence());
             int waitResult = fut.await(getAsyncWriterStartTimeout(state));
             if (waitResult != OperationFuture.QUERY_COMPLETE) {
-                state.setOperationFuture(null, fut); // Alter operation does not need to be disposable
+                state.setOperationFuture(fut);
                 fut = null;
                 throw EntryUnavailableException.instance("retry alter table wait");
             }
@@ -423,18 +422,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        UpdateOperation op = cq.getOperation();
-        op.start();
-        op.withContext(sqlExecutionContext);
         circuitBreaker.resetTimer();
         OperationFuture fut = null;
         boolean isAsyncWait = false;
         try {
-            fut = cq.getDispatcher().execute(op, sqlExecutionContext, state.getEventSubSequence());
+            fut = cq.execute(sqlExecutionContext, state.getEventSubSequence(), true);
             int waitResult = fut.await(getAsyncWriterStartTimeout(state));
             if (waitResult != OperationFuture.QUERY_COMPLETE) {
                 isAsyncWait = true;
-                state.setOperationFuture(op, fut);
+                state.setOperationFuture(fut);
                 throw EntryUnavailableException.instance("retry update table wait");
             }
             // All good, finished update
@@ -444,7 +440,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } finally {
             if (!isAsyncWait && fut != null) {
                 fut.close();
-                op.close();
             }
         }
     }

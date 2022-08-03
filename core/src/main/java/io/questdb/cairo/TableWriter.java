@@ -726,7 +726,7 @@ public class TableWriter implements TableWriterFrontend, Closeable {
 
     @Override
     public void executeUpdate(SqlExecutionContextImpl sqlExecutionContext, UpdateOperation op) throws SqlException {
-        updateOperator.executeUpdate(sqlExecutionContext, op);
+        getUpdateOperator().executeUpdate(sqlExecutionContext, op);
     }
 
     @Override

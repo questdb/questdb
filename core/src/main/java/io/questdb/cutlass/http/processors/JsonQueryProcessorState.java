@@ -93,7 +93,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
     private short queryType;
-    private QuietClosable asyncOperation;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -182,7 +181,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void freeAsyncOperation() {
-        asyncOperation = Misc.free(asyncOperation);
         operationFuture = Misc.free(operationFuture);
     }
 
@@ -222,8 +220,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return statementTimeout;
     }
 
-    public void setOperationFuture(QuietClosable op, OperationFuture fut) {
-        asyncOperation = op;
+    public void setOperationFuture(OperationFuture fut) {
         operationFuture = fut;
     }
 

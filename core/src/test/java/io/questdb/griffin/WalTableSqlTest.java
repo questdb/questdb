@@ -95,6 +95,39 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddColumnBeforeInsertCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "sym symbol," +
+                    "ts timestamp," +
+                    "sym2 symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+            try (
+                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                 InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+            ) {
+
+                insertMethod.execute();
+                compile("alter table " + tableName + " add column sym3 symbol");
+                insertMethod.commit();
+            }
+
+            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 'sym3val')");
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
+                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
+                    "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n");
+        });
+    }
+
+    @Test
     public void testCreateWalTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

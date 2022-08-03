@@ -32,14 +32,12 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
-import io.questdb.std.QuietClosable;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
@@ -104,10 +102,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
             try {
                 LOG.info().$(sql).$();
                 final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-                try (
-                        AbstractOperation op = cc.getOperation();
-                        OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, waitSequence)
-                ) {
+                try (OperationFuture fut = cc.execute(waitSequence)) {
                     if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
                         throw SqlException.$(0, "update query timeout");
                     }

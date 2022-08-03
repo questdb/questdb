@@ -308,10 +308,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 try {
                     CompiledQuery cq = compiler.compile("UPDATE up SET s1 = '11', s2 = '22'", sqlExecutionContext);
                     Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-                    try (
-                            UpdateOperation op = cq.getUpdateOperation();
-                            OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-                    ) {
+                    try (OperationFuture fut = cq.execute(eventSubSequence)) {
                         writer.tick();
                         fut.await();
                     }
@@ -1052,10 +1049,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts)", sqlExecutionContext);
 
             CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 5", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(3, fut.getAffectedRowsCount());
             }
@@ -1102,10 +1096,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             try {
                 CompiledQuery cq = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
-                try (
-                        UpdateOperation op = cq.getUpdateOperation();
-                        OperationFuture fut = cq.getDispatcher().execute(op, roExecutionContext, null)
-                ) {
+                try (OperationFuture fut = cq.execute(null)) {
                     fut.await();
                     Assert.fail();
                 }
@@ -1424,10 +1415,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts)", sqlExecutionContext);
 
             CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(2, fut.getAffectedRowsCount());
             }
@@ -1945,10 +1933,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "\t1970-01-01T00:00:04.000000Z\t5\n");
 
             CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(1, fut.getAffectedRowsCount());
             }
@@ -1994,7 +1979,7 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        executeOperation(query, CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation);
+        executeOperation(query, CompiledQuery.UPDATE);
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {
@@ -2202,10 +2187,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             barrier.await(); // table is locked
             CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute( eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
                 Assert.assertEquals(0, fut.getAffectedRowsCount());
                 barrier.await(); // update is on writer async cmd queue

@@ -60,15 +60,13 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
-            AlterOperation operation = null;
             try {
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                     CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                     AlterOperation creepyAlterOperation = new AlterOperation();
                     creepyAlterOperation.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
                     cc.ofAlter(creepyAlterOperation);
-                    operation = cc.getOperation();
-                    fut = cc.getDispatcher().execute(operation, sqlExecutionContext, commandReplySequence);
+                    fut = cc.execute(commandReplySequence);
                 }
                 fut.await();
                 Assert.fail();
@@ -76,7 +74,6 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 TestUtils.assertEquals("Invalid alter table command [code=1000]", ex.getFlyweightMessage());
             } finally {
                 Misc.free(fut);
-                Misc.free(operation);
             }
         });
     }
@@ -254,8 +251,10 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 }
 
             } // Unblock table
-            int status = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null).getStatus();
-            Assert.assertEquals(QUERY_COMPLETE, status);
+            try (OperationFuture operationFuture = compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null)) {
+                int status = operationFuture.getStatus();
+                Assert.assertEquals(QUERY_COMPLETE, status);
+            }
         });
     }
 

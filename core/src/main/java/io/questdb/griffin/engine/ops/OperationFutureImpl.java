@@ -39,10 +39,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.AbstractSelfReturningObject;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.tasks.TableWriterTask;
 
@@ -63,6 +60,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     private int tableNamePositionInSql;
     private boolean closing;
     private final long busyWaitTimeout;
+    private AsyncWriterCommand asyncWriterCommand;
 
     OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
         super(pool);
@@ -118,6 +116,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             correlationId = -1;
             tableName = null;
         }
+        asyncWriterCommand = Misc.free(asyncWriterCommand);
 
         if (!closing) {
             closing = true;
@@ -134,7 +133,8 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             AsyncWriterCommand asyncWriterCommand,
             SqlExecutionContext executionContext,
             SCSequence eventSubSeq,
-            int tableNamePositionInSql
+            int tableNamePositionInSql,
+            boolean closeOnDone
     ) throws SqlException, AlterTableContextException {
         assert eventSubSeq != null : "event subscriber sequence must be provided";
         this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
@@ -143,6 +143,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
         writerEventFanOut.and(eventSubSeq);
         this.eventSubSeq = eventSubSeq;
+        this.asyncWriterCommand = closeOnDone ? asyncWriterCommand : null;
 
         try {
             // Publish new command and get published command correlation id.

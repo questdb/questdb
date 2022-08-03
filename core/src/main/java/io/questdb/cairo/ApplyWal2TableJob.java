@@ -61,6 +61,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 LOG.error().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(tableName)
                         .$(", lock_reason=").$(tableBusy.getReason()).I$();
             }
+        } catch (CairoException ex) {
+            LOG.critical().$("Failed to apply WAL data to table [table=").$(tableName)
+                    .$(", error=").$(ex.getMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
         }
     }
 

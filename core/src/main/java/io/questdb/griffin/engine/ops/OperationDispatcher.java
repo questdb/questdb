@@ -50,12 +50,14 @@ public class OperationDispatcher<T extends AbstractOperation> {
     public OperationFuture execute(
             T operation,
             SqlExecutionContext sqlExecutionContext,
-            @Nullable SCSequence eventSubSeq
+            @Nullable SCSequence eventSubSeq,
+            boolean closeOnDone
     ) throws SqlException {
         // storing execution context for UPDATE, DROP INDEX execution
         // writer thread will call `apply()` when thread is ready to do so
         // `apply()` will use context stored in the operation
         operation.withContext(sqlExecutionContext);
+        boolean isDone = false;
         try (
                 TableWriter writer = engine.getWriter(
                         sqlExecutionContext.getCairoSecurityContext(),
@@ -63,17 +65,26 @@ public class OperationDispatcher<T extends AbstractOperation> {
                         lockReason
                 )
         ) {
-            return doneFuture.of(operation.apply(writer, true));
+            long result = operation.apply(writer, true);
+            isDone = true;
+            return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
             if (eventSubSeq == null) {
                 throw busyException;
             }
-            return futurePool.pop().of(
+            OperationFutureImpl future = futurePool.pop();
+            future.of(
                     operation,
                     sqlExecutionContext,
                     eventSubSeq,
-                    operation.getTableNamePosition()
+                    operation.getTableNamePosition(),
+                    closeOnDone
             );
+            return future;
+        } finally {
+            if (closeOnDone && isDone) {
+                operation.close();
+            }
         }
     }
 }

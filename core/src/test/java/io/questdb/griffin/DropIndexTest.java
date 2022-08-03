@@ -235,8 +235,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             assertSql(tableName, expected);
             executeOperation(
                     dropIndexStatement(),
-                    CompiledQuery.ALTER,
-                    CompiledQuery::getAlterOperation
+                    CompiledQuery.ALTER
             );
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
