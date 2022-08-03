@@ -576,6 +576,47 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJitIntervalFwdCursorBwdSwitch() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
+                "x where k > '1970-01-21T20:00:00' and b = 'BB' limit -2",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testJitFullFwdCursorBwdSwitch() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "67.00476391801053\tBB\t1970-01-19T12:26:40.000000Z\n" +
+                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
+                "x where b = 'BB' limit -2",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDistinctFunctionColumn() throws Exception {
         final String expected = "v\n" +
                 "8.0\n" +
