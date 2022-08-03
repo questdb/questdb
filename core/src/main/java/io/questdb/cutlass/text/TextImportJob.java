@@ -52,10 +52,10 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
         super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
         this.textLexer = new TextLexer(messageBus.getConfiguration().getTextConfiguration());
         this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
-        this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
+        this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_IMPORT);
         this.indexer = new CsvFileIndexer(messageBus.getConfiguration());
         this.utf8Sink = new DirectCharSink(messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize());
-        this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_PARALLEL_IMPORT);
+        this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_IMPORT);
         this.tmpPath1 = new Path();
         this.tmpPath2 = new Path();
     }
@@ -73,7 +73,7 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
         this.textLexer = Misc.free(textLexer);
         this.indexer = Misc.free(indexer);
         if (fileBufSize > 0) {
-            Unsafe.free(fileBufAddr, fileBufSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
+            Unsafe.free(fileBufAddr, fileBufSize, MemoryTag.NATIVE_IMPORT);
             fileBufSize = 0;
         }
         this.mergeIndexes = Misc.free(this.mergeIndexes);

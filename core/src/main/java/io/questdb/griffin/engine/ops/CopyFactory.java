@@ -32,15 +32,19 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 
 public class CopyFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final StringValueRecord record = new StringValueRecord();
+    private final ImportIdRecord record = new ImportIdRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
 
-    public CopyFactory(String importId) {
+    public CopyFactory(long importId) {
         super(METADATA);
-        record.setValue(importId);
+        StringSink importIdSink = new StringSink();
+        Numbers.appendHex(importIdSink, importId, true);
+        record.setValue(importIdSink);
     }
 
     @Override
@@ -54,10 +58,10 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private static class StringValueRecord implements Record {
-        private String value;
+    private static class ImportIdRecord implements Record {
+        private CharSequence value;
 
-        public void setValue(String value) {
+        public void setValue(CharSequence value) {
             this.value = value;
         }
 
@@ -67,13 +71,14 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public CharSequence getStrB(int col) {
-            return getStr(col);
+        public int getStrLen(int col) {
+            return value.length();
         }
 
         @Override
-        public int getStrLen(int col) {
-            return value.length();
+        public CharSequence getStrB(int col) {
+            // the sink is immutable
+            return getStr(col);
         }
     }
 
