@@ -584,12 +584,12 @@ public class UpdateTest extends AbstractGriffinTest {
 
             assertSql("up", "ts\txint\txbool\n" +
                     "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
-                    "1970-01-01T00:00:02.000000Z\t3\tfalse\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\tfalse\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\tfalse\n");
+                    "1970-01-01T00:00:01.000000Z\t2\ttrue\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n");
 
-            executeUpdate("UPDATE up SET xbool = true WHERE xint > 2");
+            executeUpdate("UPDATE up SET xbool = false WHERE xint = 2");
 
             assertSql("up", "ts\txint\txbool\n" +
                     "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
@@ -671,7 +671,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\tfalse\t0x02\n";
+                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
 
             executeUpdate("UPDATE up SET xint=xshort");
             assertSql("up", expected);
