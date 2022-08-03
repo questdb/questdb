@@ -5591,16 +5591,33 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_timestamp(10000000000L, 100000000000L, 2) as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(cast(0L as timestamp) as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(cast(5L as timestamp) as boolean)",
+                null,
                 true,
                 true,
                 true
