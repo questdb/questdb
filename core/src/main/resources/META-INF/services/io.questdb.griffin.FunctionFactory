@@ -214,6 +214,7 @@ io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory
 
 # cast double to ...
 io.questdb.griffin.engine.functions.cast.CastDoubleToIntFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastDoubleToBooleanFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastDoubleToFloatFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastDoubleToLong256FunctionFactory
@@ -228,6 +229,7 @@ io.questdb.griffin.engine.functions.cast.CastDoubleToTimestampFunctionFactory
 
 # cast float to ...
 io.questdb.griffin.engine.functions.cast.CastFloatToIntFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastFloatToBooleanFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastFloatToDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastFloatToFloatFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastFloatToLong256FunctionFactory
