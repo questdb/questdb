@@ -55,7 +55,6 @@ import org.junit.Assert;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.nio.file.FileSystems;
 import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -1068,7 +1067,7 @@ public final class TestUtils {
     }
 
     public static String getCsvRoot() {
-        URL rootSource = CopyTest.class.getResource("/csv/test-import.csv");
+        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
         try {
             assert rootSource != null : "huh, somebody deleted from test-import.csv?";
             return new File(rootSource.toURI()).getParent();

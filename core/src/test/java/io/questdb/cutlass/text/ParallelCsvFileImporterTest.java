@@ -683,11 +683,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testBacklogTableCleanup() throws Exception {
         for (int i = 0; i < 6; i++) {
-            testStatusLogCleanup(5, i);
+            testStatusLogCleanup(i);
         }
     }
 
-    private void testStatusLogCleanup(int daysToGenerate, int daysToKeep) throws SqlException, IOException {
+    private void testStatusLogCleanup(int daysToKeep) throws SqlException, IOException {
         String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         compiler.compile("create table " + backlogTableName + " as " +
                 "(" +
@@ -702,7 +702,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 " rnd_long() rows_imported," +
                 " rnd_long() errors" +
                 " from" +
-                " long_sequence(" + daysToGenerate + ")" +
+                " long_sequence(5)" +
                 ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
         parallelImportStatusLogKeepNDays = daysToKeep;
@@ -1680,7 +1680,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
                 boolean next = super.nextCqe();
                 if (!next) {
-                    return next;
+                    return false;
                 }
 
                 stuff.clear();

@@ -301,8 +301,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.columnDelimiter = columnDelimiter;
         if (timestampFormat != null) {
             DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
-            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
-                    configuration.getTextConfiguration().getDefaultDateLocale());
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
+                    false,
+                    dateFormat,
+                    configuration.getTextConfiguration().getDefaultDateLocale()
+            );
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;

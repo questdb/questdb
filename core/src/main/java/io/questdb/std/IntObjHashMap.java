@@ -95,11 +95,6 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         return values[-index - 1];
     }
 
-    @FunctionalInterface
-    public interface IntObjConsumer<V> {
-        void accept(int key, V value);
-    }
-
     @SuppressWarnings({"unchecked"})
     private void rehash() {
         int size = size();

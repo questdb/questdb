@@ -146,7 +146,8 @@ public final class SerialCsvFileImporter implements Closeable {
                 LOG.info()
                         .$("import complete [importId=").$(importIdSink)
                         .$(", file=`").$(inputFilePath).$('`')
-                        .$("', time=").$((endMs - startMs) / 1000).$("s").I$();
+                        .$("', time=").$((endMs - startMs) / 1000).$('s')
+                        .I$();
             }
         } catch (TextException e) {
             throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage());
@@ -174,8 +175,15 @@ public final class SerialCsvFileImporter implements Closeable {
     private void setupTextLoaderFromModel() {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination(tableName, false, false,
-                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW, PartitionBy.NONE, timestampColumn, timestampFormat);
+        textLoader.configureDestination(
+                tableName,
+                false,
+                false,
+                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
+                PartitionBy.NONE,
+                timestampColumn,
+                timestampFormat
+        );
     }
 
     private long getCurrentTimeMs() {

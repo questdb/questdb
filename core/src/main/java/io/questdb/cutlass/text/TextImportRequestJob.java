@@ -121,18 +121,20 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     }
 
     void enforceLogRetention() {
-        if (logRetentionDays < 1) {
-            writer.truncate();
-            return;
-        }
-        if (writer.getPartitionCount() > 0) {
-            partitionsToRemove.clear();
-            for (int i = writer.getPartitionCount() - logRetentionDays - 1; i > -1; i--) {
-                partitionsToRemove.add(writer.getPartitionTimestamp(i));
+        if (writer != null) {
+            if (logRetentionDays < 1) {
+                writer.truncate();
+                return;
             }
+            if (writer.getPartitionCount() > 0) {
+                partitionsToRemove.clear();
+                for (int i = writer.getPartitionCount() - logRetentionDays - 1; i > -1; i--) {
+                    partitionsToRemove.add(writer.getPartitionTimestamp(i));
+                }
 
-            for (int i = 0, sz = partitionsToRemove.size(); i < sz; i++) {
-                writer.removePartition(partitionsToRemove.getQuick(i));
+                for (int i = 0, sz = partitionsToRemove.size(); i < sz; i++) {
+                    writer.removePartition(partitionsToRemove.getQuick(i));
+                }
             }
         }
     }
@@ -227,7 +229,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 writer.commit();
             } catch (Throwable th) {
                 LOG.error()
-                        .$("could not update status table [importId=").$(task.getImportId())
+                        .$("could not update status table [importId=").$hex(task.getImportId())
                         .$(", statusTableName=").$(statusTableName)
                         .$(", tableName=").$(task.getTableName())
                         .$(", fileName=").$(task.getFileName())
@@ -240,6 +242,18 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         .$(", error=`").$(th).$('`')
                         .I$();
                 writer = Misc.free(writer);
+            }
+
+            // if we closed the writer, we need to reopen it again
+            if (writer == null) {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
+                } catch (Throwable e) {
+                    LOG.error()
+                            .$("could not re-open writer [table=").$(statusTableName)
+                            .$(", error=`").$(e).$('`')
+                            .I$();
+                }
             }
         }
     }
