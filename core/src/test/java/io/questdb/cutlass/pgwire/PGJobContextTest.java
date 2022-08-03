@@ -58,7 +58,6 @@ import org.postgresql.core.BaseConnection;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
@@ -3338,74 +3337,55 @@ nodejs code:
 
     @Test
     public void testLocalCopyFrom() throws Exception {
-        try (final PGWireServer ignored = createPGServer(2);
-             final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
-            copyStatement.execute();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement copy = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
+                copy.execute();
 
-            TestUtils.runWithTextImportRequestJob(engine, () -> {
-                assertEventually(() -> {
-                            try (final PreparedStatement selectStatement = connection.prepareStatement("select * from testLocalCopyFrom");
-                                 final ResultSet rs = selectStatement.executeQuery()) {
-                                sink.clear();
-                                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                                        + "CDE,bb,b,sentence 1\n"
-                                        + "sentence 2,12\n", sink, rs);
-                            } catch (IOException | SQLException e) {
-                                throw new AssertionError(e);
-                            }
-                        }
-                );
-            });
-        }
-    }
-
-    @Test
-    public void testLocalCopyFromExtendedPrepared() throws Exception {
-        try (final PGWireServer ignored = createPGServer(2);
-             final Connection connection = getConnection(Mode.ExtendedForPrepared, true, -1);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
-
-            copyStatement.execute();
-
-            try (final PreparedStatement selectStatement = connection.prepareStatement("select * from testLocalCopyFrom");
-                 final ResultSet rs = selectStatement.executeQuery()) {
-                sink.clear();
-                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                        + "CDE,bb,b,sentence 1\n"
-                        + "sentence 2,12\n", sink, rs);
+                TestUtils.runWithTextImportRequestJob(
+                        engine,
+                        () -> assertEventually(() -> {
+                                    try (
+                                            final PreparedStatement select = connection.prepareStatement("select * from testLocalCopyFrom");
+                                            final ResultSet rs = select.executeQuery()
+                                    ) {
+                                        assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                                                + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                                                + "CDE,bb,b,sentence 1\n"
+                                                + "sentence 2,12\n", sink, rs);
+                                    } catch (IOException | SQLException e) {
+                                        throw new AssertionError(e);
+                                    }
+                                }
+                        ));
             }
-        }
+        });
     }
 
     @Test
     public void testLocalCopyFromCancellation() throws Exception {
-        try (final PGWireServer ignored = createPGServer(1);
-             final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
+                String importId;
+                try (final ResultSet rs = copyStatement.executeQuery()) {
+                    Assert.assertTrue(rs.next());
+                    importId = rs.getString("id");
+                }
 
-            String importId;
-            try (final ResultSet rs = copyStatement.executeQuery()) {
-                Assert.assertTrue(rs.next());
-                importId = rs.getString("id");
-            }
+                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
+                    // Cancel should always succeed since we don't have text import jobs running here.
+                    cancelStatement.execute();
+                }
 
-            try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
-                // Cancel should always succeed since we don't have text import jobs running here.
-                cancelStatement.execute();
+                try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
+                    incorrectCancelStatement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Active import has different id.");
+                }
+            } finally {
+                TestUtils.drainTextImportJobQueue(engine);
             }
-
-            try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
-                incorrectCancelStatement.execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "Active import has different id.");
-            }
-        } finally {
-            TestUtils.drainTextImportJobQueue(engine);
-        }
+        });
     }
 
     @Test
