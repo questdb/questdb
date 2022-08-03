@@ -34,15 +34,14 @@ import org.jetbrains.annotations.NotNull;
 
 public class FirstStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private CharSequence first;
-
+    private int valueIndex;
     public FirstStringGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        first = this.arg.getStr(record);
+        mapValue.putStr(this.valueIndex, this.arg.getStr(record));
     }
 
     @Override
@@ -52,7 +51,8 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        columnTypes.add(ColumnType.STRING);
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.SHORT);
     }
 
     @Override
@@ -61,12 +61,12 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
 
     @Override
     public CharSequence getStr(Record record) {
-        return first;
+        return record.getStr(this.valueIndex);
     }
 
     @Override
     public CharSequence getStrB(Record record) {
-        return first;
+        return record.getStrB(this.valueIndex);
     }
 
 

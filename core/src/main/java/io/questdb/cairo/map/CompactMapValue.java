@@ -111,6 +111,11 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public void putStr(int index, CharSequence value) {
+
+    }
+
+    @Override
     public void addFloat(int index, float value) {
         final long o = getValueColumnOffset(index);
         entries.putFloat(o, entries.getFloat(o) + value);
@@ -124,6 +129,11 @@ public class CompactMapValue implements MapValue {
     @Override
     public char getChar(int columnIndex) {
         return entries.getChar(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public CharSequence getStr(int index) {
+        return null;
     }
 
     @Override

@@ -33,11 +33,12 @@ public class FirstStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     public void testKeyed() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "a\tsym\n" +
-                        "0\taa\n" +
-                        "1\tcc\n" +
-                        "-1\tbb\n",
-                "select a, first(sym) sym from tab",
-                "create table tab as (select rnd_int() % 2 a, 'ABC' sym from long_sequence(10))",
+                        "0\taaab\n" +
+                        "3\tc\n" +
+                        "1\tc\n" +
+                        "2\tbab\n",
+                "select a, first(sym) from tab",
+                "create table tab as (select rnd_int() % 5 a, rnd_str('aaab', 'bab', 'c') sym from long_sequence(5))",
                 null,
                 true,
                 true,
