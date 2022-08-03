@@ -342,6 +342,11 @@ public class AbstractCairoTest {
             public boolean isIOURingEnabled() {
                 return ioURingEnabled != null ? ioURingEnabled : super.isIOURingEnabled();
             }
+
+            @Override
+            public int getSqlCopyBufferSize() {
+                return sqlCopyBufferSize;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);

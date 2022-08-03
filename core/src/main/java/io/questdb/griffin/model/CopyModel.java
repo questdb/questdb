@@ -35,7 +35,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private ExpressionNode fileName;
     private boolean header;
 
-    private boolean parallel;
     private boolean cancel;
     private CharSequence timestampFormat;
     private CharSequence timestampColumnName;
@@ -51,7 +50,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         target = null;
         fileName = null;
         header = false;
-        parallel = false;
         cancel = false;
         timestampFormat = null;
         timestampColumnName = null;
@@ -121,10 +119,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.header = header;
     }
 
-    public void setParallel(boolean parallel) {
-        this.parallel = parallel;
-    }
-
     public void setCancel(boolean cancel) {
         this.cancel = cancel;
     }
@@ -139,10 +133,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-    }
-
-    public boolean isParallel() {
-        return parallel;
     }
 
     public boolean isCancel() {

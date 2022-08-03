@@ -34,6 +34,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -50,7 +51,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
     @Before
     public void before() throws IOException {
-        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+        inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
     }
 

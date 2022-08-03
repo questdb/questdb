@@ -105,8 +105,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
