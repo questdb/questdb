@@ -60,7 +60,8 @@ public final class MemoryTag {
     public static final int NATIVE_CB5 = 32;
     public static final int MMAP_IMPORT = 33;
     public static final int NATIVE_IMPORT = 34;
-    public static final int SIZE = NATIVE_IMPORT + 1;
+    public static final int NATIVE_ROSTI = 35;
+    public static final int SIZE = NATIVE_ROSTI + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -103,5 +104,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_CB5, "NATIVE_CB5");
         tagNameMap.extendAndSet(MMAP_IMPORT, "MMAP_IMPORT");
         tagNameMap.extendAndSet(NATIVE_IMPORT, "NATIVE_IMPORT");
+        tagNameMap.extendAndSet(NATIVE_ROSTI, "NATIVE_ROSTI");
     }
 }
