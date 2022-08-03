@@ -269,10 +269,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         this.columnNames.setAll(count, "");
     }
 
-    void setTableName(CharSequence tableName) {
-        this.tableName = tableName;
-    }
-
     private void stashPossibleHeader(ObjList<DirectByteCharSequence> values, int hi) {
         for (int i = 0; i < hi; i++) {
             DirectByteCharSequence value = values.getQuick(i);

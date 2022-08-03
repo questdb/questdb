@@ -27,7 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.std.Mutable;
 
 public class TextImportRequestTask implements Mutable {
-    private String importId;
+    private long importId;
     private String tableName;
     private String fileName;
     private boolean headerFlag;
@@ -35,15 +35,17 @@ public class TextImportRequestTask implements Mutable {
     private byte delimiter;
     private String timestampFormat;
     private int partitionBy;
+    private int atomicity;
 
-    public void of(String importId,
+    public void of(long importId,
                    String tableName,
                    String fileName,
                    boolean headerFlag,
                    String timestampColumnName,
                    byte delimiter,
                    String timestampFormat,
-                   int partition_by
+                   int partitionBy,
+                   int atomicity
     ) {
         this.clear();
         this.importId = importId;
@@ -53,12 +55,13 @@ public class TextImportRequestTask implements Mutable {
         this.timestampColumnName = timestampColumnName;
         this.delimiter = delimiter;
         this.timestampFormat = timestampFormat;
-        this.partitionBy = partition_by;
+        this.partitionBy = partitionBy;
+        this.atomicity = atomicity;
     }
 
     @Override
     public void clear() {
-        this.importId = null;
+        this.importId = -1;
         this.tableName = null;
         this.fileName = null;
         this.headerFlag = false;
@@ -66,9 +69,10 @@ public class TextImportRequestTask implements Mutable {
         this.delimiter = 0;
         this.timestampFormat = null;
         this.partitionBy = -1;
+        this.atomicity = -1;
     }
 
-    public String getImportId() {
+    public long getImportId() {
         return importId;
     }
 
@@ -98,5 +102,9 @@ public class TextImportRequestTask implements Mutable {
 
     public boolean isHeaderFlag() {
         return headerFlag;
+    }
+
+    public int getAtomicity() {
+        return atomicity;
     }
 }

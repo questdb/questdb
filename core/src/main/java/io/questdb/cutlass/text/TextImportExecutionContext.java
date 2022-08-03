@@ -31,8 +31,10 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class TextImportExecutionContext {
+    public static final long INACTIVE = -1;
+
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
-    private final AtomicLong activeImportId = new AtomicLong(-1);
+    private final AtomicLong activeImportId = new AtomicLong(INACTIVE);
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final Rnd rnd;
 
@@ -45,16 +47,12 @@ public class TextImportExecutionContext {
         return circuitBreaker;
     }
 
-    public boolean isActive() {
-        return activeImportId.get() > -1;
-    }
-
-    public boolean sameAsActiveImportId(long importId) {
-        return activeImportId.get() == importId;
+    public long getActiveImportId() {
+        return activeImportId.get();
     }
 
     public void resetActiveImportId() {
-        activeImportId.set(-1);
+        activeImportId.set(INACTIVE);
     }
 
     public long assignActiveImportId() {

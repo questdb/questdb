@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.LongList;
@@ -63,8 +64,15 @@ public class TextLoaderBase implements Closeable, Mutable {
         textWriter.closeWriter();
     }
 
-    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
-        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
+    public void configureDestination(
+            CharSequence tableName,
+            boolean overwrite,
+            boolean durable,
+            int atomicity,
+            int partitionBy,
+            CharSequence timestampColumn
+    ) {
+        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampColumn);
         textLexer.setTableName(tableName);
     }
 
@@ -112,8 +120,15 @@ public class TextLoaderBase implements Closeable, Mutable {
         textLexer.parse(lo, hi, lineCountLimit, textWriter.getTextListener());
     }
 
-    public void prepareTable(CairoSecurityContext ctx, ObjList<CharSequence> names, ObjList<TypeAdapter> types, Path path, TypeManager typeManager) throws TextException {
-        textWriter.prepareTable(ctx, names, types, path, typeManager);
+    public void prepareTable(
+            CairoSecurityContext ctx,
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager,
+            TimestampAdapter timestampAdapter
+    ) throws TextException {
+        textWriter.prepareTable(ctx, names, types, path, typeManager, timestampAdapter);
     }
 
     public final void restart(boolean header) {
