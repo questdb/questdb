@@ -688,9 +688,21 @@ public class TableWriter implements Closeable {
                     commit();
                 }
 
-                addDetachedMissingColumnFiles(timestamp, partitionSize);
-                if (validateDataFiles) {
-                    attachPartitionCheckFilesMatchMetadata(ff, path, partitionSize);
+                try {
+                    // set column tops for missing columns
+                    for (int i = 0, numMissingCols = detachedAddMissingColNames.size(); i < numMissingCols; i++) {
+                        CharSequence columnName = detachedAddMissingColNames.get(i);
+                        int colIdx = metadata.getColumnIndex(columnName);
+                        colIdx = metadata.getWriterIndex(colIdx);
+
+                        long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
+                        columnVersionWriter.upsert(timestamp, colIdx, columnNameTxn, partitionSize);
+                    }
+                    if (validateDataFiles) {
+                        attachPartitionCheckFilesMatchMetadata(ff, path, partitionSize);
+                    }
+                } finally {
+                    detachedAddMissingColNames.clear();
                 }
 
                 long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
@@ -705,7 +717,8 @@ public class TableWriter implements Closeable {
                 txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, -1L);
                 txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
                 txWriter.bumpTruncateVersion();
-                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                commit();
+
                 if (appendPartitionAttached) {
                     freeColumns(true);
                     configureAppendPosition();
@@ -1692,91 +1705,17 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void touchFile(long size) {
-        touchFile(size, false);
-    }
-
-    private void touchFile(long size, boolean isIFile) {
-        long fd = ff.openAppend(other2.$());
-        try {
-            if (!ff.truncate(fd, size)) {
-                throw CairoException.instance(ff.errno()).put("Cannot touch ").put(other2);
-            }
-        } finally {
-            if (fd != -1L) {
-                ff.close(fd);
-            }
-
-            if (isIFile) {
-                try {
-                    ddlMem.smallFile(ff, other2, MemoryTag.MMAP_DEFAULT);
-                    ddlMem.jumpTo(0);
-                    ddlMem.putLong(0L);
-                } finally {
-                    ddlMem.close();
-                }
-            }
-        }
-    }
-
-    private void addDetachedMissingColumnFiles(long timestamp, long partitionSize) {
-        int limit = detachedAddMissingColNames.size();
-        if (limit > 0) {
-            try {
-                other2.of(path);
-                int other2len = other2.length();
-                // TODO is this column top correct?
-                long columnTop = partitionCeilMethod.ceil(timestamp);
-                for (int i = 0; i < limit; i++) {
-                    CharSequence columnName = detachedAddMissingColNames.get(i);
-                    int columnType = metadata.getColumnType(columnName);
-                    int typeSize = ColumnType.sizeOf(columnType);
-                    int colIdx = metadata.getColumnIndex(columnName);
-                    colIdx = metadata.getWriterIndex(colIdx);
-                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
-
-                    TableUtils.dFile(other2.trimTo(other2len), columnName, columnNameTxn);
-                    touchFile(partitionSize * typeSize);
-
-                    if (ColumnType.isVariableLength(columnType)) {
-                        TableUtils.iFile(other2.trimTo(other2len), columnName, columnNameTxn);
-                        // TODO why do I get segfault when I try to read these files afterwards
-                        touchFile((partitionSize + 1) * Long.BYTES, true);
-                    }
-
-                    if (ColumnType.isSymbol(columnType)) {
-                        MapWriter smw = getSymbolMapWriter(colIdx);
-                        MapWriter.createSymbolMapFiles(
-                                ff,
-                                ddlMem,
-                                other2.trimTo(other2len),
-                                columnName,
-                                columnNameTxn,
-                                configuration.getDefaultSymbolCapacity(),
-                                smw.isCached()
-                        );
-                        MapWriter symMapWriter = symbolMapWriters.getQuick(colIdx);
-                        if (symMapWriter != null) {
-                            symMapWriter.truncate();
-                        }
-                    }
-
-                    columnVersionWriter.upsert(timestamp, colIdx, columnNameTxn, columnTop);
-                }
-            } finally {
-                detachedAddMissingColNames.clear();
-            }
-        }
-    }
 
     private void checkDetachedMetadata(long timestamp) {
         // load/check _meta
         other2.of(detachedPath).concat(META_FILE_NAME).$();
         if (!ff.exists(other2)) {
             // Backups and older versions of detached partitions will not have _meta
+            // we attach with minimum checks
             LOG.info().$("detached _meta not found, skipping check [path=").$(other2).I$();
             return;
         }
+
         try {
             if (detachedMetaMem == null) {
                 detachedMetaMem = Vm.getMRInstance();
@@ -1789,13 +1728,14 @@ public class TableWriter implements Closeable {
                 throw CairoException.detachedMetadataMismatch("table_id");
             }
             if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
+                // designated timestamps in both tables, same index
                 throw CairoException.detachedMetadataMismatch("timestamp_index");
             }
 
-            // check column name, type and isIndexed
+            // check column name, hash, type and isIndexed
+            detachedDeleteExtraColNames.clear(); // .attachable may have extra columns we do not need
+            detachedAddMissingColNames.clear();  // .attachable may lack columns that we need to add
             boolean colsNegativeTypeMatch = false;
-            detachedDeleteExtraColNames.clear();
-            detachedAddMissingColNames.clear();
             for (int i = 0; i < columnCount; i++) {
                 int colIdx = metadata.getWriterIndex(i);
                 String columnName = metadata.getColumnName(colIdx);
@@ -1844,47 +1784,15 @@ public class TableWriter implements Closeable {
                 throw CairoException.detachedMetadataMismatch("structure_version");
             }
 
-            if (detachedDeleteExtraColNames.size() > 0) {
-                int other2len = other2.length();
-                try {
-                    // all we know is the name, possibly the extension, but not the .txn
-                    ff.walk(other2.$(), (pUtf8NameZ, type) -> {
-                        fileNameSink.clear();
-                        Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
-                        if (!(Chars.equals(fileNameSink, COLUMN_VERSION_FILE_NAME) || Chars.equals(fileNameSink, META_FILE_NAME))) {
-                            int dotIdx = fileNameSink.length() - 1;
-                            while (dotIdx > 0 && fileNameSink.charAt(dotIdx) != '.') {
-                                dotIdx--;
-                            }
-                            if (dotIdx > 0) {
-                                fileNameSink.clear(dotIdx);
-                            }
-                            if (detachedDeleteExtraColNames.contains(fileNameSink)) {
-                                removeFileAndOrLog(ff, other2.trimTo(other2len).concat(pUtf8NameZ).$());
-                            }
-                        }
-                    });
-                } finally {
-                    other2.trimTo(other2len);
-                    detachedDeleteExtraColNames.clear();
-                }
+            // load/check _cv, updating local column tops
+            // set current _cv to where the partition was
+            other2.concat(COLUMN_VERSION_FILE_NAME).$();
+            if (!ff.exists(other2)) {
+                // Backups and older versions of detached partitions will not have _cv
+                LOG.info().$("detached _cv not found, skipping check [path=").$(other2).I$();
+                return;
             }
-        } finally {
-            detachedMetaMem = Misc.free(detachedMetaMem);
-            detachedMetadata = null;
-            // remove _meta
-            removeFileAndOrLog(ff, other2.of(detachedPath).concat(META_FILE_NAME).$());
-        }
 
-        // load/check _cv, updating local column tops
-        // set current _cv to where the partition was
-        other2.parent().concat(COLUMN_VERSION_FILE_NAME).$();
-        if (!ff.exists(other2)) {
-            // Backups and older versions of detached partitions will not have _cv
-            LOG.info().$("detached _cv not found, skipping check [path=").$(other2).I$();
-            return;
-        }
-        try {
             if (detachedColumnVersionReader == null) {
                 detachedColumnVersionReader = new ColumnVersionReader();
             }
@@ -1904,10 +1812,24 @@ public class TableWriter implements Closeable {
                     );
                 }
             }
+
+            // delete extra columns from .attachable (the table does not track/need them)
+            for (int i = 0, extraColNames = detachedDeleteExtraColNames.size(); i < extraColNames; i++) {
+                CharSequence columnName = detachedDeleteExtraColNames.get(i);
+                int colIdx = detachedMetadata.getColumnIndex(columnName);
+                long columnNameTxn = detachedColumnVersionReader.getColumnNameTxn(timestamp, colIdx);
+                removeFileAndOrLog(ff, dFile(other2.parent(), columnName, columnNameTxn));
+                removeFileAndOrLog(ff, iFile(other2.parent(), columnName, columnNameTxn));
+                removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(other2.parent(), columnName, columnNameTxn));
+                removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(other2.parent(), columnName, columnNameTxn));
+            }
         } finally {
+            detachedMetaMem = Misc.free(detachedMetaMem);
+            detachedMetadata = null;
             Misc.free(detachedColumnVersionReader);
-            // remove _cv
-            removeFileAndOrLog(ff, other2);
+            removeFileAndOrLog(ff, other2.parent().concat(META_FILE_NAME).$());
+            removeFileAndOrLog(ff, other2.parent().concat(COLUMN_VERSION_FILE_NAME).$());
+            detachedDeleteExtraColNames.clear();
             other2.parent(); // to point to the attaching partition folder
         }
     }
@@ -2145,10 +2067,12 @@ public class TableWriter implements Closeable {
         int rootLen = path.length();
         for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
             try {
-                int columnType = metadata.getColumnType(columnIndex);
                 final String columnName = metadata.getColumnName(columnIndex);
+                if (detachedAddMissingColNames.contains(columnName)) {
+                    continue;
+                }
+                int columnType = metadata.getColumnType(columnIndex);
                 long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
-
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.INT:
                     case ColumnType.LONG:

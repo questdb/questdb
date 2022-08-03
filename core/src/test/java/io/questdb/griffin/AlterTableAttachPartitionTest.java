@@ -1070,13 +1070,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore("Broken test due to dud files being created with bad iFile")
     public void testAttachPartitionsDeletedColumnFromSrc() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src49", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst49", PartitionBy.DAY)) {
 
-                int partitionRowCount = 17;
                 createPopulateTable(
                         1,
                         src.timestamp("ts")
@@ -1084,42 +1082,30 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                 .col("l", ColumnType.LONG)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 128)
                                 .col("str", ColumnType.STRING),
-                        partitionRowCount,
+                        8,
                         "2022-08-01",
                         4);
-
-                createPopulateTable(
-                        1,
-                        dst.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 128)
-                                .col("str", ColumnType.STRING),
-                        partitionRowCount,
-                        "2022-08-01",
-                        2);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, src.getName(), "testing")) {
                     writer.removeColumn("s");
                     writer.removeColumn("str");
                 }
 
-                copyPartitionToAttachable(src.getName(), "2022-08-03", dst.getName(), "2022-08-03");
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 128)
+                        .col("str", ColumnType.STRING)
+                );
 
-                long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-03T00:00:00.000z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
-                    writer.attachPartition(timestamp);
-                }
-
-                Assert.assertTrue(Files.exists(path.concat("2022-08-03").concat("s.d").$()));
-                Assert.assertTrue(Files.exists(path.parent().concat("s.k").$()));
-                Assert.assertTrue(Files.exists(path.parent().concat("s.v").$()));
-                Assert.assertTrue(Files.exists(path.parent().concat("str.d").$()));
-                Assert.assertTrue(Files.exists(path.parent().concat("str.i").$()));
+                copyPartitionToAttachable(src.getName(), "2022-08-02", dst.getName(), "2022-08-02");
+                compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2022-08-02'", sqlExecutionContext);
 
                 engine.clear();
                 assertQuery(
-                        "will fail",
+                        "ts\ti\tl\ts\tstr\n" +
+                                "2022-08-02T11:59:59.625000Z\t3\t3\t\t\n" +
+                                "2022-08-02T23:59:59.500000Z\t4\t4\t\t\n",
                         dst.getName(),
                         null,
                         "ts",
