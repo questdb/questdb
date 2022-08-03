@@ -59,7 +59,7 @@ public class CastDoubleToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getDouble(rec) != 0;
+            return Math.signum(arg.getDouble(rec)) != 0;
         }
     }
 }

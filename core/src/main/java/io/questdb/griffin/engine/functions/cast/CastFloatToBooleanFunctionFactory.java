@@ -59,7 +59,7 @@ public class CastFloatToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getFloat(rec) != 0;
+            return Math.signum(arg.getFloat(rec)) != 0;
         }
     }
 }
