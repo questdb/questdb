@@ -2162,6 +2162,25 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDoubleToBoolean() throws Exception {
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(0.0 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(0.123 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+    @Test
     public void testDoubleToChar() throws Exception {
         assertQuery(
                 "a\n",
@@ -2604,6 +2623,26 @@ public class CastTest extends AbstractGriffinTest {
                         "8\n" +
                         "20\n" +
                         "93\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatToBoolean() throws Exception {
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(0.0002 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(0.0000 as boolean)",
+                null,
                 true,
                 true,
                 true
