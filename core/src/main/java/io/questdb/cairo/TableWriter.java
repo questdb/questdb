@@ -663,15 +663,15 @@ public class TableWriter implements Closeable {
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(ATTACHABLE_DIR_MARKER).slash$();
                 if (ff.exists(detachedPath)) {
-
-                    // check detached _meta and _cv
-                    checkDetachedMetadata(timestamp);
-
                     if (inTransaction()) {
                         LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
                                 .$(", partition=").$ts(timestamp).I$();
                         commit();
                     }
+
+                    // check detached _meta and _cv
+                    prepareAttachablePartitionColumns(timestamp);
+
 
                     if (ff.rename(detachedPath, path) == Files.FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
@@ -1727,7 +1727,7 @@ public class TableWriter implements Closeable {
     }
 
 
-    private void checkDetachedMetadata(long timestamp) {
+    private void prepareAttachablePartitionColumns(long timestamp) {
         // load/check _meta
         other2.of(detachedPath).concat(META_FILE_NAME).$();
         if (!ff.exists(other2)) {

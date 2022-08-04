@@ -356,20 +356,21 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     ColumnVersionWriter w = new ColumnVersionWriter(ff, path.of(root).concat("_cv").$(), 0);
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path)
             ) {
-                for (int i = 0; i < 20; i += 2) {
-                    w.upsert(i, i % 5, -1, i * 10L);
-                }
+                w.upsert(0, 3, -1, 10L);
+                w.upsert(0, 4, -1, 10L);
+                w.upsert(0, 5, -1, 10L);
+                w.upsert(0, 6, -1, 10L);
+                w.upsert(1, 0, -1, 10L);
+                w.upsert(1, 1, -1, 10L);
                 w.commit();
                 TestUtils.assertEquals(
-                        "[0,0,-1,0,2,2,-1,20,4,4,-1,40,6,1,-1,60,8,3,-1,80,10,0,-1,100,12,2,-1,120,14,4,-1,140,16,1,-1,160,18,3,-1,180]",
+                        "[0,3,-1,10,0,4,-1,10,0,5,-1,10,0,6,-1,10,1,0,-1,10,1,1,-1,10]",
                         w.getCachedList().toString()
                 );
-                w.removePartitionColumns(0, 0);
-                w.removePartitionColumns(1, 2);
-                w.removePartitionColumns(4, 4);
+                w.removePartitionColumns(0, 5);
                 w.commit();
 
-                String expected = "[2,2,-1,20,6,1,-1,60,8,3,-1,80,10,0,-1,100,12,2,-1,120,14,4,-1,140,16,1,-1,160,18,3,-1,180]";
+                String expected = "[0,5,-1,10,0,6,-1,10,1,0,-1,10,1,1,-1,10]";
                 TestUtils.assertEquals(expected, w.getCachedList().toString());
 
                 r.readSafe(configuration.getMillisecondClock(), 1);
