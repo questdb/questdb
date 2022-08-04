@@ -3062,7 +3062,7 @@ nodejs code:
                 }
                 connection.setAutoCommit(false);
                 try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
-                    for (int i = 0; i < 50_000; i++) {
+                    for (int i = 0; i < 10_000; i++) {
                         batchInsert.clearParameters();
                         batchInsert.setLong(1, 0L);
                         batchInsert.setInt(2, 1);
@@ -3084,7 +3084,7 @@ nodejs code:
 
                 StringSink sink = new StringSink();
                 String expected = "count[BIGINT]\n" +
-                        "150000\n";
+                        "30000\n";
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
                 assertResultSet(expected, sink, rs);
