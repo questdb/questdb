@@ -5442,7 +5442,7 @@ create table tab as (
     public void testRunSimpleQueryMultipleTimes() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
-                final String query = "select ? as the_answer";
+                final String query = "select 42 as the_answer";
                 final String expected = "the_answer[INTEGER]\n" +
                         "42\n";
 
