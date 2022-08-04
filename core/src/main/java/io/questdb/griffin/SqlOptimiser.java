@@ -635,10 +635,11 @@ class SqlOptimiser {
 
         if (m != null) {
             // find order by clauses
-            final QueryModel m1 = bubbleUpOrderByAndLimitFromUnion(m);
-            if (m1 != m) {
-                model.setUnionModel(m1);
-                m = m1;
+            if (m.getNestedModel() != null) {
+                final QueryModel m1 = bubbleUpOrderByAndLimitFromUnion(m.getNestedModel());
+                if (m1 != m) {
+                    m.setNestedModel(m1);
+                }
             }
 
             do {
@@ -1822,8 +1823,26 @@ class SqlOptimiser {
 
     private QueryModel moveOrderByFunctionsIntoOuterSelect(QueryModel model) {
         // at this point order by should be on the nested model of this model :)
+        QueryModel unionModel = model.getUnionModel();
+        QueryModel parent = model;
+        while (unionModel != null) {
+            parent.setUnionModel(moveOrderByFunctionsIntoOuterSelect(unionModel));
+
+            parent = unionModel;
+            unionModel = unionModel.getUnionModel();
+        }
+
+        for (int jm = 1, jmn = model.getJoinModels().size(); jm < jmn; jm++) {
+            model.getJoinModels().setQuick(jm, moveOrderByFunctionsIntoOuterSelect(model.getJoinModels().getQuick(jm)));
+        }
+
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
+            QueryModel nestedNested = nested.getNestedModel();
+            if (nestedNested != null) {
+                nested.setNestedModel(moveOrderByFunctionsIntoOuterSelect(nestedNested));
+            }
+
             final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
             final int n = orderBy.size();
             final int columnCount = model.getBottomUpColumns().size();
@@ -1832,7 +1851,7 @@ class SqlOptimiser {
                 ExpressionNode node = orderBy.getQuick(i);
                 if (node.type == FUNCTION || node.type == OPERATION) {
                     // add this function to bottom-up columns and replace this expression with index
-                    CharSequence alias = createColumnAlias(node, model);
+                    CharSequence alias = SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getAliasToColumnMap(), true);
                     model.getBottomUpColumns().add(
                             queryColumnPool.next().of(
                                     alias,
@@ -1866,19 +1885,6 @@ class SqlOptimiser {
                 }
 
                 return _model;
-            }
-            QueryModel nestedNested = nested.getNestedModel();
-            if (nestedNested != null) {
-                nested.setNestedModel(moveOrderByFunctionsIntoOuterSelect(nestedNested));
-            }
-
-            QueryModel unionModel = model.getUnionModel();
-            QueryModel parent = model;
-            while (unionModel != null) {
-                parent.setUnionModel(moveOrderByFunctionsIntoOuterSelect(unionModel));
-
-                parent = unionModel;
-                unionModel = unionModel.getUnionModel();
             }
         }
         return model;
@@ -2114,7 +2120,7 @@ class SqlOptimiser {
         QueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
-            extractCorrelatedQueriesAsJoins(rewrittenModel);
+            //extractCorrelatedQueriesAsJoins(rewrittenModel);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);

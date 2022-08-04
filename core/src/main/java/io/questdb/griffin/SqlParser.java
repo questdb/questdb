@@ -876,6 +876,15 @@ public final class SqlParser {
                 return model;
             }
 
+            if (prevModel.getNestedModel() != null) {
+                if (prevModel.getNestedModel().getOrderByPosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getOrderByPosition(), "unexpected token 'order'");
+                }
+                if (prevModel.getNestedModel().getLimitPosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getLimitPosition(), "unexpected token 'limit'");
+                }
+            }
+
             if (isUnionKeyword(tok)) {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
@@ -1283,14 +1292,15 @@ public final class SqlParser {
         // expect [order by]
 
         if (tok != null && isOrderKeyword(tok)) {
+            model.setOrderByPosition(lexer.lastTokenPosition());
             expectBy(lexer);
             do {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
 
                 ExpressionNode n = expr(lexer, model);
-                if (n == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "literal expected");
+                if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
                 tok = optTok(lexer);
@@ -1318,6 +1328,7 @@ public final class SqlParser {
 
         // expect [limit]
         if (tok != null && isLimitKeyword(tok)) {
+            model.setLimitPosition(lexer.lastTokenPosition());
             ExpressionNode lo = expr(lexer, model);
             ExpressionNode hi = null;
 
@@ -1670,6 +1681,9 @@ public final class SqlParser {
                 tok = optTok(lexer);
 
             } else {
+                if (expr.type == ExpressionNode.QUERY) {
+                    throw SqlException.$(expr.position, "query is not expected, did you mean column?");
+                }
                 col = queryColumnPool.next().of(null, expr);
             }
 
@@ -2004,8 +2018,10 @@ public final class SqlParser {
             node.type = ExpressionNode.FUNCTION;
             node.rhs.type = ExpressionNode.CONSTANT;
             // In PG x::float casts x to "double precision" type
-            if (SqlKeywords.isFloatKeyword(node.rhs.token)) {
+            if (SqlKeywords.isFloatKeyword(node.rhs.token) || SqlKeywords.isFloat8Keyword(node.rhs.token)) {
                 node.rhs.token = "double";
+            } else if (SqlKeywords.isFloat4Keyword(node.rhs.token)) {
+                node.rhs.token = "float";
             } else if (SqlKeywords.isDateKeyword(node.rhs.token)) {
                 node.token = "to_pg_date";
                 node.rhs = node.lhs;

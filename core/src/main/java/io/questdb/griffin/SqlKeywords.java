@@ -671,6 +671,34 @@ public class SqlKeywords {
                 && (tok.charAt(i)) == 't';
     }
 
+    public static boolean isFloat4Keyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++)) == 't'
+                && (tok.charAt(i)) == '4';
+    }
+
+    public static boolean isFloat8Keyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++)) == 't'
+                && (tok.charAt(i)) == '8';
+    }
+
     public static boolean isFormatKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;

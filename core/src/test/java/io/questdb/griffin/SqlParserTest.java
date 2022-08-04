@@ -65,6 +65,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPGCastToFloat4() throws SqlException {
+        assertQuery(
+                "select-virtual cast(123,float) x from (long_sequence(1))",
+                "select 123::float4 x");
+    }
+
+    @Test
+    public void testPGCastToFloat8() throws SqlException {
+        assertQuery(
+                "select-virtual cast(123,double) x from (long_sequence(1))",
+                "select 123::float8 x");
+    }
+
+    @Test
     public void testPGCastToDate() throws SqlException {
         // '2021-01-26'::date
         assertQuery(
@@ -3389,7 +3403,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidOrderBy2() throws Exception {
-        assertSyntaxError("select x, y from (tab order by x,)", 33, "literal expected");
+        assertSyntaxError("select x, y from (tab order by x,)", 33, "literal or expression expected");
     }
 
     @Test
@@ -5593,8 +5607,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRedundantSelect() throws Exception {
         assertSyntaxError(
                 "select x from select (select x from a) timestamp(x)",
-                48,
-                "found [tok='(', len=1] ',', 'from' or 'over' expected",
+                22,
+                "query is not expected, did you mean column?",
                 modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
     }
@@ -7112,7 +7126,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionKeepOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x, z] x, z from (select-choose [x, z] x, z from (select [x, z] from a) union select-choose [x, z] x, z from (select-choose [x, z] x, z from (select [x, z] from b) union all select-choose [x, z] x, z from (select [x, z] from c))) order by z)",
+                "select-choose x from (select-choose [x, z] x, z from (select-choose [x, z] x, z from (select [x, z] from a) union select-choose [x, z] x, z from (select [x, z] from b) union all select-choose [x, z] x, z from (select [x, z] from c)) order by z)",
                 "select x from (select * from a union select * from b union all select * from c order by z)",
                 modelOf("a").col("x", ColumnType.INT).col("z", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT).col("z", ColumnType.INT),
@@ -7123,7 +7137,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionKeepOrderByIndex() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c))) order by x)",
+                "select-choose x from (select-choose [x] x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c)) order by x)",
                 "select x from (select * from a union select * from b union all select * from c order by 1)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -7181,7 +7195,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionRemoveOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, z from (select-choose [x, z] x, z from (select [x, z] from a) union select-choose [x, z] x, z from (select-choose [x, z] x, z from (select [x, z] from b) union all select-choose [x, z] x, z from (select [x, z] from c)))) order by x",
+                "select-choose x from (select-choose [x] x, z from (select-choose [x, z] x, z from (select [x, z] from a) union select-choose [x, z] x, z from (select [x, z] from b) union all select-choose [x, z] x, z from (select [x, z] from c))) order by x",
                 "select x from (select * from a union select * from b union all select * from c order by z) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("z", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT).col("z", ColumnType.INT),
