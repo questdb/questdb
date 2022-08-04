@@ -3366,14 +3366,14 @@ nodejs code:
     public void testLocalCopyFrom() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (
-                    final PreparedStatement copy = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true");
+                    final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
                     final ResultSet ignore = copy.executeQuery()
             ) {
                 TestUtils.runWithTextImportRequestJob(
                         engine,
                         () -> assertEventually(() -> {
                                     try (
-                                            final PreparedStatement select = connection.prepareStatement("select * from testLocalCopyFrom");
+                                            final PreparedStatement select = connection.prepareStatement("select * from x");
                                             final ResultSet rs = select.executeQuery()
                                     ) {
                                         sink.clear();
@@ -3393,7 +3393,7 @@ nodejs code:
     @Test
     public void testLocalCopyFromCancellation() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
+            try (final PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
                 String importId;
                 try (final ResultSet rs = copyStatement.executeQuery()) {
                     Assert.assertTrue(rs.next());
@@ -3405,18 +3405,21 @@ nodejs code:
                     cancelStatement.execute();
                 }
 
-                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
-                    cancelStatement.execute();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "No active import to cancel.");
-                }
-
                 try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
                     incorrectCancelStatement.execute();
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "Active import has different id.");
+                }
+
+                // Pretend that the import was cancelled and try to cancel it one more time.
+                engine.getTextImportExecutionContext().resetActiveImportId();
+
+                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
+                    cancelStatement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "No active import to cancel.");
                 }
             } finally {
                 TestUtils.drainTextImportJobQueue(engine);
@@ -5430,6 +5433,24 @@ create table tab as (
                         "SRED,66,0.11274667140915928,1970-01-01 00:00:00.49,0.060,-10543,3669377,2015-10-22 02:53:02.381351,77,true,PEHN,null,00000000 7c 3f d6 88 3a 93 ef 24 a5 e2 bc\n";
 
                 // dump metadata
+                assertResultSet(expected, sink, rs);
+            }
+        });
+    }
+
+    @Test
+    public void testRunSimpleQueryMultipleTimes() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement statement = connection.createStatement()) {
+                final String query = "select ? as the_answer";
+                final String expected = "the_answer[INTEGER]\n" +
+                        "42\n";
+
+                ResultSet rs = statement.executeQuery(query);
+                assertResultSet(expected, sink, rs);
+
+                sink.clear();
+                rs = statement.executeQuery(query);
                 assertResultSet(expected, sink, rs);
             }
         });

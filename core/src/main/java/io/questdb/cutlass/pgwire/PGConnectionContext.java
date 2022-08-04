@@ -1176,7 +1176,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             wrapper.queryText = Chars.toString(queryText);
             // COPY 'id' CANCEL; queries shouldn't be compiled multiple times, but it's fine to compile
             // COPY 'x' FROM ...; queries multiple times since the import is executed lazily
-            wrapper.canExecuteAgain = !(queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_COPY && typesAndSelect == null));
+            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_COPY && typesAndSelect == null));
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -2505,9 +2505,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (wrapper.canExecuteAgain && compileQuery(compiler) && typesAndSelect != null) {
+        if (!wrapper.alreadyExecuted && compileQuery(compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
+        // We'll have to compile/execute the statement next time.
+        wrapper.alreadyExecuted = false;
     }
 
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
@@ -2557,7 +2559,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         public final IntList bindVariableTypes = new IntList();
         public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
-        public boolean canExecuteAgain = false;
+        // Used for statements that are executed as a part of compilation (PREPARE), such as DDLs.
+        public boolean alreadyExecuted = false;
 
         @Override
         public void clear() {
