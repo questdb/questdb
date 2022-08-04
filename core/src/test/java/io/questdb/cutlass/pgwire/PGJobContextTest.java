@@ -3378,6 +3378,13 @@ nodejs code:
                     cancelStatement.execute();
                 }
 
+                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
+                    cancelStatement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "No active import to cancel.");
+                }
+
                 try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
                     incorrectCancelStatement.execute();
                     Assert.fail();

@@ -172,6 +172,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
     private TypesAndUpdate typesAndUpdate = null;
+    private boolean typesAndSelectIsCached = true;
     private boolean typesAndUpdateIsCached = false;
     private long fd;
     private CharSequence queryText;
@@ -317,6 +318,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = true;
         clearCursorAndFactory();
         totalReceived = 0;
+        typesAndSelectIsCached = true;
         typesAndUpdateIsCached = false;
         statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
@@ -1054,10 +1056,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
-            typesAndSelectCache.put(queryText, typesAndSelect);
-            // clear selectAndTypes so that context doesn't accidentally
-            // free the factory when context finishes abnormally
-            this.typesAndSelect = null;
+            if (typesAndSelectIsCached) {
+                typesAndSelectCache.put(queryText, typesAndSelect);
+                // clear selectAndTypes so that context doesn't accidentally
+                // free the factory when context finishes abnormally
+                this.typesAndSelect = null;
+            } else {
+                this.typesAndSelect = Misc.free(this.typesAndSelect);
+            }
         }
 
         if (typesAndUpdate != null) {
@@ -1168,7 +1174,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
-            wrapper.canExecuteAgain = !(queryTag == TAG_OK || queryTag == TAG_CTAS);
+            // COPY 'id' CANCEL; queries shouldn't be compiled multiple times, but it's fine to compile
+            // COPY 'x' FROM ...; queries multiple times since the import is executed lazily
+            wrapper.canExecuteAgain = !(queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_COPY && typesAndSelect == null));
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -1966,8 +1974,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 final RecordCursorFactory factory = cq.getRecordCursorFactory();
                 // factory is null in the COPY 'id' CANCEL; case
                 if (factory != null) {
-                    // this query is cacheable, but it's fine since we execute
-                    // COPY lazily on cursor initialization
+                    // this query is non-cacheable
+                    typesAndSelectIsCached = false;
                     typesAndSelect = typesAndSelectPool.pop();
                     typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 }
