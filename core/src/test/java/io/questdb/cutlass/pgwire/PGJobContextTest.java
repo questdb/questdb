@@ -1212,8 +1212,8 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
-        // todo: we do not report errors correctly in batch mode with "simple" connection
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+        // todo: SIMPLE_TEXT is triggering unchecked type conversion bug in row copier generator
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test (id long,val int)");
                 statement.executeUpdate("create table test2(id long,val int)");
@@ -6366,10 +6366,12 @@ create table tab as (
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
         if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
             assertWithPgServer(Mode.Simple, true, runnable, -2);
+            assertWithPgServer(Mode.Simple, true, runnable, -1);
         }
 
         if((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
             assertWithPgServer(Mode.Simple, false, runnable, -2);
+            assertWithPgServer(Mode.Simple, false, runnable, -1);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {

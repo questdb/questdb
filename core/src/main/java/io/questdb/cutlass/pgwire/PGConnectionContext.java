@@ -2252,12 +2252,19 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         if (Chars.utf8Decode(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
-            compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+            try {
+                compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                // we need to continue parsing receive buffer even if we errored out
+                // this is because PG client might expect separate responses to everything it sent
+            } catch (SqlException ex) {
+                prepareError(ex.getPosition(), ex.getFlyweightMessage(), 0);
+            } catch (CairoException ex) {
+                prepareError(0, ex.getFlyweightMessage(), ex.getErrno());
+            }
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
             throw BadProtocolException.INSTANCE;
         }
-
         sendReadyForNewQuery();
     }
 
