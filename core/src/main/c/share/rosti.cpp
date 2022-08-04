@@ -103,5 +103,15 @@ Java_io_questdb_std_Rosti_clear(JNIEnv *env, jclass cl, jlong pRosti) {
     clear(reinterpret_cast<rosti_t *>(pRosti));
 }
 
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_reset0(JNIEnv *env, jclass cl, jlong pRosti, jint newCapacity) {
+    return reset(reinterpret_cast<rosti_t *>(pRosti), (int)newCapacity);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Rosti_getAllocMemory(JNIEnv *env, jclass cl, jlong pRosti) {
+    return memorySize(reinterpret_cast<rosti_t *>(pRosti));
+}
+
 }
 

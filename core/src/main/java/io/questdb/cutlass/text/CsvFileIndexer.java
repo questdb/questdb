@@ -159,7 +159,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.inputRoot = configuration.getSqlCopyInputRoot();
         this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
-        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_PARALLEL_IMPORT);
+        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
         this.fieldRollBufCur = fieldRollBufPtr;
         this.timestampField = new DirectByteCharSequence();
         this.failOnTsError = false;
@@ -390,7 +390,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     @Override
     public void close() {
         if (fieldRollBufPtr != 0) {
-            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_PARALLEL_IMPORT);
+            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
             fieldRollBufPtr = 0;
         }
 
@@ -672,7 +672,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void closeSortBuffer() {
         if (sortBufferPtr != -1) {
-            Unsafe.free(sortBufferPtr, sortBufferLength, MemoryTag.NATIVE_PARALLEL_IMPORT);
+            Unsafe.free(sortBufferPtr, sortBufferLength, MemoryTag.NATIVE_IMPORT);
             sortBufferPtr = -1;
             sortBufferLength = 0;
         }
@@ -711,17 +711,17 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long srcAddress = -1;
 
         try {
-            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_IMPORT);
 
             if (sortBufferPtr == -1) {
-                sortBufferPtr = Unsafe.malloc(maxIndexChunkSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
+                sortBufferPtr = Unsafe.malloc(maxIndexChunkSize, MemoryTag.NATIVE_IMPORT);
                 sortBufferLength = maxIndexChunkSize;
             }
 
             Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, sortBufferPtr);
         } finally {
             if (srcAddress != -1) {
-                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_IMPORT);
             }
         }
     }
