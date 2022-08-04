@@ -58,6 +58,122 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAnalyticFunctionWithPartitionAndOrderByNonSymbol() throws Exception {
+        assertQuery("row_number\tprice\tts\n" +
+                        "0\t42\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t42\t1970-01-02T03:46:40.000000Z\n" +
+                        "2\t42\t1970-01-03T07:33:20.000000Z\n" +
+                        "3\t42\t1970-01-04T11:20:00.000000Z\n" +
+                        "4\t42\t1970-01-05T15:06:40.000000Z\n" +
+                        "5\t42\t1970-01-06T18:53:20.000000Z\n" +
+                        "6\t42\t1970-01-07T22:40:00.000000Z\n" +
+                        "7\t42\t1970-01-09T02:26:40.000000Z\n" +
+                        "8\t42\t1970-01-10T06:13:20.000000Z\n" +
+                        "9\t42\t1970-01-11T10:00:00.000000Z\n",
+                "select row_number() over (partition by price order by ts), price, ts from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " 42 price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testAnalyticFunctionWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
+        assertQuery("row_number\n" +
+                        "2\n" +
+                        "5\n" +
+                        "1\n" +
+                        "0\n" +
+                        "4\n" +
+                        "0\n" +
+                        "3\n" +
+                        "2\n" +
+                        "1\n" +
+                        "0\n",
+                "select row_number() over (partition by symbol order by symbol) from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
+        assertQuery("price\tsymbol\tts\trow_number\n" +
+                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t2\n" +
+                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t5\n" +
+                        "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t1\n" +
+                        "0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\t0\n" +
+                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t4\n" +
+                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t0\n" +
+                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t3\n" +
+                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t2\n" +
+                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t1\n" +
+                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t0\n",
+                "select *, row_number() over (partition by symbol order by symbol) from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
+        assertQuery("row_number\tprice\tsymbol\tts\n" +
+                        "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
+                        "5\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
+                        "1\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
+                        "0\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
+                        "4\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "0\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
+                        "3\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "2\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
+                        "1\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
+                        "0\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
+                "select row_number() over (partition by symbol order by symbol), * from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -210,20 +326,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testStrippingRowId() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x (a int)", sqlExecutionContext);
-            RecordCursorFactory factory  = compiler.compile("select * from '*!*x'", sqlExecutionContext).getRecordCursorFactory();
-            Assert.assertNotNull(factory);
-            try {
-                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
-            } finally {
-                Misc.free(factory);
-            }
-        });
-    }
-
-    @Test
     public void testBindVariableInSelect3() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -324,6 +426,52 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
+    }
+
+    @Test
+    public void testCg() throws Exception {
+        assertQuery(
+                "title\tcurrent\told\tdifference\tdifference_percentage\tcolors\n" +
+                        "Revenue\tNaN\tNaN\tNaN\tNaN\trag\n",
+                "SELECT\n" +
+                        "  'Revenue' as title,\n" +
+                        "  current_orders as current,\n" +
+                        "  old_orders as old,\n" +
+                        "  current_orders - old_orders as difference,\n" +
+                        "  ((current_orders - old_orders) / current_orders) * 100.0 difference_percentage,\n" +
+                        "  'rag' as colors\n" +
+                        "from\n" +
+                        "(\n" +
+                        "    SELECT\n" +
+                        "      cast(max('orders_1'.revenue) as float) as current_orders,\n" +
+                        "      cast(max('orders_2'.revenue) as float) as old_orders\n" +
+                        "    from\n" +
+                        "      (\n" +
+                        "        SELECT\n" +
+                        "          timestamp as time,\n" +
+                        "          sum(total_revenue) as revenue\n" +
+                        "        from\n" +
+                        "          'mdc_data'\n" +
+                        "        WHERE\n" +
+                        "          timestamp > timestamp_floor('d', now()) SAMPLE BY 10s\n" +
+                        "      ) as orders_1,\n" +
+                        "      (\n" +
+                        "        SELECT\n" +
+                        "          timestamp as time,\n" +
+                        "          sum(total_revenue) as revenue\n" +
+                        "        from\n" +
+                        "          'mdc_data'\n" +
+                        "        WHERE\n" +
+                        "          timestamp < dateadd('d', -1, now())\n" +
+                        "          and timestamp > timestamp_floor('d', dateadd('d', -1, now())) SAMPLE BY 10s\n" +
+                        "      ) as orders_2\n" +
+                        "  );\n",
+                "create table mdc_data as (select rnd_double() total_revenue, timestamp_sequence(dateadd('d', -1, now()),2) timestamp from long_sequence(10000)) timestamp(timestamp) partition by day",
+                null,
+                false,
+                false,
+                true
+        );
     }
 
     @Test
@@ -570,47 +718,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by DAY",
                 null,
                 false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testJitIntervalFwdCursorBwdSwitch() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
-                "x where k > '1970-01-21T20:00:00' and b = 'BB' limit -2",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol('AA','BB','CC') b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testJitFullFwdCursorBwdSwitch() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "67.00476391801053\tBB\t1970-01-19T12:26:40.000000Z\n" +
-                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
-                "x where b = 'BB' limit -2",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol('AA','BB','CC') b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
                 true,
                 true
         );
@@ -878,52 +985,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testCg() throws Exception {
-        assertQuery(
-                "title\tcurrent\told\tdifference\tdifference_percentage\tcolors\n" +
-                        "Revenue\tNaN\tNaN\tNaN\tNaN\trag\n",
-                "SELECT\n" +
-                        "  'Revenue' as title,\n" +
-                        "  current_orders as current,\n" +
-                        "  old_orders as old,\n" +
-                        "  current_orders - old_orders as difference,\n" +
-                        "  ((current_orders - old_orders) / current_orders) * 100.0 difference_percentage,\n" +
-                        "  'rag' as colors\n" +
-                        "from\n" +
-                        "(\n" +
-                        "    SELECT\n" +
-                        "      cast(max('orders_1'.revenue) as float) as current_orders,\n" +
-                        "      cast(max('orders_2'.revenue) as float) as old_orders\n" +
-                        "    from\n" +
-                        "      (\n" +
-                        "        SELECT\n" +
-                        "          timestamp as time,\n" +
-                        "          sum(total_revenue) as revenue\n" +
-                        "        from\n" +
-                        "          'mdc_data'\n" +
-                        "        WHERE\n" +
-                        "          timestamp > timestamp_floor('d', now()) SAMPLE BY 10s\n" +
-                        "      ) as orders_1,\n" +
-                        "      (\n" +
-                        "        SELECT\n" +
-                        "          timestamp as time,\n" +
-                        "          sum(total_revenue) as revenue\n" +
-                        "        from\n" +
-                        "          'mdc_data'\n" +
-                        "        WHERE\n" +
-                        "          timestamp < dateadd('d', -1, now())\n" +
-                        "          and timestamp > timestamp_floor('d', dateadd('d', -1, now())) SAMPLE BY 10s\n" +
-                        "      ) as orders_2\n" +
-                        "  );\n",
-                "create table mdc_data as (select rnd_double() total_revenue, timestamp_sequence(dateadd('d', -1, now()),2) timestamp from long_sequence(10000)) timestamp(timestamp) partition by day",
-                null,
-                false,
-                false,
                 true
         );
     }
@@ -1587,59 +1648,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFilterTimestamps() throws Exception {
-        // ts
-        // 2022-03-22 10:00:00.0
-        // 2022-03-23 10:00:00.0
-        // 2022-03-24 10:00:00.0
-        // 2022-03-25 10:00:00.0
-        // 2022-03-26 10:00:00.0
-        // 2022-03-27 10:00:00.0
-        // 2022-03-28 10:00:00.0
-        // 2022-03-29 10:00:00.0
-        // 2022-03-30 10:00:00.0
-        // 2022-03-31 10:00:00.0
-        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
-        assertQuery(
-                "min\tmax\n" +
-                        "\t\n",
-                "SELECT min(ts), max(ts)\n" +
-                        "FROM tab\n" +
-                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())",
-                "CREATE TABLE tab AS (\n" +
-                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
-                        "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                null,
-                null,
-                false,
-                false,
-                true
-        );
-
-        compiler.compile("drop table tab", sqlExecutionContext);
-
-        assertQuery(
-                "min\tmax\n" +
-                        "\t\n",
-                "SELECT min(ts), max(ts)\n" +
-                        " FROM tab\n" +
-                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())",
-                "CREATE TABLE tab AS (\n" +
-                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
-                        "    FROM long_sequence(10)\n" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                null,
-                null,
-                null,
-                false,
-                false,
-                true
-        );
-    }
-
-    @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery(null,
@@ -1796,6 +1804,59 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by DAY",
                 24,
                 "supported column types are STRING and SYMBOL, found: INT");
+    }
+
+    @Test
+    public void testFilterTimestamps() throws Exception {
+        // ts
+        // 2022-03-22 10:00:00.0
+        // 2022-03-23 10:00:00.0
+        // 2022-03-24 10:00:00.0
+        // 2022-03-25 10:00:00.0
+        // 2022-03-26 10:00:00.0
+        // 2022-03-27 10:00:00.0
+        // 2022-03-28 10:00:00.0
+        // 2022-03-29 10:00:00.0
+        // 2022-03-30 10:00:00.0
+        // 2022-03-31 10:00:00.0
+        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
+        assertQuery(
+                "min\tmax\n" +
+                        "\t\n",
+                "SELECT min(ts), max(ts)\n" +
+                        "FROM tab\n" +
+                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())",
+                "CREATE TABLE tab AS (\n" +
+                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                        "    FROM long_sequence(10)\n" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                null,
+                null,
+                false,
+                false,
+                true
+        );
+
+        compiler.compile("drop table tab", sqlExecutionContext);
+
+        assertQuery(
+                "min\tmax\n" +
+                        "\t\n",
+                "SELECT min(ts), max(ts)\n" +
+                        " FROM tab\n" +
+                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())",
+                "CREATE TABLE tab AS (\n" +
+                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                        "    FROM long_sequence(10)\n" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                null,
+                null,
+                false,
+                false,
+                true
+        );
     }
 
     @Test
@@ -4902,8 +4963,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    string string, " +
                         "    symbol symbol, " +
                         "    ts timestamp" +
-                        ") timestamp(ts)",
-                "ts");
+                        ") timestamp(ts)"
+        );
     }
 
     @Test
@@ -4919,8 +4980,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    string string, " +
                         "    symbol symbol, " +
                         "    ts timestamp" +
-                        ") timestamp(ts) partition by DAY",
-                "ts");
+                        ") timestamp(ts) partition by DAY"
+        );
     }
 
     @Test
@@ -4936,8 +4997,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    string string, " +
                         "    symbol symbol index, " +
                         "    ts timestamp" +
-                        ") timestamp(ts)",
-                "ts");
+                        ") timestamp(ts)"
+        );
     }
 
     @Test
@@ -4953,8 +5014,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    string string, " +
                         "    symbol symbol index, " +
                         "    ts timestamp" +
-                        ") timestamp(ts) partition by DAY",
-                "ts");
+                        ") timestamp(ts) partition by DAY"
+        );
     }
 
     @Test
@@ -7000,6 +7061,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrippingRowId() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (a int)", sqlExecutionContext);
+            RecordCursorFactory factory = compiler.compile("select * from '*!*x'", sqlExecutionContext).getRecordCursorFactory();
+            Assert.assertNotNull(factory);
+            try {
+                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
+            } finally {
+                Misc.free(factory);
+            }
+        });
+    }
+
+    @Test
     public void testSumDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -7418,122 +7493,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
-        assertQuery("price\tsymbol\tts\trow_number\n" +
-                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t2\n" +
-                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t5\n" +
-                        "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t1\n" +
-                        "0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\t0\n" +
-                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t4\n" +
-                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t0\n" +
-                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t3\n" +
-                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t2\n" +
-                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t1\n" +
-                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t0\n",
-                "select *, row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery("row_number\tprice\tsymbol\tts\n" +
-                        "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
-                        "5\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
-                        "0\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
-                        "4\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "0\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
-                        "3\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "2\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
-                        "1\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
-                        "0\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
-                "select row_number() over (partition by symbol order by symbol), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery("row_number\n" +
-                        "2\n" +
-                        "5\n" +
-                        "1\n" +
-                        "0\n" +
-                        "4\n" +
-                        "0\n" +
-                        "3\n" +
-                        "2\n" +
-                        "1\n" +
-                        "0\n",
-                "select row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery("row_number\tprice\tts\n" +
-                        "0\t42\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t42\t1970-01-02T03:46:40.000000Z\n" +
-                        "2\t42\t1970-01-03T07:33:20.000000Z\n" +
-                        "3\t42\t1970-01-04T11:20:00.000000Z\n" +
-                        "4\t42\t1970-01-05T15:06:40.000000Z\n" +
-                        "5\t42\t1970-01-06T18:53:20.000000Z\n" +
-                        "6\t42\t1970-01-07T22:40:00.000000Z\n" +
-                        "7\t42\t1970-01-09T02:26:40.000000Z\n" +
-                        "8\t42\t1970-01-10T06:13:20.000000Z\n" +
-                        "9\t42\t1970-01-11T10:00:00.000000Z\n",
-                "select row_number() over (partition by price order by ts), price, ts from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " 42 price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
     private void createGeoHashTable(int chars) throws SqlException {
         compiler.compile(
                 String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
@@ -7605,8 +7564,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         executeInsert(ddl);
     }
 
-    private void expectSqlResult(CharSequence expected, CharSequence query, CharSequence ts) throws SqlException {
-        printSqlResult(expected, query, ts,
+    private void expectSqlResult(CharSequence expected, CharSequence query) throws SqlException {
+        printSqlResult(expected, query, "ts",
                 null,
                 null,
                 true,
@@ -8051,7 +8010,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         });
     }
 
-    private void testLatestBySupportedColumnTypes(CharSequence ddl, CharSequence ts) throws Exception {
+    private void testLatestBySupportedColumnTypes(CharSequence ddl) throws Exception {
         assertMemoryLeak(() -> {
             // supported: [BOOLEAN, CHAR, INT, LONG, LONG256, STRING, SYMBOL]
             compiler.compile(ddl, sqlExecutionContext);
@@ -8070,21 +8029,21 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by boolean", ts);
+                    "tab latest on ts partition by boolean");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by short", "ts");
+                    "tab latest on ts partition by short");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by int", ts);
+                    "tab latest on ts partition by int");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8092,7 +8051,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by long", ts);
+                    "tab latest on ts partition by long");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8100,7 +8059,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by long256", ts);
+                    "tab latest on ts partition by long256");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8110,7 +8069,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by char", ts);
+                    "tab latest on ts partition by char");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -8118,14 +8077,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by string", ts);
+                    "tab latest on ts partition by string");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t3614738589890112276\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest on ts partition by symbol", ts);
+                    "tab latest on ts partition by symbol");
         });
     }
 }
