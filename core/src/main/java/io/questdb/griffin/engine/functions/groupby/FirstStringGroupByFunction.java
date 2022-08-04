@@ -32,27 +32,41 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.*;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.ArrayList;
+
 public class FirstStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
+    private final ArrayList<CharSequence> stringValues;
+
     public FirstStringGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        stringValues = new ArrayList<>(32);
+        stringValues.add("N/A");
+        // we initialize with one placeholder value
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putStr(this.valueIndex, this.arg.getStr(record));
+        int index = stringValues.size();
+        CharSequence cs = this.arg.getStr(record);
+        // per default, int inside the map will be zero. we know zero points to the placeholder, indicating that
+        // this is a new group key, and we need to overwrite it
+        if(mapValue.getInt(this.valueIndex) == 0) {
+            mapValue.putInt(this.valueIndex, index);
+            // to string needed to create a copy, otherwise we will end up with all the same values
+            stringValues.add(cs.toString());
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        // empty
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
+        columnTypes.add(ColumnType.INT); // pointer to string
     }
 
     @Override
@@ -61,12 +75,13 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
 
     @Override
     public CharSequence getStr(Record record) {
-        return record.getStr(this.valueIndex);
+        CharSequence val = this.stringValues.get(record.getInt(this.valueIndex));
+        return val;
     }
 
     @Override
     public CharSequence getStrB(Record record) {
-        return record.getStrB(this.valueIndex);
+        return getStr(record);
     }
 
 

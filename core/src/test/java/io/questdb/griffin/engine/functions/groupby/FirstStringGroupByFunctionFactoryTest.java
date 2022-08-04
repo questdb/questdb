@@ -32,7 +32,7 @@ public class FirstStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testKeyed() throws Exception {
         assertMemoryLeak(() -> assertQuery(
-                "a\tsym\n" +
+                "a\tfirst\n" +
                         "0\taaab\n" +
                         "3\tc\n" +
                         "1\tc\n" +

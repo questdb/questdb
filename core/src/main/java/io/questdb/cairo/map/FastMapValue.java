@@ -73,11 +73,6 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public CharSequence getStr(int index) {
-        return null;
-    }
-
-    @Override
     public int getInt(int index) {
         return Unsafe.getUnsafe().getInt(address0(index));
     }
@@ -185,11 +180,6 @@ final class FastMapValue implements MapValue {
     public void addDouble(int index, double value) {
         final long p = address0(index);
         Unsafe.getUnsafe().putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
-    }
-
-    @Override
-    public void putStr(int index, CharSequence value) {
-
     }
 
     @Override

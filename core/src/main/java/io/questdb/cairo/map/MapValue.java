@@ -43,8 +43,6 @@ public interface MapValue extends Record {
 
     char getChar(int index);
 
-    CharSequence getStr(int index);
-
     int getInt(int index);
 
     long getLong(int index);
@@ -66,8 +64,6 @@ public interface MapValue extends Record {
     void putDouble(int index, double value);
 
     void addDouble(int index, double value);
-
-    void putStr(int index, CharSequence value);
 
     void putFloat(int index, float value);
 

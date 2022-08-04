@@ -78,11 +78,6 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public CharSequence getStr(int index) {
-        return null;
-    }
-
-    @Override
     public int getInt(int index) {
         return (int) values[4 * index];
     }
@@ -136,11 +131,6 @@ public class SimpleMapValue implements MapValue {
     public void addDouble(int index, double value) {
         final double d = Double.longBitsToDouble(values[4 * index]);
         values[4 * index] = Double.doubleToLongBits(value + d);
-    }
-
-    @Override
-    public void putStr(int index, CharSequence value) {
-
     }
 
     @Override
