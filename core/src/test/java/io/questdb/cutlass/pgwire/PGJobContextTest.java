@@ -1696,6 +1696,33 @@ public class PGJobContextTest extends BasePGTest {
                             "10\t1970-01-01T00:00:00.000009Z\n" +
                             "11\t1970-01-01T00:00:00.000010Z\n"
             );
+
+            // Drop the table and create it once again with the same contents to verify
+            // that the named statement gets executed.
+            try (PreparedStatement pstmt = connection.prepareStatement("drop table t")) {
+                pstmt.execute();
+            }
+            try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                    "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
+                pstmt.execute();
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "t",
+                    sink,
+                    "a\tb\n" +
+                            "2\t1970-01-01T00:00:00.000001Z\n" +
+                            "3\t1970-01-01T00:00:00.000002Z\n" +
+                            "4\t1970-01-01T00:00:00.000003Z\n" +
+                            "5\t1970-01-01T00:00:00.000004Z\n" +
+                            "6\t1970-01-01T00:00:00.000005Z\n" +
+                            "7\t1970-01-01T00:00:00.000006Z\n" +
+                            "8\t1970-01-01T00:00:00.000007Z\n" +
+                            "9\t1970-01-01T00:00:00.000008Z\n" +
+                            "10\t1970-01-01T00:00:00.000009Z\n" +
+                            "11\t1970-01-01T00:00:00.000010Z\n"
+            );
         });
     }
 
