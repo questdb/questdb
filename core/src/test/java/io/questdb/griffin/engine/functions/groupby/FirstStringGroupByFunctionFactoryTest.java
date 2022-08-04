@@ -50,5 +50,32 @@ public class FirstStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 true
         ));
+        assertMemoryLeak(() -> assertQuery(
+                "a\tfirst\n",
+                "select a, first(sym) from tab2",
+                "create table tab2 as (select rnd_int() % 5 a, rnd_str('aaab', 'bab', 'c') sym from long_sequence(0))",
+                null,
+                true,
+                true,
+                true
+        ));
+        assertMemoryLeak(() -> assertQuery(
+                "first\n\n",
+                "select first(sym) from tab3",
+                "create table tab3 as (select rnd_int() % 5 a, rnd_str('aaab', 'bab', 'c') sym from long_sequence(0))",
+                null,
+                false,
+                true,
+                true
+        ));
+        assertMemoryLeak(() -> assertQuery(
+                "first\nc\n",
+                "select first(sym) from tab4",
+                "create table tab4 as (select rnd_int() % 5 a, rnd_str('aaab', 'bab', 'c') sym from long_sequence(10))",
+                null,
+                false,
+                true,
+                true
+        ));
     }
 }

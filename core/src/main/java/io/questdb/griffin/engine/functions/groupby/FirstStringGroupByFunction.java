@@ -33,30 +33,23 @@ import io.questdb.griffin.engine.functions.*;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.List;
 
 public class FirstStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
-    private final ArrayList<CharSequence> stringValues;
+    protected final Function arg;
+    protected int valueIndex;
+    protected final List<CharSequence> stringValues;
 
     public FirstStringGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         stringValues = new ArrayList<>(32);
-        stringValues.add("N/A");
-        // we initialize with one placeholder value
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         int index = stringValues.size();
-        CharSequence cs = this.arg.getStr(record);
-        // per default, int inside the map will be zero. we know zero points to the placeholder, indicating that
-        // this is a new group key, and we need to overwrite it
-        if(mapValue.getInt(this.valueIndex) == 0) {
-            mapValue.putInt(this.valueIndex, index);
-            // to string needed to create a copy, otherwise we will end up with all the same values
-            stringValues.add(cs.toString());
-        }
+        mapValue.putInt(this.valueIndex, index);
+        stringValues.add(this.arg.getStr(record).toString());
     }
 
     @Override
@@ -71,11 +64,16 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
 
     @Override
     public void setNull(MapValue mapValue) {
+        mapValue.putInt(this.valueIndex, -1);
     }
 
     @Override
     public CharSequence getStr(Record record) {
-        return this.stringValues.get(record.getInt(this.valueIndex));
+        int ix = record.getInt(this.valueIndex);
+        if(ix == -1) {
+            return null;
+        }
+        return this.stringValues.get(ix);
     }
 
     @Override

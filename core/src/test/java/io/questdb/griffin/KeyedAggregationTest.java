@@ -1082,17 +1082,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFirstLastAggregationsNotSupported() {
+    public void testFirstLastAggregationsNotSupported() throws Exception {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.STRING, ":STRING"),};
 
-        try {
-            testAggregations(aggregateFunctions, aggregateColTypes);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
-        }
+        testAggregations(aggregateFunctions, aggregateColTypes);
+
     }
 
     @Test
