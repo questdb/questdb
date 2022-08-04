@@ -25,11 +25,13 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -50,6 +52,11 @@ public class PGSecurityTest extends BasePGTest {
     };
     @ClassRule
     public static TemporaryFolder backup = new TemporaryFolder();
+
+    @BeforeClass
+    public static void init() {
+        inputRoot = TestUtils.getCsvRoot();
+    }
 
     @Test
     public void testDisallowAddNewColumn() throws Exception {
@@ -85,6 +92,13 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
             assertQueryDisallowed("drop table src");
+        });
+    }
+
+    @Test
+    public void testDisallowCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true");
         });
     }
 

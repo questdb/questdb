@@ -57,6 +57,7 @@ public class TextImportTask {
     public static final byte PHASE_ATTACH_PARTITIONS = 8;
     public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
     public static final byte PHASE_CLEANUP = 10;
+
     public static final byte STATUS_STARTED = 0;
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_FAILED = 2;
@@ -104,7 +105,7 @@ public class TextImportTask {
         }
     }
 
-    public PhaseIndexing getBuildPartitionIndexStage() {
+    public PhaseIndexing getBuildPartitionIndexPhase() {
         return phaseIndexing;
     }
 
@@ -116,7 +117,7 @@ public class TextImportTask {
         this.chunkIndex = chunkIndex;
     }
 
-    public PhaseBoundaryCheck getCountQuotesStage() {
+    public PhaseBoundaryCheck getCountQuotesPhase() {
         return phaseBoundaryCheck;
     }
 
@@ -124,7 +125,7 @@ public class TextImportTask {
         return errorMessage;
     }
 
-    public PhasePartitionImport getImportPartitionDataStage() {
+    public PhasePartitionImport getImportPartitionDataPhase() {
         return phasePartitionImport;
     }
 
@@ -277,7 +278,7 @@ public class TextImportTask {
         } catch (TextImportException e) {
             this.status = STATUS_CANCELLED;
             this.errorMessage = e.getMessage();
-            LOG.error().$("Import cancelled in ").$(getPhaseName(e.getPhase())).$(" phase.").$();
+            LOG.error().$("Import cancelled [phase=").$(getPhaseName(e.getPhase())).I$();
             return false;
         } catch (Throwable t) {
             LOG.error()
@@ -509,7 +510,7 @@ public class TextImportTask {
                             MemoryCMARW mem = Vm.getSmallCMARWInstance(
                                     ff,
                                     path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
-                                    MemoryTag.MMAP_PARALLEL_IMPORT,
+                                    MemoryTag.MMAP_IMPORT,
                                     cfg.getWriterFileOpenOpts()
                             )
                     ) {
@@ -586,8 +587,8 @@ public class TextImportTask {
                 remapTableMemorySize = ff.length(remapFd);
 
                 if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
-                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
-                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_IMPORT);
+                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_IMPORT);
                     long columnMemSize = partitionSize * Integer.BYTES;
                     long remapMemSize = (long) symbolCount * Integer.BYTES;
                     ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
@@ -600,10 +601,10 @@ public class TextImportTask {
                     ff.close(remapFd);
                 }
                 if (columnMemory > 0) {
-                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_IMPORT);
                 }
                 if (remapTableMemory > 0) {
-                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_IMPORT);
                 }
             }
         }
@@ -1230,7 +1231,7 @@ public class TextImportTask {
                     partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
 
                     fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
-                    mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_IMPORT);
 
                     Vect.mergeLongIndexesAsc(unmergedIndexes.getAddress(), (int) unmergedIndexes.size() / 2, mergeIndexAddr);
                     // release chunk memory because it's been copied to merge area
@@ -1264,7 +1265,7 @@ public class TextImportTask {
                 if (fd > -1) {
                     ff.close(fd);
                 }
-                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);
                 unmap(ff, unmergedIndexes);
             }
         }
@@ -1366,13 +1367,13 @@ public class TextImportTask {
                                 if (size < 1) {
                                     throw TextException.$("index chunk is empty [path='").put(partitionPath).put(']');
                                 }
-                                address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+                                address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_IMPORT);
                                 mergeIndexes.add(address);
                                 mergeIndexes.add(size / CsvFileIndexer.INDEX_ENTRY_SIZE);
                                 mergedIndexSize += size;
                             } catch (Throwable t) {
                                 if (address != -1) { //release mem if it can't be added to mergeIndexes
-                                    ff.munmap(address, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+                                    ff.munmap(address, size, MemoryTag.MMAP_IMPORT);
                                 }
                                 throw t;
                             } finally {
@@ -1397,7 +1398,7 @@ public class TextImportTask {
             for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
                 final long addr = mergeIndexes.get(2 * i);
                 final long size = mergeIndexes.get(2 * i + 1) * CsvFileIndexer.INDEX_ENTRY_SIZE;
-                ff.munmap(addr, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+                ff.munmap(addr, size, MemoryTag.MMAP_IMPORT);
             }
             mergeIndexes.clear();
         }
@@ -1416,21 +1417,21 @@ public class TextImportTask {
     }
 
     static {
-        PHASE_NAME_MAP.put(PHASE_SETUP, "SETUP");
-        PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "BOUNDARY_CHECK");
-        PHASE_NAME_MAP.put(PHASE_INDEXING, "INDEXING");
-        PHASE_NAME_MAP.put(PHASE_PARTITION_IMPORT, "PARTITION_IMPORT");
-        PHASE_NAME_MAP.put(PHASE_SYMBOL_TABLE_MERGE, "SYMBOL_TABLE_MERGE");
-        PHASE_NAME_MAP.put(PHASE_UPDATE_SYMBOL_KEYS, "UPDATE_SYMBOL_KEYS");
-        PHASE_NAME_MAP.put(PHASE_BUILD_SYMBOL_INDEX, "BUILD_SYMBOL_INDEX");
-        PHASE_NAME_MAP.put(PHASE_MOVE_PARTITIONS, "MOVE_PARTITIONS");
-        PHASE_NAME_MAP.put(PHASE_ATTACH_PARTITIONS, "ATTACH_PARTITIONS");
-        PHASE_NAME_MAP.put(PHASE_ANALYZE_FILE_STRUCTURE, "ANALYZE_FILE_STRUCTURE");
-        PHASE_NAME_MAP.put(PHASE_CLEANUP, "CLEANUP");
+        PHASE_NAME_MAP.put(PHASE_SETUP, "setup");
+        PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "boundary_check");
+        PHASE_NAME_MAP.put(PHASE_INDEXING, "indexing");
+        PHASE_NAME_MAP.put(PHASE_PARTITION_IMPORT, "partition_import");
+        PHASE_NAME_MAP.put(PHASE_SYMBOL_TABLE_MERGE, "symbol_table_merge");
+        PHASE_NAME_MAP.put(PHASE_UPDATE_SYMBOL_KEYS, "update_symbol_keys");
+        PHASE_NAME_MAP.put(PHASE_BUILD_SYMBOL_INDEX, "build_symbol_index");
+        PHASE_NAME_MAP.put(PHASE_MOVE_PARTITIONS, "move_partitions");
+        PHASE_NAME_MAP.put(PHASE_ATTACH_PARTITIONS, "attach_partitions");
+        PHASE_NAME_MAP.put(PHASE_ANALYZE_FILE_STRUCTURE, "analyze_file_structure");
+        PHASE_NAME_MAP.put(PHASE_CLEANUP, "cleanup");
 
-        STATUS_NAME_MAP.put(STATUS_STARTED, "STARTED");
-        STATUS_NAME_MAP.put(STATUS_FINISHED, "FINISHED");
-        STATUS_NAME_MAP.put(STATUS_FAILED, "FAILED");
-        STATUS_NAME_MAP.put(STATUS_CANCELLED, "CANCELLED");
+        STATUS_NAME_MAP.put(STATUS_STARTED, "started");
+        STATUS_NAME_MAP.put(STATUS_FINISHED, "finished");
+        STATUS_NAME_MAP.put(STATUS_FAILED, "failed");
+        STATUS_NAME_MAP.put(STATUS_CANCELLED, "cancelled");
     }
 }
