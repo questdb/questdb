@@ -445,10 +445,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         int cpuSpare = 0;
-        if (cpuAvailable > 8) {
-            cpuSpare = 1;
-        } else if (cpuAvailable > 16) {
+        if (cpuAvailable > 16) {
             cpuSpare = 2;
+        } else if (cpuAvailable > 8) {
+            cpuSpare = 1;
         }
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
