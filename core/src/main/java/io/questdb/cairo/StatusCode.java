@@ -27,7 +27,6 @@ package io.questdb.cairo;
 public enum StatusCode {
     OK,
     TABLE_NOT_PARTITIONED,
-    PARTITION_EMPTY,
     PARTITION_IS_ACTIVE,
     PARTITION_ALREADY_ATTACHED,
     PARTITION_FOLDER_CANNOT_RENAME,

@@ -749,14 +749,6 @@ public class TableWriter implements Closeable {
             return StatusCode.TABLE_NOT_PARTITIONED;
         }
 
-        // check timestamp
-        long minTimestamp = txWriter.getMinTimestamp();
-        long maxTimestamp = txWriter.getMaxTimestamp();
-
-        timestamp = getPartitionLo(timestamp);
-        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
-            return StatusCode.PARTITION_EMPTY;
-        }
 
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex == -1) {
@@ -764,9 +756,11 @@ public class TableWriter implements Closeable {
             return StatusCode.PARTITION_ALREADY_DETACHED;
         }
 
+        long maxTimestamp = txWriter.getMaxTimestamp();
         if (timestamp == getPartitionLo(maxTimestamp)) {
             return StatusCode.PARTITION_IS_ACTIVE;
         }
+        long minTimestamp = txWriter.getMinTimestamp();
 
         if (inTransaction()) {
             LOG.info()
