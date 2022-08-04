@@ -3338,9 +3338,10 @@ nodejs code:
     @Test
     public void testLocalCopyFrom() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PreparedStatement copy = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
-                copy.execute();
-
+            try (
+                    final PreparedStatement copy = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true");
+                    final ResultSet ignore = copy.executeQuery()
+            ) {
                 TestUtils.runWithTextImportRequestJob(
                         engine,
                         () -> assertEventually(() -> {
@@ -3348,6 +3349,7 @@ nodejs code:
                                             final PreparedStatement select = connection.prepareStatement("select * from testLocalCopyFrom");
                                             final ResultSet rs = select.executeQuery()
                                     ) {
+                                        sink.clear();
                                         assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
                                                 + "ABC,xy,a,brown fox jumped over the fence,10\n"
                                                 + "CDE,bb,b,sentence 1\n"
