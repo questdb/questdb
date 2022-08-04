@@ -139,7 +139,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab11",
                 "ALTER TABLE tab11 DETACH PARTITION LIST '2022-06-06'",
-                "could not detach [statusCode=PARTITION_ALREADY_DETACHED, table=tab11, partition='2022-06-06']"
+                "could not detach [statusCode=PARTITION_DOES_NOT_EXIST, table=tab11, partition='2022-06-06']"
         );
     }
 
@@ -158,7 +158,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab143",
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03', '2022-06-03'",
-                "could not detach [statusCode=PARTITION_ALREADY_DETACHED, table=tab143, partition='2022-06-03']"
+                "could not detach [statusCode=PARTITION_DOES_NOT_EXIST, table=tab143, partition='2022-06-03']"
         );
     }
 

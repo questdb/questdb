@@ -753,7 +753,7 @@ public class TableWriter implements Closeable {
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex == -1) {
             assert !txWriter.attachedPartitionsContains(timestamp);
-            return StatusCode.PARTITION_ALREADY_DETACHED;
+            return StatusCode.PARTITION_DOES_NOT_EXIST;
         }
 
         long maxTimestamp = txWriter.getMaxTimestamp();
@@ -769,7 +769,7 @@ public class TableWriter implements Closeable {
                     .$(", partition=")
                     .$ts(timestamp)
                     .I$();
-            commit(CommitMode.SYNC, 0);
+            commit();
         }
 
         try {
@@ -780,8 +780,7 @@ public class TableWriter implements Closeable {
                 LOG.error()
                         .$("partition folder does not exist [path=")
                         .$(path)
-                        .$(']')
-                        .$();
+                        .I$();
                 return StatusCode.PARTITION_FOLDER_DOES_NOT_EXIST;
             }
 
@@ -793,8 +792,7 @@ public class TableWriter implements Closeable {
                     LOG.error()
                             .$("cannot create detached partition folder [path=")
                             .$(detachedPath)
-                            .$(']')
-                            .$();
+                            .I$();
                     return StatusCode.PARTITION_DETACHED_FOLDER_CANNOT_CREATE;
                 }
             }
@@ -805,8 +803,7 @@ public class TableWriter implements Closeable {
                 LOG.error()
                         .$("detached partition folder already exist [path=")
                         .$(detachedPath)
-                        .$(']')
-                        .$();
+                        .I$();
                 return StatusCode.PARTITION_ALREADY_DETACHED;
             }
 
@@ -819,8 +816,7 @@ public class TableWriter implements Closeable {
                         .$(path)
                         .$(", to=")
                         .$(detachedPath)
-                        .$(']')
-                        .$();
+                        .I$();
                 return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
             }
 
