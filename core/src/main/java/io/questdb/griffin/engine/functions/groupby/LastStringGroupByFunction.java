@@ -29,17 +29,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.*;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 
-public class FirstStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
+public class LastStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
     private final ArrayList<CharSequence> stringValues;
 
-    public FirstStringGroupByFunction(@NotNull Function arg) {
+    public LastStringGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         stringValues = new ArrayList<>(32);
         stringValues.add("N/A");
@@ -61,6 +63,7 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
+        stringValues.set(mapValue.getInt(this.valueIndex), this.arg.getStr(record).toString());
     }
 
     @Override

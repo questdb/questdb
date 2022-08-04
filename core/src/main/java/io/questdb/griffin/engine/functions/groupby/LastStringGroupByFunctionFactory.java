@@ -24,31 +24,26 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class FirstStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class LastStringGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "last(S)";
+    }
 
-    @Test
-    public void testKeyed() throws Exception {
-        // a	sym
-        // 0	aaab
-        // 3	c
-        // 1	c
-        // 2	bab
-        // 1	bab
-        assertMemoryLeak(() -> assertQuery(
-                "a\tfirst\n" +
-                        "0\taaab\n" +
-                        "3\tc\n" +
-                        "1\tc\n" +
-                        "2\tbab\n",
-                "select a, first(sym) from tab",
-                "create table tab as (select rnd_int() % 5 a, rnd_str('aaab', 'bab', 'c') sym from long_sequence(5))",
-                null,
-                true,
-                true,
-                true
-        ));
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new LastStringGroupByFunction(args.getQuick(0));
     }
 }

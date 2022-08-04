@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
-public class FirstStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class LastStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testKeyed() throws Exception {
@@ -38,12 +38,12 @@ public class FirstStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
         // 2	bab
         // 1	bab
         assertMemoryLeak(() -> assertQuery(
-                "a\tfirst\n" +
+                "a\tlast\n" +
                         "0\taaab\n" +
                         "3\tc\n" +
-                        "1\tc\n" +
+                        "1\tbab\n" +
                         "2\tbab\n",
-                "select a, first(sym) from tab",
+                "select a, last(sym) from tab",
                 "create table tab as (select rnd_int() % 5 a, rnd_str('aaab', 'bab', 'c') sym from long_sequence(5))",
                 null,
                 true,

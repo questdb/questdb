@@ -134,7 +134,6 @@ public class FastMap implements Map {
                     case ColumnType.GEOSHORT:
                         offset += 2;
                         break;
-                    case ColumnType.STRING:
                     case ColumnType.INT:
                     case ColumnType.FLOAT:
                     case ColumnType.SYMBOL:
