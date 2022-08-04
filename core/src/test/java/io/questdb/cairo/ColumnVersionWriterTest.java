@@ -364,9 +364,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "[0,0,-1,0,2,2,-1,20,4,4,-1,40,6,1,-1,60,8,3,-1,80,10,0,-1,100,12,2,-1,120,14,4,-1,140,16,1,-1,160,18,3,-1,180]",
                         w.getCachedList().toString()
                 );
-                w.remove(0, 0);
-                w.remove(1, 2);
-                w.remove(4, 4);
+                w.removePartitionColumns(0, 0);
+                w.removePartitionColumns(1, 2);
+                w.removePartitionColumns(4, 4);
                 w.commit();
 
                 String expected = "[2,2,-1,20,6,1,-1,60,8,3,-1,80,10,0,-1,100,12,2,-1,120,14,4,-1,140,16,1,-1,160,18,3,-1,180]";

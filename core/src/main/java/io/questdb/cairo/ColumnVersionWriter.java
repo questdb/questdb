@@ -93,11 +93,13 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void remove(long partitionTimestamp, int columnIndex) {
-        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
-        if (recordIndex >= 0) {
-            getCachedList().removeIndexBlock(recordIndex, BLOCK_SIZE);
-            hasChanges = true;
+    public void removePartitionColumns(long partitionTimestamp, int columnCount) {
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            int recordIndex = getRecordIndex(partitionTimestamp, colIdx);
+            if (recordIndex >= 0) {
+                getCachedList().removeIndexBlock(recordIndex, BLOCK_SIZE);
+                hasChanges = true;
+            }
         }
     }
 
@@ -107,6 +109,23 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             cachedList.clear();
             hasChanges = true;
             commit();
+        }
+    }
+
+    public void upsert(long timestamp, ColumnVersionReader detachedColumnVersionReader) {
+        LongList detachedEntries = detachedColumnVersionReader.getCachedList();
+        LongList entries = getCachedList();
+        for (int i = 0, limit = detachedEntries.size(); i < limit; i += 4) {
+            // detachedEntries: [partitionTimestamp, columnIndex, columnNameTxn, columnTop]*
+            long columnTop = detachedEntries.getQuick(i + 3);
+            if (timestamp == detachedEntries.getQuick(i) && columnTop != entries.getQuick(i + 3)) {
+                upsert(
+                        timestamp,
+                        (int) detachedEntries.getQuick(i + 1),
+                        detachedEntries.getQuick(i + 2),
+                        columnTop
+                );
+            }
         }
     }
 

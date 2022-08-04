@@ -84,9 +84,9 @@ public class TableWriter implements Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
-    private final Path other2;
-    private final Path detachedPath;
-    private final int detachedRootLen;
+    private Path detachedPath; // lazy
+    private Path other2; // lazy
+    private int detachedRootLen;
     private MemoryMR detachedMetaMem;
     private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
@@ -237,9 +237,6 @@ public class TableWriter implements Closeable {
         this.path = new Path().of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
         this.rootLen = path.length();
-        this.other2 = new Path();
-        this.detachedPath = new Path().of(configuration.getDetachedRoot()).concat(tableName);
-        this.detachedRootLen = detachedPath.length();
         try {
             if (lock) {
                 lock();
@@ -652,6 +649,12 @@ public class TableWriter implements Closeable {
 
         boolean rollbackRename = false;
         try {
+            if (detachedPath == null) {
+                other2 = new Path();
+                detachedPath = new Path().of(configuration.getDetachedRoot()).concat(tableName);
+                detachedRootLen =this.detachedPath.length();
+            }
+
             // final name of partition folder after attach
             setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
             path.slash$();
@@ -773,6 +776,12 @@ public class TableWriter implements Closeable {
         }
 
         try {
+            if (detachedPath == null) {
+                other2 = new Path();
+                detachedPath = new Path().of(configuration.getDetachedRoot()).concat(tableName);
+                detachedRootLen =this.detachedPath.length();
+            }
+
             // path: partition folder to be detached
             long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
             setPathForPartition(path, rootLen, partitionBy, timestamp, partitionNameTxn);
@@ -789,10 +798,7 @@ public class TableWriter implements Closeable {
                 // the detached and standard folders can have different roots
                 // (server.conf: cairo.sql.detached.root)
                 if (0 != ff.mkdirs(detachedPath, mkDirMode)) {
-                    LOG.error()
-                            .$("cannot create detached partition folder [path=")
-                            .$(detachedPath)
-                            .I$();
+                    LOG.error().$("cannot create detached partition folder [path=").$(detachedPath).I$();
                     return StatusCode.PARTITION_DETACHED_FOLDER_CANNOT_CREATE;
                 }
             }
@@ -800,10 +806,7 @@ public class TableWriter implements Closeable {
             detachedPath.put(DETACHED_DIR_MARKER).$();
             final int detachedPathLen = detachedPath.length();
             if (ff.exists(detachedPath)) {
-                LOG.error()
-                        .$("detached partition folder already exist [path=")
-                        .$(detachedPath)
-                        .I$();
+                LOG.error().$("detached partition folder already exist [path=").$(detachedPath).I$();
                 return StatusCode.PARTITION_ALREADY_DETACHED;
             }
 
@@ -845,9 +848,8 @@ public class TableWriter implements Closeable {
             }
             if (statusCode == StatusCode.OK) {
                 // all good, commit
-                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                    columnVersionWriter.remove(timestamp, colIdx);
-                }
+                columnVersionWriter.removePartitionColumns(timestamp, columnCount);
+
                 // find out if we are removing min partition
                 long nextMinTimestamp = minTimestamp;
                 if (timestamp == txWriter.getPartitionTimestamp(0)) {
@@ -1817,20 +1819,7 @@ public class TableWriter implements Closeable {
             }
             detachedColumnVersionReader.ofRO(ff, other2);
             detachedColumnVersionReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
-            LongList entries = columnVersionWriter.getCachedList();
-            LongList detachedEntries = detachedColumnVersionReader.getCachedList();
-            for (int i = 0, limit = detachedEntries.size(); i < limit; i += 4) {
-                // detachedEntries: [partitionTimestamp, columnIndex, columnNameTxn, columnTop]*
-                long columnTop = detachedEntries.getQuick(i + 3);
-                if (timestamp == detachedEntries.getQuick(i) && columnTop != entries.getQuick(i + 3)) {
-                    columnVersionWriter.upsert(
-                            timestamp,
-                            (int) detachedEntries.getQuick(i + 1),
-                            detachedEntries.getQuick(i + 2),
-                            columnTop
-                    );
-                }
-            }
+            columnVersionWriter.upsert(timestamp, detachedColumnVersionReader);
 
             // delete extra columns from .attachable (the table does not track/need them)
             for (int i = 0, extraColNames = detachedDeleteExtraColNames.size(); i < extraColNames; i++) {

@@ -143,7 +143,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         );
     }
 
-
     @Test
     public void testCannotDetachActivePartition() throws Exception {
         assertFailure(
