@@ -22,31 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.cairo;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.sql.Function;
-import io.questdb.std.Mutable;
+import io.questdb.std.Rosti;
+import org.junit.Test;
 
-public interface VectorAggregateFunction extends Function, Mutable {
 
-    void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
+public class RostiTest extends AbstractCairoTest {
 
-    boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
-
-    int getColumnIndex();
-
-    // value offset in map
-    int getValueOffset();
-
-    void initRosti(long pRosti);
-
-    //returns true if merge was fine and false if it failed on memory allocation 
-    boolean merge(long pRostiA, long pRostiB);
-
-    void pushValueTypes(ArrayColumnTypes types);
-
-    // sets null as result of aggregation of all nulls
-    // this typically checks non-null count and replaces 0 with null if all values were null
-    void wrapUp(long pRosti);
+    @Test
+    public void testPrintRosti() {
+        long pRosti = Rosti.alloc(new SingleColumnType(ColumnType.INT), 1024);
+        try {
+            Rosti.printRosti(pRosti);
+        } finally {
+            Rosti.free(pRosti);
+        }
+    }
 }
