@@ -886,7 +886,7 @@ public final class TableUtils {
     }
 
     /**
-     * Sets the path to the directory of a partition taking into account the timestamp,the partitioning scheme
+     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
      * @param tablePath    Set to the root directory for a table, this will be updated to the root directory of the partition
