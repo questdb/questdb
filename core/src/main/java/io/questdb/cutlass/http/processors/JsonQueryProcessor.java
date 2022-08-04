@@ -541,8 +541,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // new import case
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        // Make sure to mark the query as non-cacheable.
-        if (state.of(factory, false, sqlExecutionContext)) {
+        // This query is cacheable, but it's fine since we execute
+        // COPY lazily on cursor initialization.
+        if (state.of(factory, sqlExecutionContext)) {
             header(context.getChunkedResponseSocket(), keepAliveHeader, 200);
             doResumeSend(state, context);
             metrics.jsonQuery().markComplete();

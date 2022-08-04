@@ -6347,6 +6347,10 @@ create table tab as (
     }
 
     private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold) throws Exception {
+        LOG.info().$("asserting PG Wire server [mode=").$(mode)
+                .$(", binary=").$(binary)
+                .$(", prepareThreshold=").$(prepareThreshold)
+                .I$();
         setUp();
         try {
             assertMemoryLeak(() -> {

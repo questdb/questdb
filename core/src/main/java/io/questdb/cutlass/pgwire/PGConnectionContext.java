@@ -48,7 +48,8 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 /**
  * Useful PostgreSQL documentation links:<br>
@@ -171,7 +172,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
     private TypesAndUpdate typesAndUpdate = null;
-    private boolean typesAndSelectIsCached = true;
     private boolean typesAndUpdateIsCached = false;
     private long fd;
     private CharSequence queryText;
@@ -317,7 +317,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = true;
         clearCursorAndFactory();
         totalReceived = 0;
-        typesAndSelectIsCached = true;
         typesAndUpdateIsCached = false;
         statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
@@ -1055,14 +1054,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
-            if (typesAndSelectIsCached) {
-                typesAndSelectCache.put(queryText, typesAndSelect);
-                // clear selectAndTypes so that context doesn't accidentally
-                // free the factory when context finishes abnormally
-                this.typesAndSelect = null;
-            } else {
-                this.typesAndSelect = Misc.free(this.typesAndSelect);
-            }
+            typesAndSelectCache.put(queryText, typesAndSelect);
+            // clear selectAndTypes so that context doesn't accidentally
+            // free the factory when context finishes abnormally
+            this.typesAndSelect = null;
         }
 
         if (typesAndUpdate != null) {
@@ -1173,7 +1168,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
-            wrapper.canExecuteAgain = !(queryTag == TAG_OK || queryTag == TAG_CTAS || queryTag == TAG_COPY);
+            wrapper.canExecuteAgain = !(queryTag == TAG_OK || queryTag == TAG_CTAS);
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -1971,8 +1966,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 final RecordCursorFactory factory = cq.getRecordCursorFactory();
                 // factory is null in the COPY 'id' CANCEL; case
                 if (factory != null) {
-                    // this query is non-cacheable
-                    typesAndSelectIsCached = false;
+                    // this query is cacheable, but it's fine since we execute
+                    // COPY lazily on cursor initialization
                     typesAndSelect = typesAndSelectPool.pop();
                     typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
                 }
