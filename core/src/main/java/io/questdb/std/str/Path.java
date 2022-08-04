@@ -336,17 +336,18 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path parent() {
         if (len > 0) {
             int idx = len - 1;
-            char last = charAt(idx);
+            char last = (char) Unsafe.getUnsafe().getByte(ptr + idx);
             if (last == Files.SEPARATOR || last == '\0') {
                 if (idx < 2) {
                     return this;
                 }
                 idx--;
             }
-            while (idx > 0 && charAt(idx) != Files.SEPARATOR) {
+            while (idx > 0 && (char) Unsafe.getUnsafe().getByte(ptr + idx) != Files.SEPARATOR) {
                 idx--;
             }
-            trimTo(idx);
+            len = idx;
+            wptr = ptr + len;
         }
         return this;
     }

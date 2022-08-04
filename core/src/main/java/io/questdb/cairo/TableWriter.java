@@ -664,6 +664,12 @@ public class TableWriter implements Closeable {
                     // check detached _meta and _cv
                     checkDetachedMetadata(timestamp);
 
+                    if (inTransaction()) {
+                        LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
+                                .$(", partition=").$ts(timestamp).I$();
+                        commit();
+                    }
+
                     if (ff.rename(detachedPath, path) == Files.FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                         rollbackRename = true;
@@ -682,19 +688,12 @@ public class TableWriter implements Closeable {
             CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
             final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
             if (partitionSize > 0L) {
-                if (inTransaction()) {
-                    LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
-                            .$(", partition=").$ts(timestamp).I$();
-                    commit();
-                }
-
                 try {
                     // set column tops for missing columns
                     for (int i = 0, numMissingCols = detachedAddMissingColNames.size(); i < numMissingCols; i++) {
                         CharSequence columnName = detachedAddMissingColNames.get(i);
                         int colIdx = metadata.getColumnIndex(columnName);
                         colIdx = metadata.getWriterIndex(colIdx);
-
                         long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
                         columnVersionWriter.upsert(timestamp, colIdx, columnNameTxn, partitionSize);
                     }
@@ -744,8 +743,6 @@ public class TableWriter implements Closeable {
     }
 
     public StatusCode detachPartition(long timestamp) {
-        // Partitioned table must have a timestamp
-        // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
 
         if (!PartitionBy.isPartitioned(partitionBy)) {
@@ -858,7 +855,20 @@ public class TableWriter implements Closeable {
             }
             if (statusCode == StatusCode.OK) {
                 // all good, commit
-                commitDetachPartition(timestamp, minTimestamp);
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    columnVersionWriter.remove(timestamp, colIdx);
+                }
+                // find out if we are removing min partition
+                long nextMinTimestamp = minTimestamp;
+                if (timestamp == txWriter.getPartitionTimestamp(0)) {
+                    nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
+                }
+                txWriter.beginPartitionSizeUpdate();
+                txWriter.removeAttachedPartitions(timestamp);
+                txWriter.setMinTimestamp(nextMinTimestamp);
+                txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
+                txWriter.bumpTruncateVersion();
+                commit();
             } else {
                 if (copiedDetachedMeta) {
                     other2.parent().concat(META_FILE_NAME).$();
@@ -1297,13 +1307,32 @@ public class TableWriter implements Closeable {
             return false;
         }
 
+        // when we want to delete first partition we must find out
+        // minTimestamp from next partition if it exists or next partition and so on
+        //
+        // when somebody removed data directories manually and then
+        // attempts to tidy up metadata with logical partition delete
+        // we have to uphold the effort and re-compute table size and its minTimestamp from
+        // what remains on disk
+
+        // find out if we are removing min partition
+        long nextMinTimestamp = minTimestamp;
+        if (timestamp == txWriter.getPartitionTimestamp(0)) {
+            nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
+        }
         long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
-        commitDetachPartition(timestamp, minTimestamp);
+        txWriter.beginPartitionSizeUpdate();
+        txWriter.removeAttachedPartitions(timestamp);
+        txWriter.setMinTimestamp(nextMinTimestamp);
+        txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
+        txWriter.bumpTruncateVersion();
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
         o3PartitionRemoveCandidates.clear();
         o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
         o3ProcessPartitionRemoveCandidates();
+
         return true;
     }
 
@@ -1834,33 +1863,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void commitDetachPartition(long timestamp, long minTimestamp) {
-        // when we want to delete first partition we must find out
-        // minTimestamp from next partition if it exists or next partition and so on
-        //
-        // when somebody removed data directories manually and then
-        // attempts to tidy up metadata with logical partition delete
-        // we have to uphold the effort and re-compute table size and its minTimestamp from
-        // what remains on disk
-
-        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            columnVersionWriter.remove(timestamp, colIdx);
-        }
-
-        // find out if we are removing min partition
-        long nextMinTimestamp = minTimestamp;
-        if (timestamp == txWriter.getPartitionTimestamp(0)) {
-            nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
-        }
-
-        txWriter.beginPartitionSizeUpdate();
-        txWriter.removeAttachedPartitions(timestamp);
-        txWriter.setMinTimestamp(nextMinTimestamp);
-        txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
-        txWriter.bumpTruncateVersion();
-        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-    }
-
     private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
         if (ff.exists(name)) {
             if (ff.remove(name)) {
@@ -2190,7 +2192,8 @@ public class TableWriter implements Closeable {
             try {
                 int maxKey = Vect.maxInt(address, partitionSize);
                 int symbolValues = symbolMapWriters.getQuick(columnIndex).getSymbolCount();
-                if (maxKey > 0 && maxKey >= symbolValues) {
+
+                if (maxKey >= symbolValues) {
                     throw CairoException.instance(0)
                             .put("Symbol file does not match symbol column [file=")
                             .put(path)

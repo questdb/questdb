@@ -399,8 +399,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             String tableName = "tabInAddColumnTransaction";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .col("l", ColumnType.LONG)
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .timestamp("ts"),
                         12,

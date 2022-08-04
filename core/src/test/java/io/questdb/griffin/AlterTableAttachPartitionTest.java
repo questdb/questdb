@@ -353,7 +353,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "dst26",
                     dst -> {
                     },
-                    s -> writeToStrIndexFile(s, "str.i", 0L, 16L),
+                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", 0L, 16L),
                     "Variable size column has invalid data address value"
             );
         });
@@ -373,7 +373,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "dst27",
                     dst -> {
                     },
-                    s -> writeToStrIndexFile(s, "str.i", Long.MAX_VALUE, 256L),
+                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", Long.MAX_VALUE, 256L),
                     "dataAddress=" + Long.MAX_VALUE
             );
 
@@ -383,7 +383,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "dst28",
                     dst -> {
                     },
-                    s -> writeToStrIndexFile(s, "str.i", -1L, 256L),
+                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
                     "dataAddress=" + -1L
             );
         });
@@ -402,7 +402,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     src,
                     "dst29",
                     dst -> dst.col("sh", -1 * ColumnType.SHORT),
-                    s -> writeToStrIndexFile(s, "str.i", -1L, 256L),
+                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
                     "[-100] Detached partition metadata [structure_version should be different]"
             );
         });
@@ -446,9 +446,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                 .col("i", ColumnType.INT),
                         10000,
                         "2022-08-01",
-                        2);
+                        3);
 
-                writeToStrIndexFile(src, "sym.d", -1L, 4L);
+                writeToStrIndexFile(src, "2022-08-02", "sym.d", -1L, 4L);
 
                 try (TableModel dst = new TableModel(configuration, "dst31", PartitionBy.DAY)) {
                     createPopulateTable(
@@ -459,12 +459,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                     .col("i", ColumnType.INT),
                             10000,
                             "2022-08-01",
-                            2);
-
-                    compile("alter table " + dst.getName() + " drop partition list '2022-08-01'");
+                            1);
 
                     try {
-                        attachFromSrcIntoDst(src, dst, "2022-08-01");
+                        attachFromSrcIntoDst(src, dst, "2022-08-02");
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Symbol file does not match symbol column, invalid key");
@@ -1236,31 +1234,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         int otherLen = other.length();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
-
             path.trimTo(pathLen).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
             other.trimTo(otherLen).concat(partition).put(TableUtils.ATTACHABLE_DIR_MARKER).$();
             TestUtils.copyDirectory(path, other, DIR_MODE);
-
-            // copy _meta
-            Files.copy(
-                    other2.of(path).parent().parent().concat(TableUtils.META_FILE_NAME).$(),
-                    other.parent().concat(TableUtils.META_FILE_NAME).$()
-            );
-            // copy _cv
-            Files.copy(
-                    other2.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                    other.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
-            );
         }
 
         int rowCount = readAllRows(dst.getName());
-
         engine.clear();
         compile(
                 "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";",
                 sqlExecutionContext
         );
-
         int newRowCount = readAllRows(dst.getName());
         Assert.assertTrue(newRowCount > rowCount);
 
@@ -1336,6 +1320,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 }
             }
             return count;
+        } catch (CairoException err) {
+            return 0;
         }
     }
 
@@ -1373,14 +1359,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         });
     }
 
-    private void writeToStrIndexFile(TableModel src, String columnFileName, long value, long offset) {
+    private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         long fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             // .i file
             engine.clear();
-            path.of(configuration.getRoot()).concat(src.getName()).concat("2022-08-01").concat(columnFileName).$();
+            path.of(configuration.getRoot()).concat(src.getName()).concat(partition).concat(columnFileName).$();
             fd = ff.openRW(path, CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);
