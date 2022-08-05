@@ -71,7 +71,12 @@ public final class ColumnType {
     // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
     // inside the MAX type value.
     public static final short GEOHASH = 23;
-    public static final short NULL = 24;
+
+    // PG specific types to work with 3rd party software with canned catalogue queries
+    public static final short REGCLASS = 24;
+    public static final short REGPROCEDURE = 25;
+    public static final short ARRAY_STRING = 26;
+    public static final short NULL = 27;
 
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
@@ -338,7 +343,7 @@ public final class ColumnType {
     static {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (short i = UNDEFINED; i < MAX; i++) {
-            for (short j = BOOLEAN; j < MAX; j++) {
+            for (short j = BOOLEAN; j <= MAX; j++) {
                 if (i < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i], j);
                     overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index != -1 ? index : NO_OVERLOAD;
@@ -375,6 +380,9 @@ public final class ColumnType {
         typeNameMap.put(RECORD, "RECORD");
         typeNameMap.put(VAR_ARG, "VARARG");
         typeNameMap.put(GEOHASH, "GEOHASH");
+        typeNameMap.put(REGCLASS, "regclass");
+        typeNameMap.put(REGPROCEDURE, "regprocedure");
+        typeNameMap.put(ARRAY_STRING, "text[]");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
@@ -398,6 +406,10 @@ public final class ColumnType {
         nameTypeMap.put("bigint", LONG);
         nameTypeMap.put("real", FLOAT);
         nameTypeMap.put("bytea", STRING);
+        nameTypeMap.put("varchar", STRING);
+        nameTypeMap.put("regclass", REGCLASS);
+        nameTypeMap.put("regprocedure", REGPROCEDURE);
+        nameTypeMap.put("text[]", ARRAY_STRING);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {

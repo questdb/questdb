@@ -36,7 +36,7 @@ public final class OperatorExpression {
 
     static final ObjList<OperatorExpression> operators = new ObjList<OperatorExpression>() {{
         add(new OperatorExpression(".", DOT_PRECEDENCE, false, BINARY));
-        add(new OperatorExpression("::", DOT_PRECEDENCE, false, BINARY));
+        add(new OperatorExpression("::", DOT_PRECEDENCE, true, BINARY));
         add(new OperatorExpression("*", 3, true, BINARY));
         add(new OperatorExpression("/", 3, true, BINARY));
         add(new OperatorExpression("%", 3, true, BINARY));
