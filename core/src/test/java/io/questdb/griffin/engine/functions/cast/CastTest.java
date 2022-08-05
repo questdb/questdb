@@ -55,6 +55,78 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToFloatConstant() throws Exception {
+        assertQuery(
+                "cast\n0.0000\n",
+                "select cast(false as float)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0.0000\n",
+                "select cast((150 < 100) as float)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToDoubleConstant() throws Exception {
+        assertQuery(
+                "cast\n0.0\n",
+                "select cast(false as double)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0.0\n",
+                "select cast((150 < 0) as double)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToIntConstant() throws Exception {
+        assertQuery(
+                "cast\n0\n",
+                "select cast(false as int)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0\n",
+                "select cast((150 < 0) as int)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n1\n",
+                "select cast((150 < 250) as int)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testNullToBinary() throws Exception {
         assertQuery(
                 "a\n",
@@ -135,16 +207,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as byte) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -185,16 +257,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as date) from long_sequence(10)",
                 "a\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
-                        "1970-01-01T00:00:00.001Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.000Z\n",
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.001Z\n",
                 true,
                 true,
                 true
@@ -210,16 +282,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as double) from long_sequence(10)",
                 "a\n" +
-                        "1.0\n" +
-                        "1.0\n" +
-                        "1.0\n" +
-                        "0.0\n" +
-                        "1.0\n" +
-                        "1.0\n" +
                         "0.0\n" +
                         "0.0\n" +
                         "0.0\n" +
-                        "0.0\n",
+                        "1.0\n" +
+                        "0.0\n" +
+                        "0.0\n" +
+                        "1.0\n" +
+                        "1.0\n" +
+                        "1.0\n" +
+                        "1.0\n",
                 true,
                 true,
                 true
@@ -235,16 +307,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as float) from long_sequence(10)",
                 "a\n" +
-                        "1.0000\n" +
-                        "1.0000\n" +
-                        "1.0000\n" +
-                        "0.0000\n" +
-                        "1.0000\n" +
-                        "1.0000\n" +
                         "0.0000\n" +
                         "0.0000\n" +
                         "0.0000\n" +
-                        "0.0000\n",
+                        "1.0000\n" +
+                        "0.0000\n" +
+                        "0.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n" +
+                        "1.0000\n",
                 true,
                 true,
                 true
@@ -260,16 +332,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as int) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -285,16 +357,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as long) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -310,16 +382,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as long256) from long_sequence(10)",
                 "a\n" +
-                        "0x01\n" +
-                        "0x01\n" +
-                        "0x01\n" +
-                        "0x00\n" +
-                        "0x01\n" +
-                        "0x01\n" +
                         "0x00\n" +
                         "0x00\n" +
                         "0x00\n" +
-                        "0x00\n",
+                        "0x01\n" +
+                        "0x00\n" +
+                        "0x00\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n" +
+                        "0x01\n",
                 true,
                 true,
                 true
@@ -339,8 +411,8 @@ public class CastTest extends AbstractGriffinTest {
                         "0x00\n" +
                         "0x00\n" +
                         "0x00\n" +
-                        "0x01\n" +
-                        "0x01\n" +
+                        "0x00\n" +
+                        "0x00\n" +
                         "0x01\n" +
                         "0x01\n" +
                         "0x01\n" +
@@ -368,16 +440,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as short) from long_sequence(10)",
                 "a\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "0\n" +
-                        "1\n" +
-                        "1\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
-                        "0\n",
+                        "1\n" +
+                        "0\n" +
+                        "0\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n",
                 true,
                 true,
                 true
@@ -559,16 +631,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_boolean() as timestamp) from long_sequence(10)",
                 "a\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n",
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
                 true,
                 true,
                 true
@@ -584,16 +656,33 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_byte() as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(0x00 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(0xF0 as boolean)",
+                null,
                 true,
                 true,
                 true
@@ -1582,16 +1671,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_date() as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
                 true,
                 true,
                 true
@@ -2073,6 +2162,25 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDoubleToBoolean() throws Exception {
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(0.0 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(0.123 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+    @Test
     public void testDoubleToChar() throws Exception {
         assertQuery(
                 "a\n",
@@ -2522,6 +2630,26 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFloatToBoolean() throws Exception {
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(0.0002 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(0.0000 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testFloatToChar() throws Exception {
         assertQuery(
                 "a\n",
@@ -2958,16 +3086,28 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_int(0,66,100) as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIntConstToBoolean() throws Exception {
+        assertQuery(
+                "cast\tcast1\tcast2\tcast3\ntrue\tfalse\ttrue\ttrue\n",
+                "select cast(-1 as boolean), cast(0 as boolean), cast(1 as boolean), cast(2 as boolean)",
+                null,
                 true,
                 true,
                 true
@@ -3457,16 +3597,32 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_long256() as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(cast(0 as long) as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(cast(100 as long) as boolean)",
+                null,
                 true,
                 true,
                 true
@@ -3557,16 +3713,16 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_long(0,66,100) as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
                         "true\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
                 true,
                 true,
                 true
@@ -4056,16 +4212,33 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_short() as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(cast(0 as short) as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(cast(256 as short) as boolean)",
+                null,
                 true,
                 true,
                 true
@@ -5418,16 +5591,33 @@ public class CastTest extends AbstractGriffinTest {
                 null,
                 "insert into tab select cast(rnd_timestamp(10000000000L, 100000000000L, 2) as boolean) from long_sequence(10)",
                 "a\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n",
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(cast(0L as timestamp) as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(cast(5L as timestamp) as boolean)",
+                null,
                 true,
                 true,
                 true

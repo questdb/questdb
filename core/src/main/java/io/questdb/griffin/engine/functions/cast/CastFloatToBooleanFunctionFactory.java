@@ -27,32 +27,25 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
-public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
+public class CastFloatToBooleanFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Tk)";
+        return "cast(Ft)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            return SymbolConstant.newInstance(arg.getSymbol(null));
-        }
-        return new Func(arg);
+        return new Func(args.getQuick(0));
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
+    private static class Func extends BooleanFunction implements UnaryFunction {
         private final Function arg;
 
         public Func(Function arg) {
@@ -65,39 +58,8 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getSymbol(Record rec) {
-            return arg.getSymbol(rec);
-        }
-
-        @Override
-        public CharSequence getSymbolB(Record rec) {
-            return arg.getSymbolB(rec);
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbolKey == 1 ? "true" : "false";
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return arg.getInt(rec);
-        }
-
-        @Override
-        public boolean isSymbolTableStatic() {
-            return false;
-        }
-
-        @Override
-        public @Nullable SymbolTable newSymbolTable() {
-            // this is an entity function
-            return this;
+        public boolean getBool(Record rec) {
+            return Math.signum(arg.getFloat(rec)) != 0;
         }
     }
 }
