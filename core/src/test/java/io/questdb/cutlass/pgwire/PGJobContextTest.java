@@ -6038,6 +6038,54 @@ create table tab as (
         });
     }
 
+    private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(queryScheduledCount);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
+                    SOCountDownLatch finished = new SOCountDownLatch(1);
+                    new Thread(() -> {
+                        try {
+                            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                            int numOfRowsUpdated1 = update1.executeUpdate();
+                            assertEquals(2, numOfRowsUpdated1);
+                        } catch (Throwable e) {
+                            Assert.fail(e.getMessage());
+                            e.printStackTrace();
+                        } finally {
+                            finished.countDown();
+                        }
+                    }).start();
+
+                    MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                    long startTimeMicro = microsecondClock.getTicks();
+                    // Wait 1 min max for completion
+                    while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
+                        onTick.run(writer);
+                        writer.tick(true);
+                        finished.await(500_000);
+                    }
+                }
+
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+    
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -6346,11 +6394,9 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics);
-
-        final PGWireServer pgWireServer = PGWireServer.create(
+        return PGWireServer.create(
                 conf,
-                pool,
+                null,
                 LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
@@ -6358,9 +6404,6 @@ create table tab as (
                 metrics,
                 createPGConnectionContextFactory(conf, workerCount, null, queryScheduledCount)
         );
-
-        pool.start(LOG);
-        return pgWireServer;
     }
 
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
@@ -7850,54 +7893,7 @@ create table tab as (
             }
         });
     }
-
-    private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(queryScheduledCount);
-                    final Connection connection = getConnection(true, false)
-            ) {
-                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
-                statement.execute();
-
-                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                insert1.execute();
-
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
-                    SOCountDownLatch finished = new SOCountDownLatch(1);
-                    new Thread(() -> {
-                        try {
-                            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
-                            int numOfRowsUpdated1 = update1.executeUpdate();
-                            assertEquals(2, numOfRowsUpdated1);
-                        } catch (Throwable e) {
-                            Assert.fail(e.getMessage());
-                            e.printStackTrace();
-                        } finally {
-                            finished.countDown();
-                        }
-                    }).start();
-
-                    MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
-                    long startTimeMicro = microsecondClock.getTicks();
-                    // Wait 1 min max for completion
-                    while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
-                        onTick.run(writer);
-                        writer.tick(true);
-                        finished.await(500_000);
-                    }
-                }
-
-                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
-                }
-            }
-        });
-    }
+    
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);
