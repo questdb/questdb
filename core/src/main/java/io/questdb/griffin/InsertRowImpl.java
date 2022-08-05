@@ -36,13 +36,13 @@ import io.questdb.std.ObjList;
 
 public class InsertRowImpl {
     private final VirtualRecord virtualRecord;
-    private final SqlCompiler.RecordToRowCopier copier;
+    private final RecordToRowCopier copier;
     private final Function timestampFunction;
     private final RowFactory rowFactory;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
-            SqlCompiler.RecordToRowCopier copier,
+            RecordToRowCopier copier,
             Function timestampFunction
     ) {
         this.virtualRecord = virtualRecord;

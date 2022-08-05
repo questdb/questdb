@@ -2974,7 +2974,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnType = function.getType();
                 if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
-                    if (ColumnType.isBuiltInWideningCast(targetColumnType, function.getType())) {
+                    if (ColumnType.isBuiltInWideningCast(function.getType(), targetColumnType)) {
                         // All functions will be able to getLong() if they support getInt(), no need to generate cast here
                         columnType = targetColumnType;
                     } else {
@@ -4001,10 +4001,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (typeA == typeB && typeA != ColumnType.SYMBOL) {
                 metadata.add(BaseRecordMetadata.copyOf(typesA, i));
-            } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) {
+            } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) {
                 // CHAR is "specially" assignable from SHORT, but we don't want that
                 metadata.add(BaseRecordMetadata.copyOf(typesA, i));
-            } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeB != ColumnType.SYMBOL) {
+            } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL) {
                 // even though A is assignable to B (e.g. A union B)
                 // set metadata will use A column names
                 metadata.add(new TableColumnMetadata(

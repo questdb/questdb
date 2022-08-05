@@ -1,0 +1,725 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.BytecodeAssembler;
+
+public class RecordToRowCopierUtils {
+    private RecordToRowCopierUtils() {
+    }
+
+    // Creates data type converter.
+    // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
+    public static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
+        int timestampIndex = to.getTimestampIndex();
+        asm.init(RecordToRowCopier.class);
+        asm.setupPool();
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/rowcopier"));
+        int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
+
+        int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
+        int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
+        int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
+        int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
+        int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
+        //
+        int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
+        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
+        int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
+        int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
+        int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
+        int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
+        int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
+        //
+        int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
+        int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
+        int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
+        int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
+        int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
+        //
+        int wPutByte = asm.poolInterfaceMethod(TableWriter.Row.class, "putByte", "(IB)V");
+        int wPutShort = asm.poolInterfaceMethod(TableWriter.Row.class, "putShort", "(IS)V");
+        int wPutBool = asm.poolInterfaceMethod(TableWriter.Row.class, "putBool", "(IZ)V");
+        int wPutFloat = asm.poolInterfaceMethod(TableWriter.Row.class, "putFloat", "(IF)V");
+        int wPutDouble = asm.poolInterfaceMethod(TableWriter.Row.class, "putDouble", "(ID)V");
+        int wPutSym = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
+        int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
+        int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
+        int wPutTimestampStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
+        int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
+        int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
+        int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
+        int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
+        int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
+
+        int checkDoubleBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkDoubleBounds", "(DDDIII)V");
+        int checkLongBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkLongBounds", "(JJJIII)V");
+
+        int maxDoubleFloat = asm.poolDoubleConst(Float.MAX_VALUE);
+        int minDoubleFloat = asm.poolDoubleConst(-Float.MAX_VALUE);
+        int maxDoubleLong = asm.poolDoubleConst(Long.MAX_VALUE);
+        int minDoubleLong = asm.poolDoubleConst(Long.MIN_VALUE);
+        int maxDoubleInt = asm.poolDoubleConst(Integer.MAX_VALUE);
+        int minDoubleInt = asm.poolDoubleConst(Integer.MIN_VALUE);
+        int maxDoubleShort = asm.poolDoubleConst(Short.MAX_VALUE);
+        int minDoubleShort = asm.poolDoubleConst(Short.MIN_VALUE);
+        int maxDoubleByte = asm.poolDoubleConst(Byte.MAX_VALUE);
+        int minDoubleByte = asm.poolDoubleConst(Byte.MIN_VALUE);
+
+        int maxLongInt = asm.poolLongConst(Integer.MAX_VALUE);
+        int minLongInt = asm.poolLongConst(Integer.MIN_VALUE);
+        int maxLongShort = asm.poolLongConst(Short.MAX_VALUE);
+        int minLongShort = asm.poolLongConst(Short.MIN_VALUE);
+        int maxLongByte = asm.poolLongConst(Byte.MAX_VALUE);
+        int minLongByte = asm.poolLongConst(Byte.MIN_VALUE);
+
+        int copyNameIndex = asm.poolUtf8("copy");
+        int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
+
+        asm.finishPool();
+        asm.defineClass(thisClassIndex);
+        asm.interfaceCount(1);
+        asm.putShort(interfaceClassIndex);
+        asm.fieldCount(0);
+        asm.methodCount(2);
+        asm.defineDefaultConstructor();
+
+        asm.startMethod(copyNameIndex, copySigIndex, 15, 3);
+
+        int n = toColumnFilter.getColumnCount();
+        for (int i = 0; i < n; i++) {
+
+            final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
+            // do not copy timestamp, it will be copied externally to this helper
+
+            if (toColumnIndex == timestampIndex) {
+                continue;
+            }
+
+            final int toColumnType = to.getColumnType(toColumnIndex);
+            final int fromColumnType = from.getColumnType(i);
+            final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
+            final int toColumnWriterIndex = to.getWriterIndex(toColumnIndex);
+
+            asm.aload(2);
+            asm.iconst(toColumnWriterIndex);
+            asm.aload(1);
+            asm.iconst(i);
+
+            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
+            if (fromColumnTypeTag == ColumnType.NULL) {
+                fromColumnTypeTag = toColumnTypeTag;
+            }
+            switch (fromColumnTypeTag) {
+                case ColumnType.INT:
+                    asm.invokeInterface(rGetInt);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.LONG:
+                            asm.i2l();
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.i2l();
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.i2l();
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.i2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.i2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                    }
+                    break;
+                case ColumnType.LONG:
+                    asm.invokeInterface(rGetLong);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.INT:
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongInt, maxLongInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.l2i();
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.DATE:
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.l2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.l2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                    }
+                    break;
+                case ColumnType.DATE:
+                    asm.invokeInterface(rGetDate);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.INT:
+                            asm.l2i();
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.l2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.l2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                    }
+                    break;
+                case ColumnType.TIMESTAMP:
+                    asm.invokeInterface(rGetTimestamp);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.INT:
+                            asm.l2i();
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.l2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.l2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                    }
+                    break;
+                case ColumnType.BYTE:
+                    asm.invokeInterface(rGetByte);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.INT:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.i2l();
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.i2l();
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.i2l();
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.i2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.i2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                    }
+                    break;
+                case ColumnType.SHORT:
+                    asm.invokeInterface(rGetShort);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.INT:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.i2l();
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.i2l();
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.i2l();
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.BYTE:
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.i2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.i2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                    }
+                    break;
+                case ColumnType.BOOLEAN:
+                    asm.invokeInterface(rGetBool);
+                    asm.invokeInterface(wPutBool, 2);
+                    break;
+                case ColumnType.FLOAT:
+                    asm.invokeInterface(rGetFloat);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.INT:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.f2i();
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.f2l();
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.f2l();
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.f2l();
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.f2i();
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.f2i();
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.f2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                    }
+                    break;
+                case ColumnType.DOUBLE:
+                    asm.invokeInterface(rGetDouble);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.INT:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.d2i();
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.d2l();
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.d2l();
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.d2l();
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.d2i();
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.d2i();
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleFloat, maxDoubleFloat, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            asm.d2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                    }
+                    break;
+                case ColumnType.CHAR:
+                    asm.invokeInterface(rGetChar);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.STRING:
+                            asm.invokeInterface(wPutStrChar, 2);
+                            break;
+                        case ColumnType.SYMBOL:
+                            asm.invokeInterface(wPutSymChar, 2);
+                            break;
+                        case ColumnType.GEOBYTE:
+                            asm.invokeStatic(encodeCharAsGeoByte);
+                            if (ColumnType.getGeoHashBits(toColumnType) < 5) {
+                                asm.i2l();
+                                asm.iconst(ColumnType.getGeoHashTypeWithBits(5));
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.l2i();
+                                asm.i2b();
+                            }
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
+                    }
+                    break;
+                case ColumnType.SYMBOL:
+                    asm.invokeInterface(rGetSym);
+                    if (toColumnTypeTag == ColumnType.STRING) {
+                        asm.invokeInterface(wPutStr, 2);
+                    } else {
+                        asm.invokeInterface(wPutSym, 2);
+                    }
+                    break;
+                case ColumnType.STRING:
+                    asm.invokeInterface(rGetStr);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.SYMBOL:
+                            asm.invokeInterface(wPutSym, 2);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeInterface(wPutTimestampStr, 2);
+                            break;
+                        case ColumnType.GEOBYTE:
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                            asm.invokeInterface(wPutGeoStr, 2);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutStr, 2);
+                            break;
+                    }
+                    break;
+                case ColumnType.BINARY:
+                    asm.invokeInterface(rGetBin);
+                    asm.invokeInterface(wPutBin, 2);
+                    break;
+                case ColumnType.LONG256:
+                    asm.invokeInterface(rGetLong256);
+                    asm.invokeInterface(wPutLong256, 2);
+                    break;
+                case ColumnType.GEOBYTE:
+                    asm.invokeInterface(rGetGeoByte, 1);
+                    if (fromColumnType != toColumnType && (fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOBYTE)) {
+                        // truncate within the same storage type
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2b();
+                    }
+                    asm.invokeInterface(wPutByte, 2);
+                    break;
+                case ColumnType.GEOSHORT:
+                    asm.invokeInterface(rGetGeoShort, 1);
+                    if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2b();
+                        asm.invokeInterface(wPutByte, 2);
+                    } else if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOSHORT) {
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2s();
+                        asm.invokeInterface(wPutShort, 2);
+                    } else {
+                        asm.invokeInterface(wPutShort, 2);
+                    }
+                    break;
+                case ColumnType.GEOINT:
+                    asm.invokeInterface(rGetGeoInt, 1);
+                    switch (ColumnType.tagOf(toColumnType)) {
+                        case ColumnType.GEOBYTE:
+                            asm.i2l();
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.GEOSHORT:
+                            asm.i2l();
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        default:
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOINT) {
+                                asm.i2l();
+                                asm.iconst(fromColumnType);
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.l2i();
+                            }
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                    }
+                    break;
+                case ColumnType.GEOLONG:
+                    asm.invokeInterface(rGetGeoLong, 1);
+                    switch (ColumnType.tagOf(toColumnType)) {
+                        case ColumnType.GEOBYTE:
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.GEOSHORT:
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.GEOINT:
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        default:
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOLONG) {
+                                asm.iconst(fromColumnType);
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                            }
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        asm.return_();
+        asm.endMethodCode();
+
+        // exceptions
+        asm.putShort(0);
+
+        // we have to add stack map table as branch target
+        // jvm requires it
+
+        // attributes: 0 (void, no stack verification)
+        asm.putShort(0);
+
+        asm.endMethod();
+
+        // class attribute count
+        asm.putShort(0);
+
+        return asm.newInstance();
+    }
+
+    //used by copier
+    @SuppressWarnings("unused")
+    static void checkDoubleBounds(double value, double min, double max, int fromType, int toType, int toColumnIndex) throws SqlException {
+        if (toType == ColumnType.FLOAT && Double.isInfinite(value)) {
+            // infinity in double should be able to be cast to float, since they have the same mathematical meaning
+            return;
+        }
+        if (value < min || value > max) {
+            throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
+        }
+    }
+
+    //used by copier
+    @SuppressWarnings("unused")
+    static void checkLongBounds(long value, long min, long max, int fromType, int toType, int toColumnIndex) throws SqlException {
+        if (value < min || value > max) {
+            throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
+        }
+    }
+
+    private static void addCheckDoubleBoundsCall(
+            BytecodeAssembler asm,
+            int checkDoubleBounds,
+            int min,
+            int max,
+            int fromColumnType,
+            int toColumnType,
+            int toColumnIndex
+    ) {
+        asm.dup2();
+        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void addCheckFloatBoundsCall(
+            BytecodeAssembler asm,
+            int checkDoubleBounds,
+            int min,
+            int max,
+            int fromColumnType,
+            int toColumnType,
+            int toColumnIndex
+    ) {
+        asm.dup();
+        asm.f2d();
+        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void addCheckLongBoundsCall(
+            BytecodeAssembler asm,
+            int checkLongBounds,
+            int min,
+            int max,
+            int fromColumnType,
+            int toColumnType,
+            int toColumnIndex
+    ) {
+        asm.dup2();
+        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void addCheckIntBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+        asm.dup();
+        asm.i2l();
+
+        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void invokeCheckMethod(BytecodeAssembler asm, int checkBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+        asm.ldc2_w(min);
+        asm.ldc2_w(max);
+        asm.iconst(fromColumnType);
+        asm.iconst(toColumnType);
+        asm.iconst(toColumnIndex);
+        asm.invokeStatic(checkBounds);
+    }
+}

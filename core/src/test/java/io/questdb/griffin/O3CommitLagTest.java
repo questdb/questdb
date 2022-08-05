@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCompiler.RecordToRowCopier;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -497,7 +496,12 @@ public class O3CommitLagTest extends AbstractO3Test {
             EntityColumnFilter toColumnFilter = new EntityColumnFilter();
             toColumnFilter.of(metadata.getColumnCount());
             if (null == copier) {
-                copier = SqlCompiler.assembleRecordToRowCopier(new BytecodeAssembler(), metadata, writer.getMetadata(), toColumnFilter);
+                copier = RecordToRowCopierUtils.assembleRecordToRowCopier(
+                        new BytecodeAssembler(),
+                        metadata,
+                        writer.getMetadata(),
+                        toColumnFilter
+                );
             }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();

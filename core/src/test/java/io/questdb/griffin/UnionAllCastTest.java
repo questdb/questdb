@@ -1035,11 +1035,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
         // long + geohash overlap via string type
         testUnionAll(
                 "a\n" +
-                        "wh4b6vnt\n" +
-                        "s2z2fyds\n" +
-                        "1cjjwk6r\n" +
-                        "mmt89425\n" +
-                        "71ftmpy5\n" +
+                        "nt\n" +
+                        "53\n" +
+                        "74\n" +
+                        "00\n" +
+                        "ds\n" +
                         "9v\n" +
                         "46\n" +
                         "jn\n" +
@@ -1135,11 +1135,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
         // long + geohash overlap via string type
         testUnionAll(
                 "a\n" +
-                        "111001000000\n" +
-                        "110000001011\n" +
-                        "000010101110\n" +
-                        "100111001111\n" +
-                        "001110000101\n" +
+                        "k0\n" +
+                        "0c\n" +
+                        "5f\n" +
+                        "fg\n" +
+                        "w5\n" +
                         "9v\n" +
                         "46\n" +
                         "jn\n" +
