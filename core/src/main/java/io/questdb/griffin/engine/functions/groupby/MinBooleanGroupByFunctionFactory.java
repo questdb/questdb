@@ -22,44 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
+public class MinBooleanGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Nt)";
+        return "min(T)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
-    }
-
-    private static class Func extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return arg.getTimestamp(rec) != 0;
-        }
+        return new MinDoubleGroupByFunction(args.getQuick(0));
     }
 }
