@@ -88,7 +88,7 @@ public interface CompiledQuery {
     <T extends AbstractOperation> T getOperation();
 
     /**
-     * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
+     * @return number of rows changed by this command. Used e.g. in pg wire protocol.
      */
     long getAffectedRowsCount();
 

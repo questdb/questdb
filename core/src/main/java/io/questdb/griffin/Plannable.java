@@ -27,7 +27,9 @@ package io.questdb.griffin;
 public interface Plannable {
 
     /**
-     * adds this object's data to plan
+     * Adds this object's data to plan
+     *
+     * @param sink to write plan data to
      */
     void toPlan(PlanSink sink);
 }

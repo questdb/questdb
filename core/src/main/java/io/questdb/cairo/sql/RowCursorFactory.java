@@ -48,7 +48,7 @@ public interface RowCursorFactory {
     boolean isEntity();
 
     /**
-     * Returns true if the returned RowCursor is using an index, false otherwise
+     * @return true if the returned RowCursor is using an index, false otherwise
      */
     default boolean isUsingIndex() {
         return false;

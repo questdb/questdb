@@ -73,6 +73,7 @@ public interface MemoryM extends Closeable {
      *                          should use this parameter as the increment size
      * @param size              size of the initial mapped memory when smaller than the actual file
      * @param memoryTag         memory tag for diagnostics
+     * @param opts              file open options
      *
      */
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts);

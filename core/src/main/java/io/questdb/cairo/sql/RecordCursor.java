@@ -112,7 +112,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * Returns true if the cursor is using an index, false otherwise
+     * @return true if the cursor is using an index, false otherwise
      */
     default boolean isUsingIndex() {
         return false;

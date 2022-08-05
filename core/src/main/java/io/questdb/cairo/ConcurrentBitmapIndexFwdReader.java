@@ -63,6 +63,12 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
     /**
      * Allows reusing cursor objects, if that's possible.
+     *
+     * @param rowCursor the pass-through row cursor
+     * @param key symbol key
+     * @param minValue min offset, used to limit the range of the cursor
+     * @param maxValue max offset, used to limit the range of the cursor
+     * @return the same cursor where possible
      */
     public RowCursor initCursor(RowCursor rowCursor, int key, long minValue, long maxValue) {
         Cursor cursor = null;

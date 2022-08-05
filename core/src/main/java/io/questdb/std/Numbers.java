@@ -604,6 +604,10 @@ public final class Numbers {
     /**
      * Clinger's fast path:
      * https://www.researchgate.net/publication/2295884_How_to_Read_Floating_Point_Numbers_Accurately
+     *
+     * @param sequence the sequence of bytes to parse
+     * @return double value
+     * @throws NumericException if the sequence is not a valid double
      */
     public static double parseDouble(CharSequence sequence) throws NumericException {
         int lim = sequence.length();

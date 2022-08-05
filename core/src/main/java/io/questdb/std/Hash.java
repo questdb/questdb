@@ -82,6 +82,7 @@ public final class Hash {
      * @param p        memory pointer
      * @param len      memory length in bytes
      * @param seed     seed value
+     * @param accessor memory accessor that provides access to memory
      * @return hash code
      */
     public static long xxHash64(long p, long len, long seed, MemoryAccessor accessor) {

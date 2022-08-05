@@ -210,10 +210,11 @@
                 <version>3.2.0</version>
                 <executions>
                     <execution>
-                        <id>attach-javadocs</id>
+                        <id>compile-javadoc</id>
                         <goals>
                             <goal>jar</goal>
                         </goals>
+                        <phase>compile</phase>
                     </execution>
                 </executions>
                 <configuration>
@@ -224,6 +225,7 @@
                     <sourceFileExcludes>
                         <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                     </sourceFileExcludes>
+                    <failOnWarnings>true</failOnWarnings>
                 </configuration>
             </plugin>
         </plugins>
