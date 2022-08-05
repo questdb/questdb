@@ -143,7 +143,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizes,
-                    executionContext.getWorkerCount(),
+                    executionContext.getSharedWorkerCount(),
                     pageFrameMinRows,
                     pageFrameMaxRows
             );
@@ -159,7 +159,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizes,
-                    executionContext.getWorkerCount(),
+                    executionContext.getSharedWorkerCount(),
                     pageFrameMinRows,
                     pageFrameMaxRows
             );
