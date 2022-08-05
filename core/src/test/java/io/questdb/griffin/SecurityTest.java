@@ -39,7 +39,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractGriffinTest {
