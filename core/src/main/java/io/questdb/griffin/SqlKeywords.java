@@ -258,10 +258,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
-    public static boolean isPgCastKeyword(CharSequence tok) {
-        return tok.length() == 2 && tok.charAt(0) == ':' && tok.charAt(1) == ':';
-    }
-
     public static boolean isCenturyKeyword(CharSequence tok) {
         if (tok.length() != 7) {
             return false;
@@ -278,12 +274,7 @@ public class SqlKeywords {
     }
 
     public static boolean isColonColonKeyword(CharSequence tok) {
-        if (tok.length() != 2) {
-            return false;
-        }
-
-        return (tok.charAt(0) | 32) == ':'
-                && (tok.charAt(1) | 32) == ':';
+        return tok.length() == 2 && tok.charAt(0) == ':' && tok.charAt(1) == ':';
     }
 
     public static boolean isColumnKeyword(CharSequence tok) {

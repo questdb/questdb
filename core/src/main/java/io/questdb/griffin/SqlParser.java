@@ -2009,7 +2009,7 @@ public final class SqlParser {
     }
 
     private void rewritePgCast0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isPgCastKeyword(node.token)) {
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isColonColonKeyword(node.token)) {
             node.token = "cast";
             node.type = ExpressionNode.FUNCTION;
             node.rhs.type = ExpressionNode.CONSTANT;
