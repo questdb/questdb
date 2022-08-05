@@ -44,6 +44,7 @@ public class DateFormatUtils {
     public static final DateFormat PG_DATE_FORMAT;
     public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
+    public static final DateFormat PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
     private static final DateFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
@@ -317,5 +318,6 @@ public class DateFormatUtils {
         PG_DATE_FORMAT = compiler.compile("y-MM-dd");
         PG_DATE_Z_FORMAT = compiler.compile("y-MM-dd z");
         PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.Sz");
+        PG_DATE_MILLI_TIME_Z_PRINT_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSz");
     }
 }

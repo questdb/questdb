@@ -6047,4 +6047,22 @@ public class CastTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testStringRegClass() throws Exception {
+        assertQuery(
+                "b\ta\n" +
+                        "2615\tpg_namespace\n" +
+                        "2615\tpg_namespace\n" +
+                        "1259\tpg_class\n" +
+                        "1259\tpg_class\n" +
+                        "1259\tpg_class\n",
+                "select cast(a as string)::regclass b, a from tab",
+                "create table tab as (select rnd_symbol('pg_namespace', 'pg_class') a from long_sequence(5))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
 }

@@ -1141,7 +1141,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
                 try {
                     compile(query, sqlExecutionContext);
-                    Assert.fail();
+                    Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());

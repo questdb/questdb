@@ -274,12 +274,7 @@ public class SqlKeywords {
     }
 
     public static boolean isColonColonKeyword(CharSequence tok) {
-        if (tok.length() != 2) {
-            return false;
-        }
-
-        return (tok.charAt(0) | 32) == ':'
-                && (tok.charAt(1) | 32) == ':';
+        return tok.length() == 2 && tok.charAt(0) == ':' && tok.charAt(1) == ':';
     }
 
     public static boolean isColumnKeyword(CharSequence tok) {
@@ -665,6 +660,34 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i)) == 't';
+    }
+
+    public static boolean isFloat4Keyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++)) == 't'
+                && (tok.charAt(i)) == '4';
+    }
+
+    public static boolean isFloat8Keyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++)) == 't'
+                && (tok.charAt(i)) == '8';
     }
 
     public static boolean isFormatKeyword(CharSequence tok) {
@@ -1473,6 +1496,24 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i) | 32) == 'h'
+                ;
+    }
+
+    public static boolean isDateStyle(CharSequence tok) {
+        if (tok.length() != 9) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'y'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i) | 32) == 'e'
                 ;
     }
 

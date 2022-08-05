@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
@@ -33,7 +32,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ExpressionParserTest extends AbstractCairoTest {
-    private final static SqlCompiler compiler = new SqlCompiler(new CairoEngine(configuration));
+    private final static SqlCompiler compiler = new SqlCompiler(engine);
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
     @Test
