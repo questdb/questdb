@@ -1832,12 +1832,16 @@ class SqlOptimiser {
             unionModel = unionModel.getUnionModel();
         }
 
-        for (int jm = 1, jmn = model.getJoinModels().size(); jm < jmn; jm++) {
-            model.getJoinModels().setQuick(jm, moveOrderByFunctionsIntoOuterSelect(model.getJoinModels().getQuick(jm)));
-        }
 
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
+            for (int jm = 0, jmn = nested.getJoinModels().size(); jm < jmn; jm++) {
+                QueryModel joinModel = nested.getJoinModels().getQuick(jm);
+                if (joinModel != nested && joinModel.getNestedModel() != null) {
+                    joinModel.setNestedModel(moveOrderByFunctionsIntoOuterSelect(joinModel.getNestedModel()));
+                }
+            }
+
             QueryModel nestedNested = nested.getNestedModel();
             if (nestedNested != null) {
                 nested.setNestedModel(moveOrderByFunctionsIntoOuterSelect(nestedNested));
@@ -1852,13 +1856,13 @@ class SqlOptimiser {
                 if (node.type == FUNCTION || node.type == OPERATION) {
                     // add this function to bottom-up columns and replace this expression with index
                     CharSequence alias = SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getAliasToColumnMap(), true);
-                    model.getBottomUpColumns().add(
-                            queryColumnPool.next().of(
-                                    alias,
-                                    node,
-                                    false
-                            )
+                    QueryColumn qc = queryColumnPool.next().of(
+                            alias,
+                            node,
+                            false
                     );
+                    model.getAliasToColumnMap().put(alias, qc);
+                    model.getBottomUpColumns().add(qc);
                     orderBy.setQuick(i, nextLiteral(alias));
                     moved = true;
                 }

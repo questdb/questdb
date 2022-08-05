@@ -28,13 +28,13 @@ import org.junit.Test;
 
 public class OrderByExpressionTest extends AbstractGriffinTest {
 
-    @Test//fails with [0] Duplicate column [name=column] 
+    @Test
     public void testOrderByTwoExpressions() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
-                "select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5", null, null, true, true, true);
+        assertQuery("x\n10\n9\n8\n7\n6\n",
+                "select x from long_sequence(10) order by x/100, x*x desc  limit 5", null, null, true, true, true);
     }
 
-    @Test//fails with io.questdb.griffin.SqlException: [0] Duplicate column [name=column]
+    @Test
     public void testOrderByTwoExpressionsInNestedQuery() throws Exception {
         assertQuery("x\n6\n7\n8\n",
                 "select * from \n" +
@@ -92,9 +92,9 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "limit 3", null, null, true, true, true);
     }
 
-    @Test //fails on io.questdb.griffin.SqlException: [123] Invalid column: +
+    @Test
     public void testOrderByExpressionWhenColumnHasAliasInJoinedSubquery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery("x\text\n1\t100\n1\t81\n1\t64\n",
                 "select * from \n" +
                         "(\n" +
                         "  select x from long_sequence(10) \n" +
@@ -103,7 +103,7 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "(\n" +
                         "    select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
-                        "order by x*2 asc\n" +
+                        "order by x*2 asc, ext desc\n" +
                         "limit 3", null, null, true, true, true);
     }
 
