@@ -125,9 +125,11 @@ public class CopyFactory extends AbstractRecordCursorFactory {
             }
         }
 
+        importIdSink.clear();
+        Numbers.appendHex(importIdSink, inProgressImportId, true);
         throw SqlException.$(0, "Another import request is in progress. ")
                 .put("[activeImportId=")
-                .put(inProgressImportId)
+                .put(importIdSink)
                 .put(']');
     }
 

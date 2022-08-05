@@ -78,7 +78,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final LongList indexChunkStats;
     private final LongList partitionKeysAndSizes;
     private final StringSink partitionNameSink;
-    private final StringSink importIdSink;
     private final ObjList<PartitionInfo> partitions;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
@@ -103,9 +102,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final TextImportJob localImportJob;
     private int taskCount;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
-    //input params end
     //path to import directory under, usually $inputWorkRoot/$tableName
     private CharSequence importRoot;
+    private long importId;
     //input params start
     private CharSequence tableName;
     //name of file to process in inputRoot dir
@@ -117,6 +116,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private TimestampAdapter timestampAdapter;
     private boolean forceHeader;
     private int atomicity;
+    //input params end
     //index of timestamp column in input file
     private int timestampIndex;
     private boolean targetTableCreated;
@@ -190,7 +190,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.partitionNameSink = new StringSink();
         this.partitions = new ObjList<>();
         this.taskDistribution = new IntList();
-        this.importIdSink = new StringSink();
     }
 
     public static void createTable(
@@ -234,11 +233,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @Override
     public void clear() {
+        importId = -1;
         chunkStats.clear();
         indexChunkStats.clear();
         partitionKeysAndSizes.clear();
         partitionNameSink.clear();
-        importIdSink.clear();
         taskDistribution.clear();
         utf8Sink.clear();
         typeManager.clear();
@@ -314,9 +313,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.targetTableStatus = -1;
         this.targetTableCreated = false;
         this.atomicity = Atomicity.isValid(atomicity) ? atomicity : Atomicity.SKIP_ROW;
-
+        this.importId = importId;
         inputFilePath.of(inputRoot).concat(inputFileName).$();
-        Numbers.appendHex(importIdSink, importId, true);
     }
 
     @TestOnly
@@ -432,7 +430,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         long endMs = getCurrentTimeMs();
         LOG.info()
-                .$("import complete [importId=").$(importIdSink)
+                .$("import complete [importId=").$hexPadded(importId)
                 .$(", file=`").$(inputFilePath).$('`')
                 .$("', time=").$((endMs - startMs) / 1000).$("s").I$();
     }
@@ -940,7 +938,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         throwErrorIfNotOk();
         long endMs = getCurrentTimeMs();
         LOG.info()
-                .$("finished [importId=").$(importIdSink)
+                .$("finished [importId=").$hexPadded(importId)
                 .$(", phase=").$(TextImportTask.getPhaseName(phase))
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
@@ -1073,7 +1071,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePrologue(byte phase) {
         phaseErrors = 0;
         LOG.info()
-                .$("started [importId=").$(importIdSink)
+                .$("started [importId=").$hexPadded(importId)
                 .$(", phase=").$(TextImportTask.getPhaseName(phase))
                 .$(", file=`").$(inputFilePath)
                 .$("`, workerCount=").$(workerCount).I$();
