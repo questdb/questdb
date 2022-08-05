@@ -429,14 +429,13 @@ public final class SqlParser {
         if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
             throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
         }
-        ExpressionNode tableName = expectExpr(lexer);
+        ExpressionNode target = expectExpr(lexer);
         CharSequence tok = tok(lexer, "'from' or 'to' or 'cancel'");
 
         if (isCancelKeyword(tok)) {
             CopyModel model = copyModelPool.next();
             model.setCancel(true);
-            model.setParallel(true);
-            model.setTarget(tableName);
+            model.setTarget(target);
             return model;
         }
 
@@ -447,7 +446,7 @@ public final class SqlParser {
             }
 
             CopyModel model = copyModelPool.next();
-            model.setTarget(tableName);
+            model.setTarget(target);
             model.setFileName(fileName);
 
             tok = optTok(lexer);
@@ -456,9 +455,6 @@ public final class SqlParser {
                 while (tok != null && !isSemicolon(tok)) {
                     if (isHeaderKeyword(tok)) {
                         model.setHeader(isTrueKeyword(tok(lexer, "'true' or 'false'")));
-                        tok = optTok(lexer);
-                    } else if (isParallelKeyword(tok)) {
-                        model.setParallel(true);
                         tok = optTok(lexer);
                     } else if (isPartitionKeyword(tok)) {
                         expectTok(lexer, "by");

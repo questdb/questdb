@@ -34,6 +34,7 @@ import io.questdb.std.Misc;
 public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final IntervalFwdDataFrameCursor cursor;
     private final RuntimeIntrinsicIntervalModel intervals;
+    private IntervalBwdDataFrameCursor bwdCursor;
 
     public IntervalFwdDataFrameCursorFactory(
             CairoEngine engine,
@@ -54,7 +55,11 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
             cursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
             return cursor;
         }
-        throw new UnsupportedOperationException();
+
+        if (bwdCursor == null) {
+            bwdCursor = new IntervalBwdDataFrameCursor(intervals, cursor.getTimestampIndex());
+        }
+        return bwdCursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
     }
 
     @Override

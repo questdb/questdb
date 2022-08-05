@@ -1313,23 +1313,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'r';
     }
 
-    public static boolean isParallelKeyword(CharSequence tok) {
-        if (tok.length() != 8) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'p'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i) | 32) == 'l';
-    }
-
-
     public static boolean isParamKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;

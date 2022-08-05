@@ -96,8 +96,8 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMinLongMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntMinLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override

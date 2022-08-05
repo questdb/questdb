@@ -128,8 +128,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 sendErrorAndThrowDisconnect("invalid partitionBy");
             }
 
-            CharSequence timestampIndexCol = rh.getUrlParam("timestamp");
-            if (PartitionBy.isPartitioned(partitionBy) && timestampIndexCol == null) {
+            CharSequence timestampColumn = rh.getUrlParam("timestamp");
+            if (PartitionBy.isPartitioned(partitionBy) && timestampColumn == null) {
                 sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
             }
 
@@ -140,7 +140,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     Chars.equalsNc("true", rh.getUrlParam("durable")),
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
-                    timestampIndexCol
+                    timestampColumn,
+                    null
             );
 
             CharSequence commitLagChars = rh.getUrlParam("commitLag");

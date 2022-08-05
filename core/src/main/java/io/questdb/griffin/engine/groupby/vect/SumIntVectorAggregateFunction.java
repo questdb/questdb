@@ -95,8 +95,8 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
