@@ -24,74 +24,58 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.*;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
-import java.util.List;
 
-public class FirstStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-    protected final Function arg;
+public class StringAggGroupByFunction extends FirstStringGroupByFunction implements GroupByFunction, UnaryFunction {
+    private static final int INITIAL_SINK_CAPACITY = 8 * 1024;
     protected int valueIndex;
-    protected List<CharSequence> stringValues;
-
-    public FirstStringGroupByFunction(@NotNull Function arg) {
-        this.arg = arg;
-        stringValues = new ArrayList<>(32);
-    }
+    private final char delimiter;
 
     @Override
     public void close() {
+        for(CharSequence s : stringValues) {
+            ((DirectCharSink)s).close();
+        }
         stringValues.clear();
+    }
+
+    public StringAggGroupByFunction(@NotNull Function arg, char delimiter) {
+        super(arg);
+        this.delimiter = delimiter;
+        this.stringValues = new ArrayList<>(32);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         int index = stringValues.size();
         mapValue.putInt(this.valueIndex, index);
-        stringValues.add(this.arg.getStr(record).toString());
+        DirectCharSink cs = new DirectCharSink(INITIAL_SINK_CAPACITY);
+        CharSequence str = this.arg.getStr(record);
+        if(str != null) {
+            cs.put(str);
+        }
+
+        stringValues.add(cs);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT); // pointer to string
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(this.valueIndex, -1);
-    }
-
-    @Override
-    public CharSequence getStr(Record record) {
-        if(record == null) {
-            return null;
+        CharSequence str = this.arg.getStr(record);
+        if(str != null) {
+            int index = mapValue.getInt(this.valueIndex);
+            DirectCharSink cs = (DirectCharSink) stringValues.get(index);
+            if(cs.length() > 0) {
+                cs.put(delimiter);
+            }
+            cs.put(str);
         }
-        int ix = record.getInt(this.valueIndex);
-        if(ix == -1) {
-            return null;
-        }
-        return this.stringValues.get(ix);
-    }
-
-    @Override
-    public CharSequence getStrB(Record record) {
-        return getStr(record);
-    }
-
-
-    @Override
-    public Function getArg() {
-        return this.arg;
     }
 }

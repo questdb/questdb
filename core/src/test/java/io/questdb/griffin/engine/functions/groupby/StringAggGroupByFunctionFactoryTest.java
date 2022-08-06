@@ -33,25 +33,31 @@ import org.junit.Test;
 public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testGroupKeyedUnsupported() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
-                            "select * from (" +
-                            "   select " +
-                            "       rnd_symbol('a','b','c','d','e','f') a," +
-                            "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
-                            "       timestamp_sequence(0, 100000) ts " +
-                            "   from long_sequence(5)" +
-                            ") timestamp(ts))",
-                    sqlExecutionContext
-            );
-            try {
-                compiler.compile("select a, string_agg(s, ',') from x", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "value type is not supported: STRING");
-            }
-        });
+    public void testGroupKeyed() throws Exception {
+        // a	s	ts
+        //a	bbb	1970-01-01T00:00:00.000000Z
+        //b	ccc	1970-01-01T00:00:00.100000Z
+        //f	ccc	1970-01-01T00:00:00.200000Z
+        //c	ccc	1970-01-01T00:00:00.300000Z
+        //a	abc	1970-01-01T00:00:00.400000Z
+        assertQuery(
+                "s\tstring_agg\n" +
+                "bbb\ta\n" +
+                "ccc\tb,f,c\n" +
+                "abc\ta\n",
+                "select s, string_agg(a, ',') from x",
+                "create table x as (" +
+                        "   select " +
+                        "       rnd_symbol('a','b','c','d','e','f') a," +
+                        "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -64,34 +70,6 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 false,
                 false,
-                true
-        );
-    }
-
-    @Test
-    public void testConstantString() throws Exception {
-        assertQuery(
-                "string_agg\n" +
-                        "aaa,aaa,aaa,aaa,aaa\n",
-                "select string_agg('aaa', ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testConstantNull() throws Exception {
-        assertQuery(
-                "string_agg\n" +
-                        "\n",
-                "select string_agg(null, ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true,
                 true
         );
     }
