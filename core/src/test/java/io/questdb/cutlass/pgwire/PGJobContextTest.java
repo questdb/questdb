@@ -58,7 +58,6 @@ import org.postgresql.core.BaseConnection;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
@@ -83,6 +82,24 @@ import static org.junit.Assert.*;
 
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
+
+    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
+    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
+    public static final int CONN_AWARE_EXTENDED_BINARY = 4;
+    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
+    public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
+    public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
+    public static final int CONN_AWARE_ALL =
+            CONN_AWARE_SIMPLE_BINARY
+                    | CONN_AWARE_SIMPLE_TEXT
+                    | CONN_AWARE_EXTENDED_BINARY
+                    | CONN_AWARE_EXTENDED_TEXT
+                    | CONN_AWARE_EXTENDED_PREPARED_BINARY
+                    | CONN_AWARE_EXTENDED_PREPARED_TEXT
+                    | CONN_AWARE_EXTENDED_CACHED_BINARY
+                    | CONN_AWARE_EXTENDED_CACHED_TEXT;
 
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
@@ -1160,175 +1177,184 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testBasicFetch() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-                int totalRows = 100;
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
 
-                PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
-                tbl.execute();
+            PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
+            tbl.execute();
 
-                PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
-                for (int i = 0; i < totalRows; i++) {
-                    insert.setInt(1, i);
-                    insert.execute();
+            PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setInt(1, i);
+                insert.execute();
+            }
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count, rs.getInt(1));
+                    ++count;
                 }
-                connection.commit();
-                PreparedStatement stmt = connection.prepareStatement("x");
-                int[] testSizes = {0, 1, 49, 50, 51, 99, 100, 101};
-                for (int testSize : testSizes) {
-                    stmt.setFetchSize(testSize);
-                    assertEquals(testSize, stmt.getFetchSize());
 
-                    ResultSet rs = stmt.executeQuery();
-                    assertEquals(testSize, rs.getFetchSize());
-
-                    int count = 0;
-                    while (rs.next()) {
-                        assertEquals(count, rs.getInt(1));
-                        ++count;
-                    }
-
-                    assertEquals(totalRows, count);
-                }
+                assertEquals(totalRows, count);
             }
         });
     }
 
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
-        assertMemoryLeak(() -> {
-
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table test (id long,val int)");
-                    statement.executeUpdate("create table test2(id long,val int)");
-                }
-
-                connection.setAutoCommit(false);
-                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test(id,val) values(?,?)")) {
-                    batchInsert.setLong(1, 0L);
-                    batchInsert.setInt(2, 1);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 1L);
-                    batchInsert.setInt(2, 2);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 2L);
-                    batchInsert.setInt(2, 3);
-                    batchInsert.addBatch();
-                    batchInsert.clearParameters();
-                    batchInsert.executeLargeBatch();
-                }
-
-                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test2(id,val) values(?,?)")) {
-                    batchInsert.setLong(1, 0L);
-                    batchInsert.setInt(2, 1);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 1L);
-                    batchInsert.setInt(2, 2);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 2L);
-                    batchInsert.setInt(2, 3);
-                    batchInsert.addBatch();
-                    batchInsert.clearParameters();
-                    batchInsert.executeLargeBatch();
-                }
-
-                connection.commit();
-
-                connection.setAutoCommit(true);
-                StringSink sink = new StringSink();
-                String expected = "id[BIGINT],val[INTEGER]\n" +
-                        "0,1\n" +
-                        "1,2\n" +
-                        "2,3\n";
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("select * from test");
-                assertResultSet(expected, sink, rs);
-
-                sink.clear();
-                Statement statement2 = connection.createStatement();
-                ResultSet rs2 = statement2.executeQuery("select * from test2");
-                assertResultSet(expected, sink, rs2);
-
-                //now switch on autocommit and check that data is inserted without explicitly calling commit()
-                connection.setAutoCommit(true);
-                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test(id,val) values(?,?)")) {
-                    batchInsert.setLong(1, 3L);
-                    batchInsert.setInt(2, 4);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 4L);
-                    batchInsert.setInt(2, 5);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 5L);
-                    batchInsert.setInt(2, 6);
-                    batchInsert.addBatch();
-                    batchInsert.clearParameters();
-                    batchInsert.executeLargeBatch();
-                }
-
-                sink.clear();
-                expected = "id[BIGINT],val[INTEGER]\n" +
-                        "0,1\n" +
-                        "1,2\n" +
-                        "2,3\n" +
-                        "3,4\n" +
-                        "4,5\n" +
-                        "5,6\n";
-                Statement statement3 = connection.createStatement();
-                ResultSet rs3 = statement3.executeQuery("select * from test");
-                assertResultSet(expected, sink, rs3);
-
-                //now fail insertion during transaction
-                try (Statement statement4 = connection.createStatement()) {
-                    statement4.executeUpdate("create table anothertab(id long, val int, k timestamp) timestamp(k) ");
-                }
-                connection.setAutoCommit(false);
-                try (PreparedStatement batchInsert = connection.prepareStatement("insert into anothertab(id, val, k) values(?,?,?)")) {
-                    batchInsert.setLong(1, 3L);
-                    batchInsert.setInt(2, 4);
-                    batchInsert.setLong(3, 1_000L);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 4L);
-                    batchInsert.setInt(2, 5);
-                    batchInsert.setLong(3, 0L);
-                    batchInsert.addBatch();
-                    batchInsert.setLong(1, 5L);
-                    batchInsert.setInt(2, 6);
-                    batchInsert.setLong(3, 2_000L);
-                    batchInsert.addBatch();
-                    batchInsert.clearParameters();
-                    batchInsert.executeLargeBatch();
-                    Assert.fail();
-                } catch (Exception e) {
-                    LOG.error().$(e).$();
-                }
-                //now transaction fail, we should rollback transaction
-                connection.rollback();
-                connection.setAutoCommit(true);
-                sink.clear();
-                expected = "id[BIGINT],val[INTEGER],k[TIMESTAMP]\n";
-                Statement statement4 = connection.createStatement();
-                ResultSet rs4 = statement4.executeQuery("select * from anothertab");
-                assertResultSet(expected, sink, rs4);
+        // todo: SIMPLE_TEXT is triggering unchecked type conversion bug in row copier generator
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("create table test (id long,val int)");
+                statement.executeUpdate("create table test2(id long,val int)");
             }
+
+            connection.setAutoCommit(false);
+            try (PreparedStatement batchInsert = connection.prepareStatement("insert into test(id,val) values(?,?)")) {
+                batchInsert.setLong(1, 0L);
+                batchInsert.setInt(2, 1);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 1L);
+                batchInsert.setInt(2, 2);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 2L);
+                batchInsert.setInt(2, 3);
+                batchInsert.addBatch();
+                batchInsert.clearParameters();
+                batchInsert.executeLargeBatch();
+            }
+
+            try (PreparedStatement batchInsert = connection.prepareStatement("insert into test2(id,val) values(?,?)")) {
+                batchInsert.setLong(1, 0L);
+                batchInsert.setInt(2, 1);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 1L);
+                batchInsert.setInt(2, 2);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 2L);
+                batchInsert.setInt(2, 3);
+                batchInsert.addBatch();
+                batchInsert.clearParameters();
+                batchInsert.executeLargeBatch();
+            }
+
+            connection.commit();
+
+            connection.setAutoCommit(true);
+            StringSink sink = new StringSink();
+            String expected = "id[BIGINT],val[INTEGER]\n" +
+                    "0,1\n" +
+                    "1,2\n" +
+                    "2,3\n";
+            Statement statement = connection.createStatement();
+            ResultSet rs = statement.executeQuery("select * from test");
+            assertResultSet(expected, sink, rs);
+
+            sink.clear();
+            Statement statement2 = connection.createStatement();
+            ResultSet rs2 = statement2.executeQuery("select * from test2");
+            assertResultSet(expected, sink, rs2);
+
+            //now switch on autocommit and check that data is inserted without explicitly calling commit()
+            connection.setAutoCommit(true);
+            try (PreparedStatement batchInsert = connection.prepareStatement("insert into test(id,val) values(?,?)")) {
+                batchInsert.setLong(1, 3L);
+                batchInsert.setInt(2, 4);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 4L);
+                batchInsert.setInt(2, 5);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 5L);
+                batchInsert.setInt(2, 6);
+                batchInsert.addBatch();
+                batchInsert.clearParameters();
+                batchInsert.executeLargeBatch();
+            }
+
+            sink.clear();
+            expected = "id[BIGINT],val[INTEGER]\n" +
+                    "0,1\n" +
+                    "1,2\n" +
+                    "2,3\n" +
+                    "3,4\n" +
+                    "4,5\n" +
+                    "5,6\n";
+            Statement statement3 = connection.createStatement();
+            ResultSet rs3 = statement3.executeQuery("select * from test");
+            assertResultSet(expected, sink, rs3);
+
+            //now fail insertion during transaction
+            try (Statement statement4 = connection.createStatement()) {
+                statement4.executeUpdate("create table anothertab(id long, val int, k timestamp) timestamp(k) ");
+            }
+            connection.setAutoCommit(false);
+            try (PreparedStatement batchInsert = connection.prepareStatement("insert into anothertab(id, val, k) values(?,?,?)")) {
+                batchInsert.setLong(1, 3L);
+                batchInsert.setInt(2, 4);
+                batchInsert.setLong(3, 1_000L);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 4L);
+                batchInsert.setInt(2, 5);
+                batchInsert.setLong(3, 0L);
+                batchInsert.addBatch();
+                batchInsert.setLong(1, 5L);
+                batchInsert.setInt(2, 6);
+                batchInsert.setLong(3, 2_000L);
+                batchInsert.addBatch();
+                batchInsert.clearParameters();
+                batchInsert.executeLargeBatch();
+                Assert.fail();
+            } catch (Exception e) {
+                LOG.error().$(e).$();
+            }
+            //now transaction fail, we should rollback transaction
+            connection.rollback();
+            connection.setAutoCommit(true);
+            sink.clear();
+            expected = "id[BIGINT],val[INTEGER],k[TIMESTAMP]\n";
+            Statement statement4 = connection.createStatement();
+            ResultSet rs4 = statement4.executeQuery("select * from anothertab");
+            assertResultSet(expected, sink, rs4);
         });
     }
 
     @Test
-    public void testBindVariableInFilterBinaryTransfer() throws Exception {
-        testBindVariableInFilter(true);
-    }
+    public void testBindVariableInFilter() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT), (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts)").execute();
+            connection.prepareStatement("insert into x values (100, 0)").execute();
+            connection.prepareStatement("insert into x values (101, 1)").execute();
+            connection.prepareStatement("insert into x values (102, 2)").execute();
+            connection.prepareStatement("insert into x values (103, 3)").execute();
+            connection.commit();
 
-    @Test
-    public void testBindVariableInFilterStringTransfer() throws Exception {
-        testBindVariableInFilter(false);
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
+                ps.setLong(1, 0);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "l[BIGINT],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "101,1970-01-01 00:00:00.000001\n" +
+                                    "102,1970-01-01 00:00:00.000002\n" +
+                                    "103,1970-01-01 00:00:00.000003\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -1339,16 +1365,6 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testBindVariableIsNotNullStringTransfer() throws Exception {
         testBindVariableIsNotNull(false);
-    }
-
-    @Test
-    public void testBindVariableIsNullBinaryTransfer() throws Exception {
-        testBindVariableIsNull(true);
-    }
-
-    @Test
-    public void testBindVariableIsNullStringTransfer() throws Exception {
-        testBindVariableIsNull(false);
     }
 
     @Test
@@ -1608,31 +1624,6 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-    public void testCloseMessageWithInvalidStatementNameHex() throws Exception {
-        String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
-                "<520000000800000003\n" +
-                ">70000000076f6800\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
-                ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000004200033100000000000001000000170004ffffffff00003200000000000002000000170004ffffffff00003300000000000003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">500000002d535f310073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000f00535f310000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000004200033100000000000001000000170004ffffffff00003200000000000002000000170004ffffffff00003300000000000003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
-                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
-                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">430000000953535f32005300000004\n" +
-                "<!!";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
-                script,
-                getHexPgWireConfig());
-    }
-
-    @Test
     public void testCloseMessageWithInvalidTypeHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -1681,13 +1672,65 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testCreateTableAsSelectExtendedPrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                    "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
+                pstmt.execute();
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "t",
+                    sink,
+                    "a\tb\n" +
+                            "2\t1970-01-01T00:00:00.000001Z\n" +
+                            "3\t1970-01-01T00:00:00.000002Z\n" +
+                            "4\t1970-01-01T00:00:00.000003Z\n" +
+                            "5\t1970-01-01T00:00:00.000004Z\n" +
+                            "6\t1970-01-01T00:00:00.000005Z\n" +
+                            "7\t1970-01-01T00:00:00.000006Z\n" +
+                            "8\t1970-01-01T00:00:00.000007Z\n" +
+                            "9\t1970-01-01T00:00:00.000008Z\n" +
+                            "10\t1970-01-01T00:00:00.000009Z\n" +
+                            "11\t1970-01-01T00:00:00.000010Z\n"
+            );
+
+            // Drop the table and create it once again with the same contents to verify
+            // that the named statement gets executed.
+            try (PreparedStatement pstmt = connection.prepareStatement("drop table t")) {
+                pstmt.execute();
+            }
+            try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                    "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
+                pstmt.execute();
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "t",
+                    sink,
+                    "a\tb\n" +
+                            "2\t1970-01-01T00:00:00.000001Z\n" +
+                            "3\t1970-01-01T00:00:00.000002Z\n" +
+                            "4\t1970-01-01T00:00:00.000003Z\n" +
+                            "5\t1970-01-01T00:00:00.000004Z\n" +
+                            "6\t1970-01-01T00:00:00.000005Z\n" +
+                            "7\t1970-01-01T00:00:00.000006Z\n" +
+                            "8\t1970-01-01T00:00:00.000007Z\n" +
+                            "9\t1970-01-01T00:00:00.000008Z\n" +
+                            "10\t1970-01-01T00:00:00.000009Z\n" +
+                            "11\t1970-01-01T00:00:00.000010Z\n"
+            );
+        });
+    }
+
+    @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection conn = getConnection(false, true)
-            ) {
-                conn.prepareStatement("create table tab as (\n" +
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try {
+                connection.prepareStatement("create table tab as (\n" +
                         "            select\n" +
                         "                rnd_byte() b,\n" +
                         "                rnd_boolean() B\n" +
@@ -1701,12 +1744,9 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testCreateTableDuplicateColumnNameNonAscii() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection conn = getConnection(false, true)
-            ) {
-                conn.prepareStatement("create table tab as (\n" +
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try {
+                connection.prepareStatement("create table tab as (\n" +
                         "            select\n" +
                         "                rnd_byte() 侘寂,\n" +
                         "                rnd_boolean() 侘寂\n" +
@@ -1719,61 +1759,72 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testCreateTableExtendedPrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            try (PreparedStatement pstmt = connection.prepareStatement("create table t (\n" +
+                    "  a SYMBOL,\n" +
+                    "  b TIMESTAMP)\n" +
+                    "    timestamp(b)")) {
+                pstmt.execute();
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "t",
+                    sink,
+                    "a\tb\n"
+            );
+        });
+    }
+
+    @Test
     public void testCursorFetch() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-                int totalRows = 10000;
-                int fetchSize = 10;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 10000;
+            int fetchSize = 10;
 
-                CallableStatement stmt = connection.prepareCall(
-                        "create table x as (select" +
-                                " cast(x as int) kk, " +
-                                " rnd_int() a," +
-                                " rnd_boolean() b," + // str
-                                " rnd_str(1,1,2) c," + // str
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) i," + // str
-                                " rnd_long() j," +
-                                " timestamp_sequence(889001, 8890012) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n," +
-                                " rnd_char() cc," + // str
-                                " rnd_long256() l2" + // str
-                                " from long_sequence(" + totalRows + "))" // str
-                );
-                stmt.execute();
+            CallableStatement stmt = connection.prepareCall(
+                    "create table x as (select" +
+                            " cast(x as int) kk, " +
+                            " rnd_int() a," +
+                            " rnd_boolean() b," + // str
+                            " rnd_str(1,1,2) c," + // str
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) i," + // str
+                            " rnd_long() j," +
+                            " timestamp_sequence(889001, 8890012) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_char() cc," + // str
+                            " rnd_long256() l2" + // str
+                            " from long_sequence(" + totalRows + "))" // str
+            );
+            stmt.execute();
 
-                try (PreparedStatement statement = connection.prepareStatement("x")) {
-                    statement.setFetchSize(fetchSize);
-                    int count = 0;
-                    try (ResultSet rs = statement.executeQuery()) {
-                        while (rs.next()) {
-                            count++;
-                            assertEquals(count, rs.getInt(1));
-                        }
+            try (PreparedStatement statement = connection.prepareStatement("x")) {
+                statement.setFetchSize(fetchSize);
+                int count = 0;
+                try (ResultSet rs = statement.executeQuery()) {
+                    while (rs.next()) {
+                        count++;
+                        assertEquals(count, rs.getInt(1));
                     }
-                    Assert.assertEquals(totalRows, count);
                 }
+                Assert.assertEquals(totalRows, count);
             }
         });
     }
 
     @Test
     public void testDDL() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true);
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a int)")
-            ) {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (a int)")) {
                 statement.execute();
                 try (
                         PreparedStatement select = connection.prepareStatement("x");
@@ -1822,17 +1873,15 @@ public class PGJobContextTest extends BasePGTest {
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
         };
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1);
-                 final Connection connection = getConnection(false, false)) {
-                for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
-                    String[] testData = sqlExpectedErrMsg[i];
-                    try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
-                        statement.execute();
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        assertContains(e.getMessage(), testData[1]);
-                    }
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
+                String[] testData = sqlExpectedErrMsg[i];
+                try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
+                    statement.execute();
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), testData[1]);
                 }
             }
         });
@@ -1840,39 +1889,20 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement("drop table if exists doesnt")) {
-                        statement.execute();
-                    }
-                }
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement statement = connection.prepareStatement("drop table if exists doesnt")) {
+                statement.execute();
             }
         });
     }
 
     @Test
     public void testEmptySql() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.execute("");
-                }
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement statement = connection.prepareStatement("")) {
+                statement.execute();
             }
         });
-    }
-
-    @Test
-    public void testExtendedModeTransaction() throws Exception {
-        assertTransaction(false);
-    }
-
-    @Test
-    public void testExtendedSyntaxErrorReporting() throws Exception {
-        testSyntaxErrorReporting(false);
     }
 
     @Test
@@ -2074,247 +2104,119 @@ public class PGJobContextTest extends BasePGTest {
         // this is a HEX encoded bytes of the same script as 'testSimple' sends using postgres jdbc driver
         String script = ">0000000804d2162f\n" +
                 "<4e\n" +
-                ">0000007000030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e\n" +
-                ">6700\n" +
-                ">5554463800\n" +
-                ">44\n" +
-                ">61746553\n" +
-                ">74\n" +
-                ">796c\n" +
-                ">65\n" +
-                ">004953\n" +
+                ">0000007000030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e670055544638004461746553\n" +
+                ">74796c65004953\n" +
                 ">4f00\n" +
-                ">54696d\n" +
-                ">655a6f\n" +
-                ">6e65\n" +
-                ">00\n" +
+                ">54696d655a6f6e6500\n" +
                 ">4575\n" +
-                ">72\n" +
-                ">6f70652f\n" +
-                ">4c6f\n" +
-                ">6e646f\n" +
-                ">6e0065\n" +
-                ">787472615f\n" +
-                ">666c6f\n" +
-                ">61\n" +
-                ">745f\n" +
-                ">64\n" +
+                ">726f70652f4c6f\n" +
+                ">6e646f6e0065787472615f666c6f\n" +
+                ">61745f64\n" +
                 ">696769\n" +
-                ">747300\n" +
-                ">320000\n" +
+                ">747300320000\n" +
                 "<520000000800000003\n" +
                 ">7000\n" +
                 ">00000a\n" +
-                ">7175\n" +
-                ">65\n" +
+                ">717565\n" +
                 ">737400\n" +
                 "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
                 ">50\n" +
-                ">000000220053\n" +
-                ">45542065\n" +
-                ">7874\n" +
-                ">72615f\n" +
-                ">666c6f\n" +
-                ">61745f64\n" +
-                ">6967\n" +
-                ">69747320\n" +
-                ">3d20\n" +
-                ">33\n" +
+                ">00000022005345542065787472615f666c6f61745f64696769747320\n" +
+                ">3d2033\n" +
                 ">00\n" +
                 ">0000420000000c0000000000000000450000000900000000015300000004\n" +
                 "<310000000432000000044300000008534554005a0000000549\n" +
-                ">5000000037\n" +
-                ">00\n" +
+                ">500000003700\n" +
                 ">5345\n" +
-                ">54\n" +
-                ">20617070\n" +
-                ">6c69\n" +
-                ">63\n" +
-                ">617469\n" +
-                ">6f6e5f\n" +
-                ">6e616d65203d2027506f737467726553514c204a444243\n" +
-                ">2044726976657227\n" +
+                ">54206170706c69636174696f6e5f\n" +
+                ">6e616d65203d2027506f737467726553514c204a4442432044726976657227\n" +
                 ">000000\n" +
                 ">420000000c0000000000000000450000000900000000015300000004\n" +
                 "<310000000432000000044300000008534554005a0000000549\n" +
                 ">5000\n" +
-                ">00\n" +
-                ">01940073\n" +
-                ">656c656374\n" +
-                ">20726e\n" +
-                ">645f73\n" +
-                ">74722834\n" +
+                ">0001940073656c656374\n" +
+                ">20726e645f7374722834\n" +
                 ">2c342c\n" +
                 ">342920732c\n" +
                 ">20\n" +
                 ">726e\n" +
-                ">64\n" +
-                ">5f\n" +
-                ">69\n" +
-                ">6e7428\n" +
+                ">645f696e7428\n" +
                 ">302c20\n" +
                 ">32\n" +
-                ">3536\n" +
-                ">2c2034\n" +
-                ">2920\n" +
+                ">35362c20342920\n" +
                 ">692c\n" +
                 ">20\n" +
-                ">726e\n" +
-                ">64\n" +
-                ">5f646f75\n" +
-                ">62\n" +
-                ">6c65\n" +
-                ">28342920\n" +
-                ">642c20\n" +
-                ">7469\n" +
+                ">726e645f646f75\n" +
+                ">626c65\n" +
+                ">28342920642c207469\n" +
                 ">6d6573\n" +
                 ">7461\n" +
-                ">6d705f\n" +
-                ">736571\n" +
-                ">75656e636528302c3130\n" +
+                ">6d705f73657175656e636528302c3130\n" +
                 ">30\n" +
-                ">30302920742c\n" +
-                ">20\n" +
-                ">726e\n" +
-                ">64\n" +
-                ">5f66\n" +
-                ">6c6f617428\n" +
+                ">30302920742c20726e645f666c6f617428\n" +
                 ">342920\n" +
                 ">66\n" +
-                ">2c\n" +
-                ">20726e\n" +
+                ">2c20726e\n" +
                 ">645f73\n" +
-                ">686f72\n" +
-                ">742829\n" +
-                ">205f73\n" +
+                ">686f72742829205f73\n" +
                 ">686f7274\n" +
                 ">2c2072\n" +
                 ">6e645f\n" +
-                ">6c6f\n" +
-                ">6e6728\n" +
-                ">302c20313030\n" +
-                ">3030\n" +
-                ">3030302c\n" +
-                ">2035\n" +
-                ">29\n" +
-                ">206c2c\n" +
-                ">20726e64\n" +
-                ">5f7469\n" +
-                ">6d\n" +
-                ">657374\n" +
-                ">616d70\n" +
+                ">6c6f6e6728302c203130303030\n" +
+                ">3030302c2035\n" +
+                ">29206c2c20726e64\n" +
+                ">5f74696d657374616d70\n" +
                 ">28746f\n" +
                 ">5f\n" +
-                ">74696d\n" +
-                ">65737461\n" +
-                ">6d70\n" +
-                ">2827\n" +
-                ">323031\n" +
-                ">35272c27797979\n" +
-                ">792729\n" +
-                ">2c746f5f7469\n" +
-                ">6d\n" +
-                ">65\n" +
-                ">7374616d\n" +
-                ">70\n" +
-                ">2827323031\n" +
-                ">3627\n" +
+                ">74696d65737461\n" +
+                ">6d70282732303135272c277979797927292c746f5f74696d657374616d\n" +
+                ">7028273230313627\n" +
                 ">2c\n" +
-                ">2779\n" +
-                ">7979\n" +
-                ">7927\n" +
-                ">292c\n" +
-                ">32\n" +
-                ">292074\n" +
-                ">73\n" +
-                ">322c\n" +
-                ">2072\n" +
+                ">277979797927292c3229207473322c2072\n" +
                 ">6e645f62\n" +
                 ">79\n" +
                 ">746528\n" +
-                ">302c31\n" +
-                ">3237\n" +
-                ">2920\n" +
-                ">6262\n" +
+                ">302c31323729206262\n" +
                 ">2c20\n" +
                 ">726e\n" +
                 ">64\n" +
-                ">5f\n" +
-                ">626f\n" +
-                ">6f6c\n" +
+                ">5f626f6f6c\n" +
                 ">6561\n" +
                 ">6e282920\n" +
-                ">622c\n" +
-                ">20\n" +
-                ">72\n" +
-                ">6e64\n" +
+                ">622c20726e64\n" +
                 ">5f73\n" +
-                ">796d\n" +
-                ">626f\n" +
-                ">6c28\n" +
-                ">34\n" +
-                ">2c\n" +
-                ">342c34\n" +
-                ">2c\n" +
-                ">3229\n" +
-                ">2c\n" +
+                ">796d626f6c2834\n" +
+                ">2c342c342c32292c\n" +
                 ">20\n" +
-                ">726e\n" +
-                ">64\n" +
-                ">5f64\n" +
-                ">61\n" +
-                ">74\n" +
+                ">726e645f646174\n" +
                 ">6528\n" +
                 ">74\n" +
-                ">6f5f64\n" +
-                ">6174\n" +
-                ">65\n" +
-                ">2827323031\n" +
+                ">6f5f646174652827323031\n" +
                 ">35272c202779\n" +
                 ">7979\n" +
-                ">79\n" +
-                ">2729\n" +
-                ">2c20\n" +
-                ">74\n" +
-                ">6f5f64\n" +
-                ">6174\n" +
-                ">65\n" +
-                ">28\n" +
+                ">7927292c20\n" +
+                ">746f5f64\n" +
+                ">61746528\n" +
                 ">27\n" +
                 ">32\n" +
                 ">30\n" +
-                ">31\n" +
-                ">36\n" +
-                ">27\n" +
-                ">2c2027\n" +
-                ">797979\n" +
+                ">3136272c2027797979\n" +
                 ">792729\n" +
                 ">2c\n" +
                 ">20\n" +
                 ">3229\n" +
-                ">2c72\n" +
-                ">6e\n" +
-                ">64\n" +
-                ">5f62\n" +
+                ">2c726e645f62\n" +
                 ">69\n" +
-                ">6e28\n" +
-                ">3130\n" +
-                ">2c32\n" +
-                ">30\n" +
-                ">2c\n" +
-                ">322920\n" +
+                ">6e2831302c32\n" +
+                ">302c322920\n" +
                 ">66726f6d\n" +
                 ">206c6f\n" +
-                ">6e\n" +
-                ">675f\n" +
-                ">7365\n" +
-                ">7175\n" +
-                ">656e\n" +
-                ">6365283530\n" +
+                ">6e675f7365\n" +
+                ">7175656e6365283530\n" +
                 ">29\n" +
                 ">0000004200\n" +
                 ">00000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<310000000432000000045400000128000d730000000000000100000413ffffffffffff00006900000000000002000000170004ffffffff00006400000000000003000002bd0008ffffffff000074000000000000040000045a0008ffffffff00006600000000000005000002bc0004ffffffff00005f73686f727400000000000006000000150002ffffffff00006c00000000000007000000140008ffffffff0000747332000000000000080000045a0008ffffffff0000626200000000000009000000150001ffffffff0000620000000000000a000000100001ffffffff0000726e645f73796d626f6c0000000000000b00000413ffffffffffff0000726e645f646174650000000000000c0000045a0008ffffffff0000726e645f62696e0000000000000d00000011ffffffffffff000144000000a6000dffffffff00000002353700000012302e363235343032313534323431323031380000001a313937302d30312d30312030303a30303a30302e30303030303000000005302e343632000000052d313539330000000733343235323332ffffffff000000033132310000000166000000045045484e00000017323031352d30332d31372030343a32353a35322e3736350000000e19c49594365349b4597e3b08a11e44000000c8000d00000004585953420000000331343200000012302e353739333436363332363836323231310000001a313937302d30312d30312030303a30303a30302e30313030303000000005302e39363900000005323030383800000007313531373439300000001a323031352d30312d31372032303a34313a31392e343830363835000000033130300000000174000000045045484e00000017323031352d30362d32302030313a31303a35382e35393900000011795f8b812b934d1a8e78b5b91153d0fb6444000000c2000d000000044f5a5a560000000332313900000013302e31363338313337343737333734383531340000001a313937302d30312d30312030303a30303a30302e30323030303000000005302e363539000000062d313233303300000007393438393530380000001a323031352d30382d31332031373a31303a31392e37353235323100000001360000000166ffffffff00000017323031352d30352d32302030313a34383a33372e3431380000000f2b4d5ff64690c3b3598ee5612f640e44000000b1000d000000044f4c595800000002333000000012302e373133333931303237313535353834330000001a313937302d30312d30312030303a30303a30302e30333030303000000005302e363535000000043636313000000007363530343432380000001a323031352d30382d30382030303a34323a32342e353435363339000000033132330000000166ffffffff00000017323031352d30312d30332031333a35333a30332e313635ffffffff44000000ac000d000000045449514200000002343200000012302e363830363837333133343632363431380000001a313937302d30312d30312030303a30303a30302e30343030303000000005302e363236000000052d3136303500000007383831343038360000001a323031352d30372d32382031353a30383a35332e34363234393500000002323800000001740000000443505357ffffffff0000000e3ba6dc3b7d2be392fe6938e1779a44000000af000d000000044c544f560000000331333700000012302e373633323631353030343332343530330000001a313937302d30312d30312030303a30303a30302e30353030303000000005302e3838320000000439303534ffffffff0000001a323031352d30342d32302030353a30393a30332e353830353734000000033130360000000166000000045045484e00000017323031352d30312d30392030363a35373a31372e353132ffffffff44000000a0000d000000045a494d4e00000003313235ffffffff0000001a313937302d30312d30312030303a30303a30302e303630303030ffffffff00000005313135323400000007383333353236310000001a323031352d31302d32362030323a31303a35302e363838333934000000033131310000000174000000045045484e00000017323031352d30382d32312031353a34363a33322e363234ffffffff44000000a1000d000000044f504a4f0000000331363800000013302e31303435393335323331323333313138330000001a313937302d30312d30312030303a30303a30302e30373030303000000005302e353335000000052d3539323000000007373038303730340000001a323031352d30372d31312030393a31353a33382e3334323731370000000331303300000001660000000456544a57ffffffffffffffff44000000b5000d00000004474c554f0000000331343500000012302e353339313632363632313739343637330000001a313937302d30312d30312030303a30303a30302e30383030303000000005302e37363700000005313432343200000007323439393932320000001a323031352d31312d30322030393a30313a33312e3331323830340000000238340000000166000000045045484e00000016323031352d31312d31342031373a33373a33362e3433ffffffff44000000c2000d000000045a5651450000000331303300000012302e363732393430353539303737333633380000001a313937302d30312d30312030303a30303a30302e303930303030ffffffff00000005313337323700000007373837353834360000001a323031352d31322d31322031333a31363a32362e3133343536320000000232320000000174000000045045484e00000016323031352d30312d32302030343a35303a33342e393800000012143380c9eba3677a1a79e435e43adc5c65ff44000000a7000d000000044c4947590000000331393900000012302e323833363334373133393438313436390000001a313937302d30312d30312030303a30303a30302e313030303030ffffffff00000005333034323600000007333231353536320000001a323031352d30382d32312031343a35353a30372e30353537323200000002313100000001660000000456544a57ffffffff0000000dff703ac78ab314cd470b0c391244000000a7000d000000044d514e5400000002343300000012302e353835393333323338383539393633380000001a313937302d30312d30312030303a30303a30302e31313030303000000005302e333335000000053237303139ffffffffffffffff0000000232370000000174000000045045484e00000017323031352d30372d31322031323a35393a34372e3636350000001326fb2e42faf56e8f80e354b807b13257ff9aef44000000c8000d00000004575743430000000332313300000012302e373636353032393931343337363935320000001a313937302d30312d30312030303a30303a30302e31323030303000000005302e35383000000005313336343000000007343132313932330000001a323031352d30382d30362030323a32373a33302e3436393736320000000237330000000166000000045045484e00000017323031352d30342d33302030383a31383a31302e3435330000001271a7d5af11963708dd98ef54882aa2ade7d444000000af000d00000004564647500000000331323000000012302e383430323936343730383132393534360000001a313937302d30312d30312030303a30303a30302e31333030303000000005302e373733000000043732323300000007373234313432330000001a323031352d31322d31382030373a33323a31382e34353630323500000002343300000001660000000456544a57ffffffff00000011244e44a80dfe27ec53135db215e7b8356744000000b7000d00000004524d44470000000331333400000013302e31313034373331353231343739333639360000001a313937302d30312d30312030303a30303a30302e31343030303000000005302e30343300000005323132323700000007373135353730380000001a323031352d30372d30332030343a31323a34352e3737343238310000000234320000000174000000044350535700000017323031352d30322d32342031323a31303a34332e313939ffffffff44000000a4000d0000000457464f5100000003323535ffffffff0000001a313937302d30312d30312030303a30303a30302e31353030303000000005302e31313600000005333135363900000007363638383237370000001a323031352d30352d31392030333a33303a34352e373739393939000000033132360000000174000000045045484e00000016323031352d31322d30392030393a35373a31372e3738ffffffff4400000098000d000000044d58444b00000002353600000012302e393939373739373233343033313638380000001a313937302d30312d30312030303a30303a30302e31363030303000000005302e353233000000062d33323337320000000736383834313332ffffffff0000000235380000000166ffffffff00000017323031352d30312d32302030363a31383a31382e353833ffffffff44000000ba000d00000004584d4b4a0000000331333900000012302e383430353831353439333536373431370000001a313937302d30312d30312030303a30303a30302e31373030303000000005302e333036000000053235383536ffffffff0000001a323031352d30352d31382030333a35303a32322e373331343337000000013200000001740000000456544a5700000016323031352d30362d32352031303a34353a30312e31340000000d007cfb0119caf2bf845a6f383544000000af000d0000000456494844ffffffffffffffff0000001a313937302d30312d30312030303a30303a30302e31383030303000000005302e35353000000005323232383000000007393130393834320000001a323031352d30312d32352031333a35313a33382e3237303538330000000239340000000166000000044350535700000017323031352d31302d32372030323a35323a31392e3933350000000e2d16f389a38364ded6fdc45bc4e944000000bd000d0000000457504e58ffffffff00000012302e393436393730303831333932363930370000001a313937302d30312d30312030303a30303a30302e31393030303000000005302e343135000000062d3137393333000000063637343236310000001a323031352d30332d30342031353a34333a31352e3231333638360000000234330000000174000000044859525800000017323031352d31322d31382032313a32383a32352e3332350000000ab34c0e8ff10cc560b7d144000000bd000d0000000459504f5600000002333600000012302e363734313234383434383732383832340000001a313937302d30312d30312030303a30303a30302e32303030303000000005302e303331000000052d3538383800000007313337353432330000001a323031352d31322d31302032303a35303a33352e38363636313400000001330000000174ffffffff00000017323031352d30372d32332032303a31373a30342e3233360000000dd4abbe30fa8dac3d98a0ad9a5d44000000c6000d000000044e55484effffffff00000012302e363934303931373932353134383333320000001a313937302d30312d30312030303a30303a30302e32313030303000000005302e333339000000062d323532323600000007333532343734380000001a323031352d30352d30372030343a30373a31382e31353239363800000002333900000001740000000456544a5700000017323031352d30342d30342031353a32333a33342e31333000000012b8bef8a146872892a39be3cbc2648ab035d8440000009c000d00000004424f53450000000332343000000013302e30363030313832373732313535363031390000001a313937302d30312d30312030303a30303a30302e32323030303000000005302e33373900000005323339303400000007393036393333390000001a323031352d30332d32312030333a34323a34322e3634333138360000000238340000000174ffffffffffffffffffffffff44000000c5000d00000004494e4b470000000331323400000012302e383631353834313632373730323735330000001a313937302d30312d30312030303a30303a30302e32333030303000000005302e343034000000062d333033383300000007373233333534320000001a323031352d30372d32312031363a34323a34372e3031323134380000000239390000000166ffffffff00000017323031352d30382d32372031373a32353a33352e3330380000001287fc9283fc88f3322770c801b0dcc93a5b7e44000000b1000d000000044655584300000002353200000012302e373433303130313939343531313531370000001a313937302d30312d30312030303a30303a30302e323430303030ffffffff000000062d313437323900000007313034323036340000001a323031352d30382d32312030323a31303a35382e3934393637340000000232380000000174000000044350535700000017323031352d30382d32392032303a31353a35312e383335ffffffff44000000bd000d00000004554e595100000002373100000011302e3434323039353431303238313933380000001a313937302d30312d30312030303a30303a30302e32353030303000000005302e353339000000062d3232363131ffffffff0000001a323031352d31322d32332031383a34313a34322e3331393835390000000239380000000174000000045045484e00000017323031352d30312d32362030303a35353a35302e3230320000000f28ed9799d877333fb267da984747bf44000000b1000d000000044b424d51ffffffff00000013302e32383031393231383832353035313339350000001a313937302d30312d30312030303a30303a30302e323630303030ffffffff000000053132323430ffffffff0000001a323031352d30382d31362030313a30323a35352e3736363632320000000232310000000166ffffffff00000017323031352d30352d31392030303a34373a31382e3639380000000d6ade4604d381e7a21622353b1c4400000091000d000000044a534f4c00000003323433ffffffff0000001a313937302d30312d30312030303a30303a30302e32373030303000000005302e303638000000062d3137343638ffffffffffffffff0000000232300000000174ffffffff00000017323031352d30362d31392031303a33383a35342e343833000000113de02d0486e7ca29980769ca5bd6cf0969440000007f000d00000004484e535300000003313530ffffffff0000001a313937302d30312d30312030303a30303a30302e32383030303000000005302e3134380000000531343834310000000735393932343433ffffffff0000000232350000000166000000045045484effffffff0000000c14d6fcee032281b806c406af44000000c3000d00000004505a50420000000331303100000014302e3036313634363731373738363135383034350000001a313937302d30312d30312030303a30303a30302e323930303030ffffffff00000005313232333700000007393837383137390000001a323031352d30392d30332032323a31333a31382e38353234363500000002373900000001660000000456544a5700000017323031352d31322d31372031353a31323a35342e3935380000001012613a9aad982e7552ad62878845b99d44000000c3000d000000044f594e4e00000002323500000012302e333339333530393531343030303234370000001a313937302d30312d30312030303a30303a30302e33303030303000000005302e36323800000005323234313200000007343733363337380000001a323031352d31302d31302031323a31393a34322e353238323234000000033130360000000174000000044350535700000017323031352d30372d30312030303a32333a34392e3738390000000d54133fffb67ecd0427669489db4400000083000dffffffff0000000331313700000012302e353633383430343737353636333136310000001a313937302d30312d30312030303a30303a30302e333130303030ffffffff000000052d353630340000000736333533303138ffffffff0000000238340000000166ffffffffffffffff0000000b2bad2507db6244336e008e4400000099000d00000004485652490000000332333300000013302e32323430373636353739303730353737370000001a313937302d30312d30312030303a30303a30302e33323030303000000005302e3432350000000531303436390000000731373135323133ffffffff0000000238360000000166ffffffff00000017323031352d30322d30322030353a34383a31372e333733ffffffff44000000b6000d000000044f59544f00000002393600000012302e373430373538313631363931363336340000001a313937302d30312d30312030303a30303a30302e33333030303000000005302e353238000000062d313232333900000007333439393632300000001a323031352d30322d30372032323a33353a30332e3231323236380000000231370000000166000000045045484e00000017323031352d30332d32392031323a35353a31312e363832ffffffff44000000a5000d000000044c46435900000002363300000012302e373231373331353732393739303732320000001a313937302d30312d30312030303a30303a30302e333430303030ffffffff0000000532333334340000000739353233393832ffffffff000000033132330000000166000000044350535700000017323031352d30352d31382030343a33353a32372e3232380000000e05e5c04eccd6e37b34cd1535bba444000000c1000d0000000447484c580000000331343800000012302e333035373933373730343936343237320000001a313937302d30312d30312030303a30303a30302e33353030303000000005302e363336000000062d333134353700000007323332323333370000001a323031352d31302d32322031323a30363a30352e3534343730310000000239310000000174000000044859525800000017323031352d30352d32312030393a33333a31382e3135380000000a571d91723004b702cb0344000000a3000d000000045954535a00000003313233ffffffff0000001a313937302d30312d30312030303a30303a30302e33363030303000000005302e35313900000005323235333400000007343434363233360000001a323031352d30372d32372030373a32333a33372e3233333731310000000235330000000166000000044350535700000016323031352d30312d31332030343a33373a31302e3336ffffffff44000000a1000d0000000453574c5500000003323531ffffffff0000001a313937302d30312d30312030303a30303a30302e33373030303000000005302e313739000000043737333400000007343038323437350000001a323031352d31302d32312031383a32343a33342e3430303334350000000236390000000166000000045045484e00000015323031352d30342d30312031343a33333a34322e35ffffffff44000000b1000d0000000454514a4c00000003323435ffffffff0000001a313937302d30312d30312030303a30303a30302e33383030303000000005302e3836350000000439353136000000063932393334300000001a323031352d30352d32382030343a31383a31382e36343035363700000002363900000001660000000456544a5700000017323031352d30362d31322032303a31323a32382e3838310000000f6c3e51d7ebb10771321faf404e8c47440000009e000d000000045245494a000000023934ffffffff0000001a313937302d30312d30312030303a30303a30302e33393030303000000005302e313330000000062d3239393234ffffffff0000001a323031352d30332d32302032323a31343a34362e323034373138000000033131330000000174000000044859525800000017323031352d31322d31392031333a35383a34312e383139ffffffff44000000c2000d000000044844485100000002393400000012302e373233343138313737333430373533360000001a313937302d30312d30312030303a30303a30302e34303030303000000005302e373330000000053139393730000000063635343133310000001a323031352d30312d31302032323a35363a30382e3438303435300000000238340000000174ffffffff00000017323031352d30332d30352031373a31343a34382e323735000000124f566b65a45338e9cdc1a7ee8675ada52d4944000000b8000d00000004554d455500000002343000000014302e3030383434343033333233303538303733390000001a313937302d30312d30312030303a30303a30302e34313030303000000005302e383035000000062d313136323300000007343539393836320000001a323031352d31312d32302030343a30323a34342e3333353934370000000237360000000166000000045045484e00000017323031352d30352d31372031373a33333a32302e393232ffffffff44000000ad000d00000004594a494800000003313834ffffffff0000001a313937302d30312d30312030303a30303a30302e34323030303000000005302e33383300000005313736313400000007333130313637310000001a323031352d30312d32382031323a30353a34362e363833303031000000033130350000000174ffffffff00000017323031352d31322d30372031393a32343a33362e3833380000000cec69cd73bb9bc595db6191ce44000000a3000d000000044359584700000002323700000012302e323931373739363035333034353734370000001a313937302d30312d30312030303a30303a30302e34333030303000000005302e393533000000043339343400000006323439313635ffffffff0000000236370000000174ffffffff00000017323031352d30332d30322030383a31393a34342e3536360000000e0148153e0c7f3f8fe4b5ab34212944000000b4000d000000044d5254470000000331343300000013302e30323633323533313336313439393131330000001a313937302d30312d30312030303a30303a30302e34343030303000000005302e393433000000062d323733323000000007313636373834320000001a323031352d30312d32342031393a35363a31352e3937333130390000000231310000000166ffffffff00000017323031352d30312d32342030373a31353a30322e373732ffffffff44000000c3000d00000004444f4e500000000332343600000011302e3635343232363234383734303434370000001a313937302d30312d30312030303a30303a30302e34353030303000000005302e35353600000005323734373700000007343136303031380000001a323031352d31322d31342030333a34303a30352e3931313833390000000232300000000174000000045045484e00000017323031352d31302d32392031343a33353a31302e3136370000000e079201f56aa131cdcbc2a2b48e9944000000c4000d00000004495158530000000332333200000013302e32333037353730303231383033383835330000001a313937302d30312d30312030303a30303a30302e34363030303000000005302e303439000000062d313831313300000007343030353232380000001a323031352d30362d31312031333a30303a30372e32343831383800000001380000000174000000044350535700000017323031352d30382d31362031313a30393a32342e3331310000000dfa1f9224b1b8676508b7f8410044000000b0000dffffffff00000003313738ffffffff0000001a313937302d30312d30312030303a30303a30302e34373030303000000005302e393033000000062d313436323600000007323933343537300000001a323031352d30342d30342030383a35313a35342e3036383135340000000238380000000174ffffffff00000016323031352d30372d30312030343a33323a32332e383300000014843625632b6361431c477db646babb98ca08bea444000000b0000d000000044855575a00000002393400000011302e3131303430313337343937393631330000001a313937302d30312d30312030303a30303a30302e34383030303000000005302e343230000000052d3337333600000007353638373531340000001a323031352d30312d30322031373a31383a30352e3632373633330000000237340000000166ffffffff00000017323031352d30332d32392030363a33393a31312e363432ffffffff44000000ab000d000000045352454400000002363600000013302e31313237343636373134303931353932380000001a313937302d30312d30312030303a30303a30302e34393030303000000005302e303630000000062d313035343300000007333636393337370000001a323031352d31302d32322030323a35333a30322e3338313335310000000237370000000174000000045045484effffffff0000000b7c3fd6883a93ef24a5e2bc430000000e53454c454354203530005a0000000549\n";
+                "<310000000432000000045400000128000d730000000000000100000413ffffffffffff00006900000000000002000000170004ffffffff00006400000000000003000002bd0008ffffffff000074000000000000040000045a0008ffffffff00006600000000000005000002bc0004ffffffff00005f73686f727400000000000006000000150002ffffffff00006c00000000000007000000140008ffffffff0000747332000000000000080000045a0008ffffffff0000626200000000000009000000150001ffffffff0000620000000000000a000000100001ffffffff0000726e645f73796d626f6c0000000000000b00000413ffffffffffff0000726e645f646174650000000000000c0000045a0008ffffffff0000726e645f62696e0000000000000d00000011ffffffffffff000144000000a6000dffffffff00000002353700000012302e363235343032313534323431323031380000001a313937302d30312d30312030303a30303a30302e30303030303000000005302e343632000000052d313539330000000733343235323332ffffffff000000033132310000000166000000045045484e00000017323031352d30332d31372030343a32353a35322e3736350000000e19c49594365349b4597e3b08a11e44000000c8000d00000004585953420000000331343200000012302e353739333436363332363836323231310000001a313937302d30312d30312030303a30303a30302e30313030303000000005302e39363900000005323030383800000007313531373439300000001a323031352d30312d31372032303a34313a31392e343830363835000000033130300000000174000000045045484e00000017323031352d30362d32302030313a31303a35382e35393900000011795f8b812b934d1a8e78b5b91153d0fb6444000000c2000d000000044f5a5a560000000332313900000013302e31363338313337343737333734383531340000001a313937302d30312d30312030303a30303a30302e30323030303000000005302e363539000000062d313233303300000007393438393530380000001a323031352d30382d31332031373a31303a31392e37353235323100000001360000000166ffffffff00000017323031352d30352d32302030313a34383a33372e3431380000000f2b4d5ff64690c3b3598ee5612f640e44000000b1000d000000044f4c595800000002333000000012302e373133333931303237313535353834330000001a313937302d30312d30312030303a30303a30302e30333030303000000005302e363535000000043636313000000007363530343432380000001a323031352d30382d30382030303a34323a32342e353435363339000000033132330000000166ffffffff00000017323031352d30312d30332031333a35333a30332e313635ffffffff44000000ac000d000000045449514200000002343200000012302e363830363837333133343632363431380000001a313937302d30312d30312030303a30303a30302e30343030303000000005302e363236000000052d3136303500000007383831343038360000001a323031352d30372d32382031353a30383a35332e34363234393500000002323800000001740000000443505357ffffffff0000000e3ba6dc3b7d2be392fe6938e1779a44000000af000d000000044c544f560000000331333700000012302e373633323631353030343332343530330000001a313937302d30312d30312030303a30303a30302e30353030303000000005302e3838320000000439303534ffffffff0000001a323031352d30342d32302030353a30393a30332e353830353734000000033130360000000166000000045045484e00000017323031352d30312d30392030363a35373a31372e353132ffffffff44000000a0000d000000045a494d4e00000003313235ffffffff0000001a313937302d30312d30312030303a30303a30302e303630303030ffffffff00000005313135323400000007383333353236310000001a323031352d31302d32362030323a31303a35302e363838333934000000033131310000000174000000045045484e00000017323031352d30382d32312031353a34363a33322e363234ffffffff44000000a1000d000000044f504a4f0000000331363800000013302e31303435393335323331323333313138330000001a313937302d30312d30312030303a30303a30302e30373030303000000005302e353335000000052d3539323000000007373038303730340000001a323031352d30372d31312030393a31353a33382e3334323731370000000331303300000001660000000456544a57ffffffffffffffff44000000b6000d00000004474c554f0000000331343500000012302e353339313632363632313739343637330000001a313937302d30312d30312030303a30303a30302e30383030303000000005302e37363700000005313432343200000007323439393932320000001a323031352d31312d30322030393a30313a33312e3331323830340000000238340000000166000000045045484e00000017323031352d31312d31342031373a33373a33362e303433ffffffff44000000c3000d000000045a5651450000000331303300000012302e363732393430353539303737333633380000001a313937302d30312d30312030303a30303a30302e303930303030ffffffff00000005313337323700000007373837353834360000001a323031352d31322d31322031333a31363a32362e3133343536320000000232320000000174000000045045484e00000017323031352d30312d32302030343a35303a33342e30393800000012143380c9eba3677a1a79e435e43adc5c65ff44000000a7000d000000044c4947590000000331393900000012302e323833363334373133393438313436390000001a313937302d30312d30312030303a30303a30302e313030303030ffffffff00000005333034323600000007333231353536320000001a323031352d30382d32312031343a35353a30372e30353537323200000002313100000001660000000456544a57ffffffff0000000dff703ac78ab314cd470b0c391244000000a7000d000000044d514e5400000002343300000012302e353835393333323338383539393633380000001a313937302d30312d30312030303a30303a30302e31313030303000000005302e333335000000053237303139ffffffffffffffff0000000232370000000174000000045045484e00000017323031352d30372d31322031323a35393a34372e3636350000001326fb2e42faf56e8f80e354b807b13257ff9aef44000000c8000d00000004575743430000000332313300000012302e373636353032393931343337363935320000001a313937302d30312d30312030303a30303a30302e31323030303000000005302e35383000000005313336343000000007343132313932330000001a323031352d30382d30362030323a32373a33302e3436393736320000000237330000000166000000045045484e00000017323031352d30342d33302030383a31383a31302e3435330000001271a7d5af11963708dd98ef54882aa2ade7d444000000af000d00000004564647500000000331323000000012302e383430323936343730383132393534360000001a313937302d30312d30312030303a30303a30302e31333030303000000005302e373733000000043732323300000007373234313432330000001a323031352d31322d31382030373a33323a31382e34353630323500000002343300000001660000000456544a57ffffffff00000011244e44a80dfe27ec53135db215e7b8356744000000b7000d00000004524d44470000000331333400000013302e31313034373331353231343739333639360000001a313937302d30312d30312030303a30303a30302e31343030303000000005302e30343300000005323132323700000007373135353730380000001a323031352d30372d30332030343a31323a34352e3737343238310000000234320000000174000000044350535700000017323031352d30322d32342031323a31303a34332e313939ffffffff44000000a5000d0000000457464f5100000003323535ffffffff0000001a313937302d30312d30312030303a30303a30302e31353030303000000005302e31313600000005333135363900000007363638383237370000001a323031352d30352d31392030333a33303a34352e373739393939000000033132360000000174000000045045484e00000017323031352d31322d30392030393a35373a31372e303738ffffffff4400000098000d000000044d58444b00000002353600000012302e393939373739373233343033313638380000001a313937302d30312d30312030303a30303a30302e31363030303000000005302e353233000000062d33323337320000000736383834313332ffffffff0000000235380000000166ffffffff00000017323031352d30312d32302030363a31383a31382e353833ffffffff44000000bb000d00000004584d4b4a0000000331333900000012302e383430353831353439333536373431370000001a313937302d30312d30312030303a30303a30302e31373030303000000005302e333036000000053235383536ffffffff0000001a323031352d30352d31382030333a35303a32322e373331343337000000013200000001740000000456544a5700000017323031352d30362d32352031303a34353a30312e3031340000000d007cfb0119caf2bf845a6f383544000000af000d0000000456494844ffffffffffffffff0000001a313937302d30312d30312030303a30303a30302e31383030303000000005302e35353000000005323232383000000007393130393834320000001a323031352d30312d32352031333a35313a33382e3237303538330000000239340000000166000000044350535700000017323031352d31302d32372030323a35323a31392e3933350000000e2d16f389a38364ded6fdc45bc4e944000000bd000d0000000457504e58ffffffff00000012302e393436393730303831333932363930370000001a313937302d30312d30312030303a30303a30302e31393030303000000005302e343135000000062d3137393333000000063637343236310000001a323031352d30332d30342031353a34333a31352e3231333638360000000234330000000174000000044859525800000017323031352d31322d31382032313a32383a32352e3332350000000ab34c0e8ff10cc560b7d144000000bd000d0000000459504f5600000002333600000012302e363734313234383434383732383832340000001a313937302d30312d30312030303a30303a30302e32303030303000000005302e303331000000052d3538383800000007313337353432330000001a323031352d31322d31302032303a35303a33352e38363636313400000001330000000174ffffffff00000017323031352d30372d32332032303a31373a30342e3233360000000dd4abbe30fa8dac3d98a0ad9a5d44000000c6000d000000044e55484effffffff00000012302e363934303931373932353134383333320000001a313937302d30312d30312030303a30303a30302e32313030303000000005302e333339000000062d323532323600000007333532343734380000001a323031352d30352d30372030343a30373a31382e31353239363800000002333900000001740000000456544a5700000017323031352d30342d30342031353a32333a33342e31333000000012b8bef8a146872892a39be3cbc2648ab035d8440000009c000d00000004424f53450000000332343000000013302e30363030313832373732313535363031390000001a313937302d30312d30312030303a30303a30302e32323030303000000005302e33373900000005323339303400000007393036393333390000001a323031352d30332d32312030333a34323a34322e3634333138360000000238340000000174ffffffffffffffffffffffff44000000c5000d00000004494e4b470000000331323400000012302e383631353834313632373730323735330000001a313937302d30312d30312030303a30303a30302e32333030303000000005302e343034000000062d333033383300000007373233333534320000001a323031352d30372d32312031363a34323a34372e3031323134380000000239390000000166ffffffff00000017323031352d30382d32372031373a32353a33352e3330380000001287fc9283fc88f3322770c801b0dcc93a5b7e44000000b1000d000000044655584300000002353200000012302e373433303130313939343531313531370000001a313937302d30312d30312030303a30303a30302e323430303030ffffffff000000062d313437323900000007313034323036340000001a323031352d30382d32312030323a31303a35382e3934393637340000000232380000000174000000044350535700000017323031352d30382d32392032303a31353a35312e383335ffffffff44000000bd000d00000004554e595100000002373100000011302e3434323039353431303238313933380000001a313937302d30312d30312030303a30303a30302e32353030303000000005302e353339000000062d3232363131ffffffff0000001a323031352d31322d32332031383a34313a34322e3331393835390000000239380000000174000000045045484e00000017323031352d30312d32362030303a35353a35302e3230320000000f28ed9799d877333fb267da984747bf44000000b1000d000000044b424d51ffffffff00000013302e32383031393231383832353035313339350000001a313937302d30312d30312030303a30303a30302e323630303030ffffffff000000053132323430ffffffff0000001a323031352d30382d31362030313a30323a35352e3736363632320000000232310000000166ffffffff00000017323031352d30352d31392030303a34373a31382e3639380000000d6ade4604d381e7a21622353b1c4400000091000d000000044a534f4c00000003323433ffffffff0000001a313937302d30312d30312030303a30303a30302e32373030303000000005302e303638000000062d3137343638ffffffffffffffff0000000232300000000174ffffffff00000017323031352d30362d31392031303a33383a35342e343833000000113de02d0486e7ca29980769ca5bd6cf0969440000007f000d00000004484e535300000003313530ffffffff0000001a313937302d30312d30312030303a30303a30302e32383030303000000005302e3134380000000531343834310000000735393932343433ffffffff0000000232350000000166000000045045484effffffff0000000c14d6fcee032281b806c406af44000000c3000d00000004505a50420000000331303100000014302e3036313634363731373738363135383034350000001a313937302d30312d30312030303a30303a30302e323930303030ffffffff00000005313232333700000007393837383137390000001a323031352d30392d30332032323a31333a31382e38353234363500000002373900000001660000000456544a5700000017323031352d31322d31372031353a31323a35342e3935380000001012613a9aad982e7552ad62878845b99d44000000c3000d000000044f594e4e00000002323500000012302e333339333530393531343030303234370000001a313937302d30312d30312030303a30303a30302e33303030303000000005302e36323800000005323234313200000007343733363337380000001a323031352d31302d31302031323a31393a34322e353238323234000000033130360000000174000000044350535700000017323031352d30372d30312030303a32333a34392e3738390000000d54133fffb67ecd0427669489db4400000083000dffffffff0000000331313700000012302e353633383430343737353636333136310000001a313937302d30312d30312030303a30303a30302e333130303030ffffffff000000052d353630340000000736333533303138ffffffff0000000238340000000166ffffffffffffffff0000000b2bad2507db6244336e008e4400000099000d00000004485652490000000332333300000013302e32323430373636353739303730353737370000001a313937302d30312d30312030303a30303a30302e33323030303000000005302e3432350000000531303436390000000731373135323133ffffffff0000000238360000000166ffffffff00000017323031352d30322d30322030353a34383a31372e333733ffffffff44000000b6000d000000044f59544f00000002393600000012302e373430373538313631363931363336340000001a313937302d30312d30312030303a30303a30302e33333030303000000005302e353238000000062d313232333900000007333439393632300000001a323031352d30322d30372032323a33353a30332e3231323236380000000231370000000166000000045045484e00000017323031352d30332d32392031323a35353a31312e363832ffffffff44000000a5000d000000044c46435900000002363300000012302e373231373331353732393739303732320000001a313937302d30312d30312030303a30303a30302e333430303030ffffffff0000000532333334340000000739353233393832ffffffff000000033132330000000166000000044350535700000017323031352d30352d31382030343a33353a32372e3232380000000e05e5c04eccd6e37b34cd1535bba444000000c1000d0000000447484c580000000331343800000012302e333035373933373730343936343237320000001a313937302d30312d30312030303a30303a30302e33353030303000000005302e363336000000062d333134353700000007323332323333370000001a323031352d31302d32322031323a30363a30352e3534343730310000000239310000000174000000044859525800000017323031352d30352d32312030393a33333a31382e3135380000000a571d91723004b702cb0344000000a4000d000000045954535a00000003313233ffffffff0000001a313937302d30312d30312030303a30303a30302e33363030303000000005302e35313900000005323235333400000007343434363233360000001a323031352d30372d32372030373a32333a33372e3233333731310000000235330000000166000000044350535700000017323031352d30312d31332030343a33373a31302e303336ffffffff44000000a3000d0000000453574c5500000003323531ffffffff0000001a313937302d30312d30312030303a30303a30302e33373030303000000005302e313739000000043737333400000007343038323437350000001a323031352d31302d32312031383a32343a33342e3430303334350000000236390000000166000000045045484e00000017323031352d30342d30312031343a33333a34322e303035ffffffff44000000b1000d0000000454514a4c00000003323435ffffffff0000001a313937302d30312d30312030303a30303a30302e33383030303000000005302e3836350000000439353136000000063932393334300000001a323031352d30352d32382030343a31383a31382e36343035363700000002363900000001660000000456544a5700000017323031352d30362d31322032303a31323a32382e3838310000000f6c3e51d7ebb10771321faf404e8c47440000009e000d000000045245494a000000023934ffffffff0000001a313937302d30312d30312030303a30303a30302e33393030303000000005302e313330000000062d3239393234ffffffff0000001a323031352d30332d32302032323a31343a34362e323034373138000000033131330000000174000000044859525800000017323031352d31322d31392031333a35383a34312e383139ffffffff44000000c2000d000000044844485100000002393400000012302e373233343138313737333430373533360000001a313937302d30312d30312030303a30303a30302e34303030303000000005302e373330000000053139393730000000063635343133310000001a323031352d30312d31302032323a35363a30382e3438303435300000000238340000000174ffffffff00000017323031352d30332d30352031373a31343a34382e323735000000124f566b65a45338e9cdc1a7ee8675ada52d4944000000b8000d00000004554d455500000002343000000014302e3030383434343033333233303538303733390000001a313937302d30312d30312030303a30303a30302e34313030303000000005302e383035000000062d313136323300000007343539393836320000001a323031352d31312d32302030343a30323a34342e3333353934370000000237360000000166000000045045484e00000017323031352d30352d31372031373a33333a32302e393232ffffffff44000000ad000d00000004594a494800000003313834ffffffff0000001a313937302d30312d30312030303a30303a30302e34323030303000000005302e33383300000005313736313400000007333130313637310000001a323031352d30312d32382031323a30353a34362e363833303031000000033130350000000174ffffffff00000017323031352d31322d30372031393a32343a33362e3833380000000cec69cd73bb9bc595db6191ce44000000a3000d000000044359584700000002323700000012302e323931373739363035333034353734370000001a313937302d30312d30312030303a30303a30302e34333030303000000005302e393533000000043339343400000006323439313635ffffffff0000000236370000000174ffffffff00000017323031352d30332d30322030383a31393a34342e3536360000000e0148153e0c7f3f8fe4b5ab34212944000000b4000d000000044d5254470000000331343300000013302e30323633323533313336313439393131330000001a313937302d30312d30312030303a30303a30302e34343030303000000005302e393433000000062d323733323000000007313636373834320000001a323031352d30312d32342031393a35363a31352e3937333130390000000231310000000166ffffffff00000017323031352d30312d32342030373a31353a30322e373732ffffffff44000000c3000d00000004444f4e500000000332343600000011302e3635343232363234383734303434370000001a313937302d30312d30312030303a30303a30302e34353030303000000005302e35353600000005323734373700000007343136303031380000001a323031352d31322d31342030333a34303a30352e3931313833390000000232300000000174000000045045484e00000017323031352d31302d32392031343a33353a31302e3136370000000e079201f56aa131cdcbc2a2b48e9944000000c4000d00000004495158530000000332333200000013302e32333037353730303231383033383835330000001a313937302d30312d30312030303a30303a30302e34363030303000000005302e303439000000062d313831313300000007343030353232380000001a323031352d30362d31312031333a30303a30372e32343831383800000001380000000174000000044350535700000017323031352d30382d31362031313a30393a32342e3331310000000dfa1f9224b1b8676508b7f8410044000000b1000dffffffff00000003313738ffffffff0000001a313937302d30312d30312030303a30303a30302e34373030303000000005302e393033000000062d313436323600000007323933343537300000001a323031352d30342d30342030383a35313a35342e3036383135340000000238380000000174ffffffff00000017323031352d30372d30312030343a33323a32332e30383300000014843625632b6361431c477db646babb98ca08bea444000000b0000d000000044855575a00000002393400000011302e3131303430313337343937393631330000001a313937302d30312d30312030303a30303a30302e34383030303000000005302e343230000000052d3337333600000007353638373531340000001a323031352d30312d30322031373a31383a30352e3632373633330000000237340000000166ffffffff00000017323031352d30332d32392030363a33393a31312e363432ffffffff44000000ab000d000000045352454400000002363600000013302e31313237343636373134303931353932380000001a313937302d30312d30312030303a30303a30302e34393030303000000005302e303630000000062d313035343300000007333636393337370000001a323031352d31302d32322030323a35333a30322e3338313335310000000237370000000174000000045045484effffffff0000000b7c3fd6883a93ef24a5e2bc430000000e53454c454354203530005a0000000549\n";
 
         assertHexScript(script);
     }
@@ -2597,6 +2499,45 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertDoubleTableWithTypeSuffix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (val double)");
+                statement.execute();
+
+                // mimics the behavior of Python drivers
+                // which will set NaN and Inf into string with ::float suffix
+                final PreparedStatement insert = connection.prepareStatement("insert into x values " +
+                        "('NaN'::float)," +
+                        "('Infinity'::float)," +
+                        "('-Infinity'::float)," +
+                        "('1.234567890123'::float)");
+                insert.execute();
+
+                final String expectedAbleToInsertToDoubleTable = "val[DOUBLE]\n" +
+                        "null\n" +
+                        "Infinity\n" +
+                        "-Infinity\n" +
+                        "1.234567890123\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAbleToInsertToDoubleTable, sink, resultSet);
+                }
+
+                final String expectedInsertWithoutLosingPrecision = "val[DOUBLE]\n" +
+                        "1.234567890123\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x where val = cast('1.234567890123' as double)").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedInsertWithoutLosingPrecision, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertExtendedBinary() throws Exception {
         testInsert0(false, true);
     }
@@ -2681,6 +2622,45 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testInsertExtendedText() throws Exception {
         testInsert0(false, false);
+    }
+
+    @Test
+    public void testInsertFloatTableWithTypeSuffix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (val float)");
+                statement.execute();
+
+                // mimics the behavior of Python drivers
+                // which will set NaN and Inf into string with ::float suffix
+                final PreparedStatement insert = connection.prepareStatement("insert into x values " +
+                        "('NaN'::float)," +
+                        "('Infinity'::float)," +
+                        "('-Infinity'::float)," +
+                        "('1.234567890123'::float)");  // should be first cast info double, then cast to float on insert
+                insert.execute();
+
+                final String expectedAbleToInsertToFloatTable = "val[REAL]\n" +
+                        "null\n" +
+                        "Infinity\n" +
+                        "-Infinity\n" +
+                        "1.235\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAbleToInsertToFloatTable, sink, resultSet);
+                }
+
+                final String expectedInsertWithLosingPrecision = "val[REAL]\n" +
+                        "1.235\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x where val = 1.23456788063").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedInsertWithLosingPrecision, sink, resultSet);
+                }
+            }
+        });
     }
 
     /*
@@ -2867,84 +2847,6 @@ nodejs code:
                 try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testInsertDoubleTableWithTypeSuffix() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(true, false)
-            ) {
-                final PreparedStatement statement = connection.prepareStatement("create table x (val double)");
-                statement.execute();
-
-                // mimics the behavior of Python drivers
-                // which will set NaN and Inf into string with ::float suffix
-                final PreparedStatement insert = connection.prepareStatement("insert into x values " +
-                        "('NaN'::float)," +
-                        "('Infinity'::float)," +
-                        "('-Infinity'::float)," +
-                        "('1.234567890123'::float)");
-                insert.execute();
-
-                final String expectedAbleToInsertToDoubleTable = "val[DOUBLE]\n" +
-                        "null\n" +
-                        "Infinity\n" +
-                        "-Infinity\n" +
-                        "1.234567890123\n";
-                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expectedAbleToInsertToDoubleTable, sink, resultSet);
-                }
-
-                final String expectedInsertWithoutLosingPrecision = "val[DOUBLE]\n" +
-                        "1.234567890123\n";
-                try (ResultSet resultSet = connection.prepareStatement("select * from x where val = cast('1.234567890123' as double)").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expectedInsertWithoutLosingPrecision, sink, resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testInsertFloatTableWithTypeSuffix() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(true, false)
-            ) {
-                final PreparedStatement statement = connection.prepareStatement("create table x (val float)");
-                statement.execute();
-
-                // mimics the behavior of Python drivers
-                // which will set NaN and Inf into string with ::float suffix
-                final PreparedStatement insert = connection.prepareStatement("insert into x values " +
-                        "('NaN'::float)," +
-                        "('Infinity'::float)," +
-                        "('-Infinity'::float)," +
-                        "('1.234567890123'::float)");  // should be first cast info double, then cast to float on insert
-                insert.execute();
-
-                final String expectedAbleToInsertToFloatTable = "val[REAL]\n" +
-                        "null\n" +
-                        "Infinity\n" +
-                        "-Infinity\n" +
-                        "1.235\n";
-                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expectedAbleToInsertToFloatTable, sink, resultSet);
-                }
-
-                final String expectedInsertWithLosingPrecision = "val[REAL]\n" +
-                        "1.235\n";
-                try (ResultSet resultSet = connection.prepareStatement("select * from x where val = 1.23456788063").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expectedInsertWithLosingPrecision, sink, resultSet);
                 }
             }
         });
@@ -3462,55 +3364,67 @@ nodejs code:
 
     @Test
     public void testLocalCopyFrom() throws Exception {
-        try (final PGWireServer ignored = createPGServer(2);
-             final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
-            copyStatement.execute();
-
-            TestUtils.runWithTextImportRequestJob(engine, () -> {
-                assertEventually(() -> {
-                            try (final PreparedStatement selectStatement = connection.prepareStatement("select * from testLocalCopyFrom");
-                                 final ResultSet rs = selectStatement.executeQuery()) {
-                                sink.clear();
-                                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                                        + "CDE,bb,b,sentence 1\n"
-                                        + "sentence 2,12\n", sink, rs);
-                            } catch (IOException | SQLException e) {
-                                throw new AssertionError(e);
-                            }
-                        }
-                );
-            });
-        }
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (
+                    final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
+                    final ResultSet ignore = copy.executeQuery()
+            ) {
+                TestUtils.runWithTextImportRequestJob(
+                        engine,
+                        () -> assertEventually(() -> {
+                                    try (
+                                            final PreparedStatement select = connection.prepareStatement("select * from x");
+                                            final ResultSet rs = select.executeQuery()
+                                    ) {
+                                        sink.clear();
+                                        assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                                                + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                                                + "CDE,bb,b,sentence 1\n"
+                                                + "sentence 2,12\n", sink, rs);
+                                    } catch (IOException | SQLException e) {
+                                        throw new AssertionError(e);
+                                    }
+                                }
+                        ));
+            }
+        });
     }
 
     @Test
     public void testLocalCopyFromCancellation() throws Exception {
-        try (final PGWireServer ignored = createPGServer(1);
-             final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/test-numeric-headers.csv' with header true")) {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
+                String importId;
+                try (final ResultSet rs = copyStatement.executeQuery()) {
+                    Assert.assertTrue(rs.next());
+                    importId = rs.getString("id");
+                }
 
-            String importId;
-            try (final ResultSet rs = copyStatement.executeQuery()) {
-                Assert.assertTrue(rs.next());
-                importId = rs.getString("id");
-            }
+                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
+                    // Cancel should always succeed since we don't have text import jobs running here.
+                    cancelStatement.execute();
+                }
 
-            try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
-                // Cancel should always succeed since we don't have text import jobs running here.
-                cancelStatement.execute();
-            }
+                try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
+                    incorrectCancelStatement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Active import has different id.");
+                }
 
-            try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
-                incorrectCancelStatement.execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "Active import has different id.");
+                // Pretend that the import was cancelled and try to cancel it one more time.
+                engine.getTextImportExecutionContext().resetActiveImportId();
+
+                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
+                    cancelStatement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "No active import to cancel.");
+                }
+            } finally {
+                TestUtils.drainTextImportJobQueue(engine);
             }
-        } finally {
-            TestUtils.drainTextImportJobQueue(engine);
-        }
+        });
     }
 
     @Test
@@ -3626,6 +3540,30 @@ nodejs code:
                 PreparedStatement sel = connection.prepareStatement("x");
                 ResultSet res = sel.executeQuery();
                 assertResultSet(expected, sink, res);
+            }
+        });
+    }
+
+    @Test
+    public void testMiscExtendedPrepared() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(Mode.ExtendedForPrepared, false, -1)
+            ) {
+                connection.setAutoCommit(false);
+                try (PreparedStatement pstmt = connection.prepareStatement("begin")) {
+                    pstmt.execute();
+                }
+                try (PreparedStatement pstmt = connection.prepareStatement("set")) {
+                    pstmt.execute();
+                }
+                try (PreparedStatement pstmt = connection.prepareStatement("commit")) {
+                    pstmt.execute();
+                }
+                try (PreparedStatement pstmt = connection.prepareStatement("rollback")) {
+                    pstmt.execute();
+                }
             }
         });
     }
@@ -4439,20 +4377,18 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesTimestampRange() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, false)
-            ) {
-                try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
-                    statement.execute();
-                }
+        // todo: simple mode doesn't work because PG sends timestamp as:
+        //     dateadd('d', -1, '1973-03-12 16:00:00+00')
+        //     we don't yet support text argument for the dateadd function.
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+            try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                statement.execute();
+            }
 
-                queryTimestampsInRange(connection);
+            queryTimestampsInRange(connection);
 
-                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                    statement.execute();
-                }
+            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                statement.execute();
             }
         });
     }
@@ -4524,8 +4460,7 @@ nodejs code:
                 ">510000000a424547494e00\n" +
                 "<430000000a424547494e005a0000000554\n" +
                 ">510000001a53454c454354202a2046524f4d207472616465733b00\n" +
-                "<540000006100047473000000000000010000045a0008ffffffff000064617465000000000000020000045a0008ffffffff00006e616d650000000000000300000413ffffffffffff000076616c756500000000000004000000170004ffffffff0000440000005b00040000001a323032312d30312d32362031333a34333a34302e32323030383900000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000130440000005b00040000001a323032312d30312d32362031333a34333a34302e32333130323800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000131440000005b00040000001a323032312d30312d32362031333a34333a34302e32333230323800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000132440000005b00040000001a323032312d30312d32362031333a34333a34302e32333230323800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000133440000005b00040000001a323032312d30312d32362031333a34333a34302e32333330323800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000134440000005b00040000001a323032312d30312d32362031333a34333a34302e32333330323800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000135440000005b00040000001a323032312d30312d32362031333a34333a34302e32333430323800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000136440000005b00040000001a323032312d30312d32362031333a34333a34302e32333430323800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000137440000005b00040000001a323032312d30312d32362031333a34333a34302e32333530373800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000138440000005b00040000001a323032312d30312d32362031333a34333a34302e32333530373800000015323032312d30312d32362030303a30303a30302e3000000015707974686f6e20707265702073746174656d656e740000000139430000000e53454c454354203130005a0000000554\n" +
-                ">5800000004\n";
+                "<540000006100047473000000000000010000045a0008ffffffff000064617465000000000000020000045a0008ffffffff00006e616d650000000000000300000413ffffffffffff000076616c756500000000000004000000170004ffffffff0000440000005d00040000001a323032312d30312d32362031333a34333a34302e32323030383900000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000130440000005d00040000001a323032312d30312d32362031333a34333a34302e32333130323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000131440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000132440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000133440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000134440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000135440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000136440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000137440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000138440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000139430000000e53454c454354203130005a0000000554\n";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
                 new DefaultPGWireConfiguration()
@@ -4620,46 +4555,41 @@ nodejs code:
 
     @Test
     public void testRegularBatchInsertMethod() throws Exception {
-
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table test_batch(id long,val int)");
-                }
-                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
-                    batchInsert.setLong(1, 0L);
-                    batchInsert.setInt(2, 1);
-                    batchInsert.addBatch();
-
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 1L);
-                    batchInsert.setInt(2, 2);
-                    batchInsert.addBatch();
-
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 2L);
-                    batchInsert.setInt(2, 3);
-                    batchInsert.addBatch();
-
-                    int[] a = batchInsert.executeBatch();
-                    Assert.assertEquals(3, a.length);
-                    Assert.assertEquals(1, a[0]);
-                    Assert.assertEquals(1, a[1]);
-                    Assert.assertEquals(1, a[2]);
-                }
-
-                StringSink sink = new StringSink();
-                String expected = "id[BIGINT],val[INTEGER]\n" +
-                        "0,1\n" +
-                        "1,2\n" +
-                        "2,3\n";
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("select * from test_batch");
-                assertResultSet(expected, sink, rs);
+        // bind variables do not work well over "simple" protocol
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("create table test_batch(id long,val int)");
             }
+            try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
+                batchInsert.setLong(1, 0L);
+                batchInsert.setInt(2, 1);
+                batchInsert.addBatch();
+
+                batchInsert.clearParameters();
+                batchInsert.setLong(1, 1L);
+                batchInsert.setInt(2, 2);
+                batchInsert.addBatch();
+
+                batchInsert.clearParameters();
+                batchInsert.setLong(1, 2L);
+                batchInsert.setInt(2, 3);
+                batchInsert.addBatch();
+
+                int[] a = batchInsert.executeBatch();
+                Assert.assertEquals(3, a.length);
+                Assert.assertEquals(1, a[0]);
+                Assert.assertEquals(1, a[1]);
+                Assert.assertEquals(1, a[2]);
+            }
+
+            StringSink sink = new StringSink();
+            String expected = "id[BIGINT],val[INTEGER]\n" +
+                    "0,1\n" +
+                    "1,2\n" +
+                    "2,3\n";
+            Statement statement = connection.createStatement();
+            ResultSet rs = statement.executeQuery("select * from test_batch");
+            assertResultSet(expected, sink, rs);
         });
     }
 
@@ -4675,32 +4605,27 @@ nodejs code:
     // --process 25 rows. end of results.
     @Test
     public void testResultSetFetchSizeFour() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-                int totalRows = 100;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
 
-                CallableStatement tbl = connection.prepareCall(
-                        "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
-                tbl.execute();
+            CallableStatement tbl = connection.prepareCall(
+                    "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
+            tbl.execute();
 
-                connection.commit();
-                PreparedStatement stmt = connection.prepareStatement("x");
-                stmt.setFetchSize(50);
-                ResultSet rs = stmt.executeQuery();
-                rs.setFetchSize(25);
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            stmt.setFetchSize(50);
+            ResultSet rs = stmt.executeQuery();
+            rs.setFetchSize(25);
 
-                int count = 0;
-                while (rs.next()) {
-                    assertEquals(count, rs.getInt(1));
-                    ++count;
-                }
-
-                assertEquals(totalRows, count);
+            int count = 0;
+            while (rs.next()) {
+                assertEquals(count, rs.getInt(1));
+                ++count;
             }
+
+            assertEquals(totalRows, count);
         });
     }
 
@@ -4711,32 +4636,27 @@ nodejs code:
     // -process results
     @Test
     public void testResultSetFetchSizeOne() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-                int totalRows = 100;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
 
-                CallableStatement tbl = connection.prepareCall(
-                        "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
-                tbl.execute();
+            CallableStatement tbl = connection.prepareCall(
+                    "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
+            tbl.execute();
 
-                PreparedStatement stmt = connection.prepareStatement("x");
-                stmt.setFetchSize(0);
+            PreparedStatement stmt = connection.prepareStatement("x");
+            stmt.setFetchSize(0);
 
-                ResultSet rs = stmt.executeQuery();
-                rs.setFetchSize(50); // Should have no effect.
+            ResultSet rs = stmt.executeQuery();
+            rs.setFetchSize(50); // Should have no effect.
 
-                int count = 0;
-                while (rs.next()) {
-                    assertEquals(count, rs.getInt(1));
-                    ++count;
-                }
-
-                assertEquals(totalRows, count);
+            int count = 0;
+            while (rs.next()) {
+                assertEquals(count, rs.getInt(1));
+                ++count;
             }
+
+            assertEquals(totalRows, count);
         });
     }
 
@@ -4752,33 +4672,28 @@ nodejs code:
     // --process 25 rows. end of results.
     @Test
     public void testResultSetFetchSizeThree() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-                int totalRows = 100;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
 
-                CallableStatement tbl = connection.prepareCall(
-                        "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
-                tbl.execute();
+            CallableStatement tbl = connection.prepareCall(
+                    "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
+            tbl.execute();
 
-                connection.commit();
+            connection.commit();
 
-                PreparedStatement stmt = connection.prepareStatement("x");
-                stmt.setFetchSize(25);
-                ResultSet rs = stmt.executeQuery();
-                rs.setFetchSize(50);
+            PreparedStatement stmt = connection.prepareStatement("x");
+            stmt.setFetchSize(25);
+            ResultSet rs = stmt.executeQuery();
+            rs.setFetchSize(50);
 
-                int count = 0;
-                while (rs.next()) {
-                    assertEquals(count, rs.getInt(1));
-                    ++count;
-                }
-
-                assertEquals(totalRows, count);
+            int count = 0;
+            while (rs.next()) {
+                assertEquals(count, rs.getInt(1));
+                ++count;
             }
+
+            assertEquals(totalRows, count);
         });
     }
 
@@ -4792,32 +4707,27 @@ nodejs code:
     // --process 75 rows
     @Test
     public void testResultSetFetchSizeTwo() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-                int totalRows = 100;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 100;
 
-                CallableStatement tbl = connection.prepareCall(
-                        "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
-                tbl.execute();
+            CallableStatement tbl = connection.prepareCall(
+                    "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
+            tbl.execute();
 
-                connection.commit();
-                PreparedStatement stmt = connection.prepareStatement("x");
-                stmt.setFetchSize(25);
-                ResultSet rs = stmt.executeQuery();
-                rs.setFetchSize(0);
+            connection.commit();
+            PreparedStatement stmt = connection.prepareStatement("x");
+            stmt.setFetchSize(25);
+            ResultSet rs = stmt.executeQuery();
+            rs.setFetchSize(0);
 
-                int count = 0;
-                while (rs.next()) {
-                    assertEquals(count, rs.getInt(1));
-                    ++count;
-                }
-
-                assertEquals(totalRows, count);
+            int count = 0;
+            while (rs.next()) {
+                assertEquals(count, rs.getInt(1));
+                ++count;
             }
+
+            assertEquals(totalRows, count);
         });
     }
 
@@ -5384,40 +5294,19 @@ create table tab as (
         // 1. create a table
         // 2. alter table
         // 3. check table column added
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, true)
-            ) {
-                PreparedStatement statement = connection.prepareStatement("create table x (a int)");
-                statement.execute();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+            statement.execute();
 
-                PreparedStatement alter = connection.prepareStatement("alter table x add column b long");
-                alter.executeUpdate();
+            PreparedStatement alter = connection.prepareStatement("alter table x add column b long");
+            alter.executeUpdate();
 
-                PreparedStatement select = connection.prepareStatement("x");
-                try (ResultSet resultSet = select.executeQuery()) {
-                    Assert.assertEquals(resultSet.findColumn("a"), 1);
-                    Assert.assertEquals(resultSet.findColumn("b"), 2);
-                }
+            PreparedStatement select = connection.prepareStatement("x");
+            try (ResultSet resultSet = select.executeQuery()) {
+                Assert.assertEquals(resultSet.findColumn("a"), 1);
+                Assert.assertEquals(resultSet.findColumn("b"), 2);
             }
         });
-    }
-
-    @Test
-    public void testSimpleHex() throws Exception {
-        // this is a HEX encoded bytes of the same script as 'testSimple' sends using postgres jdbc driver
-        String script = ">0000006600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
-                "<520000000800000003\n" +
-                ">700000000a717565737400\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
-                ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">50000001af0073656c65637420726e645f73747228342c342c342920732c20726e645f696e7428302c203235362c20342920692c20726e645f646f75626c6528342920642c2074696d657374616d705f73657175656e636528302c31303030302920742c20726e645f666c6f617428342920662c20726e645f73686f72742829205f73686f72742c20726e645f6c6f6e6728302c2031303030303030302c203529206c2c20726e645f74696d657374616d7028746f5f74696d657374616d70282732303135272c277979797927292c746f5f74696d657374616d70282732303136272c277979797927292c3229207473322c20726e645f6279746528302c313237292062622c20726e645f626f6f6c65616e282920622c20726e645f73796d626f6c28342c342c342c32292c20726e645f6461746528746f5f64617465282732303135272c20277979797927292c20746f5f64617465282732303136272c20277979797927292c2032292c726e645f62696e2831302c32302c32292c20726e645f6368617228292c20726e645f6c6f6e6732353628292066726f6d206c6f6e675f73657175656e636528353029000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<310000000432000000045400000161000f730000000000000100000413ffffffffffff00006900000000000002000000170004ffffffff00006400000000000003000002bd0008ffffffff000074000000000000040000045a0008ffffffff00006600000000000005000002bc0004ffffffff00005f73686f727400000000000006000000150002ffffffff00006c00000000000007000000140008ffffffff0000747332000000000000080000045a0008ffffffff0000626200000000000009000000150001ffffffff0000620000000000000a000000100001ffffffff0000726e645f73796d626f6c0000000000000b00000413ffffffffffff0000726e645f646174650000000000000c0000045a0008ffffffff0000726e645f62696e0000000000000d00000011ffffffffffff0001726e645f636861720000000000000e000000120002ffffffff0000726e645f6c6f6e673235360000000000000f00000413ffffffffffff000044000000f1000fffffffff00000002353700000012302e363235343032313534323431323031380000001a313937302d30312d30312030303a30303a30302e30303030303000000005302e343632000000052d313539330000000733343235323332ffffffff000000033132310000000166000000045045484e00000017323031352d30332d31372030343a32353a35322e3736350000000e19c49594365349b4597e3b08a11e00000001440000004230783566323061333565383065313534663435386466643038656562396363333965636563383238363965646563313231626332353933663832623433303332386444000000fd000f000000044f554f4a000000023737ffffffff0000001a313937302d30312d30312030303a30303a30302e30313030303000000005302e363736000000052d3733373400000007373737373739310000001a323031352d30362d31392030383a34373a34352e3630333138320000000235330000000174ffffffff00000017323031352d31312d31302030393a35303a33332e323135000000138b812b934d1a8e78b5b91153d0fb64bb1ad4f00000000156000000423078626564663239656662323863646362316237356463636264663166386238346239623237656261356539636661316532393636303330306365613764623534304400000110000f00000004494343580000000332303500000012302e383833373432313931383830303930370000001a313937302d30312d30312030303a30303a30302e30323030303000000005302e303534000000043630393300000007343535323936300000001a323031352d30372d31372030303a35303a35392e37383737343200000002333300000001660000000456544a5700000017323031352d30372d31352030313a30363a31312e32323600000010e5612f640e2c7fd76fb8c9ae28c7844700000001550000004230783862346534383331343939666332613532363536376634343330623436623766373863353934633439363939353838356161313839366430616433343139643244000000f0000f000000044753484f00000002333100000013302e33343934373236393939373133373336350000001a313937302d30312d30312030303a30303a30302e30333030303000000005302e31393800000005313037393500000007363430363230370000001a323031352d30352d32322031343a35393a34312e3637333432320000000235360000000166ffffffffffffffff0000000a491cf23ced39aca83ba600000001530000004230783765623664383036343964316466653338653461376636363164663663333262326631373162336630366636333837643266643262346136306261326261336244000000f4000f00000004485a45500000000331383000000013302e30363934343438303034363332373331370000001a313937302d30312d30312030303a30303a30302e30343030303000000005302e343330000000053231333437ffffffff0000001a323031352d30322d30372031303a30323a31332e36303039353600000002343100000001660000000448595258ffffffff00000010eac3c9739346fec2d368798b431d57340000000146000000423078333865346265396531393332316235373833326464323739353264393439643836393164643434313261326433393864346663303165326239666431313632334400000101000f000000044857564400000002333800000013302e34383532343034363836383439393731350000001a313937302d30312d30312030303a30303a30302e30353030303000000005302e36383000000005323535373900000007353537353735310000001a323031352d31302d31392031323a33383a34392e33363032393400000002313500000001660000000456544a5700000017323031352d30322d30362032323a35383a35302e333333ffffffff0000000151000000423078383531333434363830323561616562306132663862626562623938396261363039626230663231616339653432373238336565663366313538653038343336324400000118000f0000000450474c5500000002393700000014302e3032393232373639363934323732363634340000001a313937302d30312d30312030303a30303a30302e30363030303000000005302e313732000000062d313839313200000007383334303237320000001a323031352d30352d32342032323a30393a35352e3137353939310000000331313100000001660000000456544a5700000017323031352d31312d30382032313a35373a32322e38313200000014d96f04ab27478f233fae7c9f7704e90cea4eea8b000000014b0000004230783535643336383664356461323765313432353561393162306532386162656233366333343933666362326430323732643630343665356431333764643866306644000000fa000f00000004574946460000000331303400000011302e3839323435343738333932313139370000001a313937302d30312d30312030303a30303a30302e30373030303000000005302e30393300000005323832313800000007343030393035370000001a323031352d30322d31382030373a32363a31302e31343130353500000002383900000001660000000448595258ffffffff000000112926c5aada18ce5fb28b5c549025c220ff00000001520000004230783535623035383664316330326466623339393930343632346334396236643861376438356565323931366232303963373739343036616231663835653333336144000000f5000f00000004434c544a0000000331313500000012302e323039333536393934373634343233360000001a313937302d30312d30312030303a30303a30302e30383030303000000005302e353436000000052d3832303700000007323337383731380000001a323031352d30342d32312031323a32353a34332e3239313931360000000233310000000166000000045045484effffffff0000000ba5dba1761c1c26fb2e42fa00000001460000004230783438336338336438386163363734653338393434393961316131363830353830636665646666323361363764393138666234396233633234653435366164366544000000f5000f0000000448464c5000000002373900000012302e393133303135313130353132353130320000001a313937302d30312d30312030303a30303a30302e303930303030ffffffff00000005313436363700000007323531333234380000001a323031352d30382d33312031333a31363a31322e33313837383200000001330000000166ffffffff00000016323031352d30322d30382031323a32383a33362e3636ffffffff0000000155000000423078373934323364346433323064323634393736376134666564613036306434666236393233633063376439363539363964613162313134306132626532353234314400000111000f00000004474c4e590000000331333800000012302e373136353834373331383139313430350000001a313937302d30312d30312030303a30303a30302e31303030303000000005302e373533000000052d3236363600000007393333373337390000001a323031352d30332d32352030393a32313a35322e373736353736000000033131310000000166000000044859525800000016323031352d30312d32342031353a32333a31332e39320000001062e14ed6b2575be3713d20e237f26443000000015900000042307861616334326363626334393363663434616136613061316434636466343064643661653466643235376534343132613037663139373737656331333638303535440000010e000f0000000456544e500000000332333700000013302e32393234323734383437353232373835330000001a313937302d30312d30312030303a30303a30302e31313030303000000005302e373533000000062d323638363100000007323335343133320000001a323031352d30322d31302031383a32373a31312e3134303637350000000235360000000174ffffffff00000017323031352d30322d32352030303a34353a31352e3336330000000f28b6a917ec0e01c4eb9f138fbb2a4b000000014f0000004230783932366364643939653633616262333536353064316662343632643031346466353930373033393265663661613338393933326534623530386533353432386644000000ef000f0000000457464f5100000003323535ffffffff0000001a313937302d30312d30312030303a30303a30302e31323030303000000005302e31313600000005333135363900000007363638383237370000001a323031352d30352d31392030333a33303a34352e373739393939000000033132360000000174000000045045484e00000016323031352d31322d30392030393a35373a31372e3738ffffffff000000014500000042307834663338383034323730613461363433343962353736306136383764386366383338636262396165393665396563646337343565643966616562353133616433440000010f000f00000004454a43540000000331393500000013302e31333331323231343339363735343136330000001a313937302d30312d30312030303a30303a30302e31333030303000000005302e393434000000052d33303133ffffffff0000001a323031352d31312d30332031343a35343a34372e353234303135000000033131340000000174000000045045484e00000017323031352d30382d32382030373a34313a32392e39353200000013fb9d63ca94006bdd18fe7176bc4524cd13007c00000001520000004230783363666535306239636162616631663239653064636666623735323065626361633438616436623866363936323231396232376230616337666264656532303144000000fd000f000000044a5959460000000332343900000012302e323030303638323435303932393335330000001a313937302d30312d30312030303a30303a30302e31343030303000000005302e363032000000043538363900000007323037393231370000001a323031352d30372d31302031383a31363a33382e38383239393100000002343400000001740000000448595258ffffffff00000014b76c4bfb2d16f389a38364ded6fdc45bc4e9194700000001500000004230783835653730623436333439373939666534396637383364353334336464376263336433666531333032636433333731313337666363646162663138316235616444000000f7000f00000004545a4f44ffffffff00000013302e33363037383837383939363233323136370000001a313937302d30312d30312030303a30303a30302e31353030303000000005302e363031000000062d32333132350000000735303833333130ffffffff00000002313100000001660000000456544a5700000017323031352d30392d31392031383a31343a35372e35393000000011c560b7d15a0ce9db51134d5920c937a10000000001450000004230786366663835663932353838343765303361366632653261373732636432663337353164383232613637646666336432333735313636323233613631383136343244000000ff000f0000000450424d4200000002373600000013302e32333536373431393537363635383333330000001a313937302d30312d30312030303a30303a30302e31363030303000000005302e353731000000053236323834ffffffff0000001a323031352d30352d32312031333a31343a35362e3334393033360000000234350000000174ffffffff00000016323031352d30392d31312030393a33343a33392e35300000000a97cbf62c2345a3766015000000014d000000423078336333613362373934376365383336393932366362636231366539613266313163666162373066326431373564306439616562393839626537396364326238634400000110000f00000004544b52490000000332303100000012302e323632353432343331323431393536320000001a313937302d30312d30312030303a30303a30302e31373030303000000005302e393135000000052d3534383600000007393931373136320000001a323031352d30352d30332030333a35393a30342e32353637313900000002363600000001660000000456544a5700000016323031352d30312d31352030333a32323a30312e333300000010a1f54bea01c963b4fc92601fdf41ec2c000000014f00000042307834653365313561643439653061383539333132393831613733633964666365373930323261373561373339656534383865656661323932303032366462613838440000010b000f000000044e4b47510000000331373400000012302e343033393034323633393538313233320000001a313937302d30312d30312030303a30303a30302e31383030303000000005302e34333800000005323036383700000007373331353332390000001a323031352d30372d32352030343a35323a32372e3732343836390000000232300000000166000000045045484e00000016323031352d30362d31302032323a32383a35372e31300000000b9283fc88f3322770c801b000000001540000004230783537396231346332373235643761376535646662643865323334393837313562386439656533306537626362663833613664316231633830663031326134633944000000fc000f000000044655584300000002353200000012302e373433303130313939343531313531370000001a313937302d30312d30312030303a30303a30302e313930303030ffffffff000000062d313437323900000007313034323036340000001a323031352d30382d32312030323a31303a35382e3934393637340000000232380000000174000000044350535700000017323031352d30382d32392032303a31353a35312e383335ffffffff000000015800000042307834313435376562633561303261326235343263626434393431346530323261303666346161326463343861396134643939323838323234626533333462323530440000010d000f0000000454474e4a0000000331353900000012302e393536323537373132383430313434340000001a313937302d30312d30312030303a30303a30302e32303030303000000005302e3235310000000337393500000007353036393733300000001a323031352d30372d30312030313a33363a35372e3130313734390000000237310000000174000000045045484e00000017323031352d30392d31322030353a34313a35392e3939390000000e333fb267da984747bf4fea5f48ed000000014d000000423078346261323061386530636637633533633966353237343835633461616334613238323666343762616163643538623238373030613637663631313963363362624400000116000f0000000448434e500000000331373300000013302e31383638343236373634303139353931370000001a313937302d30312d30312030303a30303a30302e32313030303000000005302e363838000000062d313438383200000007383431363835380000001a323031352d30362d31362031393a33313a35392e3831323834380000000232350000000166000000044859525800000017323031352d30392d33302031373a32383a32342e313133000000131d5cc15d2d44ea0081c419a1ec74f810fc6e230000000144000000423078336436343535393836356638346338363438386265393531383139663433303432663033363134376337386530623264313237636135646232663431633565304400000110000f00000004455a42520000000332343300000012302e383230333431383134303533383832340000001a313937302d30312d30312030303a30303a30302e32323030303000000005302e323231000000052d3834343700000007343637373136380000001a323031352d30332d32342030333a33323a33392e3833323337380000000237380000000166000000044350535700000016323031352d30322d31362030343a30343a31392e38320000001042677847b38069b914d6fcee032281b800000001510000004230783732313330346666653163393334333836343636323038643530363930356166343063376533626365346232383430363738336133393435616236383263633444000000fd000f000000045a5042480000000331333100000012302e313939393537363538363737383033390000001a313937302d30312d30312030303a30303a30302e32333030303000000005302e343739000000062d3138393531000000063837343535350000001a323031352d31322d32322031393a31333a35352e3430343132330000000235320000000166ffffffff00000017323031352d31302d30332030353a31363a31372e383931ffffffff000000015a000000423078613934346261613830396133663261646464343132316334376362313133396164643466316135363431633931653361623831663466306361313532656336314400000101000f00000004564c54500000000331393600000012302e343130343835353539353330343533330000001a313937302d30312d30312030303a30303a30302e32343030303000000005302e393138000000062d3132323639000000063134323130370000001a323031352d31302d31302031383a32373a34332e3432333737340000000239320000000166000000045045484e00000017323031352d30322d30362031383a34323a32342e363331ffffffff00000001480000004230783532393363653333393434323465366135616536336264663039613834653332626163343438346264656563343065383837656338346430313531303137363644000000d9000f0000000452554d4d00000003313835ffffffff0000001a313937302d30312d30312030303a30303a30302e32353030303000000005302e383338000000062d323736343900000007333633393034390000001a323031352d30352d30362030303a35313a35372e3337353738340000000238390000000174000000045045484effffffffffffffff000000015700000042307833313636656433626266666238353833313266313930353764393533343138383633363063393939323364323534663338663232353437616539363631343233440000010b000fffffffff00000002373100000012302e373430393039323330323032333630370000001a313937302d30312d30312030303a30303a30302e32363030303000000005302e373432000000062d313838333700000007343136313138300000001a323031352d30342d32322031303a31393a31392e3136323831340000000233370000000174000000044859525800000017323031352d30392d32332030333a31343a35362e3636340000000e8e93bd2742f8252a4271a37a58e500000001440000004230783638396131356438393036373730666361656665303236366239663633626436363938633537343234386539303131633663633834643961366434316530623844000000f6000f000000044e475a540000000332313400000013302e31383137303634363833353634333234350000001a313937302d30312d30312030303a30303a30302e32373030303000000005302e3834310000000532313736340000000733323331383732ffffffff0000000237390000000166000000044859525800000017323031352d30352d32302030373a35313a32392e3637350000000eababac216199be2df530786d5a3b00000001480000004230783562386465663465376130313765383834613363326335303434303337303862343966623864356665306666323833636261633634393965373163653562333044000000ff000f0000000445595950000000023133ffffffff0000001a313937302d30312d30312030303a30303a30302e32383030303000000005302e35333400000005313931333600000007343635383130380000001a323031352d30382d32302030353a32363a30342e30363136313400000001350000000166000000044350535700000017323031352d30332d32332032333a34333a33372e36333400000012c8660c4071ea207e4397271f5cd9ee045b9c000000014300000042307836653665643831316532353438363935336633353938376135303031366262663438316539663535633333616334386336613232623062643666376230626632440000010c000f00000004474d504c00000002353000000012302e373930323638323931383237343330390000001a313937302d30312d30312030303a30303a30302e32393030303000000005302e383734000000062d323738303700000007353639333032390000001a323031352d30372d31342032313a30363a30372e3937353734370000000233370000000174000000044350535700000016323031352d30392d30312030343a30303a32392e34390000000c3b4bb7e27fab6e2303ddc7d600000001550000004230783732633630376231393932666632663838303265383339623737613461326433346238623936376334313265376338393562353039623535643163333864323944000000f0000f0000000442435a490000000332303700000013302e31303836333036313537373030303232310000001a313937302d30312d30312030303a30303a30302e33303030303000000005302e313239000000043339393900000006313231323332ffffffff0000000238380000000174000000044350535700000016323031352d30352d31302032313a31303a32302e34310000000b970bf5ef3bbe857c11f734000000014b0000004230783333626534633034363935663734643737366163366466373161323231663531386633633634323438666235393433656135356162346536393136663366366344000000fe000f000000044458555500000003313339ffffffff0000001a313937302d30312d30312030303a30303a30302e33313030303000000005302e323632000000062d3135323839000000063334313036300000001a323031352d30312d30362030373a34383a32342e363234373733000000033131300000000166ffffffff00000017323031352d30372d30382031383a33373a31362e3837320000001271cf5a8f2106b23f0e41938927ca102f60ce000000014e0000004230783163303564383136333336393465303237393565626163666365623063376464376563396237653963363334626337393132383331343061623737353533316344000000dc000f00000004464d44560000000331393700000012302e323532323130323230393230313935340000001a313937302d30312d30312030303a30303a30302e33323030303000000005302e393933000000062d32363032360000000735333936343338ffffffff00000002383300000001740000000443505357ffffffff0000000b8675ada52d49486836f035000000014b0000004230783330386137613439363665363561303136306230303232393633343834383935376661363764366134313965313732316231353230663636636161373439343544000000cf000f000000045351434e00000002363200000013302e31313530303934333437383834393234360000001a313937302d30312d30312030303a30303a30302e33333030303000000005302e35393500000004313031310000000734363331343132ffffffff00000002353600000001660000000456544a57ffffffffffffffff00000001570000004230783636393036646331663161646263323036613862663632376338353937313461366238343164366336633865343463653134373236316638363839643932353044000000f7000f000000045153434d0000000331333000000012302e383637313430353937383535393237370000001a313937302d30312d30312030303a30303a30302e33343030303000000005302e34323800000005323238393900000006343033313933ffffffff0000000232310000000174000000045045484e00000017323031352d31312d33302032313a30343a33322e38363500000011a0baa5d163ca32e50d6852c694c318c97c00000001490000004230783364636333363231663337333463343835626238316332386563326464623031363364656630366662346536393564633262666134376238323331386666396644000000e4000f0000000455555a490000000331393600000012302e393237373432393434373332303435380000001a313937302d30312d30312030303a30303a30302e33353030303000000005302e3632350000000532343335350000000735373631373336ffffffff000000033131360000000166ffffffff00000017323031352d30322d30342030373a31353a32362e393937ffffffff000000014200000042307862306135323234323438623039336130363765656534353239636365323663333734323966393939626666633935343861613364663134626665643432393639440000010c000f000000044445514e00000002343100000012302e393032383338313136303936353131330000001a313937302d30312d30312030303a30303a30302e33363030303000000005302e31323000000005323930363600000007323534353430340000001a323031352d30342d30372032313a35383a31342e373134373931000000033132350000000166000000045045484e00000017323031352d30322d30362032333a32393a34392e3833360000000bec4b9727dfcd7a1407920100000001490000004230783535303136616362323534623538636433636530356361616236353531383331363833373238666632663732356161316261363233333636633264303865366144000000fc000fffffffff0000000331363400000012302e373635323737353338373732393236360000001a313937302d30312d30312030303a30303a30302e33373030303000000005302e333132000000052d3835363300000007373638343530310000001a323031352d30322d30312031323a33383a32382e33323232383200000001300000000174000000044859525800000017323031352d30372d31362032303a31313a35312e333430ffffffff000000014600000042307839376166396462383462383035343565636465653635313433636263393266383965666561346430343536643930663239646439333339353732323831303432440000010b000f00000004514a504c0000000331363000000012302e313734303033353831323233303034330000001a313937302d30312d30312030303a30303a30302e33383030303000000005302e373633000000043539393100000007323039393236390000001a323031352d30322d32352031353a34393a30362e34373236373400000002363500000001740000000456544a5700000016323031352d30342d32332031313a31353a31332e36350000000cde5845d01b58be3392cd5c9d0000000145000000423078613835613566633230373736653832623336633163646266653334656232363336656563346666633062343466393235623039616334663039636232376633364400000106000f00000004424b554e0000000332303800000012302e343435323134383532343936373032380000001a313937302d30312d30312030303a30303a30302e33393030303000000005302e35383200000005313739323800000007363338333732310000001a323031352d31302d32332030373a31323a32302e37333034323400000001370000000166ffffffff00000017323031352d30312d30322031373a30343a35382e3935390000000a5e37e4682a960646b6aa0000000146000000423078653164323032306265326362376265396335623638663965613162643330633738396536643037323964343462363433393036373862353734656430663539324400000109000f0000000452454453000000013400000013302e30333830343939353332373435343731390000001a313937302d30312d30312030303a30303a30302e34303030303000000005302e313033000000043233353800000007313839373439310000001a323031352d30372d32312031363a33343a31342e3537313536350000000237350000000166000000044350535700000017323031352d30372d33302031363a30343a34362e3732360000000ad6883a93ef24a5e2bc8600000001500000004230783839323435386233346538373639393238363437313636343635333035656631646436363830343038343561313061333865613566626136636639626663393244000000d5000f000000044d505652ffffffffffffffff0000001a313937302d30312d30312030303a30303a30302e34313030303000000005302e353932000000043837353400000007353832383034340000001a323031352d31302d30352032313a31313a31302e3630303835310000000331313600000001660000000443505357ffffffffffffffff00000001480000004230783964316536376336626532663234623261346532636336613632386339343339353932346461646162616564376565343539623261363162306663623734633544000000f4000f000000044b4b4e5a0000000331383600000012302e383232333338383339383932323337320000001a313937302d30312d30312030303a30303a30302e34323030303000000005302e373230000000052d363137390000000738373238393037ffffffff00000002383000000001740000000456544a5700000017323031352d30392d31312030333a34393a31322e3234340000000d16b2d883f5957c95fd52bb50c900000001420000004230783535373234363631636663633831316634343832653161326261386566616566366534616566303339343830316334303934316438396632343038316636346444000000e7000f000000044249434c0000000331383200000012302e373231353639353039353631303233330000001a313937302d30312d30312030303a30303a30302e34333030303000000005302e323237000000062d323238393900000007363430313636300000001a323031352d30382d32332031383a33313a32392e3933313631380000000237380000000174ffffffffffffffffffffffff000000015400000042307862626237353165653130663036306431633266626562373330343435303461656135356138653238336263663835376235333964386364383839666139633931440000010f000f0000000453575046ffffffff00000013302e34383737303737323331303132383637340000001a313937302d30312d30312030303a30303a30302e34343030303000000005302e393134000000062d313739323900000007383337373333360000001a323031352d31322d31332032333a30343a32302e3436353435340000000232380000000166000000044859525800000017323031352d31302d33312031333a33373a30312e3332370000000fb2319c69be749aadcccfb8e4d17a4f0000000149000000423078626539316437333434343333383861326136333164373136623537356338313963393232346132356533663665366661366364373830393364356537656131364400000114000f000000044248455600000002383000000012302e383931373637383530303137343930370000001a313937302d30312d30312030303a30303a30302e34353030303000000005302e32333700000005323932383400000007393537373531330000001a323031352d31302d32302030373a33383a32332e3838393234390000000232370000000166000000044859525800000017323031352d31322d31352031333a33323a35362e3739370000001492832453604d04c2f07a07d4a3d15f0dfe63100d00000001560000004230783232356664646430663433323561396438363334653163623331373333386130643363623766363137333766313637646339303262366636643737396337353344000000fa000f000000044450434800000002363200000012302e363638343530323333323735303630340000001a313937302d30312d30312030303a30303a30302e34363030303000000005302e383739000000062d32323630300000000739323636353533ffffffff00000002383900000001740000000456544a5700000017323031352d30352d32352031393a34323a31372e39353500000013351bb90f97f5777ea32dcefeebcd4706536197000000015300000042307838396436613433623233663833363935623233366165356666616235343632326365316634646163383436343930613862383866303436386330636266613333440000010a000f000000044d4b4e4a00000002363100000012302e323638323030393933353537353030370000001a313937302d30312d30312030303a30303a30302e34373030303000000005302e383133000000052d31333232ffffffff0000001a323031352d31312d30342030383a31313a33392e39393631333200000001340000000166000000044350535700000017323031352d30372d32392032323a35313a30332e333439000000128208fbe7943a325d8a660be485f11306f2270000000156000000423078393839306434616561313439663034393862646566316336626131366464386362643031636638333633323838346165386237303833663838383535346230634400000109000f00000004475351490000000331353800000012302e383034373935343839303139343036350000001a313937302d30312d30312030303a30303a30302e34383030303000000005302e33343700000005323331333900000007313235323338350000001a323031352d30342d32322030303a31303a31322e3036373331310000000233320000000174ffffffff00000017323031352d30312d30392030363a30363a33322e3231330000000c38a785461a275b4d0f33f4700000000156000000423078633065366531313062393039653133613831323432356133383136326265306262363565323965643532396434646261383638613730373566336233343335374400000110000f00000004425054550000000332303500000011302e3433303231343731323430393235350000001a313937302d30312d30312030303a30303a30302e34393030303000000005302e39303500000005333132363600000007383237313535370000001a323031352d30312d30372030353a35333a30332e38333830303500000002313400000001740000000456544a5700000017323031352d31302d33302030353a33333a31352e38313900000010240bc51a5a8d855039429e8a8617896b000000015300000042307834653237326539646664653762623132363138313738663766656261353032313338326138633437613238666566613437356437343363663063326334626364430000000e53454c454354203530005a0000000549\n";
-        assertHexScript(script);
     }
 
     @Test
@@ -5461,18 +5350,9 @@ create table tab as (
     }
 
     @Test
-    public void testSimpleModeTransaction() throws Exception {
-        assertTransaction(true);
-    }
-
-    @Test
     public void testSimpleSimpleQuery() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, false)
-            ) {
-                Statement statement = connection.createStatement();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement statement = connection.createStatement()) {
                 ResultSet rs = statement.executeQuery(
                         "select " +
                                 "rnd_str(4,4,4) s, " +
@@ -5500,8 +5380,8 @@ create table tab as (
                         "LTOV,137,0.7632615004324503,1970-01-01 00:00:00.05,0.882,9054,null,2015-04-20 05:09:03.580574,106,false,PEHN,2015-01-09 06:57:17.512,null\n" +
                         "ZIMN,125,null,1970-01-01 00:00:00.06,null,11524,8335261,2015-10-26 02:10:50.688394,111,true,PEHN,2015-08-21 15:46:32.624,null\n" +
                         "OPJO,168,0.10459352312331183,1970-01-01 00:00:00.07,0.535,-5920,7080704,2015-07-11 09:15:38.342717,103,false,VTJW,null,null\n" +
-                        "GLUO,145,0.5391626621794673,1970-01-01 00:00:00.08,0.767,14242,2499922,2015-11-02 09:01:31.312804,84,false,PEHN,2015-11-14 17:37:36.43,null\n" +
-                        "ZVQE,103,0.6729405590773638,1970-01-01 00:00:00.09,null,13727,7875846,2015-12-12 13:16:26.134562,22,true,PEHN,2015-01-20 04:50:34.98,00000000 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c\n" +
+                        "GLUO,145,0.5391626621794673,1970-01-01 00:00:00.08,0.767,14242,2499922,2015-11-02 09:01:31.312804,84,false,PEHN,2015-11-14 17:37:36.043,null\n" +
+                        "ZVQE,103,0.6729405590773638,1970-01-01 00:00:00.09,null,13727,7875846,2015-12-12 13:16:26.134562,22,true,PEHN,2015-01-20 04:50:34.098,00000000 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c\n" +
                         "00000010 65 ff\n" +
                         "LIGY,199,0.2836347139481469,1970-01-01 00:00:00.1,null,30426,3215562,2015-08-21 14:55:07.055722,11,false,VTJW,null,00000000 ff 70 3a c7 8a b3 14 cd 47 0b 0c 39 12\n" +
                         "MQNT,43,0.5859332388599638,1970-01-01 00:00:00.11,0.335,27019,null,null,27,true,PEHN,2015-07-12 12:59:47.665,00000000 26 fb 2e 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57\n" +
@@ -5511,9 +5391,9 @@ create table tab as (
                         "VFGP,120,0.8402964708129546,1970-01-01 00:00:00.13,0.773,7223,7241423,2015-12-18 07:32:18.456025,43,false,VTJW,null,00000000 24 4e 44 a8 0d fe 27 ec 53 13 5d b2 15 e7 b8 35\n" +
                         "00000010 67\n" +
                         "RMDG,134,0.11047315214793696,1970-01-01 00:00:00.14,0.043,21227,7155708,2015-07-03 04:12:45.774281,42,true,CPSW,2015-02-24 12:10:43.199,null\n" +
-                        "WFOQ,255,null,1970-01-01 00:00:00.15,0.116,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.78,null\n" +
+                        "WFOQ,255,null,1970-01-01 00:00:00.15,0.116,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.078,null\n" +
                         "MXDK,56,0.9997797234031688,1970-01-01 00:00:00.16,0.523,-32372,6884132,null,58,false,null,2015-01-20 06:18:18.583,null\n" +
-                        "XMKJ,139,0.8405815493567417,1970-01-01 00:00:00.17,0.306,25856,null,2015-05-18 03:50:22.731437,2,true,VTJW,2015-06-25 10:45:01.14,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35\n" +
+                        "XMKJ,139,0.8405815493567417,1970-01-01 00:00:00.17,0.306,25856,null,2015-05-18 03:50:22.731437,2,true,VTJW,2015-06-25 10:45:01.014,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35\n" +
                         "VIHD,null,null,1970-01-01 00:00:00.18,0.550,22280,9109842,2015-01-25 13:51:38.270583,94,false,CPSW,2015-10-27 02:52:19.935,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9\n" +
                         "WPNX,null,0.9469700813926907,1970-01-01 00:00:00.19,0.415,-17933,674261,2015-03-04 15:43:15.213686,43,true,HYRX,2015-12-18 21:28:25.325,00000000 b3 4c 0e 8f f1 0c c5 60 b7 d1\n" +
                         "YPOV,36,0.6741248448728824,1970-01-01 00:00:00.2,0.031,-5888,1375423,2015-12-10 20:50:35.866614,3,true,null,2015-07-23 20:17:04.236,00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
@@ -5535,8 +5415,8 @@ create table tab as (
                         "OYTO,96,0.7407581616916364,1970-01-01 00:00:00.33,0.528,-12239,3499620,2015-02-07 22:35:03.212268,17,false,PEHN,2015-03-29 12:55:11.682,null\n" +
                         "LFCY,63,0.7217315729790722,1970-01-01 00:00:00.34,null,23344,9523982,null,123,false,CPSW,2015-05-18 04:35:27.228,00000000 05 e5 c0 4e cc d6 e3 7b 34 cd 15 35 bb a4\n" +
                         "GHLX,148,0.3057937704964272,1970-01-01 00:00:00.35,0.636,-31457,2322337,2015-10-22 12:06:05.544701,91,true,HYRX,2015-05-21 09:33:18.158,00000000 57 1d 91 72 30 04 b7 02 cb 03\n" +
-                        "YTSZ,123,null,1970-01-01 00:00:00.36,0.519,22534,4446236,2015-07-27 07:23:37.233711,53,false,CPSW,2015-01-13 04:37:10.36,null\n" +
-                        "SWLU,251,null,1970-01-01 00:00:00.37,0.179,7734,4082475,2015-10-21 18:24:34.400345,69,false,PEHN,2015-04-01 14:33:42.5,null\n" +
+                        "YTSZ,123,null,1970-01-01 00:00:00.36,0.519,22534,4446236,2015-07-27 07:23:37.233711,53,false,CPSW,2015-01-13 04:37:10.036,null\n" +
+                        "SWLU,251,null,1970-01-01 00:00:00.37,0.179,7734,4082475,2015-10-21 18:24:34.400345,69,false,PEHN,2015-04-01 14:33:42.005,null\n" +
                         "TQJL,245,null,1970-01-01 00:00:00.38,0.865,9516,929340,2015-05-28 04:18:18.640567,69,false,VTJW,2015-06-12 20:12:28.881,00000000 6c 3e 51 d7 eb b1 07 71 32 1f af 40 4e 8c 47\n" +
                         "REIJ,94,null,1970-01-01 00:00:00.39,0.130,-29924,null,2015-03-20 22:14:46.204718,113,true,HYRX,2015-12-19 13:58:41.819,null\n" +
                         "HDHQ,94,0.7234181773407536,1970-01-01 00:00:00.4,0.730,19970,654131,2015-01-10 22:56:08.48045,84,true,null,2015-03-05 17:14:48.275,00000000 4f 56 6b 65 a4 53 38 e9 cd c1 a7 ee 86 75 ad a5\n" +
@@ -5547,12 +5427,10 @@ create table tab as (
                         "MRTG,143,0.02632531361499113,1970-01-01 00:00:00.44,0.943,-27320,1667842,2015-01-24 19:56:15.973109,11,false,null,2015-01-24 07:15:02.772,null\n" +
                         "DONP,246,0.654226248740447,1970-01-01 00:00:00.45,0.556,27477,4160018,2015-12-14 03:40:05.911839,20,true,PEHN,2015-10-29 14:35:10.167,00000000 07 92 01 f5 6a a1 31 cd cb c2 a2 b4 8e 99\n" +
                         "IQXS,232,0.23075700218038853,1970-01-01 00:00:00.46,0.049,-18113,4005228,2015-06-11 13:00:07.248188,8,true,CPSW,2015-08-16 11:09:24.311,00000000 fa 1f 92 24 b1 b8 67 65 08 b7 f8 41 00\n" +
-                        "null,178,null,1970-01-01 00:00:00.47,0.903,-14626,2934570,2015-04-04 08:51:54.068154,88,true,null,2015-07-01 04:32:23.83,00000000 84 36 25 63 2b 63 61 43 1c 47 7d b6 46 ba bb 98\n" +
+                        "null,178,null,1970-01-01 00:00:00.47,0.903,-14626,2934570,2015-04-04 08:51:54.068154,88,true,null,2015-07-01 04:32:23.083,00000000 84 36 25 63 2b 63 61 43 1c 47 7d b6 46 ba bb 98\n" +
                         "00000010 ca 08 be a4\n" +
                         "HUWZ,94,0.110401374979613,1970-01-01 00:00:00.48,0.420,-3736,5687514,2015-01-02 17:18:05.627633,74,false,null,2015-03-29 06:39:11.642,null\n" +
                         "SRED,66,0.11274667140915928,1970-01-01 00:00:00.49,0.060,-10543,3669377,2015-10-22 02:53:02.381351,77,true,PEHN,null,00000000 7c 3f d6 88 3a 93 ef 24 a5 e2 bc\n";
-
-                StringSink sink = new StringSink();
 
                 // dump metadata
                 assertResultSet(expected, sink, rs);
@@ -5561,180 +5439,186 @@ create table tab as (
     }
 
     @Test
-    public void testSimpleSyntaxErrorReporting() throws Exception {
-        testSyntaxErrorReporting(true);
+    public void testRunSimpleQueryMultipleTimes() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement statement = connection.createStatement()) {
+                final String query = "select 42 as the_answer";
+                final String expected = "the_answer[INTEGER]\n" +
+                        "42\n";
+
+                ResultSet rs = statement.executeQuery(query);
+                assertResultSet(expected, sink, rs);
+
+                sink.clear();
+                rs = statement.executeQuery(query);
+                assertResultSet(expected, sink, rs);
+            }
+        });
     }
 
     @Test
     public void testSingleInClause() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
-                        statement.execute();
-                    }
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                statement.execute();
+            }
 
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
-                        sink.clear();
-                        String date = "1970-01-01";
-                        statement.setString(1, date);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = datesArr.stream()
-                                    .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
-                                    .map(arr -> arr[1] + "\n")
-                                    .collect(Collectors.joining());
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                sink.clear();
+                String date = "1970-01-01";
+                statement.setString(1, date);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = datesArr.stream()
+                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .map(arr -> arr[1] + "\n")
+                            .collect(Collectors.joining());
 
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-
-                    // NOT IN
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
-                        sink.clear();
-                        String date = "1970-01-01";
-                        statement.setString(1, date);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = datesArr.stream()
-                                    .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
-                                    .map(arr -> arr[1] + "\n")
-                                    .collect(Collectors.joining());
-
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    // IN NULL
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
-                        sink.clear();
-                        statement.setString(1, null);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = "";
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    // NOT IN NULL
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
-                        sink.clear();
-                        statement.setString(1, null);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = datesArr.stream()
-                                    .map(arr -> arr[1] + "\n")
-                                    .collect(Collectors.joining());
-
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    // NULL in not null
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE cast(NULL as TIMESTAMP) in ?")) {
-                        sink.clear();
-                        String date = "1970-01-01";
-                        statement.setString(1, date);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = "";
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                        statement.execute();
-                    }
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
                 }
+            }
+
+
+            // NOT IN
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                sink.clear();
+                String date = "1970-01-01";
+                statement.setString(1, date);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = datesArr.stream()
+                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .map(arr -> arr[1] + "\n")
+                            .collect(Collectors.joining());
+
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            // IN NULL
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                sink.clear();
+                statement.setString(1, null);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = "";
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            // NOT IN NULL
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                sink.clear();
+                statement.setString(1, null);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = datesArr.stream()
+                            .map(arr -> arr[1] + "\n")
+                            .collect(Collectors.joining());
+
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            // NULL in not null
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE cast(NULL as TIMESTAMP) in ?")) {
+                sink.clear();
+                String date = "1970-01-01";
+                statement.setString(1, date);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = "";
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                statement.execute();
             }
         });
     }
 
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement(
-                            "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
-                        statement.execute();
-                    }
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
+                statement.execute();
+            }
 
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
-                        sink.clear();
-                        String date = "1970-01-01";
-                        statement.setString(1, date);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = datesArr.stream()
-                                    .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
-                                    .map(arr -> arr[1] + "\n")
-                                    .collect(Collectors.joining());
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                sink.clear();
+                String date = "1970-01-01";
+                statement.setString(1, date);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = datesArr.stream()
+                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .map(arr -> arr[1] + "\n")
+                            .collect(Collectors.joining());
 
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    // NOT IN
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
-                        sink.clear();
-                        String date = "1970-01-01";
-                        statement.setString(1, date);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = datesArr.stream()
-                                    .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
-                                    .map(arr -> arr[1] + "\n")
-                                    .collect(Collectors.joining());
-
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    // IN NULL
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
-                        sink.clear();
-                        statement.setString(1, null);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = "";
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    // NOT IN NULL
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
-                        sink.clear();
-                        statement.setString(1, null);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = datesArr.stream()
-                                    .map(arr -> arr[1] + "\n")
-                                    .collect(Collectors.joining());
-
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    // NULL in not null
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE cast(NULL as TIMESTAMP) in ?")) {
-                        sink.clear();
-                        String date = "1970-01-01";
-                        statement.setString(1, date);
-                        statement.executeQuery();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            String expected = "";
-                            assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
-                        }
-                    }
-
-                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                        statement.execute();
-                    }
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
                 }
             }
+
+            // NOT IN
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                sink.clear();
+                String date = "1970-01-01";
+                statement.setString(1, date);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = datesArr.stream()
+                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .map(arr -> arr[1] + "\n")
+                            .collect(Collectors.joining());
+
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            // IN NULL
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
+                sink.clear();
+                statement.setString(1, null);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = "";
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            // NOT IN NULL
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
+                sink.clear();
+                statement.setString(1, null);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = datesArr.stream()
+                            .map(arr -> arr[1] + "\n")
+                            .collect(Collectors.joining());
+
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            // NULL in not null
+            try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE cast(NULL as TIMESTAMP) in ?")) {
+                sink.clear();
+                String date = "1970-01-01";
+                statement.setString(1, date);
+                statement.executeQuery();
+                try (ResultSet rs = statement.executeQuery()) {
+                    String expected = "";
+                    assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+                }
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                statement.execute();
+            }
         });
+
     }
 
     @Test
@@ -5919,26 +5803,6 @@ create table tab as (
                 }
             }
         });
-    }
-
-    @Test
-    public void testStaleQueryCacheOnTableDroppedNonSimple() throws Exception {
-        testStaleQueryCacheOnTableDropped(false);
-    }
-
-    @Test
-    public void testStaleQueryCacheOnTableDroppedSimple() throws Exception {
-        testStaleQueryCacheOnTableDropped(true);
-    }
-
-    @Test
-    public void testSymbolBindVariableInFilterBinaryTransfer() throws Exception {
-        testSymbolBindVariableInFilter(true);
-    }
-
-    @Test
-    public void testSymbolBindVariableInFilterStringTransfer() throws Exception {
-        testSymbolBindVariableInFilter(false);
     }
 
     @Test
@@ -6174,39 +6038,6 @@ create table tab as (
         });
     }
 
-    @Test
-    public void testUpdateAsync() throws Exception {
-        testUpdateAsync(null, writer -> {},
-                "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
-                "1,2.0,2020-06-01 00:00:02.0\n" +
-                "9,2.6,2020-06-01 00:00:06.0\n" +
-                "9,3.0,2020-06-01 00:00:12.0\n");
-    }
-
-    @Test
-    public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
-        SOCountDownLatch queryScheduledCount = new SOCountDownLatch(1);
-        testUpdateAsync(queryScheduledCount, new OnTickAction() {
-            private boolean first = true;
-
-            @Override
-            public void run(TableWriter writer) {
-                if (first) {
-                    queryScheduledCount.await();
-                    // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
-                    // thrown from UpdateOperator as this changes table structure
-                    // recompile should be successful so the UPDATE completes
-                    writer.addColumn("newCol", ColumnType.INT);
-                    first = false;
-                }
-            }
-        },
-        "a[BIGINT],b[DOUBLE],ts[TIMESTAMP],newCol[INTEGER]\n" +
-        "1,2.0,2020-06-01 00:00:02.0,null\n" +
-        "9,2.6,2020-06-01 00:00:06.0,null\n" +
-        "9,3.0,2020-06-01 00:00:12.0,null\n");
-    }
-
     private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -6254,44 +6085,7 @@ create table tab as (
             }
         });
     }
-
-    private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
-        int workerCount = 2;
-
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        };
-
-        WorkerPool pool = new WorkerPool(conf, metrics);
-
-        final PGWireServer pgWireServer = PGWireServer.create(
-                conf,
-                pool,
-                LOG,
-                engine,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent,
-                metrics,
-                createPGConnectionContextFactory(conf, workerCount, null, queryScheduledCount)
-        );
-
-        pool.start(LOG);
-        return pgWireServer;
-    }
-
+    
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -6336,6 +6130,40 @@ create table tab as (
     }
 
     @Test
+    public void testUpdateAsync() throws Exception {
+        testUpdateAsync(null, writer -> {
+                },
+                "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                        "1,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,2.6,2020-06-01 00:00:06.0\n" +
+                        "9,3.0,2020-06-01 00:00:12.0\n");
+    }
+
+    @Test
+    public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
+        SOCountDownLatch queryScheduledCount = new SOCountDownLatch(1);
+        testUpdateAsync(queryScheduledCount, new OnTickAction() {
+                    private boolean first = true;
+
+                    @Override
+                    public void run(TableWriter writer) {
+                        if (first) {
+                            queryScheduledCount.await();
+                            // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
+                            // thrown from UpdateOperator as this changes table structure
+                            // recompile should be successful so the UPDATE completes
+                            writer.addColumn("newCol", ColumnType.INT);
+                            first = false;
+                        }
+                    }
+                },
+                "a[BIGINT],b[DOUBLE],ts[TIMESTAMP],newCol[INTEGER]\n" +
+                        "1,2.0,2020-06-01 00:00:02.0,null\n" +
+                        "9,2.6,2020-06-01 00:00:06.0,null\n" +
+                        "9,3.0,2020-06-01 00:00:12.0,null\n");
+    }
+
+    @Test
     public void testUpdateBatch() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -6377,6 +6205,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
@@ -6484,36 +6316,31 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testTransaction() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table xyz(a int)").execute();
+            connection.prepareStatement("insert into xyz values (100)").execute();
+            connection.prepareStatement("insert into xyz values (101)").execute();
+            connection.prepareStatement("insert into xyz values (102)").execute();
+            connection.prepareStatement("insert into xyz values (103)").execute();
+            connection.commit();
 
-    private void assertTransaction(boolean simple) throws Exception {
-        assertMemoryLeak(() -> {
+            sink.clear();
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(simple, true)
+                    PreparedStatement ps = connection.prepareStatement("xyz");
+                    ResultSet rs = ps.executeQuery()
             ) {
-                connection.setAutoCommit(false);
-                connection.prepareStatement("create table xyz(a int)").execute();
-                connection.prepareStatement("insert into xyz values (100)").execute();
-                connection.prepareStatement("insert into xyz values (101)").execute();
-                connection.prepareStatement("insert into xyz values (102)").execute();
-                connection.prepareStatement("insert into xyz values (103)").execute();
-                connection.commit();
-
-                sink.clear();
-                try (
-                        PreparedStatement ps = connection.prepareStatement("xyz");
-                        ResultSet rs = ps.executeQuery()
-                ) {
-                    assertResultSet(
-                            "a[INTEGER]\n" +
-                                    "100\n" +
-                                    "101\n" +
-                                    "102\n" +
-                                    "103\n",
-                            sink,
-                            rs
-                    );
-                }
+                assertResultSet(
+                        "a[INTEGER]\n" +
+                                "100\n" +
+                                "101\n" +
+                                "102\n" +
+                                "103\n",
+                        sink,
+                        rs
+                );
             }
         });
     }
@@ -6533,6 +6360,7 @@ create table tab as (
                                     queryStartedCount.countDown();
                                 }
                             }
+
                             @Override
                             public void reportStart(CharSequence tableName, long commandId) {
                                 if (queryScheduledCount != null) {
@@ -6544,6 +6372,100 @@ create table tab as (
                 };
             }
         };
+    }
+
+    private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
+        int workerCount = 2;
+
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return TestUtils.getWorkerAffinity(getWorkerCount());
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
+
+        return PGWireServer.create(
+                conf,
+                null,
+                LOG,
+                engine,
+                compiler.getFunctionFactoryCache(),
+                snapshotAgent,
+                metrics,
+                createPGConnectionContextFactory(conf, workerCount, null, queryScheduledCount)
+        );
+    }
+
+    private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
+        if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
+            assertWithPgServer(Mode.Simple, true, runnable, -2);
+            assertWithPgServer(Mode.Simple, true, runnable, -1);
+        }
+
+        if((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
+            assertWithPgServer(Mode.Simple, false, runnable, -2);
+            assertWithPgServer(Mode.Simple, false, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
+            assertWithPgServer(Mode.Extended, true, runnable, -2);
+            assertWithPgServer(Mode.Extended, true, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
+            assertWithPgServer(Mode.Extended, false, runnable, -2);
+            assertWithPgServer(Mode.Extended, false, runnable, -1);
+        }
+
+        if((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2);
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1);
+        }
+
+        if((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2);
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2);
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2);
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1);
+        }
+    }
+
+    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold) throws Exception {
+        LOG.info().$("asserting PG Wire server [mode=").$(mode)
+                .$(", binary=").$(binary)
+                .$(", prepareThreshold=").$(prepareThreshold)
+                .I$();
+        setUp();
+        try {
+            assertMemoryLeak(() -> {
+                try (
+                        final PGWireServer ignored = createPGServer(2);
+                        final Connection connection = getConnection(mode, binary, prepareThreshold)
+                ) {
+                    runnable.run(connection, binary);
+                }
+            });
+        } finally {
+            tearDown();
+        }
     }
 
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
@@ -6631,10 +6553,6 @@ create table tab as (
             rs.close();
         }
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess, SOCountDownLatch queryStartedCountDownLatch) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
@@ -6889,39 +6807,6 @@ create table tab as (
         });
     }
 
-    private void testBindVariableInFilter(boolean binary) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, binary)
-            ) {
-                connection.setAutoCommit(false);
-                connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts)").execute();
-                connection.prepareStatement("insert into x values (100, 0)").execute();
-                connection.prepareStatement("insert into x values (101, 1)").execute();
-                connection.prepareStatement("insert into x values (102, 2)").execute();
-                connection.prepareStatement("insert into x values (103, 3)").execute();
-                connection.commit();
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
-                    ps.setLong(1, 0);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "l[BIGINT],ts[TIMESTAMP]\n" +
-                                        "100,1970-01-01 00:00:00.0\n" +
-                                        "101,1970-01-01 00:00:00.000001\n" +
-                                        "102,1970-01-01 00:00:00.000002\n" +
-                                        "103,1970-01-01 00:00:00.000003\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-            }
-        });
-    }
-
     private void testBindVariableIsNotNull(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -7085,23 +6970,71 @@ create table tab as (
         });
     }
 
-    private void testBindVariableIsNull(boolean binary) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, binary)
-            ) {
-                connection.setAutoCommit(false);
-                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
-                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
-                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
-                connection.commit();
-                connection.setAutoCommit(true);
+    @Test
+    public void testBindVariableIsNull() throws Exception {
+        // todo: in "simple" mode we do not support this SQL:
+        //    tab1 where 'NaN'::double precision is null
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+            connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+            connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+            connection.commit();
+            connection.setAutoCommit(true);
 
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
-                    try (ResultSet rs = ps.executeQuery()) {
-                        // all rows, null = null is always true
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
+                ps.setLong(1, 1066);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                // 'is' is an alias for '=', the matching type for this operator, with null
+                // on the right, is DOUBLE (EqDoubleFunctionFactory)
+                ps.setDouble(1, Double.NaN);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                // type information is lost in text mode; Numbers.INT_NaN is transmitted as "-2147483648" string
+                // and bind variable type is set to BYTEA, despite us calling setInt()
+                // server cannot assume that the client is sending null
+                ps.setInt(1, Numbers.INT_NaN);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (binary) {
+                        // in binary protocol DOUBLE.null == INT.null
                         assertResultSet(
                                 "value[INTEGER],ts[TIMESTAMP]\n" +
                                         "100,1970-01-01 00:00:00.0\n" +
@@ -7109,72 +7042,8 @@ create table tab as (
                                 sink,
                                 rs
                         );
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
-                    ps.setLong(1, 1066);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n" +
-                                        "100,1970-01-01 00:00:00.0\n" +
-                                        "null,1970-01-01 00:00:00.000001\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    // 'is' is an alias for '=', the matching type for this operator, with null
-                    // on the right, is DOUBLE (EqDoubleFunctionFactory)
-                    ps.setDouble(1, Double.NaN);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n" +
-                                        "100,1970-01-01 00:00:00.0\n" +
-                                        "null,1970-01-01 00:00:00.000001\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    // INTEGER fits in a DOUBLE, however it is interpreted differently depending on
-                    // transfer type (binary, string)
-                    ps.setInt(1, Numbers.INT_NaN);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (binary) {
-                            // in binary protocol DOUBLE.null == INT.null
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n" +
-                                            "100,1970-01-01 00:00:00.0\n" +
-                                            "null,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    rs
-                            );
-                        } else {
-                            // in string protocol DOUBLE.null != INT.null
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    // 'is' is an alias for '=', the matching type for this operator
-                    // (with null on the right) is DOUBLE, and thus INT is a valid
-                    // value type
-                    ps.setInt(1, 21);
-                    try (ResultSet rs = ps.executeQuery()) {
+                    } else {
+                        // in string protocol DOUBLE.null != INT.null
                         assertResultSet(
                                 "value[INTEGER],ts[TIMESTAMP]\n",
                                 sink,
@@ -7182,60 +7051,75 @@ create table tab as (
                         );
                     }
                 }
+            }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    ps.setString(1, "");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
-                    }
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                // 'is' is an alias for '=', the matching type for this operator
+                // (with null on the right) is DOUBLE, and thus INT is a valid
+                // value type
+                ps.setInt(1, 21);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n",
+                            sink,
+                            rs
+                    );
                 }
+            }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    ps.setString(1, "cha-cha-cha");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='cha-cha-cha', as=DOUBLE, index=0]");
-                    }
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                ps.setString(1, "");
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
                 }
+            }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
-                    ps.setString(1, "NULL");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-
-                    }
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                ps.setString(1, "cha-cha-cha");
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "could not parse [value='cha-cha-cha', as=DOUBLE, index=0]");
                 }
+            }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
-                    ps.setDouble(1, Double.NaN);
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                    }
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                ps.setString(1, "NULL");
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+
                 }
+            }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
-                    ps.setNull(1, Types.NULL);
-                    try (ResultSet ignored1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                    }
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                ps.setDouble(1, Double.NaN);
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
                 }
+            }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
-                    ps.setString(1, "NULL");
-                    try (ResultSet ignored1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                    }
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                ps.setNull(1, Types.NULL);
+                try (ResultSet ignored1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                ps.setString(1, "NULL");
+                try (ResultSet ignored1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
                 }
             }
         });
@@ -7371,93 +7255,93 @@ create table tab as (
                     "0,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998,2011-04-11 14:39:50.4,2011-04-11 14:40:54.998821\n" +
                     "1,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999,2011-04-11 14:39:50.4,2011-04-11 14:40:54.999821\n" +
                     "2,2011-04-11 00:00:00.0,2011-04-11 14:40:55.000821,2011-04-11 14:40:55.0,2011-04-11 14:39:50.4,2011-04-11 14:40:55.000821\n" +
-                    "3,2011-04-11 00:00:00.0,2011-04-11 14:40:55.001821,2011-04-11 14:40:55.1,2011-04-11 14:39:50.4,2011-04-11 14:40:55.001821\n" +
-                    "4,2011-04-11 00:00:00.0,2011-04-11 14:40:55.002821,2011-04-11 14:40:55.2,2011-04-11 14:39:50.4,2011-04-11 14:40:55.002821\n" +
-                    "5,2011-04-11 00:00:00.0,2011-04-11 14:40:55.003821,2011-04-11 14:40:55.3,2011-04-11 14:39:50.4,2011-04-11 14:40:55.003821\n" +
-                    "6,2011-04-11 00:00:00.0,2011-04-11 14:40:55.004821,2011-04-11 14:40:55.4,2011-04-11 14:39:50.4,2011-04-11 14:40:55.004821\n" +
-                    "7,2011-04-11 00:00:00.0,2011-04-11 14:40:55.005821,2011-04-11 14:40:55.5,2011-04-11 14:39:50.4,2011-04-11 14:40:55.005821\n" +
-                    "8,2011-04-11 00:00:00.0,2011-04-11 14:40:55.006821,2011-04-11 14:40:55.6,2011-04-11 14:39:50.4,2011-04-11 14:40:55.006821\n" +
-                    "9,2011-04-11 00:00:00.0,2011-04-11 14:40:55.007821,2011-04-11 14:40:55.7,2011-04-11 14:39:50.4,2011-04-11 14:40:55.007821\n" +
-                    "10,2011-04-11 00:00:00.0,2011-04-11 14:40:55.008821,2011-04-11 14:40:55.8,2011-04-11 14:39:50.4,2011-04-11 14:40:55.008821\n" +
-                    "11,2011-04-11 00:00:00.0,2011-04-11 14:40:55.009821,2011-04-11 14:40:55.9,2011-04-11 14:39:50.4,2011-04-11 14:40:55.009821\n" +
-                    "12,2011-04-11 00:00:00.0,2011-04-11 14:40:55.010821,2011-04-11 14:40:55.1,2011-04-11 14:39:50.4,2011-04-11 14:40:55.010821\n" +
-                    "13,2011-04-11 00:00:00.0,2011-04-11 14:40:55.011821,2011-04-11 14:40:55.11,2011-04-11 14:39:50.4,2011-04-11 14:40:55.011821\n" +
-                    "14,2011-04-11 00:00:00.0,2011-04-11 14:40:55.012821,2011-04-11 14:40:55.12,2011-04-11 14:39:50.4,2011-04-11 14:40:55.012821\n" +
-                    "15,2011-04-11 00:00:00.0,2011-04-11 14:40:55.013821,2011-04-11 14:40:55.13,2011-04-11 14:39:50.4,2011-04-11 14:40:55.013821\n" +
-                    "16,2011-04-11 00:00:00.0,2011-04-11 14:40:55.014821,2011-04-11 14:40:55.14,2011-04-11 14:39:50.4,2011-04-11 14:40:55.014821\n" +
-                    "17,2011-04-11 00:00:00.0,2011-04-11 14:40:55.015821,2011-04-11 14:40:55.15,2011-04-11 14:39:50.4,2011-04-11 14:40:55.015821\n" +
-                    "18,2011-04-11 00:00:00.0,2011-04-11 14:40:55.016821,2011-04-11 14:40:55.16,2011-04-11 14:39:50.4,2011-04-11 14:40:55.016821\n" +
-                    "19,2011-04-11 00:00:00.0,2011-04-11 14:40:55.017821,2011-04-11 14:40:55.17,2011-04-11 14:39:50.4,2011-04-11 14:40:55.017821\n" +
-                    "20,2011-04-11 00:00:00.0,2011-04-11 14:40:55.018821,2011-04-11 14:40:55.18,2011-04-11 14:39:50.4,2011-04-11 14:40:55.018821\n" +
-                    "21,2011-04-11 00:00:00.0,2011-04-11 14:40:55.019821,2011-04-11 14:40:55.19,2011-04-11 14:39:50.4,2011-04-11 14:40:55.019821\n" +
-                    "22,2011-04-11 00:00:00.0,2011-04-11 14:40:55.020821,2011-04-11 14:40:55.2,2011-04-11 14:39:50.4,2011-04-11 14:40:55.020821\n" +
-                    "23,2011-04-11 00:00:00.0,2011-04-11 14:40:55.021821,2011-04-11 14:40:55.21,2011-04-11 14:39:50.4,2011-04-11 14:40:55.021821\n" +
-                    "24,2011-04-11 00:00:00.0,2011-04-11 14:40:55.022821,2011-04-11 14:40:55.22,2011-04-11 14:39:50.4,2011-04-11 14:40:55.022821\n" +
-                    "25,2011-04-11 00:00:00.0,2011-04-11 14:40:55.023821,2011-04-11 14:40:55.23,2011-04-11 14:39:50.4,2011-04-11 14:40:55.023821\n" +
-                    "26,2011-04-11 00:00:00.0,2011-04-11 14:40:55.024821,2011-04-11 14:40:55.24,2011-04-11 14:39:50.4,2011-04-11 14:40:55.024821\n" +
-                    "27,2011-04-11 00:00:00.0,2011-04-11 14:40:55.025821,2011-04-11 14:40:55.25,2011-04-11 14:39:50.4,2011-04-11 14:40:55.025821\n" +
-                    "28,2011-04-11 00:00:00.0,2011-04-11 14:40:55.026821,2011-04-11 14:40:55.26,2011-04-11 14:39:50.4,2011-04-11 14:40:55.026821\n" +
-                    "29,2011-04-11 00:00:00.0,2011-04-11 14:40:55.027821,2011-04-11 14:40:55.27,2011-04-11 14:39:50.4,2011-04-11 14:40:55.027821\n" +
-                    "30,2011-04-11 00:00:00.0,2011-04-11 14:40:55.028821,2011-04-11 14:40:55.28,2011-04-11 14:39:50.4,2011-04-11 14:40:55.028821\n" +
-                    "31,2011-04-11 00:00:00.0,2011-04-11 14:40:55.029821,2011-04-11 14:40:55.29,2011-04-11 14:39:50.4,2011-04-11 14:40:55.029821\n" +
-                    "32,2011-04-11 00:00:00.0,2011-04-11 14:40:55.030821,2011-04-11 14:40:55.3,2011-04-11 14:39:50.4,2011-04-11 14:40:55.030821\n" +
-                    "33,2011-04-11 00:00:00.0,2011-04-11 14:40:55.031821,2011-04-11 14:40:55.31,2011-04-11 14:39:50.4,2011-04-11 14:40:55.031821\n" +
-                    "34,2011-04-11 00:00:00.0,2011-04-11 14:40:55.032821,2011-04-11 14:40:55.32,2011-04-11 14:39:50.4,2011-04-11 14:40:55.032821\n" +
-                    "35,2011-04-11 00:00:00.0,2011-04-11 14:40:55.033821,2011-04-11 14:40:55.33,2011-04-11 14:39:50.4,2011-04-11 14:40:55.033821\n" +
-                    "36,2011-04-11 00:00:00.0,2011-04-11 14:40:55.034821,2011-04-11 14:40:55.34,2011-04-11 14:39:50.4,2011-04-11 14:40:55.034821\n" +
-                    "37,2011-04-11 00:00:00.0,2011-04-11 14:40:55.035821,2011-04-11 14:40:55.35,2011-04-11 14:39:50.4,2011-04-11 14:40:55.035821\n" +
-                    "38,2011-04-11 00:00:00.0,2011-04-11 14:40:55.036821,2011-04-11 14:40:55.36,2011-04-11 14:39:50.4,2011-04-11 14:40:55.036821\n" +
-                    "39,2011-04-11 00:00:00.0,2011-04-11 14:40:55.037821,2011-04-11 14:40:55.37,2011-04-11 14:39:50.4,2011-04-11 14:40:55.037821\n" +
-                    "40,2011-04-11 00:00:00.0,2011-04-11 14:40:55.038821,2011-04-11 14:40:55.38,2011-04-11 14:39:50.4,2011-04-11 14:40:55.038821\n" +
-                    "41,2011-04-11 00:00:00.0,2011-04-11 14:40:55.039821,2011-04-11 14:40:55.39,2011-04-11 14:39:50.4,2011-04-11 14:40:55.039821\n" +
-                    "42,2011-04-11 00:00:00.0,2011-04-11 14:40:55.040821,2011-04-11 14:40:55.4,2011-04-11 14:39:50.4,2011-04-11 14:40:55.040821\n" +
-                    "43,2011-04-11 00:00:00.0,2011-04-11 14:40:55.041821,2011-04-11 14:40:55.41,2011-04-11 14:39:50.4,2011-04-11 14:40:55.041821\n" +
-                    "44,2011-04-11 00:00:00.0,2011-04-11 14:40:55.042821,2011-04-11 14:40:55.42,2011-04-11 14:39:50.4,2011-04-11 14:40:55.042821\n" +
-                    "45,2011-04-11 00:00:00.0,2011-04-11 14:40:55.043821,2011-04-11 14:40:55.43,2011-04-11 14:39:50.4,2011-04-11 14:40:55.043821\n" +
-                    "46,2011-04-11 00:00:00.0,2011-04-11 14:40:55.044821,2011-04-11 14:40:55.44,2011-04-11 14:39:50.4,2011-04-11 14:40:55.044821\n" +
-                    "47,2011-04-11 00:00:00.0,2011-04-11 14:40:55.045821,2011-04-11 14:40:55.45,2011-04-11 14:39:50.4,2011-04-11 14:40:55.045821\n" +
-                    "48,2011-04-11 00:00:00.0,2011-04-11 14:40:55.046821,2011-04-11 14:40:55.46,2011-04-11 14:39:50.4,2011-04-11 14:40:55.046821\n" +
-                    "49,2011-04-11 00:00:00.0,2011-04-11 14:40:55.047821,2011-04-11 14:40:55.47,2011-04-11 14:39:50.4,2011-04-11 14:40:55.047821\n" +
-                    "50,2011-04-11 00:00:00.0,2011-04-11 14:40:55.048821,2011-04-11 14:40:55.48,2011-04-11 14:39:50.4,2011-04-11 14:40:55.048821\n" +
-                    "51,2011-04-11 00:00:00.0,2011-04-11 14:40:55.049821,2011-04-11 14:40:55.49,2011-04-11 14:39:50.4,2011-04-11 14:40:55.049821\n" +
-                    "52,2011-04-11 00:00:00.0,2011-04-11 14:40:55.050821,2011-04-11 14:40:55.5,2011-04-11 14:39:50.4,2011-04-11 14:40:55.050821\n" +
-                    "53,2011-04-11 00:00:00.0,2011-04-11 14:40:55.051821,2011-04-11 14:40:55.51,2011-04-11 14:39:50.4,2011-04-11 14:40:55.051821\n" +
-                    "54,2011-04-11 00:00:00.0,2011-04-11 14:40:55.052821,2011-04-11 14:40:55.52,2011-04-11 14:39:50.4,2011-04-11 14:40:55.052821\n" +
-                    "55,2011-04-11 00:00:00.0,2011-04-11 14:40:55.053821,2011-04-11 14:40:55.53,2011-04-11 14:39:50.4,2011-04-11 14:40:55.053821\n" +
-                    "56,2011-04-11 00:00:00.0,2011-04-11 14:40:55.054821,2011-04-11 14:40:55.54,2011-04-11 14:39:50.4,2011-04-11 14:40:55.054821\n" +
-                    "57,2011-04-11 00:00:00.0,2011-04-11 14:40:55.055821,2011-04-11 14:40:55.55,2011-04-11 14:39:50.4,2011-04-11 14:40:55.055821\n" +
-                    "58,2011-04-11 00:00:00.0,2011-04-11 14:40:55.056821,2011-04-11 14:40:55.56,2011-04-11 14:39:50.4,2011-04-11 14:40:55.056821\n" +
-                    "59,2011-04-11 00:00:00.0,2011-04-11 14:40:55.057821,2011-04-11 14:40:55.57,2011-04-11 14:39:50.4,2011-04-11 14:40:55.057821\n" +
-                    "60,2011-04-11 00:00:00.0,2011-04-11 14:40:55.058821,2011-04-11 14:40:55.58,2011-04-11 14:39:50.4,2011-04-11 14:40:55.058821\n" +
-                    "61,2011-04-11 00:00:00.0,2011-04-11 14:40:55.059821,2011-04-11 14:40:55.59,2011-04-11 14:39:50.4,2011-04-11 14:40:55.059821\n" +
-                    "62,2011-04-11 00:00:00.0,2011-04-11 14:40:55.060821,2011-04-11 14:40:55.6,2011-04-11 14:39:50.4,2011-04-11 14:40:55.060821\n" +
-                    "63,2011-04-11 00:00:00.0,2011-04-11 14:40:55.061821,2011-04-11 14:40:55.61,2011-04-11 14:39:50.4,2011-04-11 14:40:55.061821\n" +
-                    "64,2011-04-11 00:00:00.0,2011-04-11 14:40:55.062821,2011-04-11 14:40:55.62,2011-04-11 14:39:50.4,2011-04-11 14:40:55.062821\n" +
-                    "65,2011-04-11 00:00:00.0,2011-04-11 14:40:55.063821,2011-04-11 14:40:55.63,2011-04-11 14:39:50.4,2011-04-11 14:40:55.063821\n" +
-                    "66,2011-04-11 00:00:00.0,2011-04-11 14:40:55.064821,2011-04-11 14:40:55.64,2011-04-11 14:39:50.4,2011-04-11 14:40:55.064821\n" +
-                    "67,2011-04-11 00:00:00.0,2011-04-11 14:40:55.065821,2011-04-11 14:40:55.65,2011-04-11 14:39:50.4,2011-04-11 14:40:55.065821\n" +
-                    "68,2011-04-11 00:00:00.0,2011-04-11 14:40:55.066821,2011-04-11 14:40:55.66,2011-04-11 14:39:50.4,2011-04-11 14:40:55.066821\n" +
-                    "69,2011-04-11 00:00:00.0,2011-04-11 14:40:55.067821,2011-04-11 14:40:55.67,2011-04-11 14:39:50.4,2011-04-11 14:40:55.067821\n" +
-                    "70,2011-04-11 00:00:00.0,2011-04-11 14:40:55.068821,2011-04-11 14:40:55.68,2011-04-11 14:39:50.4,2011-04-11 14:40:55.068821\n" +
-                    "71,2011-04-11 00:00:00.0,2011-04-11 14:40:55.069821,2011-04-11 14:40:55.69,2011-04-11 14:39:50.4,2011-04-11 14:40:55.069821\n" +
-                    "72,2011-04-11 00:00:00.0,2011-04-11 14:40:55.070821,2011-04-11 14:40:55.7,2011-04-11 14:39:50.4,2011-04-11 14:40:55.070821\n" +
-                    "73,2011-04-11 00:00:00.0,2011-04-11 14:40:55.071821,2011-04-11 14:40:55.71,2011-04-11 14:39:50.4,2011-04-11 14:40:55.071821\n" +
-                    "74,2011-04-11 00:00:00.0,2011-04-11 14:40:55.072821,2011-04-11 14:40:55.72,2011-04-11 14:39:50.4,2011-04-11 14:40:55.072821\n" +
-                    "75,2011-04-11 00:00:00.0,2011-04-11 14:40:55.073821,2011-04-11 14:40:55.73,2011-04-11 14:39:50.4,2011-04-11 14:40:55.073821\n" +
-                    "76,2011-04-11 00:00:00.0,2011-04-11 14:40:55.074821,2011-04-11 14:40:55.74,2011-04-11 14:39:50.4,2011-04-11 14:40:55.074821\n" +
-                    "77,2011-04-11 00:00:00.0,2011-04-11 14:40:55.075821,2011-04-11 14:40:55.75,2011-04-11 14:39:50.4,2011-04-11 14:40:55.075821\n" +
-                    "78,2011-04-11 00:00:00.0,2011-04-11 14:40:55.076821,2011-04-11 14:40:55.76,2011-04-11 14:39:50.4,2011-04-11 14:40:55.076821\n" +
-                    "79,2011-04-11 00:00:00.0,2011-04-11 14:40:55.077821,2011-04-11 14:40:55.77,2011-04-11 14:39:50.4,2011-04-11 14:40:55.077821\n" +
-                    "80,2011-04-11 00:00:00.0,2011-04-11 14:40:55.078821,2011-04-11 14:40:55.78,2011-04-11 14:39:50.4,2011-04-11 14:40:55.078821\n" +
-                    "81,2011-04-11 00:00:00.0,2011-04-11 14:40:55.079821,2011-04-11 14:40:55.79,2011-04-11 14:39:50.4,2011-04-11 14:40:55.079821\n" +
-                    "82,2011-04-11 00:00:00.0,2011-04-11 14:40:55.080821,2011-04-11 14:40:55.8,2011-04-11 14:39:50.4,2011-04-11 14:40:55.080821\n" +
-                    "83,2011-04-11 00:00:00.0,2011-04-11 14:40:55.081821,2011-04-11 14:40:55.81,2011-04-11 14:39:50.4,2011-04-11 14:40:55.081821\n" +
-                    "84,2011-04-11 00:00:00.0,2011-04-11 14:40:55.082821,2011-04-11 14:40:55.82,2011-04-11 14:39:50.4,2011-04-11 14:40:55.082821\n" +
-                    "85,2011-04-11 00:00:00.0,2011-04-11 14:40:55.083821,2011-04-11 14:40:55.83,2011-04-11 14:39:50.4,2011-04-11 14:40:55.083821\n" +
-                    "86,2011-04-11 00:00:00.0,2011-04-11 14:40:55.084821,2011-04-11 14:40:55.84,2011-04-11 14:39:50.4,2011-04-11 14:40:55.084821\n" +
-                    "87,2011-04-11 00:00:00.0,2011-04-11 14:40:55.085821,2011-04-11 14:40:55.85,2011-04-11 14:39:50.4,2011-04-11 14:40:55.085821\n" +
-                    "88,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.86,2011-04-11 14:39:50.4,2011-04-11 14:40:55.086821\n" +
-                    "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.87,2011-04-11 14:39:50.4,2011-04-11 14:40:55.087821\n";
+                    "3,2011-04-11 00:00:00.0,2011-04-11 14:40:55.001821,2011-04-11 14:40:55.001,2011-04-11 14:39:50.4,2011-04-11 14:40:55.001821\n" +
+                    "4,2011-04-11 00:00:00.0,2011-04-11 14:40:55.002821,2011-04-11 14:40:55.002,2011-04-11 14:39:50.4,2011-04-11 14:40:55.002821\n" +
+                    "5,2011-04-11 00:00:00.0,2011-04-11 14:40:55.003821,2011-04-11 14:40:55.003,2011-04-11 14:39:50.4,2011-04-11 14:40:55.003821\n" +
+                    "6,2011-04-11 00:00:00.0,2011-04-11 14:40:55.004821,2011-04-11 14:40:55.004,2011-04-11 14:39:50.4,2011-04-11 14:40:55.004821\n" +
+                    "7,2011-04-11 00:00:00.0,2011-04-11 14:40:55.005821,2011-04-11 14:40:55.005,2011-04-11 14:39:50.4,2011-04-11 14:40:55.005821\n" +
+                    "8,2011-04-11 00:00:00.0,2011-04-11 14:40:55.006821,2011-04-11 14:40:55.006,2011-04-11 14:39:50.4,2011-04-11 14:40:55.006821\n" +
+                    "9,2011-04-11 00:00:00.0,2011-04-11 14:40:55.007821,2011-04-11 14:40:55.007,2011-04-11 14:39:50.4,2011-04-11 14:40:55.007821\n" +
+                    "10,2011-04-11 00:00:00.0,2011-04-11 14:40:55.008821,2011-04-11 14:40:55.008,2011-04-11 14:39:50.4,2011-04-11 14:40:55.008821\n" +
+                    "11,2011-04-11 00:00:00.0,2011-04-11 14:40:55.009821,2011-04-11 14:40:55.009,2011-04-11 14:39:50.4,2011-04-11 14:40:55.009821\n" +
+                    "12,2011-04-11 00:00:00.0,2011-04-11 14:40:55.010821,2011-04-11 14:40:55.01,2011-04-11 14:39:50.4,2011-04-11 14:40:55.010821\n" +
+                    "13,2011-04-11 00:00:00.0,2011-04-11 14:40:55.011821,2011-04-11 14:40:55.011,2011-04-11 14:39:50.4,2011-04-11 14:40:55.011821\n" +
+                    "14,2011-04-11 00:00:00.0,2011-04-11 14:40:55.012821,2011-04-11 14:40:55.012,2011-04-11 14:39:50.4,2011-04-11 14:40:55.012821\n" +
+                    "15,2011-04-11 00:00:00.0,2011-04-11 14:40:55.013821,2011-04-11 14:40:55.013,2011-04-11 14:39:50.4,2011-04-11 14:40:55.013821\n" +
+                    "16,2011-04-11 00:00:00.0,2011-04-11 14:40:55.014821,2011-04-11 14:40:55.014,2011-04-11 14:39:50.4,2011-04-11 14:40:55.014821\n" +
+                    "17,2011-04-11 00:00:00.0,2011-04-11 14:40:55.015821,2011-04-11 14:40:55.015,2011-04-11 14:39:50.4,2011-04-11 14:40:55.015821\n" +
+                    "18,2011-04-11 00:00:00.0,2011-04-11 14:40:55.016821,2011-04-11 14:40:55.016,2011-04-11 14:39:50.4,2011-04-11 14:40:55.016821\n" +
+                    "19,2011-04-11 00:00:00.0,2011-04-11 14:40:55.017821,2011-04-11 14:40:55.017,2011-04-11 14:39:50.4,2011-04-11 14:40:55.017821\n" +
+                    "20,2011-04-11 00:00:00.0,2011-04-11 14:40:55.018821,2011-04-11 14:40:55.018,2011-04-11 14:39:50.4,2011-04-11 14:40:55.018821\n" +
+                    "21,2011-04-11 00:00:00.0,2011-04-11 14:40:55.019821,2011-04-11 14:40:55.019,2011-04-11 14:39:50.4,2011-04-11 14:40:55.019821\n" +
+                    "22,2011-04-11 00:00:00.0,2011-04-11 14:40:55.020821,2011-04-11 14:40:55.02,2011-04-11 14:39:50.4,2011-04-11 14:40:55.020821\n" +
+                    "23,2011-04-11 00:00:00.0,2011-04-11 14:40:55.021821,2011-04-11 14:40:55.021,2011-04-11 14:39:50.4,2011-04-11 14:40:55.021821\n" +
+                    "24,2011-04-11 00:00:00.0,2011-04-11 14:40:55.022821,2011-04-11 14:40:55.022,2011-04-11 14:39:50.4,2011-04-11 14:40:55.022821\n" +
+                    "25,2011-04-11 00:00:00.0,2011-04-11 14:40:55.023821,2011-04-11 14:40:55.023,2011-04-11 14:39:50.4,2011-04-11 14:40:55.023821\n" +
+                    "26,2011-04-11 00:00:00.0,2011-04-11 14:40:55.024821,2011-04-11 14:40:55.024,2011-04-11 14:39:50.4,2011-04-11 14:40:55.024821\n" +
+                    "27,2011-04-11 00:00:00.0,2011-04-11 14:40:55.025821,2011-04-11 14:40:55.025,2011-04-11 14:39:50.4,2011-04-11 14:40:55.025821\n" +
+                    "28,2011-04-11 00:00:00.0,2011-04-11 14:40:55.026821,2011-04-11 14:40:55.026,2011-04-11 14:39:50.4,2011-04-11 14:40:55.026821\n" +
+                    "29,2011-04-11 00:00:00.0,2011-04-11 14:40:55.027821,2011-04-11 14:40:55.027,2011-04-11 14:39:50.4,2011-04-11 14:40:55.027821\n" +
+                    "30,2011-04-11 00:00:00.0,2011-04-11 14:40:55.028821,2011-04-11 14:40:55.028,2011-04-11 14:39:50.4,2011-04-11 14:40:55.028821\n" +
+                    "31,2011-04-11 00:00:00.0,2011-04-11 14:40:55.029821,2011-04-11 14:40:55.029,2011-04-11 14:39:50.4,2011-04-11 14:40:55.029821\n" +
+                    "32,2011-04-11 00:00:00.0,2011-04-11 14:40:55.030821,2011-04-11 14:40:55.03,2011-04-11 14:39:50.4,2011-04-11 14:40:55.030821\n" +
+                    "33,2011-04-11 00:00:00.0,2011-04-11 14:40:55.031821,2011-04-11 14:40:55.031,2011-04-11 14:39:50.4,2011-04-11 14:40:55.031821\n" +
+                    "34,2011-04-11 00:00:00.0,2011-04-11 14:40:55.032821,2011-04-11 14:40:55.032,2011-04-11 14:39:50.4,2011-04-11 14:40:55.032821\n" +
+                    "35,2011-04-11 00:00:00.0,2011-04-11 14:40:55.033821,2011-04-11 14:40:55.033,2011-04-11 14:39:50.4,2011-04-11 14:40:55.033821\n" +
+                    "36,2011-04-11 00:00:00.0,2011-04-11 14:40:55.034821,2011-04-11 14:40:55.034,2011-04-11 14:39:50.4,2011-04-11 14:40:55.034821\n" +
+                    "37,2011-04-11 00:00:00.0,2011-04-11 14:40:55.035821,2011-04-11 14:40:55.035,2011-04-11 14:39:50.4,2011-04-11 14:40:55.035821\n" +
+                    "38,2011-04-11 00:00:00.0,2011-04-11 14:40:55.036821,2011-04-11 14:40:55.036,2011-04-11 14:39:50.4,2011-04-11 14:40:55.036821\n" +
+                    "39,2011-04-11 00:00:00.0,2011-04-11 14:40:55.037821,2011-04-11 14:40:55.037,2011-04-11 14:39:50.4,2011-04-11 14:40:55.037821\n" +
+                    "40,2011-04-11 00:00:00.0,2011-04-11 14:40:55.038821,2011-04-11 14:40:55.038,2011-04-11 14:39:50.4,2011-04-11 14:40:55.038821\n" +
+                    "41,2011-04-11 00:00:00.0,2011-04-11 14:40:55.039821,2011-04-11 14:40:55.039,2011-04-11 14:39:50.4,2011-04-11 14:40:55.039821\n" +
+                    "42,2011-04-11 00:00:00.0,2011-04-11 14:40:55.040821,2011-04-11 14:40:55.04,2011-04-11 14:39:50.4,2011-04-11 14:40:55.040821\n" +
+                    "43,2011-04-11 00:00:00.0,2011-04-11 14:40:55.041821,2011-04-11 14:40:55.041,2011-04-11 14:39:50.4,2011-04-11 14:40:55.041821\n" +
+                    "44,2011-04-11 00:00:00.0,2011-04-11 14:40:55.042821,2011-04-11 14:40:55.042,2011-04-11 14:39:50.4,2011-04-11 14:40:55.042821\n" +
+                    "45,2011-04-11 00:00:00.0,2011-04-11 14:40:55.043821,2011-04-11 14:40:55.043,2011-04-11 14:39:50.4,2011-04-11 14:40:55.043821\n" +
+                    "46,2011-04-11 00:00:00.0,2011-04-11 14:40:55.044821,2011-04-11 14:40:55.044,2011-04-11 14:39:50.4,2011-04-11 14:40:55.044821\n" +
+                    "47,2011-04-11 00:00:00.0,2011-04-11 14:40:55.045821,2011-04-11 14:40:55.045,2011-04-11 14:39:50.4,2011-04-11 14:40:55.045821\n" +
+                    "48,2011-04-11 00:00:00.0,2011-04-11 14:40:55.046821,2011-04-11 14:40:55.046,2011-04-11 14:39:50.4,2011-04-11 14:40:55.046821\n" +
+                    "49,2011-04-11 00:00:00.0,2011-04-11 14:40:55.047821,2011-04-11 14:40:55.047,2011-04-11 14:39:50.4,2011-04-11 14:40:55.047821\n" +
+                    "50,2011-04-11 00:00:00.0,2011-04-11 14:40:55.048821,2011-04-11 14:40:55.048,2011-04-11 14:39:50.4,2011-04-11 14:40:55.048821\n" +
+                    "51,2011-04-11 00:00:00.0,2011-04-11 14:40:55.049821,2011-04-11 14:40:55.049,2011-04-11 14:39:50.4,2011-04-11 14:40:55.049821\n" +
+                    "52,2011-04-11 00:00:00.0,2011-04-11 14:40:55.050821,2011-04-11 14:40:55.05,2011-04-11 14:39:50.4,2011-04-11 14:40:55.050821\n" +
+                    "53,2011-04-11 00:00:00.0,2011-04-11 14:40:55.051821,2011-04-11 14:40:55.051,2011-04-11 14:39:50.4,2011-04-11 14:40:55.051821\n" +
+                    "54,2011-04-11 00:00:00.0,2011-04-11 14:40:55.052821,2011-04-11 14:40:55.052,2011-04-11 14:39:50.4,2011-04-11 14:40:55.052821\n" +
+                    "55,2011-04-11 00:00:00.0,2011-04-11 14:40:55.053821,2011-04-11 14:40:55.053,2011-04-11 14:39:50.4,2011-04-11 14:40:55.053821\n" +
+                    "56,2011-04-11 00:00:00.0,2011-04-11 14:40:55.054821,2011-04-11 14:40:55.054,2011-04-11 14:39:50.4,2011-04-11 14:40:55.054821\n" +
+                    "57,2011-04-11 00:00:00.0,2011-04-11 14:40:55.055821,2011-04-11 14:40:55.055,2011-04-11 14:39:50.4,2011-04-11 14:40:55.055821\n" +
+                    "58,2011-04-11 00:00:00.0,2011-04-11 14:40:55.056821,2011-04-11 14:40:55.056,2011-04-11 14:39:50.4,2011-04-11 14:40:55.056821\n" +
+                    "59,2011-04-11 00:00:00.0,2011-04-11 14:40:55.057821,2011-04-11 14:40:55.057,2011-04-11 14:39:50.4,2011-04-11 14:40:55.057821\n" +
+                    "60,2011-04-11 00:00:00.0,2011-04-11 14:40:55.058821,2011-04-11 14:40:55.058,2011-04-11 14:39:50.4,2011-04-11 14:40:55.058821\n" +
+                    "61,2011-04-11 00:00:00.0,2011-04-11 14:40:55.059821,2011-04-11 14:40:55.059,2011-04-11 14:39:50.4,2011-04-11 14:40:55.059821\n" +
+                    "62,2011-04-11 00:00:00.0,2011-04-11 14:40:55.060821,2011-04-11 14:40:55.06,2011-04-11 14:39:50.4,2011-04-11 14:40:55.060821\n" +
+                    "63,2011-04-11 00:00:00.0,2011-04-11 14:40:55.061821,2011-04-11 14:40:55.061,2011-04-11 14:39:50.4,2011-04-11 14:40:55.061821\n" +
+                    "64,2011-04-11 00:00:00.0,2011-04-11 14:40:55.062821,2011-04-11 14:40:55.062,2011-04-11 14:39:50.4,2011-04-11 14:40:55.062821\n" +
+                    "65,2011-04-11 00:00:00.0,2011-04-11 14:40:55.063821,2011-04-11 14:40:55.063,2011-04-11 14:39:50.4,2011-04-11 14:40:55.063821\n" +
+                    "66,2011-04-11 00:00:00.0,2011-04-11 14:40:55.064821,2011-04-11 14:40:55.064,2011-04-11 14:39:50.4,2011-04-11 14:40:55.064821\n" +
+                    "67,2011-04-11 00:00:00.0,2011-04-11 14:40:55.065821,2011-04-11 14:40:55.065,2011-04-11 14:39:50.4,2011-04-11 14:40:55.065821\n" +
+                    "68,2011-04-11 00:00:00.0,2011-04-11 14:40:55.066821,2011-04-11 14:40:55.066,2011-04-11 14:39:50.4,2011-04-11 14:40:55.066821\n" +
+                    "69,2011-04-11 00:00:00.0,2011-04-11 14:40:55.067821,2011-04-11 14:40:55.067,2011-04-11 14:39:50.4,2011-04-11 14:40:55.067821\n" +
+                    "70,2011-04-11 00:00:00.0,2011-04-11 14:40:55.068821,2011-04-11 14:40:55.068,2011-04-11 14:39:50.4,2011-04-11 14:40:55.068821\n" +
+                    "71,2011-04-11 00:00:00.0,2011-04-11 14:40:55.069821,2011-04-11 14:40:55.069,2011-04-11 14:39:50.4,2011-04-11 14:40:55.069821\n" +
+                    "72,2011-04-11 00:00:00.0,2011-04-11 14:40:55.070821,2011-04-11 14:40:55.07,2011-04-11 14:39:50.4,2011-04-11 14:40:55.070821\n" +
+                    "73,2011-04-11 00:00:00.0,2011-04-11 14:40:55.071821,2011-04-11 14:40:55.071,2011-04-11 14:39:50.4,2011-04-11 14:40:55.071821\n" +
+                    "74,2011-04-11 00:00:00.0,2011-04-11 14:40:55.072821,2011-04-11 14:40:55.072,2011-04-11 14:39:50.4,2011-04-11 14:40:55.072821\n" +
+                    "75,2011-04-11 00:00:00.0,2011-04-11 14:40:55.073821,2011-04-11 14:40:55.073,2011-04-11 14:39:50.4,2011-04-11 14:40:55.073821\n" +
+                    "76,2011-04-11 00:00:00.0,2011-04-11 14:40:55.074821,2011-04-11 14:40:55.074,2011-04-11 14:39:50.4,2011-04-11 14:40:55.074821\n" +
+                    "77,2011-04-11 00:00:00.0,2011-04-11 14:40:55.075821,2011-04-11 14:40:55.075,2011-04-11 14:39:50.4,2011-04-11 14:40:55.075821\n" +
+                    "78,2011-04-11 00:00:00.0,2011-04-11 14:40:55.076821,2011-04-11 14:40:55.076,2011-04-11 14:39:50.4,2011-04-11 14:40:55.076821\n" +
+                    "79,2011-04-11 00:00:00.0,2011-04-11 14:40:55.077821,2011-04-11 14:40:55.077,2011-04-11 14:39:50.4,2011-04-11 14:40:55.077821\n" +
+                    "80,2011-04-11 00:00:00.0,2011-04-11 14:40:55.078821,2011-04-11 14:40:55.078,2011-04-11 14:39:50.4,2011-04-11 14:40:55.078821\n" +
+                    "81,2011-04-11 00:00:00.0,2011-04-11 14:40:55.079821,2011-04-11 14:40:55.079,2011-04-11 14:39:50.4,2011-04-11 14:40:55.079821\n" +
+                    "82,2011-04-11 00:00:00.0,2011-04-11 14:40:55.080821,2011-04-11 14:40:55.08,2011-04-11 14:39:50.4,2011-04-11 14:40:55.080821\n" +
+                    "83,2011-04-11 00:00:00.0,2011-04-11 14:40:55.081821,2011-04-11 14:40:55.081,2011-04-11 14:39:50.4,2011-04-11 14:40:55.081821\n" +
+                    "84,2011-04-11 00:00:00.0,2011-04-11 14:40:55.082821,2011-04-11 14:40:55.082,2011-04-11 14:39:50.4,2011-04-11 14:40:55.082821\n" +
+                    "85,2011-04-11 00:00:00.0,2011-04-11 14:40:55.083821,2011-04-11 14:40:55.083,2011-04-11 14:39:50.4,2011-04-11 14:40:55.083821\n" +
+                    "86,2011-04-11 00:00:00.0,2011-04-11 14:40:55.084821,2011-04-11 14:40:55.084,2011-04-11 14:39:50.4,2011-04-11 14:40:55.084821\n" +
+                    "87,2011-04-11 00:00:00.0,2011-04-11 14:40:55.085821,2011-04-11 14:40:55.085,2011-04-11 14:39:50.4,2011-04-11 14:40:55.085821\n" +
+                    "88,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.086,2011-04-11 14:39:50.4,2011-04-11 14:40:55.086821\n" +
+                    "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.087,2011-04-11 14:39:50.4,2011-04-11 14:40:55.087821\n";
 
             try (
                     final PGWireServer ignored = createPGServer(4);
@@ -7775,209 +7659,6 @@ create table tab as (
         });
     }
 
-    private void testQuery(String s, String s2) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignore = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery(
-                        "select " +
-                                "rnd_str(4,4,4) s, " +
-                                "rnd_int(0, 256, 4) i, " +
-                                s +
-                                "timestamp_sequence(0,10000) t, " +
-                                "rnd_float(4) f, " +
-                                "rnd_short() _short, " +
-                                "rnd_long(0, 10000000, 5) l, " +
-                                "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
-                                "rnd_byte(0,127) bb, " +
-                                "rnd_boolean() b, " +
-                                "rnd_symbol(4,4,4,2), " +
-                                "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                                "rnd_bin(10,20,2), " +
-                                "rnd_char(), " +
-                                "rnd_long256() " +
-                                "from long_sequence(50)");
-
-                final String expected = s2 +
-                        "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e,D,0x5f20a35e80e154f458dfd08eeb9cc39ecec82869edec121bc2593f82b430328d\n" +
-                        "OUOJ,77,null,1970-01-01 00:00:00.01,0.676,-7374,7777791,2015-06-19 08:47:45.603182,53,true,null,2015-11-10 09:50:33.215,00000000 8b 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0 fb 64 bb\n" +
-                        "00000010 1a d4 f0,V,0xbedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e29660300cea7db540\n" +
-                        "ICCX,205,0.8837421918800907,1970-01-01 00:00:00.02,0.054,6093,4552960,2015-07-17 00:50:59.787742,33,false,VTJW,2015-07-15 01:06:11.226,00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47,U,0x8b4e4831499fc2a526567f4430b46b7f78c594c496995885aa1896d0ad3419d2\n" +
-                        "GSHO,31,0.34947269997137365,1970-01-01 00:00:00.03,0.198,10795,6406207,2015-05-22 14:59:41.673422,56,false,null,null,00000000 49 1c f2 3c ed 39 ac a8 3b a6,S,0x7eb6d80649d1dfe38e4a7f661df6c32b2f171b3f06f6387d2fd2b4a60ba2ba3b\n" +
-                        "HZEP,180,0.06944480046327317,1970-01-01 00:00:00.04,0.430,21347,null,2015-02-07 10:02:13.600956,41,false,HYRX,null,00000000 ea c3 c9 73 93 46 fe c2 d3 68 79 8b 43 1d 57 34,F,0x38e4be9e19321b57832dd27952d949d8691dd4412a2d398d4fc01e2b9fd11623\n" +
-                        "HWVD,38,0.48524046868499715,1970-01-01 00:00:00.05,0.680,25579,5575751,2015-10-19 12:38:49.360294,15,false,VTJW,2015-02-06 22:58:50.333,null,Q,0x85134468025aaeb0a2f8bbebb989ba609bb0f21ac9e427283eef3f158e084362\n" +
-                        "PGLU,97,0.029227696942726644,1970-01-01 00:00:00.06,0.172,-18912,8340272,2015-05-24 22:09:55.175991,111,false,VTJW,2015-11-08 21:57:22.812,00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
-                        "00000010 ea 4e ea 8b,K,0x55d3686d5da27e14255a91b0e28abeb36c3493fcb2d0272d6046e5d137dd8f0f\n" +
-                        "WIFF,104,0.892454783921197,1970-01-01 00:00:00.07,0.093,28218,4009057,2015-02-18 07:26:10.141055,89,false,HYRX,null,00000000 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90 25 c2 20\n" +
-                        "00000010 ff,R,0x55b0586d1c02dfb399904624c49b6d8a7d85ee2916b209c779406ab1f85e333a\n" +
-                        "CLTJ,115,0.2093569947644236,1970-01-01 00:00:00.08,0.546,-8207,2378718,2015-04-21 12:25:43.291916,31,false,PEHN,null,00000000 a5 db a1 76 1c 1c 26 fb 2e 42 fa,F,0x483c83d88ac674e3894499a1a1680580cfedff23a67d918fb49b3c24e456ad6e\n" +
-                        "HFLP,79,0.9130151105125102,1970-01-01 00:00:00.09,null,14667,2513248,2015-08-31 13:16:12.318782,3,false,null,2015-02-08 12:28:36.66,null,U,0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\n" +
-                        "GLNY,138,0.7165847318191405,1970-01-01 00:00:00.1,0.753,-2666,9337379,2015-03-25 09:21:52.776576,111,false,HYRX,2015-01-24 15:23:13.92,00000000 62 e1 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43,Y,0xaac42ccbc493cf44aa6a0a1d4cdf40dd6ae4fd257e4412a07f19777ec1368055\n" +
-                        "VTNP,237,0.29242748475227853,1970-01-01 00:00:00.11,0.753,-26861,2354132,2015-02-10 18:27:11.140675,56,true,null,2015-02-25 00:45:15.363,00000000 28 b6 a9 17 ec 0e 01 c4 eb 9f 13 8f bb 2a 4b,O,0x926cdd99e63abb35650d1fb462d014df59070392ef6aa389932e4b508e35428f\n" +
-                        "WFOQ,255,null,1970-01-01 00:00:00.12,0.116,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.78,null,E,0x4f38804270a4a64349b5760a687d8cf838cbb9ae96e9ecdc745ed9faeb513ad3\n" +
-                        "EJCT,195,0.13312214396754163,1970-01-01 00:00:00.13,0.944,-3013,null,2015-11-03 14:54:47.524015,114,true,PEHN,2015-08-28 07:41:29.952,00000000 fb 9d 63 ca 94 00 6b dd 18 fe 71 76 bc 45 24 cd\n" +
-                        "00000010 13 00 7c,R,0x3cfe50b9cabaf1f29e0dcffb7520ebcac48ad6b8f6962219b27b0ac7fbdee201\n" +
-                        "JYYF,249,0.2000682450929353,1970-01-01 00:00:00.14,0.602,5869,2079217,2015-07-10 18:16:38.882991,44,true,HYRX,null,00000000 b7 6c 4b fb 2d 16 f3 89 a3 83 64 de d6 fd c4 5b\n" +
-                        "00000010 c4 e9 19 47,P,0x85e70b46349799fe49f783d5343dd7bc3d3fe1302cd3371137fccdabf181b5ad\n" +
-                        "TZOD,null,0.36078878996232167,1970-01-01 00:00:00.15,0.601,-23125,5083310,null,11,false,VTJW,2015-09-19 18:14:57.59,00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
-                        "00000010 00,E,0xcff85f9258847e03a6f2e2a772cd2f3751d822a67dff3d2375166223a6181642\n" +
-                        "PBMB,76,0.23567419576658333,1970-01-01 00:00:00.16,0.571,26284,null,2015-05-21 13:14:56.349036,45,true,null,2015-09-11 09:34:39.5,00000000 97 cb f6 2c 23 45 a3 76 60 15,M,0x3c3a3b7947ce8369926cbcb16e9a2f11cfab70f2d175d0d9aeb989be79cd2b8c\n" +
-                        "TKRI,201,0.2625424312419562,1970-01-01 00:00:00.17,0.915,-5486,9917162,2015-05-03 03:59:04.256719,66,false,VTJW,2015-01-15 03:22:01.33,00000000 a1 f5 4b ea 01 c9 63 b4 fc 92 60 1f df 41 ec 2c,O,0x4e3e15ad49e0a859312981a73c9dfce79022a75a739ee488eefa2920026dba88\n" +
-                        "NKGQ,174,0.4039042639581232,1970-01-01 00:00:00.18,0.438,20687,7315329,2015-07-25 04:52:27.724869,20,false,PEHN,2015-06-10 22:28:57.1,00000000 92 83 fc 88 f3 32 27 70 c8 01 b0,T,0x579b14c2725d7a7e5dfbd8e23498715b8d9ee30e7bcbf83a6d1b1c80f012a4c9\n" +
-                        "FUXC,52,0.7430101994511517,1970-01-01 00:00:00.19,null,-14729,1042064,2015-08-21 02:10:58.949674,28,true,CPSW,2015-08-29 20:15:51.835,null,X,0x41457ebc5a02a2b542cbd49414e022a06f4aa2dc48a9a4d99288224be334b250\n" +
-                        "TGNJ,159,0.9562577128401444,1970-01-01 00:00:00.2,0.251,795,5069730,2015-07-01 01:36:57.101749,71,true,PEHN,2015-09-12 05:41:59.999,00000000 33 3f b2 67 da 98 47 47 bf 4f ea 5f 48 ed,M,0x4ba20a8e0cf7c53c9f527485c4aac4a2826f47baacd58b28700a67f6119c63bb\n" +
-                        "HCNP,173,0.18684267640195917,1970-01-01 00:00:00.21,0.688,-14882,8416858,2015-06-16 19:31:59.812848,25,false,HYRX,2015-09-30 17:28:24.113,00000000 1d 5c c1 5d 2d 44 ea 00 81 c4 19 a1 ec 74 f8 10\n" +
-                        "00000010 fc 6e 23,D,0x3d64559865f84c86488be951819f43042f036147c78e0b2d127ca5db2f41c5e0\n" +
-                        "EZBR,243,0.8203418140538824,1970-01-01 00:00:00.22,0.221,-8447,4677168,2015-03-24 03:32:39.832378,78,false,CPSW,2015-02-16 04:04:19.82,00000000 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03 22 81 b8,Q,0x721304ffe1c934386466208d506905af40c7e3bce4b28406783a3945ab682cc4\n" +
-                        "ZPBH,131,0.1999576586778039,1970-01-01 00:00:00.23,0.479,-18951,874555,2015-12-22 19:13:55.404123,52,false,null,2015-10-03 05:16:17.891,null,Z,0xa944baa809a3f2addd4121c47cb1139add4f1a5641c91e3ab81f4f0ca152ec61\n" +
-                        "VLTP,196,0.4104855595304533,1970-01-01 00:00:00.24,0.918,-12269,142107,2015-10-10 18:27:43.423774,92,false,PEHN,2015-02-06 18:42:24.631,null,H,0x5293ce3394424e6a5ae63bdf09a84e32bac4484bdeec40e887ec84d015101766\n" +
-                        "RUMM,185,null,1970-01-01 00:00:00.25,0.838,-27649,3639049,2015-05-06 00:51:57.375784,89,true,PEHN,null,null,W,0x3166ed3bbffb858312f19057d95341886360c99923d254f38f22547ae9661423\n" +
-                        "null,71,0.7409092302023607,1970-01-01 00:00:00.26,0.742,-18837,4161180,2015-04-22 10:19:19.162814,37,true,HYRX,2015-09-23 03:14:56.664,00000000 8e 93 bd 27 42 f8 25 2a 42 71 a3 7a 58 e5,D,0x689a15d8906770fcaefe0266b9f63bd6698c574248e9011c6cc84d9a6d41e0b8\n" +
-                        "NGZT,214,0.18170646835643245,1970-01-01 00:00:00.27,0.841,21764,3231872,null,79,false,HYRX,2015-05-20 07:51:29.675,00000000 ab ab ac 21 61 99 be 2d f5 30 78 6d 5a 3b,H,0x5b8def4e7a017e884a3c2c504403708b49fb8d5fe0ff283cbac6499e71ce5b30\n" +
-                        "EYYP,13,null,1970-01-01 00:00:00.28,0.534,19136,4658108,2015-08-20 05:26:04.061614,5,false,CPSW,2015-03-23 23:43:37.634,00000000 c8 66 0c 40 71 ea 20 7e 43 97 27 1f 5c d9 ee 04\n" +
-                        "00000010 5b 9c,C,0x6e6ed811e25486953f35987a50016bbf481e9f55c33ac48c6a22b0bd6f7b0bf2\n" +
-                        "GMPL,50,0.7902682918274309,1970-01-01 00:00:00.29,0.874,-27807,5693029,2015-07-14 21:06:07.975747,37,true,CPSW,2015-09-01 04:00:29.49,00000000 3b 4b b7 e2 7f ab 6e 23 03 dd c7 d6,U,0x72c607b1992ff2f8802e839b77a4a2d34b8b967c412e7c895b509b55d1c38d29\n" +
-                        "BCZI,207,0.10863061577000221,1970-01-01 00:00:00.3,0.129,3999,121232,null,88,true,CPSW,2015-05-10 21:10:20.41,00000000 97 0b f5 ef 3b be 85 7c 11 f7 34,K,0x33be4c04695f74d776ac6df71a221f518f3c64248fb5943ea55ab4e6916f3f6c\n" +
-                        "DXUU,139,null,1970-01-01 00:00:00.31,0.262,-15289,341060,2015-01-06 07:48:24.624773,110,false,null,2015-07-08 18:37:16.872,00000000 71 cf 5a 8f 21 06 b2 3f 0e 41 93 89 27 ca 10 2f\n" +
-                        "00000010 60 ce,N,0x1c05d81633694e02795ebacfceb0c7dd7ec9b7e9c634bc791283140ab775531c\n" +
-                        "FMDV,197,0.2522102209201954,1970-01-01 00:00:00.32,0.993,-26026,5396438,null,83,true,CPSW,null,00000000 86 75 ad a5 2d 49 48 68 36 f0 35,K,0x308a7a4966e65a0160b00229634848957fa67d6a419e1721b1520f66caa74945\n" +
-                        "SQCN,62,0.11500943478849246,1970-01-01 00:00:00.33,0.595,1011,4631412,null,56,false,VTJW,null,null,W,0x66906dc1f1adbc206a8bf627c859714a6b841d6c6c8e44ce147261f8689d9250\n" +
-                        "QSCM,130,0.8671405978559277,1970-01-01 00:00:00.34,0.428,22899,403193,null,21,true,PEHN,2015-11-30 21:04:32.865,00000000 a0 ba a5 d1 63 ca 32 e5 0d 68 52 c6 94 c3 18 c9\n" +
-                        "00000010 7c,I,0x3dcc3621f3734c485bb81c28ec2ddb0163def06fb4e695dc2bfa47b82318ff9f\n" +
-                        "UUZI,196,0.9277429447320458,1970-01-01 00:00:00.35,0.625,24355,5761736,null,116,false,null,2015-02-04 07:15:26.997,null,B,0xb0a5224248b093a067eee4529cce26c37429f999bffc9548aa3df14bfed42969\n" +
-                        "DEQN,41,0.9028381160965113,1970-01-01 00:00:00.36,0.120,29066,2545404,2015-04-07 21:58:14.714791,125,false,PEHN,2015-02-06 23:29:49.836,00000000 ec 4b 97 27 df cd 7a 14 07 92 01,I,0x55016acb254b58cd3ce05caab6551831683728ff2f725aa1ba623366c2d08e6a\n" +
-                        "null,164,0.7652775387729266,1970-01-01 00:00:00.37,0.312,-8563,7684501,2015-02-01 12:38:28.322282,0,true,HYRX,2015-07-16 20:11:51.34,null,F,0x97af9db84b80545ecdee65143cbc92f89efea4d0456d90f29dd9339572281042\n" +
-                        "QJPL,160,0.1740035812230043,1970-01-01 00:00:00.38,0.763,5991,2099269,2015-02-25 15:49:06.472674,65,true,VTJW,2015-04-23 11:15:13.65,00000000 de 58 45 d0 1b 58 be 33 92 cd 5c 9d,E,0xa85a5fc20776e82b36c1cdbfe34eb2636eec4ffc0b44f925b09ac4f09cb27f36\n" +
-                        "BKUN,208,0.4452148524967028,1970-01-01 00:00:00.39,0.582,17928,6383721,2015-10-23 07:12:20.730424,7,false,null,2015-01-02 17:04:58.959,00000000 5e 37 e4 68 2a 96 06 46 b6 aa,F,0xe1d2020be2cb7be9c5b68f9ea1bd30c789e6d0729d44b64390678b574ed0f592\n" +
-                        "REDS,4,0.03804995327454719,1970-01-01 00:00:00.4,0.103,2358,1897491,2015-07-21 16:34:14.571565,75,false,CPSW,2015-07-30 16:04:46.726,00000000 d6 88 3a 93 ef 24 a5 e2 bc 86,P,0x892458b34e8769928647166465305ef1dd668040845a10a38ea5fba6cf9bfc92\n" +
-                        "MPVR,null,null,1970-01-01 00:00:00.41,0.592,8754,5828044,2015-10-05 21:11:10.600851,116,false,CPSW,null,null,H,0x9d1e67c6be2f24b2a4e2cc6a628c94395924dadabaed7ee459b2a61b0fcb74c5\n" +
-                        "KKNZ,186,0.8223388398922372,1970-01-01 00:00:00.42,0.720,-6179,8728907,null,80,true,VTJW,2015-09-11 03:49:12.244,00000000 16 b2 d8 83 f5 95 7c 95 fd 52 bb 50 c9,B,0x55724661cfcc811f4482e1a2ba8efaef6e4aef0394801c40941d89f24081f64d\n" +
-                        "BICL,182,0.7215695095610233,1970-01-01 00:00:00.43,0.227,-22899,6401660,2015-08-23 18:31:29.931618,78,true,null,null,null,T,0xbbb751ee10f060d1c2fbeb73044504aea55a8e283bcf857b539d8cd889fa9c91\n" +
-                        "SWPF,null,0.48770772310128674,1970-01-01 00:00:00.44,0.914,-17929,8377336,2015-12-13 23:04:20.465454,28,false,HYRX,2015-10-31 13:37:01.327,00000000 b2 31 9c 69 be 74 9a ad cc cf b8 e4 d1 7a 4f,I,0xbe91d734443388a2a631d716b575c819c9224a25e3f6e6fa6cd78093d5e7ea16\n" +
-                        "BHEV,80,0.8917678500174907,1970-01-01 00:00:00.45,0.237,29284,9577513,2015-10-20 07:38:23.889249,27,false,HYRX,2015-12-15 13:32:56.797,00000000 92 83 24 53 60 4d 04 c2 f0 7a 07 d4 a3 d1 5f 0d\n" +
-                        "00000010 fe 63 10 0d,V,0x225fddd0f4325a9d8634e1cb317338a0d3cb7f61737f167dc902b6f6d779c753\n" +
-                        "DPCH,62,0.6684502332750604,1970-01-01 00:00:00.46,0.879,-22600,9266553,null,89,true,VTJW,2015-05-25 19:42:17.955,00000000 35 1b b9 0f 97 f5 77 7e a3 2d ce fe eb cd 47 06\n" +
-                        "00000010 53 61 97,S,0x89d6a43b23f83695b236ae5ffab54622ce1f4dac846490a8b88f0468c0cbfa33\n" +
-                        "MKNJ,61,0.2682009935575007,1970-01-01 00:00:00.47,0.813,-1322,null,2015-11-04 08:11:39.996132,4,false,CPSW,2015-07-29 22:51:03.349,00000000 82 08 fb e7 94 3a 32 5d 8a 66 0b e4 85 f1 13 06\n" +
-                        "00000010 f2 27,V,0x9890d4aea149f0498bdef1c6ba16dd8cbd01cf83632884ae8b7083f888554b0c\n" +
-                        "GSQI,158,0.8047954890194065,1970-01-01 00:00:00.48,0.347,23139,1252385,2015-04-22 00:10:12.067311,32,true,null,2015-01-09 06:06:32.213,00000000 38 a7 85 46 1a 27 5b 4d 0f 33 f4 70,V,0xc0e6e110b909e13a812425a38162be0bb65e29ed529d4dba868a7075f3b34357\n" +
-                        "BPTU,205,0.430214712409255,1970-01-01 00:00:00.49,0.905,31266,8271557,2015-01-07 05:53:03.838005,14,true,VTJW,2015-10-30 05:33:15.819,00000000 24 0b c5 1a 5a 8d 85 50 39 42 9e 8a 86 17 89 6b,S,0x4e272e9dfde7bb12618178f7feba5021382a8c47a28fefa475d743cf0c2c4bcd\n";
-
-                StringSink sink = new StringSink();
-                // dump metadata
-                assertResultSet(expected, sink, rs);
-            }
-        });
-    }
-
-    private void testSemicolon(boolean simpleQueryMode) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(simpleQueryMode, true);
-                    final PreparedStatement statement = connection.prepareStatement(";;")
-            ) {
-                statement.execute();
-            }
-        });
-    }
-
-    private void testStaleQueryCacheOnTableDropped(boolean simple) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(simple, true)
-            ) {
-                try (CallableStatement st1 = connection.prepareCall("create table y as (" +
-                        "select timestamp_sequence(0, 1000000000) timestamp," +
-                        " rnd_symbol('a','b',null) symbol1 " +
-                        " from long_sequence(10)" +
-                        ") timestamp (timestamp)")) {
-                    st1.execute();
-                }
-
-                try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y")) {
-                    ResultSet rs0 = select.executeQuery();
-                    rs0.close();
-
-                    connection.prepareStatement("drop table y").execute();
-                    connection.prepareStatement("create table y as ( " +
-                            " select " +
-                            " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
-                            " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
-                            " ,rnd_str('a','b',null) symbol1" +
-                            " from long_sequence(10)" +
-                            ")").execute();
-
-                    ResultSet rs1 = select.executeQuery();
-                    sink.clear();
-                    assertResultSet("timestamp[TIMESTAMP],symbol1[VARCHAR]\n" +
-                            "1970-01-01 02:30:00.0,null\n" +
-                            "1970-01-01 02:46:40.0,b\n" +
-                            "1970-01-01 03:03:20.0,a\n" +
-                            "1970-01-01 03:20:00.0,b\n" +
-                            "1970-01-01 03:36:40.0,b\n" +
-                            "1970-01-01 03:53:20.0,a\n" +
-                            "1970-01-01 04:10:00.0,null\n" +
-                            "1970-01-01 04:26:40.0,b\n" +
-                            "1970-01-01 04:43:20.0,b\n" +
-                            "1970-01-01 05:00:00.0,a\n", sink, rs1);
-
-                    rs1.close();
-                }
-            }
-        });
-    }
-
-    private void testSymbolBindVariableInFilter(boolean binary) throws Exception {
-        assertMemoryLeak(() -> {
-            // create and initialize table outside of PG wire
-            // to ensure we do not collaterally initialize execution context on function parser
-            compiler.compile("CREATE TABLE x (\n" +
-                    "    ticker symbol index,\n" +
-                    "    sample_time timestamp,\n" +
-                    "    value int\n" +
-                    ") timestamp (sample_time)", sqlExecutionContext);
-            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
-
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, binary)
-            ) {
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
-                    ps.setString(1, "ABC");
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
-                                        "ABC,1970-01-01 00:00:00.0,0\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-            }
-        });
-    }
-
-    private void testSyntaxErrorReporting(boolean simple) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(simple, true)
-            ) {
-                connection.prepareCall("drop table xyz;").execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "table 'xyz' does not exist");
-                TestUtils.assertEquals("00000", e.getSQLState());
-            }
-        });
-    }
-
     private void testNullTypeSerialization0(boolean simple, boolean binary) throws Exception {
         try (final Connection connection = getConnection(simple, binary)) {
             sink.clear();
@@ -8026,6 +7707,202 @@ create table tab as (
         }
     }
 
+    private void testQuery(String s, String s2) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement statement = connection.createStatement()) {
+                ResultSet rs = statement.executeQuery(
+                        "select " +
+                                "rnd_str(4,4,4) s, " +
+                                "rnd_int(0, 256, 4) i, " +
+                                s +
+                                "timestamp_sequence(0,10000) t, " +
+                                "rnd_float(4) f, " +
+                                "rnd_short() _short, " +
+                                "rnd_long(0, 10000000, 5) l, " +
+                                "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
+                                "rnd_byte(0,127) bb, " +
+                                "rnd_boolean() b, " +
+                                "rnd_symbol(4,4,4,2), " +
+                                "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
+                                "rnd_bin(10,20,2), " +
+                                "rnd_char(), " +
+                                "rnd_long256() " +
+                                "from long_sequence(50)");
+
+                final String expected = s2 +
+                        "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e,D,0x5f20a35e80e154f458dfd08eeb9cc39ecec82869edec121bc2593f82b430328d\n" +
+                        "OUOJ,77,null,1970-01-01 00:00:00.01,0.676,-7374,7777791,2015-06-19 08:47:45.603182,53,true,null,2015-11-10 09:50:33.215,00000000 8b 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0 fb 64 bb\n" +
+                        "00000010 1a d4 f0,V,0xbedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e29660300cea7db540\n" +
+                        "ICCX,205,0.8837421918800907,1970-01-01 00:00:00.02,0.054,6093,4552960,2015-07-17 00:50:59.787742,33,false,VTJW,2015-07-15 01:06:11.226,00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47,U,0x8b4e4831499fc2a526567f4430b46b7f78c594c496995885aa1896d0ad3419d2\n" +
+                        "GSHO,31,0.34947269997137365,1970-01-01 00:00:00.03,0.198,10795,6406207,2015-05-22 14:59:41.673422,56,false,null,null,00000000 49 1c f2 3c ed 39 ac a8 3b a6,S,0x7eb6d80649d1dfe38e4a7f661df6c32b2f171b3f06f6387d2fd2b4a60ba2ba3b\n" +
+                        "HZEP,180,0.06944480046327317,1970-01-01 00:00:00.04,0.430,21347,null,2015-02-07 10:02:13.600956,41,false,HYRX,null,00000000 ea c3 c9 73 93 46 fe c2 d3 68 79 8b 43 1d 57 34,F,0x38e4be9e19321b57832dd27952d949d8691dd4412a2d398d4fc01e2b9fd11623\n" +
+                        "HWVD,38,0.48524046868499715,1970-01-01 00:00:00.05,0.680,25579,5575751,2015-10-19 12:38:49.360294,15,false,VTJW,2015-02-06 22:58:50.333,null,Q,0x85134468025aaeb0a2f8bbebb989ba609bb0f21ac9e427283eef3f158e084362\n" +
+                        "PGLU,97,0.029227696942726644,1970-01-01 00:00:00.06,0.172,-18912,8340272,2015-05-24 22:09:55.175991,111,false,VTJW,2015-11-08 21:57:22.812,00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
+                        "00000010 ea 4e ea 8b,K,0x55d3686d5da27e14255a91b0e28abeb36c3493fcb2d0272d6046e5d137dd8f0f\n" +
+                        "WIFF,104,0.892454783921197,1970-01-01 00:00:00.07,0.093,28218,4009057,2015-02-18 07:26:10.141055,89,false,HYRX,null,00000000 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90 25 c2 20\n" +
+                        "00000010 ff,R,0x55b0586d1c02dfb399904624c49b6d8a7d85ee2916b209c779406ab1f85e333a\n" +
+                        "CLTJ,115,0.2093569947644236,1970-01-01 00:00:00.08,0.546,-8207,2378718,2015-04-21 12:25:43.291916,31,false,PEHN,null,00000000 a5 db a1 76 1c 1c 26 fb 2e 42 fa,F,0x483c83d88ac674e3894499a1a1680580cfedff23a67d918fb49b3c24e456ad6e\n" +
+                        "HFLP,79,0.9130151105125102,1970-01-01 00:00:00.09,null,14667,2513248,2015-08-31 13:16:12.318782,3,false,null,2015-02-08 12:28:36.066,null,U,0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\n" +
+                        "GLNY,138,0.7165847318191405,1970-01-01 00:00:00.1,0.753,-2666,9337379,2015-03-25 09:21:52.776576,111,false,HYRX,2015-01-24 15:23:13.092,00000000 62 e1 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43,Y,0xaac42ccbc493cf44aa6a0a1d4cdf40dd6ae4fd257e4412a07f19777ec1368055\n" +
+                        "VTNP,237,0.29242748475227853,1970-01-01 00:00:00.11,0.753,-26861,2354132,2015-02-10 18:27:11.140675,56,true,null,2015-02-25 00:45:15.363,00000000 28 b6 a9 17 ec 0e 01 c4 eb 9f 13 8f bb 2a 4b,O,0x926cdd99e63abb35650d1fb462d014df59070392ef6aa389932e4b508e35428f\n" +
+                        "WFOQ,255,null,1970-01-01 00:00:00.12,0.116,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.078,null,E,0x4f38804270a4a64349b5760a687d8cf838cbb9ae96e9ecdc745ed9faeb513ad3\n" +
+                        "EJCT,195,0.13312214396754163,1970-01-01 00:00:00.13,0.944,-3013,null,2015-11-03 14:54:47.524015,114,true,PEHN,2015-08-28 07:41:29.952,00000000 fb 9d 63 ca 94 00 6b dd 18 fe 71 76 bc 45 24 cd\n" +
+                        "00000010 13 00 7c,R,0x3cfe50b9cabaf1f29e0dcffb7520ebcac48ad6b8f6962219b27b0ac7fbdee201\n" +
+                        "JYYF,249,0.2000682450929353,1970-01-01 00:00:00.14,0.602,5869,2079217,2015-07-10 18:16:38.882991,44,true,HYRX,null,00000000 b7 6c 4b fb 2d 16 f3 89 a3 83 64 de d6 fd c4 5b\n" +
+                        "00000010 c4 e9 19 47,P,0x85e70b46349799fe49f783d5343dd7bc3d3fe1302cd3371137fccdabf181b5ad\n" +
+                        "TZOD,null,0.36078878996232167,1970-01-01 00:00:00.15,0.601,-23125,5083310,null,11,false,VTJW,2015-09-19 18:14:57.59,00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                        "00000010 00,E,0xcff85f9258847e03a6f2e2a772cd2f3751d822a67dff3d2375166223a6181642\n" +
+                        "PBMB,76,0.23567419576658333,1970-01-01 00:00:00.16,0.571,26284,null,2015-05-21 13:14:56.349036,45,true,null,2015-09-11 09:34:39.05,00000000 97 cb f6 2c 23 45 a3 76 60 15,M,0x3c3a3b7947ce8369926cbcb16e9a2f11cfab70f2d175d0d9aeb989be79cd2b8c\n" +
+                        "TKRI,201,0.2625424312419562,1970-01-01 00:00:00.17,0.915,-5486,9917162,2015-05-03 03:59:04.256719,66,false,VTJW,2015-01-15 03:22:01.033,00000000 a1 f5 4b ea 01 c9 63 b4 fc 92 60 1f df 41 ec 2c,O,0x4e3e15ad49e0a859312981a73c9dfce79022a75a739ee488eefa2920026dba88\n" +
+                        "NKGQ,174,0.4039042639581232,1970-01-01 00:00:00.18,0.438,20687,7315329,2015-07-25 04:52:27.724869,20,false,PEHN,2015-06-10 22:28:57.01,00000000 92 83 fc 88 f3 32 27 70 c8 01 b0,T,0x579b14c2725d7a7e5dfbd8e23498715b8d9ee30e7bcbf83a6d1b1c80f012a4c9\n" +
+                        "FUXC,52,0.7430101994511517,1970-01-01 00:00:00.19,null,-14729,1042064,2015-08-21 02:10:58.949674,28,true,CPSW,2015-08-29 20:15:51.835,null,X,0x41457ebc5a02a2b542cbd49414e022a06f4aa2dc48a9a4d99288224be334b250\n" +
+                        "TGNJ,159,0.9562577128401444,1970-01-01 00:00:00.2,0.251,795,5069730,2015-07-01 01:36:57.101749,71,true,PEHN,2015-09-12 05:41:59.999,00000000 33 3f b2 67 da 98 47 47 bf 4f ea 5f 48 ed,M,0x4ba20a8e0cf7c53c9f527485c4aac4a2826f47baacd58b28700a67f6119c63bb\n" +
+                        "HCNP,173,0.18684267640195917,1970-01-01 00:00:00.21,0.688,-14882,8416858,2015-06-16 19:31:59.812848,25,false,HYRX,2015-09-30 17:28:24.113,00000000 1d 5c c1 5d 2d 44 ea 00 81 c4 19 a1 ec 74 f8 10\n" +
+                        "00000010 fc 6e 23,D,0x3d64559865f84c86488be951819f43042f036147c78e0b2d127ca5db2f41c5e0\n" +
+                        "EZBR,243,0.8203418140538824,1970-01-01 00:00:00.22,0.221,-8447,4677168,2015-03-24 03:32:39.832378,78,false,CPSW,2015-02-16 04:04:19.082,00000000 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03 22 81 b8,Q,0x721304ffe1c934386466208d506905af40c7e3bce4b28406783a3945ab682cc4\n" +
+                        "ZPBH,131,0.1999576586778039,1970-01-01 00:00:00.23,0.479,-18951,874555,2015-12-22 19:13:55.404123,52,false,null,2015-10-03 05:16:17.891,null,Z,0xa944baa809a3f2addd4121c47cb1139add4f1a5641c91e3ab81f4f0ca152ec61\n" +
+                        "VLTP,196,0.4104855595304533,1970-01-01 00:00:00.24,0.918,-12269,142107,2015-10-10 18:27:43.423774,92,false,PEHN,2015-02-06 18:42:24.631,null,H,0x5293ce3394424e6a5ae63bdf09a84e32bac4484bdeec40e887ec84d015101766\n" +
+                        "RUMM,185,null,1970-01-01 00:00:00.25,0.838,-27649,3639049,2015-05-06 00:51:57.375784,89,true,PEHN,null,null,W,0x3166ed3bbffb858312f19057d95341886360c99923d254f38f22547ae9661423\n" +
+                        "null,71,0.7409092302023607,1970-01-01 00:00:00.26,0.742,-18837,4161180,2015-04-22 10:19:19.162814,37,true,HYRX,2015-09-23 03:14:56.664,00000000 8e 93 bd 27 42 f8 25 2a 42 71 a3 7a 58 e5,D,0x689a15d8906770fcaefe0266b9f63bd6698c574248e9011c6cc84d9a6d41e0b8\n" +
+                        "NGZT,214,0.18170646835643245,1970-01-01 00:00:00.27,0.841,21764,3231872,null,79,false,HYRX,2015-05-20 07:51:29.675,00000000 ab ab ac 21 61 99 be 2d f5 30 78 6d 5a 3b,H,0x5b8def4e7a017e884a3c2c504403708b49fb8d5fe0ff283cbac6499e71ce5b30\n" +
+                        "EYYP,13,null,1970-01-01 00:00:00.28,0.534,19136,4658108,2015-08-20 05:26:04.061614,5,false,CPSW,2015-03-23 23:43:37.634,00000000 c8 66 0c 40 71 ea 20 7e 43 97 27 1f 5c d9 ee 04\n" +
+                        "00000010 5b 9c,C,0x6e6ed811e25486953f35987a50016bbf481e9f55c33ac48c6a22b0bd6f7b0bf2\n" +
+                        "GMPL,50,0.7902682918274309,1970-01-01 00:00:00.29,0.874,-27807,5693029,2015-07-14 21:06:07.975747,37,true,CPSW,2015-09-01 04:00:29.049,00000000 3b 4b b7 e2 7f ab 6e 23 03 dd c7 d6,U,0x72c607b1992ff2f8802e839b77a4a2d34b8b967c412e7c895b509b55d1c38d29\n" +
+                        "BCZI,207,0.10863061577000221,1970-01-01 00:00:00.3,0.129,3999,121232,null,88,true,CPSW,2015-05-10 21:10:20.041,00000000 97 0b f5 ef 3b be 85 7c 11 f7 34,K,0x33be4c04695f74d776ac6df71a221f518f3c64248fb5943ea55ab4e6916f3f6c\n" +
+                        "DXUU,139,null,1970-01-01 00:00:00.31,0.262,-15289,341060,2015-01-06 07:48:24.624773,110,false,null,2015-07-08 18:37:16.872,00000000 71 cf 5a 8f 21 06 b2 3f 0e 41 93 89 27 ca 10 2f\n" +
+                        "00000010 60 ce,N,0x1c05d81633694e02795ebacfceb0c7dd7ec9b7e9c634bc791283140ab775531c\n" +
+                        "FMDV,197,0.2522102209201954,1970-01-01 00:00:00.32,0.993,-26026,5396438,null,83,true,CPSW,null,00000000 86 75 ad a5 2d 49 48 68 36 f0 35,K,0x308a7a4966e65a0160b00229634848957fa67d6a419e1721b1520f66caa74945\n" +
+                        "SQCN,62,0.11500943478849246,1970-01-01 00:00:00.33,0.595,1011,4631412,null,56,false,VTJW,null,null,W,0x66906dc1f1adbc206a8bf627c859714a6b841d6c6c8e44ce147261f8689d9250\n" +
+                        "QSCM,130,0.8671405978559277,1970-01-01 00:00:00.34,0.428,22899,403193,null,21,true,PEHN,2015-11-30 21:04:32.865,00000000 a0 ba a5 d1 63 ca 32 e5 0d 68 52 c6 94 c3 18 c9\n" +
+                        "00000010 7c,I,0x3dcc3621f3734c485bb81c28ec2ddb0163def06fb4e695dc2bfa47b82318ff9f\n" +
+                        "UUZI,196,0.9277429447320458,1970-01-01 00:00:00.35,0.625,24355,5761736,null,116,false,null,2015-02-04 07:15:26.997,null,B,0xb0a5224248b093a067eee4529cce26c37429f999bffc9548aa3df14bfed42969\n" +
+                        "DEQN,41,0.9028381160965113,1970-01-01 00:00:00.36,0.120,29066,2545404,2015-04-07 21:58:14.714791,125,false,PEHN,2015-02-06 23:29:49.836,00000000 ec 4b 97 27 df cd 7a 14 07 92 01,I,0x55016acb254b58cd3ce05caab6551831683728ff2f725aa1ba623366c2d08e6a\n" +
+                        "null,164,0.7652775387729266,1970-01-01 00:00:00.37,0.312,-8563,7684501,2015-02-01 12:38:28.322282,0,true,HYRX,2015-07-16 20:11:51.34,null,F,0x97af9db84b80545ecdee65143cbc92f89efea4d0456d90f29dd9339572281042\n" +
+                        "QJPL,160,0.1740035812230043,1970-01-01 00:00:00.38,0.763,5991,2099269,2015-02-25 15:49:06.472674,65,true,VTJW,2015-04-23 11:15:13.065,00000000 de 58 45 d0 1b 58 be 33 92 cd 5c 9d,E,0xa85a5fc20776e82b36c1cdbfe34eb2636eec4ffc0b44f925b09ac4f09cb27f36\n" +
+                        "BKUN,208,0.4452148524967028,1970-01-01 00:00:00.39,0.582,17928,6383721,2015-10-23 07:12:20.730424,7,false,null,2015-01-02 17:04:58.959,00000000 5e 37 e4 68 2a 96 06 46 b6 aa,F,0xe1d2020be2cb7be9c5b68f9ea1bd30c789e6d0729d44b64390678b574ed0f592\n" +
+                        "REDS,4,0.03804995327454719,1970-01-01 00:00:00.4,0.103,2358,1897491,2015-07-21 16:34:14.571565,75,false,CPSW,2015-07-30 16:04:46.726,00000000 d6 88 3a 93 ef 24 a5 e2 bc 86,P,0x892458b34e8769928647166465305ef1dd668040845a10a38ea5fba6cf9bfc92\n" +
+                        "MPVR,null,null,1970-01-01 00:00:00.41,0.592,8754,5828044,2015-10-05 21:11:10.600851,116,false,CPSW,null,null,H,0x9d1e67c6be2f24b2a4e2cc6a628c94395924dadabaed7ee459b2a61b0fcb74c5\n" +
+                        "KKNZ,186,0.8223388398922372,1970-01-01 00:00:00.42,0.720,-6179,8728907,null,80,true,VTJW,2015-09-11 03:49:12.244,00000000 16 b2 d8 83 f5 95 7c 95 fd 52 bb 50 c9,B,0x55724661cfcc811f4482e1a2ba8efaef6e4aef0394801c40941d89f24081f64d\n" +
+                        "BICL,182,0.7215695095610233,1970-01-01 00:00:00.43,0.227,-22899,6401660,2015-08-23 18:31:29.931618,78,true,null,null,null,T,0xbbb751ee10f060d1c2fbeb73044504aea55a8e283bcf857b539d8cd889fa9c91\n" +
+                        "SWPF,null,0.48770772310128674,1970-01-01 00:00:00.44,0.914,-17929,8377336,2015-12-13 23:04:20.465454,28,false,HYRX,2015-10-31 13:37:01.327,00000000 b2 31 9c 69 be 74 9a ad cc cf b8 e4 d1 7a 4f,I,0xbe91d734443388a2a631d716b575c819c9224a25e3f6e6fa6cd78093d5e7ea16\n" +
+                        "BHEV,80,0.8917678500174907,1970-01-01 00:00:00.45,0.237,29284,9577513,2015-10-20 07:38:23.889249,27,false,HYRX,2015-12-15 13:32:56.797,00000000 92 83 24 53 60 4d 04 c2 f0 7a 07 d4 a3 d1 5f 0d\n" +
+                        "00000010 fe 63 10 0d,V,0x225fddd0f4325a9d8634e1cb317338a0d3cb7f61737f167dc902b6f6d779c753\n" +
+                        "DPCH,62,0.6684502332750604,1970-01-01 00:00:00.46,0.879,-22600,9266553,null,89,true,VTJW,2015-05-25 19:42:17.955,00000000 35 1b b9 0f 97 f5 77 7e a3 2d ce fe eb cd 47 06\n" +
+                        "00000010 53 61 97,S,0x89d6a43b23f83695b236ae5ffab54622ce1f4dac846490a8b88f0468c0cbfa33\n" +
+                        "MKNJ,61,0.2682009935575007,1970-01-01 00:00:00.47,0.813,-1322,null,2015-11-04 08:11:39.996132,4,false,CPSW,2015-07-29 22:51:03.349,00000000 82 08 fb e7 94 3a 32 5d 8a 66 0b e4 85 f1 13 06\n" +
+                        "00000010 f2 27,V,0x9890d4aea149f0498bdef1c6ba16dd8cbd01cf83632884ae8b7083f888554b0c\n" +
+                        "GSQI,158,0.8047954890194065,1970-01-01 00:00:00.48,0.347,23139,1252385,2015-04-22 00:10:12.067311,32,true,null,2015-01-09 06:06:32.213,00000000 38 a7 85 46 1a 27 5b 4d 0f 33 f4 70,V,0xc0e6e110b909e13a812425a38162be0bb65e29ed529d4dba868a7075f3b34357\n" +
+                        "BPTU,205,0.430214712409255,1970-01-01 00:00:00.49,0.905,31266,8271557,2015-01-07 05:53:03.838005,14,true,VTJW,2015-10-30 05:33:15.819,00000000 24 0b c5 1a 5a 8d 85 50 39 42 9e 8a 86 17 89 6b,S,0x4e272e9dfde7bb12618178f7feba5021382a8c47a28fefa475d743cf0c2c4bcd\n";
+
+                assertResultSet(expected, sink, rs);
+            }
+        });
+    }
+
+    private void testSemicolon(boolean simpleQueryMode) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(simpleQueryMode, true);
+                    final PreparedStatement statement = connection.prepareStatement(";;")
+            ) {
+                statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testStaleQueryCacheOnTableDropped() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                    "select timestamp_sequence(0, 1000000000) timestamp," +
+                    " rnd_symbol('a','b',null) symbol1 " +
+                    " from long_sequence(10)" +
+                    ") timestamp (timestamp)")) {
+                st1.execute();
+            }
+
+            try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y")) {
+                ResultSet rs0 = select.executeQuery();
+                rs0.close();
+
+                connection.prepareStatement("drop table y").execute();
+                connection.prepareStatement("create table y as ( " +
+                        " select " +
+                        " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
+                        " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
+                        " ,rnd_str('a','b',null) symbol1" +
+                        " from long_sequence(10)" +
+                        ")").execute();
+
+                ResultSet rs1 = select.executeQuery();
+                sink.clear();
+                assertResultSet("timestamp[TIMESTAMP],symbol1[VARCHAR]\n" +
+                        "1970-01-01 02:30:00.0,null\n" +
+                        "1970-01-01 02:46:40.0,b\n" +
+                        "1970-01-01 03:03:20.0,a\n" +
+                        "1970-01-01 03:20:00.0,b\n" +
+                        "1970-01-01 03:36:40.0,b\n" +
+                        "1970-01-01 03:53:20.0,a\n" +
+                        "1970-01-01 04:10:00.0,null\n" +
+                        "1970-01-01 04:26:40.0,b\n" +
+                        "1970-01-01 04:43:20.0,b\n" +
+                        "1970-01-01 05:00:00.0,a\n", sink, rs1);
+
+                rs1.close();
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolBindVariableInFilter() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
+            // create and initialize table outside of PG wire
+            // to ensure we do not collaterally initialize execution context on function parser
+            compiler.compile("CREATE TABLE x (\n" +
+                    "    ticker symbol index,\n" +
+                    "    sample_time timestamp,\n" +
+                    "    value int\n" +
+                    ") timestamp (sample_time)", sqlExecutionContext);
+            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
+                    ps.setString(1, "ABC");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
+                                        "ABC,1970-01-01 00:00:00.0,0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+        });
+    }
+
+    @Test
+    public void testSyntaxErrorReporting() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try {
+                connection.prepareCall("drop table xyz;").execute();
+                Assert.fail();
+            }catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "table 'xyz' does not exist");
+                TestUtils.assertEquals("00000", e.getSQLState());
+            }
+        });
+    }
+    
+    @FunctionalInterface
+    interface OnTickAction {
+        void run(TableWriter writer);
+    }
+    @FunctionalInterface
+    interface ConnectionAwareRunnable {
+        void run(Connection connection, boolean binary) throws Exception;
+    }
+
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
         private final AtomicBoolean delaying = new AtomicBoolean(false);
         private final AtomicInteger delayedAttemptsCounter = new AtomicInteger(0);
@@ -8046,10 +7923,5 @@ create table tab as (
             delayedAttemptsCounter.set(1000);
             delaying.set(true);
         }
-    }
-
-    @FunctionalInterface
-    interface OnTickAction {
-        void run(TableWriter writer);
     }
 }

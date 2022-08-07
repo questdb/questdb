@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
@@ -69,6 +70,18 @@ public class TestListener extends RunListener {
             } catch (Throwable t) {
                 System.out.println("Thread dumper failed!");
                 t.printStackTrace();
+            }
+        });
+
+        monitor.setDaemon(true);
+        monitor.start();
+    }
+
+    static {
+        Thread monitor = new Thread(() -> {
+            while (true) {
+                DumpThreadStacksFunctionFactory.dumpThreadStacks();
+                Os.sleep(10 * 60 * 1000);
             }
         });
 

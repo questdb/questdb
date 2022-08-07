@@ -76,7 +76,7 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolKey == 0 ? "true" : "false";
+            return symbolKey == 1 ? "true" : "false";
         }
 
         @Override
