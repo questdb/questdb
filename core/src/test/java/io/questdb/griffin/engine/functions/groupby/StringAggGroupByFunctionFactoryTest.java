@@ -90,4 +90,12 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testConstant() throws Exception {
+        assertSql(
+                "select string_agg('aaa', ',')",
+                "string_agg\naaa\n"
+        );
+    }
 }

@@ -81,11 +81,19 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public long getLong(Record rec) {
+        if(rec == null) {
+            return arg.getLong(null);
+        }
         return rec.getLong(valueIndex);
     }
 
     @Override
     public void toSink(CharSink sink) {
         sink.put("MaxLong").put(arg).put(')');
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 }

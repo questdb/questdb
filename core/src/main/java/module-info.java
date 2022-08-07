@@ -469,6 +469,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.StringAggGroupByFunctionFactory,
 //                  'sum' group by function
             io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.SumBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory,
@@ -477,6 +478,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory,
 //                  'last' group by function
             io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunctionFactory,
@@ -491,6 +493,7 @@ open module io.questdb {
 
 //                  'first' group by function
             io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunctionFactory,

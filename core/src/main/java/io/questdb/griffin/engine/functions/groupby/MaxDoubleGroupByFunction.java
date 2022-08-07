@@ -75,6 +75,9 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public double getDouble(Record rec) {
+        if( rec == null) {
+            return arg.getDouble(null);
+        }
         return rec.getDouble(valueIndex);
     }
 
@@ -86,5 +89,10 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void toSink(CharSink sink) {
         sink.put("MaxDouble(").put(arg).put(')');
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 }

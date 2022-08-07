@@ -54,6 +54,11 @@ public class StringAggGroupByFunction extends FirstStringGroupByFunction impleme
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         int index = stringValues.size();
         mapValue.putInt(this.valueIndex, index);

@@ -29,68 +29,51 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class MaxIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+public class FirstBooleanGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
+    protected final Function arg;
+    protected int valueIndex;
 
-    public MaxIntGroupByFunction(@NotNull Function arg) {
-        super();
+    public FirstBooleanGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, arg.getInt(record));
+        mapValue.putBool(this.valueIndex, this.arg.getBool(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        int max = mapValue.getInt(valueIndex);
-        int next = arg.getInt(record);
-        if (next > max) {
-            mapValue.putInt(valueIndex, next);
-        }
+        // empty
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+        mapValue.putBool(this.valueIndex, false);
     }
 
     @Override
     public Function getArg() {
-        return arg;
+        return this.arg;
     }
 
     @Override
-    public int getInt(Record rec) {
+    public boolean getBool(Record rec) {
         if(rec == null) {
-            return arg.getInt(null);
+            return arg.getBool(null);
         }
-        return rec.getInt(valueIndex);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MaxInt(").put(arg).put(')');
+        return rec.getBool(this.valueIndex);
     }
 
     @Override

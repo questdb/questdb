@@ -76,6 +76,9 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public long getLong(Record rec) {
+        if(rec == null) {
+            return arg.getLong(null);
+        }
         return rec.getLong(valueIndex);
     }
 
@@ -87,5 +90,10 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void toSink(CharSink sink) {
         sink.put("MinLong(").put(arg).put(')');
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 }

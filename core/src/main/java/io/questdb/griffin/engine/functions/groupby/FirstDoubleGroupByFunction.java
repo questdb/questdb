@@ -75,6 +75,14 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public double getDouble(Record rec) {
+        if(rec == null) {
+            return arg.getDouble(null);
+        }
         return rec.getDouble(this.valueIndex);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 }
