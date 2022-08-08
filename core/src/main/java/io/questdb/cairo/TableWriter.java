@@ -1749,7 +1749,7 @@ public class TableWriter implements Closeable {
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128BigEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                nullers.add(() -> mem1.putLong128LittleEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG256:
                 nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
@@ -5665,7 +5665,7 @@ public class TableWriter implements Closeable {
 
         void putLong(int columnIndex, long value);
 
-        void putLong128BigEndian(int columnIndex, long first, long second);
+        void putLong128LittleEndian(int columnIndex, long first, long second);
 
         void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
 
@@ -5796,7 +5796,7 @@ public class TableWriter implements Closeable {
         }
 
         @Override
-        public void putLong128BigEndian(int columnIndex, long hi, long lo) {
+        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
