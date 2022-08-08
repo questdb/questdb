@@ -659,7 +659,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i)) == 't';
+                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isFloat4Keyword(CharSequence tok) {
@@ -672,7 +672,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++)) == 't'
+                && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i)) == '4';
     }
 
@@ -686,7 +686,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++)) == 't'
+                && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i)) == '8';
     }
 
@@ -701,7 +701,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'r'
                 && (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i)) == 't';
+                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isFromKeyword(CharSequence tok) {
@@ -759,10 +759,10 @@ public class SqlKeywords {
         }
 
         int i = 0;
-        return (tok.charAt(i++)) == 'h'
-                && (tok.charAt(i++)) == 'o'
-                && (tok.charAt(i++)) == 'u'
-                && (tok.charAt(i)) == 'r';
+        return (tok.charAt(i++) | 32) == 'h'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i) | 32) == 'r';
     }
 
     public static boolean isIfKeyword(CharSequence tok) {
@@ -1052,7 +1052,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'r'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'w'
-                && (tok.charAt(i)) == 's';
+                && (tok.charAt(i) | 32) == 's';
     }
 
     public static boolean isMicrosecondsKeyword(CharSequence tok) {
@@ -1072,7 +1072,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 'd'
-                && (tok.charAt(i)) == 's';
+                && (tok.charAt(i) | 32) == 's';
     }
 
     public static boolean isMillenniumKeyword(CharSequence tok) {
@@ -1090,7 +1090,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i++) | 32) == 'u'
-                && (tok.charAt(i)) == 'm';
+                && (tok.charAt(i) | 32) == 'm';
     }
 
     public static boolean isMillisecondsKeyword(CharSequence tok) {
@@ -1110,7 +1110,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 'd'
-                && (tok.charAt(i)) == 's';
+                && (tok.charAt(i) | 32) == 's';
     }
 
     public static boolean isMinuteKeyword(CharSequence tok) {
@@ -1124,7 +1124,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 'u'
                 && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i)) == 'e';
+                && (tok.charAt(i) | 32) == 'e';
     }
 
     public static boolean isMonthKeyword(CharSequence tok) {
@@ -1137,7 +1137,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i)) == 'h';
+                && (tok.charAt(i) | 32) == 'h';
     }
 
     public static boolean isNanKeyword(CharSequence tok) {
