@@ -36,6 +36,41 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     static final int ORDER_DESC = 1;
 
     @Test
+    public void testOrderByDescInOverClause() throws Exception {
+        String expected = "ts\ttemp\n" +
+                "1970-04-23T22:00:00.000000Z\t99.9780\n" +
+                "1971-02-02T02:00:00.000000Z\t98.3369\n";
+        String direction = "desc";
+
+        assertOrderByInOverClause(expected, direction);
+    }
+
+    @Test
+    public void testOrderByAscInOverClause() throws Exception {
+        String expected = "ts\ttemp\n" +
+                "1970-05-23T02:00:00.000000Z\t0.0049\n" +
+                "1971-02-21T16:00:00.000000Z\t0.3032\n";
+        String direction = "asc";
+
+        assertOrderByInOverClause(expected, direction);
+    }
+
+    private void assertOrderByInOverClause(String expected, String direction) throws Exception {
+        assertQuery(expected,
+                "select ts, temp from \n" +
+                        "( \n" +
+                        "  Select temp, ts, \n" +
+                        "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
+                        "  from weather \n" +
+                        ") inq \n" +
+                        "where rid = 0 \n" +
+                        "order by ts",
+                "create table weather as " +
+                        "(select cast(x*36000000000 as timestamp) ts, \n" +
+                        "  rnd_float(0)*100 temp from long_sequence(1000));", null);
+    }
+
+    @Test
     public void testOrderByAscWithByteFilter() throws Exception {
         testOrderByWithFilter("byte", ORDER_ASC);
     }
