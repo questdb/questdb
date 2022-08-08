@@ -86,6 +86,11 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, memoryTag, opts);
+    }
+
+    @Override
     public void close() {
         close(true);
     }
@@ -129,11 +134,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     public FilesFacade getFilesFacade() {
         return ff;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, memoryTag, opts);
     }
 
     @Override

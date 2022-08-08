@@ -68,7 +68,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterFrontend, Closeable {
+public class TableWriter implements TableWriterFrontend, TableWriterBackend, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
@@ -706,6 +706,16 @@ public class TableWriter implements TableWriterFrontend, Closeable {
     }
 
     @Override
+    public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException, SqlException {
+        return operation.apply(this, contextAllowsAnyStructureChanges);
+    }
+
+    @Override
+    public long applyUpdate(UpdateOperation operation) throws SqlException {
+        return operation.apply(this, true);
+    }
+
+    @Override
     public void close() {
         if (isOpen() && lifecycleManager.close()) {
             doClose(true);
@@ -722,11 +732,6 @@ public class TableWriter implements TableWriterFrontend, Closeable {
 
     public long commitWithLag(long lagMicros) {
         return commit(defaultCommitMode, lagMicros);
-    }
-
-    @Override
-    public void executeUpdate(SqlExecutionContextImpl sqlExecutionContext, UpdateOperation op) throws SqlException {
-        getUpdateOperator().executeUpdate(sqlExecutionContext, op);
     }
 
     @Override
@@ -923,6 +928,7 @@ public class TableWriter implements TableWriterFrontend, Closeable {
         return (masterRef - committedMasterRef) >> 1;
     }
 
+    @Override
     public UpdateOperator getUpdateOperator() {
         if (updateOperator == null) {
             updateOperator = new UpdateOperator(configuration, messageBus, this, path, rootLen);

@@ -1444,7 +1444,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         public boolean publishSyncCmd(String tableName, long tableId, TableWriter slave, long slaveIP, long sequence) {
             AsyncWriterCommand cmd = new AbstractOperation() {
                 @Override
-                public long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) {
+                public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) {
                     throw new RuntimeException("Should not be called for SYNC command");
                 }
 
@@ -1473,6 +1473,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 @Override
                 public String getCommandName() {
                     return "SYNC";
+                }
+
+                @Override
+                public boolean isMetadataChange() {
+                    return false;
                 }
 
                 @Override

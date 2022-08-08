@@ -26,68 +26,103 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.CATALOG_FILE_NAME;
-import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.TableUtils.*;
 
 public class TxnCatalog implements Closeable {
     private final FilesFacade ff;
-    private final MemoryCMARW txnListMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
     public static final int RECORD_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES;
-    public static final int HEADER_SIZE = Integer.BYTES + Long.BYTES;
-    public static final long COUNT_OFFSET = Integer.BYTES;
-    private final MemoryCMR txnCursorMem = Vm.getCMARWInstance();
-    private long txnCount;
+    public static final int HEADER_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES;
+    public static final long MAX_TXN_OFFSET = Integer.BYTES;
+    public static final long MAX_STRUCTURE_VERSION_OFFSET = MAX_TXN_OFFSET + Long.BYTES;
+    public static final int METADATA_WALID = -1;
+    private long maxTxn;
 
     TxnCatalog(FilesFacade ff) {
         this.ff = ff;
     }
 
     public void abortClose() {
-        txnListMem.close(false);
+        txnMem.close(false);
+    }
+
+    public long addMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance) {
+        assert newStructureVersion == txnMetaMemIndex.getAppendOffset() / Long.BYTES;
+
+        txnMem.putInt(METADATA_WALID);
+        txnMem.putLong(newStructureVersion);
+
+        long varMemBegin = txnMetaMem.getAppendOffset();
+        txnMetaMem.putInt(0);
+        serializer.toSink(instance, txnMetaMem);
+        int len = (int)(txnMetaMem.getAppendOffset() - varMemBegin);
+        txnMetaMem.putInt(varMemBegin, len);
+        txnMetaMemIndex.putLong(varMemBegin + len);
+
+        Unsafe.getUnsafe().storeFence();
+        txnMem.putLong(MAX_TXN_OFFSET, ++maxTxn);
+        txnMem.putLong(MAX_STRUCTURE_VERSION_OFFSET, newStructureVersion);
+
+        // Transactions are 1 based here
+        return maxTxn;
     }
 
     @Override
     public void close() {
-        Misc.free(txnListMem);
+        Misc.free(txnMem);
+        Misc.free(txnMetaMem);
+        Misc.free(txnMetaMemIndex);
+    }
+
+    public SequencerStructureChangeCursor getStructureChangeCursor(int fromSchemaVersion, MemorySerializer serializer) {
+        // return new StructureChangeCursor(fromSchemaVersion, serializer, txnMetaMemIndex.getFd(), txnMetaMem.getFd());
+        throw new UnsupportedOperationException();
     }
 
     long addEntry(int walId, long segmentId, long segmentTxn) {
-        txnListMem.putInt(walId);
-        txnListMem.putLong(segmentId);
-        txnListMem.putLong(segmentTxn);
+        txnMem.putInt(walId);
+        txnMem.putLong(segmentId);
+        txnMem.putLong(segmentTxn);
 
         Unsafe.getUnsafe().storeFence();
-        txnListMem.putLong(COUNT_OFFSET, ++txnCount);
+        txnMem.putLong(MAX_TXN_OFFSET, ++maxTxn);
         // Transactions are 1 based here
-        return txnCount;
+        return maxTxn;
     }
 
     SequencerCursor getCursor(long txnLo) {
-        return new SequencerCursorImpl(ff, txnLo, txnListMem.getFd());
-    }
-
-    // Can be used in parallel thread with no synchronisation between it and  addEntry
-    long maxTxn() {
-        Unsafe.getUnsafe().loadFence();
-        // Transactions are 1 based here
-        return txnListMem.getLong(COUNT_OFFSET);
+        return new SequencerCursorImpl(ff, txnLo, txnMem.getFd());
     }
 
     void open(Path path) {
-        openSmallFile(ff, path, path.length(), txnListMem, CATALOG_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
-        txnCount = txnListMem.getLong(COUNT_OFFSET);
-        if (txnCount == 0) {
-            txnListMem.jumpTo(0L);
-            txnListMem.putInt(WalWriter.WAL_FORMAT_VERSION);
-            txnListMem.putLong(0L);
+        openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+        openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MemoryTag.MMAP_SEQUENCER);
+        openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MemoryTag.MMAP_SEQUENCER);
+
+        maxTxn = txnMem.getLong(MAX_TXN_OFFSET);
+        long maxStructureVersion = txnMetaMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);
+
+        if (maxTxn == 0) {
+            txnMem.jumpTo(0L);
+            txnMem.putInt(WalWriter.WAL_FORMAT_VERSION);
+            txnMem.putLong(0L);
+            txnMem.putLong(0L);
+            txnMetaMemIndex.jumpTo(0L);
+            txnMetaMemIndex.putLong(0L); // N + 1, first entry is 0.
+            txnMetaMem.jumpTo(0L);
         } else {
-            txnListMem.jumpTo(HEADER_SIZE + txnCount * RECORD_SIZE);
+            txnMem.jumpTo(HEADER_SIZE + maxTxn * RECORD_SIZE);
+            long structureAppendOffset = (maxStructureVersion + 1) * Long.BYTES;
+            txnMetaMemIndex.jumpTo(structureAppendOffset);
+            long structureVarMemAppendOffset = txnMetaMemIndex.getLong(structureAppendOffset - Long.BYTES);
+            txnMetaMem.jumpTo(structureVarMemAppendOffset);
         }
     }
 
@@ -105,7 +140,7 @@ public class TxnCatalog implements Closeable {
         public SequencerCursorImpl(FilesFacade ff, long txnLo, long fd) {
             this.ff = ff;
             this.fd = fd;
-            this.txnCount = ff.readULong(fd, COUNT_OFFSET);
+            this.txnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_SEQUENCER);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
@@ -126,7 +161,7 @@ public class TxnCatalog implements Closeable {
                 return true;
             }
 
-            long newTxnCount = ff.readULong(fd, COUNT_OFFSET);
+            long newTxnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
                 long oldSize = getMappedLen();
                 this.txnCount = newTxnCount;

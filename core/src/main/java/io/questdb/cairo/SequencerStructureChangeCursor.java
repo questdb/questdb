@@ -24,33 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.UpdateOperation;
-
-import java.io.Closeable;
-
-public interface TableWriterFrontend extends Closeable {
-    long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges)  throws SqlException, AlterTableContextException;
-
-    long applyUpdate(UpdateOperation operations)  throws SqlException;
-
-    @Override
-    void close();
-
-    long commit();
-
-    long commitWithLag(long commitLag);
-
-    BaseRecordMetadata getMetadata();
-
-    long getStructureVersion();
-
-    CharSequence getTableName();
-
-    TableWriter.Row newRow();
-
-    TableWriter.Row newRow(long timestamp);
-
-    void rollback();
+public interface SequencerStructureChangeCursor {
+    boolean hasNext();
+    void deserializeTo(Object operation);
 }

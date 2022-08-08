@@ -31,7 +31,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -49,7 +49,6 @@ public class WalWriter implements TableWriterFrontend {
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final Runnable NOOP = () -> {
     };
-    private final TableDescriptor tableDescriptor = new TableDescriptorImpl();
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders;
     private final IntList initialSymbolCounts = new IntList();
@@ -64,10 +63,9 @@ public class WalWriter implements TableWriterFrontend {
     private final CharSequence tableName;
     private final String walName;
     private final int walId;
-    private final WalWriterMetadata metadata;
+    private final SequencerMetadata metadata;
     private final WalWriterEvents events;
     private final Sequencer sequencer;
-    private final CairoEngine engine;
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
@@ -85,37 +83,36 @@ public class WalWriter implements TableWriterFrontend {
     };
     private long lastSegmentTxn = -1L;
 
-    public WalWriter(CairoEngine engine, CharSequence tableName, int walId, Sequencer sequencer) {
+    public WalWriter(CharSequence tableName, int walId, Sequencer sequencer, CairoConfiguration configuration) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.sequencer = sequencer;
-        this.engine = engine;
-        this.configuration = engine.getConfiguration();
-        this.millisecondClock = configuration.getMillisecondClock();
-        this.mkDirMode = configuration.getMkDirMode();
-        this.ff = configuration.getFilesFacade();
+        this.configuration = configuration;
+        this.millisecondClock = this.configuration.getMillisecondClock();
+        this.mkDirMode = this.configuration.getMkDirMode();
+        this.ff = this.configuration.getFilesFacade();
         this.tableName = tableName;
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = new Path().of(configuration.getRoot()).concat(tableName).concat(walName);
+        this.path = new Path().of(this.configuration.getRoot()).concat(tableName).concat(walName);
         this.rootLen = path.length();
 
         try {
             lock();
 
-            sequencer.populateDescriptor(tableDescriptor);
-            columnCount = tableDescriptor.getColumnCount();
+            metadata = new SequencerMetadata(ff);
+            sequencer.copyMetadataTo(metadata, path, rootLen);
+
+            columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
             nullSetters = new ObjList<>(columnCount);
 
             symbolMapReaders = new ObjList<>();
-            metadata = new WalWriterMetadata(ff);
-            metadata.of(tableDescriptor);
             events = new WalWriterEvents(ff);
             events.of(symbolMaps, initialSymbolCounts);
 
             configureColumns();
             openNewSegment();
-            configureSymbolTable(tableDescriptor);
+            configureSymbolTable();
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -170,6 +167,23 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     @Override
+    public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        if (operation.isMetadataChange()) {
+            long structureVersion = getStructureVersion();
+            return sequencer.nextStructureTxn(structureVersion, operation);
+        } else {
+            // This is likely to be updates and some weird alters.
+            // TODO: We have to serialize the command to WAL-E and register the transaction in the sequencer.
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    @Override
+    public long applyUpdate(UpdateOperation operations) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void close() {
         try {
             closeCurrentSegment();
@@ -182,11 +196,6 @@ public class WalWriter implements TableWriterFrontend {
     @Override
     public long commitWithLag(long commitLag) {
         return commit();
-    }
-
-    @Override
-    public void executeUpdate(SqlExecutionContextImpl sqlExecutionContext, UpdateOperation op) throws SqlException {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -205,7 +214,7 @@ public class WalWriter implements TableWriterFrontend {
 
     @Override
     public void rollback() {
-
+        // TODO: roll back current transaction
     }
 
     public CharSequence getTableName() {
@@ -361,7 +370,7 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void configureSymbolTable(TableDescriptor descriptor) {
+    private void configureSymbolTable() {
         // we should not need the reader here, this will not work in a distributed environment
         // what if the wal is created on a node where the table itself is not present?
         // maybe copying symbols from existing table is not the best or sequencer needs an API for it
@@ -398,7 +407,7 @@ public class WalWriter implements TableWriterFrontend {
                 } else {
                     int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
                     long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
-                    configureSymbolMapWriter(i, descriptor.getColumnName(i), symbolValueCount, columnNameTxn);
+                    configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
                 }
 
                 if (columnType == ColumnType.SYMBOL || columnType == -ColumnType.SYMBOL) {
@@ -586,23 +595,28 @@ public class WalWriter implements TableWriterFrontend {
         return commit(false);
     }
 
-    public long getLastSegmentTxn() {
-        return lastSegmentTxn;
-    }
-
     private long commit(boolean rollSegment) {
         rollSegmentOnNextRow = rollSegment;
         final long transientRowCount = getTransientRowCount();
         if (transientRowCount != 0) {
             lastSegmentTxn = events.data(startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-            long txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId, lastSegmentTxn);
-            if (txn == Sequencer.NO_TXN) {
-                throw new UnsupportedOperationException("WAL schema changes not supported yet");
-            }
+
+            long txn;
+            do {
+                txn = sequencer.nextTxn(metadata.getStructureVersion(), walId, segmentId, lastSegmentTxn);
+                if (txn == Sequencer.NO_TXN) {
+                    applyStructureChanges();
+                }
+            } while (txn == Sequencer.NO_TXN);
+
             resetDataTxnProperties();
             return txn;
         }
         return Sequencer.NO_TXN;
+    }
+
+    private void applyStructureChanges() {
+        sequencer.getStructureChangeCursor(metadata.getStructureVersion());
     }
 
     private void resetDataTxnProperties() {
@@ -638,7 +652,7 @@ public class WalWriter implements TableWriterFrontend {
                 }
             }
 
-            metadata.openMetaFile(path, segmentPathLen, columnCount);
+            metadata.open(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();

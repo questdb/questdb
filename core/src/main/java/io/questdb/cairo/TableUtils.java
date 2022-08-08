@@ -54,7 +54,9 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String EVENT_FILE_NAME = "_event";
-    public static final String CATALOG_FILE_NAME = "_catalog";
+    public static final String CATALOG_FILE_NAME = "_catalog.txn";
+    public static final String CATALOG_FILE_NAME_META_VAR = "_catalog.meta.d";
+    public static final String CATALOG_FILE_NAME_META_INX = "_catalog.meta.i";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
@@ -79,10 +81,12 @@ public final class TableUtils {
     public static final long WAL_META_OFFSET_COLUMN_COUNT = 4;
     public static final long WAL_META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long WAL_META_OFFSET_COLUMNS = 12;
-    public static final long SEQ_META_OFFSET_WAL_VERSION = 0;
-    public static final long SEQ_META_OFFSET_SCHEMA_VERSION = 4;
-    public static final long SEQ_META_OFFSET_COLUMN_COUNT = 8;
-    public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = 12;
+    public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
+    public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_SCHEMA_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_COLUMN_COUNT = SEQ_META_OFFSET_SCHEMA_VERSION + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = SEQ_META_OFFSET_COLUMN_COUNT + Integer.BYTES;
+
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final String FILE_SUFFIX_I = ".i";
@@ -1075,13 +1079,16 @@ public final class TableUtils {
                 final String name = getColumnName(metaMem, memSize, offset, i).toString();
                 offset += Vm.getStorageLength(name);
 
-                nameIndex.put(name, i);
+                if (type > 0) {
+                    nameIndex.put(name, i);
 
-                if (ColumnType.isSymbol(type)) {
-                    columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
-                } else {
-                    columnMetadata.add(new TableColumnMetadata(name, -1L, type));
+                    if (ColumnType.isSymbol(type)) {
+                        columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
+                    } else {
+                        columnMetadata.add(new TableColumnMetadata(name, -1L, type));
+                    }
                 }
+                // Negative type means deleted column
             }
 
             // validate designated timestamp column

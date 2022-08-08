@@ -109,7 +109,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
             try (
                     InsertOperation insertOperation = compiledQuery.getInsertOperation();
-                 InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
             ) {
 
                 insertMethod.execute();

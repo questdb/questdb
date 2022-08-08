@@ -26,6 +26,9 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -33,10 +36,10 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.NotNull;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static String CMD_NAME = "ALTER TABLE";
-
     public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = 1;
     public final static short DROP_PARTITION = 2;
@@ -49,9 +52,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short RENAME_COLUMN = 9;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
     public final static short SET_PARAM_COMMIT_LAG = 11;
-
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
-
     private final ObjCharSequenceList objCharList;
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
     private final LongList longList;
@@ -60,6 +61,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
     private short command;
     private CharSequenceList charSequenceList;
+    private MemoryFCRImpl deserializeMem;
 
     public AlterOperation() {
         this(new LongList(), new ObjList<>());
@@ -72,7 +74,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
-    public long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException {
+    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException {
         try {
             switch (command) {
                 case ADD_COLUMN:
@@ -151,22 +153,31 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         if (readPtr + 10 >= hi) {
             throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [1]");
         }
-        command = Unsafe.getUnsafe().getShort(readPtr);
-        readPtr += 2;
-        tableNamePosition = Unsafe.getUnsafe().getInt(readPtr);
-        readPtr += 4;
-        int longSize = Unsafe.getUnsafe().getInt(readPtr);
-        readPtr += 4;
-        if (longSize < 0 || readPtr + longSize * 8L >= hi) {
-            throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [2]");
+
+        if (deserializeMem == null) {
+            deserializeMem = new MemoryFCRImpl();
         }
-        for (int i = 0; i < longSize; i++) {
-            longList.add(Unsafe.getUnsafe().getLong(readPtr));
-            readPtr += 8;
-        }
-        directCharList.of(readPtr, hi);
-        charSequenceList = directCharList;
+        deserializeMem.of(readPtr, event.getDataSize());
+        deserializeBody(deserializeMem, 0L);
         return this;
+    }
+
+    @Override
+    public boolean isMetadataChange() {
+        switch (command) {
+            case DROP_PARTITION:
+            case ATTACH_PARTITION:
+            case ADD_INDEX:
+            case DROP_INDEX:
+            case ADD_SYMBOL_CACHE:
+            case REMOVE_SYMBOL_CACHE:
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS:
+            case SET_PARAM_COMMIT_LAG:
+                return false;
+
+            default:
+                return true;
+        }
     }
 
     @Override
@@ -181,6 +192,26 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         charSequenceList = objCharList;
         longList.clear();
         clearCommandCorrelationId();
+    }
+
+    public void deserializeBody(MemoryR buffer, long offset) {
+        long readPtr = offset;
+        long hi = offset + buffer.size();
+        command = buffer.getShort(readPtr);
+        readPtr += 2;
+        tableNamePosition = Unsafe.getUnsafe().getInt(readPtr);
+        readPtr += 4;
+        int longSize = Unsafe.getUnsafe().getInt(readPtr);
+        readPtr += 4;
+        if (longSize < 0 || readPtr + longSize * 8L >= hi) {
+            throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [2]");
+        }
+        for (int i = 0; i < longSize; i++) {
+            longList.add(Unsafe.getUnsafe().getLong(readPtr));
+            readPtr += 8;
+        }
+        directCharList.of(readPtr, hi);
+        charSequenceList = directCharList;
     }
 
     public AlterOperation of(
@@ -210,7 +241,21 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyAddColumn(TableWriter tableWriter) throws SqlException {
+    public void serializeBody(MemoryA sink) {
+        sink.putShort(command);
+        sink.putInt(tableNamePosition);
+        sink.putInt(longList.size());
+        for (int i = 0, n = longList.size(); i < n; i++) {
+            sink.putLong(longList.getQuick(i));
+        }
+
+        sink.putInt(objCharList.size());
+        for (int i = 0, n = objCharList.size(); i < n; i++) {
+            sink.putStr(objCharList.getStrA(i));
+        }
+    }
+
+    private void applyAddColumn(TableWriterBackend tableWriter) throws SqlException {
         int lParam = 0;
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
             CharSequence columnName = charSequenceList.getStrA(i);
@@ -238,7 +283,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyAddIndex(TableWriter tableWriter) throws SqlException {
+    private void applyAddIndex(TableWriterBackend tableWriter) throws SqlException {
         CharSequence columnName = charSequenceList.getStrA(0);
         try {
             int indexValueBlockSize = (int) longList.get(0);
@@ -249,20 +294,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyDropIndex(TableWriter tableWriter) throws SqlException {
-        CharSequence columnName = charSequenceList.getStrA(0);
-        try {
-            tableWriter.dropIndex(columnName);
-        } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition)
-                    .put(e.getFlyweightMessage())
-                    .put("[errno=")
-                    .put(e.getErrno())
-                    .put(']');
-        }
-    }
-
-    private void applyAttachPartition(TableWriter tableWriter) throws SqlException {
+    private void applyAttachPartition(TableWriterBackend tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
@@ -309,7 +341,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyDropColumn(TableWriter writer) throws SqlException {
+    private void applyDropColumn(TableWriterBackend writer) throws SqlException {
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
             CharSequence columnName = charSequenceList.getStrA(i);
             RecordMetadata metadata = writer.getMetadata();
@@ -325,7 +357,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyDropPartition(TableWriter tableWriter) throws SqlException {
+    private void applyDropIndex(TableWriterBackend tableWriter) throws SqlException {
+        CharSequence columnName = charSequenceList.getStrA(0);
+        try {
+            tableWriter.dropIndex(columnName);
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=")
+                    .put(e.getErrno())
+                    .put(']');
+        }
+    }
+
+    private void applyDropPartition(TableWriterBackend tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
@@ -349,17 +394,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyParamCommitLag(TableWriter tableWriter) {
+    private void applyParamCommitLag(TableWriterBackend tableWriter) {
         long commitLag = longList.get(0);
         tableWriter.setMetaCommitLag(commitLag);
     }
 
-    private void applyParamUncommittedRows(TableWriter tableWriter) {
+    private void applyParamUncommittedRows(TableWriterBackend tableWriter) {
         int maxUncommittedRows = (int) longList.get(0);
         tableWriter.setMetaMaxUncommittedRows(maxUncommittedRows);
     }
 
-    private void applyRenameColumn(TableWriter writer) throws SqlException {
+    private void applyRenameColumn(TableWriterBackend writer) throws SqlException {
         // To not store 2 var len fields, store only new name as CharSequence
         // and index of existing column store as
         int i = 0, n = charSequenceList.size();
@@ -375,7 +420,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applySetSymbolCache(TableWriter tableWriter, boolean isCacheOn) throws SqlException {
+    private void applySetSymbolCache(TableWriterBackend tableWriter, boolean isCacheOn) throws SqlException {
         CharSequence columnName = charSequenceList.getStrA(0);
         int columnIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {

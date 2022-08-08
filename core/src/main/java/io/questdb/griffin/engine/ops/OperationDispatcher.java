@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterFrontend;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,7 +34,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import org.jetbrains.annotations.Nullable;
 
-public class OperationDispatcher<T extends AbstractOperation> {
+public abstract class OperationDispatcher<T extends AbstractOperation> {
 
     private final CairoEngine engine;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
@@ -59,13 +59,13 @@ public class OperationDispatcher<T extends AbstractOperation> {
         operation.withContext(sqlExecutionContext);
         boolean isDone = false;
         try (
-                TableWriter writer = engine.getWriter(
+                TableWriterFrontend writer = engine.getTableWriterFrontEnd(
                         sqlExecutionContext.getCairoSecurityContext(),
                         operation.getTableName(),
                         lockReason
                 )
         ) {
-            long result = operation.apply(writer, true);
+            long result = apply(operation, writer);
             isDone = true;
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
@@ -87,4 +87,6 @@ public class OperationDispatcher<T extends AbstractOperation> {
             }
         }
     }
+
+    protected abstract long apply(T operation, TableWriterFrontend writerFronted) throws SqlException;
 }

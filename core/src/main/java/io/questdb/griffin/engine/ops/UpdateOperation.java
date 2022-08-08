@@ -24,8 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -61,13 +60,18 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException {
+    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException {
         return tableWriter.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 
     @Override
     public AsyncWriterCommand deserialize(TableWriterTask task) {
         return task.getAsyncWriterCommand();
+    }
+
+    @Override
+    public boolean isMetadataChange() {
+        return false;
     }
 
     @Override

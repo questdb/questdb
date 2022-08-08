@@ -1355,7 +1355,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int index = pendingWriters.keyIndex(op.getTableName());
         if (index < 0) {
             op.withContext(sqlExecutionContext);
-            pendingWriters.valueAt(index).executeUpdate(sqlExecutionContext, op);
+            pendingWriters.valueAt(index).applyUpdate(op);
         } else {
             if (statementTimeout > 0) {
                 circuitBreaker.setTimeout(statementTimeout);

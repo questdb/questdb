@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.std.str.Path;
+
 import java.io.Closeable;
 
 public interface Sequencer extends Closeable {
@@ -31,21 +34,24 @@ public interface Sequencer extends Closeable {
 
     long NO_TXN = Long.MIN_VALUE;
 
+    void copyMetadataTo(SequencerMetadata metadata, Path path, int rootLen);
+
+    SequencerStructureChangeCursor getStructureChangeCursor(int fromSchemaVersion);
+
+    int getTableId();
+
+    long nextStructureTxn(long structureVersion, AlterOperation operation);
+
     void open();
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(int expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
-
-    // populates the given table descriptor with the current snapshot of metadata and schema version number
-    void populateDescriptor(TableDescriptor descriptor);
 
     // always creates a new wal with an increasing unique id
     WalWriter createWal();
 
     // return txn cursor to apply transaction from given point
     SequencerCursor getCursor(long lastCommittedTxn);
-
-    long getMaxTxn();
 
     @Override
     void close();

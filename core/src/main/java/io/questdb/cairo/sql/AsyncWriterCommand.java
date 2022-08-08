@@ -24,15 +24,14 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.tasks.TableWriterTask;
 
 import java.io.Closeable;
 
 public interface AsyncWriterCommand extends Closeable {
-    long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
+    long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
 
     AsyncWriterCommand deserialize(TableWriterTask task);
 
@@ -47,6 +46,8 @@ public interface AsyncWriterCommand extends Closeable {
     long getTableVersion();
 
     long getCorrelationId();
+
+    boolean isMetadataChange();
 
     void startAsync();
 

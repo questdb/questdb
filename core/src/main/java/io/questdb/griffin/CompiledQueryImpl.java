@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriterFrontend;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -49,8 +50,19 @@ public class CompiledQueryImpl implements CompiledQuery {
     private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution");
-        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute");
+        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
+            @Override
+            protected long apply(UpdateOperation operation, TableWriterFrontend writerFronted) throws SqlException {
+                return writerFronted.applyUpdate(operation);
+            }
+        };
+
+        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
+            @Override
+            protected long apply(AlterOperation operation, TableWriterFrontend writerFronted) throws SqlException {
+                return writerFronted.applyAlter(operation, true);
+            }
+        };
     }
 
     @Override

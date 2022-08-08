@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -34,11 +33,11 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
+public class SequencerMetadata extends BaseRecordMetadata implements Closeable, TableDescriptor {
     private final FilesFacade ff;
     private final MemoryMAR metaMem = Vm.getMARInstance();
 
-    private int schemaVersion = -1;
+    private int structureVersion = -1;
     private int tableId;
 
     SequencerMetadata(FilesFacade ff) {
@@ -55,36 +54,48 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         return tableId;
     }
 
-    void create(TableStructure model, Path path, int pathLen, int tableId) {
-        reset();
+    public void renameColumn(CharSequence columnName, CharSequence newName) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.instance(0).put("Column not found: ").put(columnName);
+        }
+        int columnType = columnMetadata.getQuick(columnIndex).getType();
+        columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newName.toString(), 0L, columnType));
+        structureVersion++;
+        syncToMetaFile();
+    }
 
+    void create(TableDescriptor model, Path path, int pathLen, int tableId) {
+        reset();
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
         timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
 
         for (int i = 0; i < model.getColumnCount(); i++) {
             final CharSequence name = model.getColumnName(i);
             final int type = model.getColumnType(i);
-            addColumn(i, name, type);
+            addColumn0(name, type);
         }
 
-        schemaVersion = 0;
-        syncToMetaFile(path, pathLen);
+        structureVersion = 0;
+        columnCount = columnMetadata.size();
+        syncToMetaFile();
     }
 
     void open(Path path, int pathLen) {
         reset();
-        try (MemoryMR metaMem = Vm.getMRInstance()) {
-            openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
-            columnNameIndexMap.clear();
-            loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap);
-            schemaVersion = metaMem.getInt(SEQ_META_OFFSET_SCHEMA_VERSION);
-            columnCount = metaMem.getInt(SEQ_META_OFFSET_COLUMN_COUNT);
-            timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
-            tableId = metaMem.getInt(SEQ_META_TABLE_ID);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+
+        // get written data size
+        metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
+        int size = metaMem.getInt(0);
+        metaMem.jumpTo(size);
+
+        loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap);
+        structureVersion = metaMem.getInt(SEQ_META_OFFSET_SCHEMA_VERSION);
+        columnCount = columnMetadata.size();
+        timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+        tableId = metaMem.getInt(SEQ_META_TABLE_ID);
     }
 
     private void reset() {
@@ -94,8 +105,8 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         timestampIndex = -1;
     }
 
-    public int getSchemaVersion() {
-        return schemaVersion;
+    public int getStructureVersion() {
+        return structureVersion;
     }
 
     @Override
@@ -103,49 +114,49 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         Misc.free(metaMem);
     }
 
-    private void addColumn(int columnIndex, CharSequence columnName, int columnType) {
+    private void addColumn0(CharSequence columnName, int columnType) {
         final String name = columnName.toString();
         columnNameIndexMap.put(name, columnNameIndexMap.size());
-        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
-        columnCount++;
-        schemaVersion++;
+        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
     }
 
-    void addColumn(int columnIndex, CharSequence columnName, int columnType, Path path, int pathLen) {
-        addColumn(columnIndex, columnName, columnType);
-        syncToMetaFile(path, pathLen);
+    void addColumn(CharSequence columnName, int columnType) {
+        addColumn0(columnName, columnType);
+        structureVersion++;
+        syncToMetaFile();
     }
 
-    void removeColumn(int columnIndex, Path path, int pathLen) {
+    void removeColumn(CharSequence columnName) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.instance(0).put("Column not found: ").put(columnName);
+        }
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
         columnNameIndexMap.remove(deletedMeta.getName());
-        schemaVersion++;
-
-        syncToMetaFile(path, pathLen);
+        structureVersion++;
+        syncToMetaFile();
     }
 
-    private void syncToMetaFile(Path path, int pathLen) {
-        int liveColumnCount = 0;
-        for (int i = 0; i < columnCount; i++) {
-            if (getColumnType(i) > 0) {
-                liveColumnCount++;
-            }
-        }
-
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
-
+    private void syncToMetaFile() {
+        metaMem.jumpTo(0);
+        // Size of metadata
+        metaMem.putInt(0);
         metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
-        metaMem.putInt(schemaVersion);
-        metaMem.putInt(liveColumnCount);
+        metaMem.putInt(structureVersion);
+        metaMem.putInt(columnMetadata.size());
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
-        for (int i = 0; i < columnCount; i++) {
+        for (int i = 0; i < columnMetadata.size(); i++) {
             final int type = getColumnType(i);
-            if (type > 0) {
-                metaMem.putInt(type);
-                metaMem.putStr(getColumnName(i));
-            }
+            metaMem.putInt(type);
+            metaMem.putStr(getColumnName(i));
         }
+
+        // Set metadata size
+        int size = (int) metaMem.getAppendOffset();
+        metaMem.jumpTo(0);
+        metaMem.putInt(size);
+        metaMem.jumpTo(size);
     }
 }
