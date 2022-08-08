@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
@@ -39,11 +37,17 @@ import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.IOException;
+
+import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
+import static io.questdb.cutlass.text.TextImportTask.getStatusName;
 
 public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
@@ -54,13 +58,17 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final MicrosecondClock clock;
     private final int logRetentionDays;
     private final LongList partitionsToRemove = new LongList();
+    private final TextImportExecutionContext textImportExecutionContext;
+    private final StringSink stringSink = new StringSink();
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
-    private ParallelCsvFileImporter importer;
-    private final TextImportExecutionContext textImportExecutionContext;
+    private Path path;
+    private ParallelCsvFileImporter parallelImporter;
+    private final CairoEngine engine;
+    private SerialCsvFileImporter serialImporter;
 
     public TextImportRequestJob(
             final CairoEngine engine,
@@ -69,11 +77,12 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     ) throws SqlException {
         this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
         this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
-        this.importer = new ParallelCsvFileImporter(engine, workerCount);
+        this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
+        this.serialImporter = new SerialCsvFileImporter(engine);
 
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
-        this.statusTableName = configuration.getSystemTableNamePrefix() + "parallel_text_import_log";
+        this.statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
 
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
@@ -81,10 +90,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
                         "ts timestamp, " + // 0
-                        "id symbol, " + // 1
+                        "id string, " + // 1
                         "table symbol, " + // 2
                         "file symbol, " + // 3
-                        "stage symbol, " + // 4
+                        "phase symbol, " + // 4
                         "status symbol, " + // 5
                         "message string," + // 6
                         "rows_handled long," + // 7
@@ -96,31 +105,46 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();
+        this.path = new Path();
+        this.engine = engine;
         enforceLogRetention();
     }
 
     @Override
     public void close() throws IOException {
-        this.importer = Misc.free(importer);
+        this.parallelImporter = Misc.free(parallelImporter);
+        this.serialImporter = Misc.free(serialImporter);
         this.writer = Misc.free(this.writer);
         this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
+        this.path = Misc.free(path);
     }
 
     void enforceLogRetention() {
-        if (logRetentionDays < 1) {
-            writer.truncate();
-            return;
-        }
-        if (writer.getPartitionCount() > 0) {
-            partitionsToRemove.clear();
-            for (int i = writer.getPartitionCount() - logRetentionDays - 1; i > -1; i--) {
-                partitionsToRemove.add(writer.getPartitionTimestamp(i));
+        if (writer != null) {
+            if (logRetentionDays < 1) {
+                writer.truncate();
+                return;
             }
+            if (writer.getPartitionCount() > 0) {
+                partitionsToRemove.clear();
+                for (int i = writer.getPartitionCount() - logRetentionDays - 1; i > -1; i--) {
+                    partitionsToRemove.add(writer.getPartitionTimestamp(i));
+                }
 
-            for (int i = 0, sz = partitionsToRemove.size(); i < sz; i++) {
-                writer.removePartition(partitionsToRemove.getQuick(i));
+                for (int i = 0, sz = partitionsToRemove.size(); i < sz; i++) {
+                    writer.removePartition(partitionsToRemove.getQuick(i));
+                }
             }
+        }
+    }
+
+    private boolean useParallelImport() {
+        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
+            return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
+        }
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
+            return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }
     }
 
@@ -130,18 +154,36 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         if (cursor > -1) {
             task = requestQueue.get(cursor);
             try {
-                importer.of(
-                        task.getTableName(),
-                        task.getFileName(),
-                        task.getPartitionBy(),
-                        task.getDelimiter(),
-                        task.getTimestampColumnName(),
-                        task.getTimestampFormat(),
-                        task.isHeaderFlag(),
-                        textImportExecutionContext.getCircuitBreaker()
-                );
-                importer.setStatusReporter(updateStatusRef);
-                importer.process();
+                if (useParallelImport()) {
+                    parallelImporter.of(
+                            task.getTableName(),
+                            task.getFileName(),
+                            task.getImportId(),
+                            task.getPartitionBy(),
+                            task.getDelimiter(),
+                            task.getTimestampColumnName(),
+                            task.getTimestampFormat(),
+                            task.isHeaderFlag(),
+                            textImportExecutionContext.getCircuitBreaker(),
+                            task.getAtomicity()
+                    );
+                    parallelImporter.setStatusReporter(updateStatusRef);
+                    parallelImporter.process();
+                } else {
+                    serialImporter.of(
+                            task.getTableName(),
+                            task.getFileName(),
+                            task.getImportId(),
+                            task.getDelimiter(),
+                            task.getTimestampColumnName(),
+                            task.getTimestampFormat(),
+                            task.isHeaderFlag(),
+                            textImportExecutionContext.getCircuitBreaker(),
+                            task.getAtomicity()
+                    );
+                    serialImporter.setStatusReporter(updateStatusRef);
+                    serialImporter.process();
+                }
             } catch (TextImportException e) {
                 updateStatus(
                         TextImportTask.NO_PHASE,
@@ -170,9 +212,11 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             long errors
     ) {
         if (writer != null) {
+            stringSink.clear();
+            Numbers.appendHex(stringSink, task.getImportId(), true);
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putSym(1, task.getImportId());
+                row.putStr(1, stringSink);
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
                 row.putSym(4, TextImportTask.getPhaseName(phase));
@@ -184,11 +228,32 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 row.append();
                 writer.commit();
             } catch (Throwable th) {
-                LOG.error().$("error saving to parallel import log table, unable to insert")
-                        .$(", releasing writer and stopping log table updates [table=").$(statusTableName)
-                        .$(", error=").$(th)
+                LOG.error()
+                        .$("could not update status table [importId=").$hexPadded(task.getImportId())
+                        .$(", statusTableName=").$(statusTableName)
+                        .$(", tableName=").$(task.getTableName())
+                        .$(", fileName=").$(task.getFileName())
+                        .$(", phase=").$(getPhaseName(phase))
+                        .$(", status=").$(getStatusName(phase))
+                        .$(", msg=").$(msg)
+                        .$(", rowsHandled=").$(rowsHandled)
+                        .$(", rowsImported=").$(rowsImported)
+                        .$(", errors=").$(errors)
+                        .$(", error=`").$(th).$('`')
                         .I$();
                 writer = Misc.free(writer);
+            }
+
+            // if we closed the writer, we need to reopen it again
+            if (writer == null) {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
+                } catch (Throwable e) {
+                    LOG.error()
+                            .$("could not re-open writer [table=").$(statusTableName)
+                            .$(", error=`").$(e).$('`')
+                            .I$();
+                }
             }
         }
     }

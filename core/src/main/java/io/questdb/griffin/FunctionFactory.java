@@ -57,7 +57,10 @@ public interface FunctionFactory {
      * <li>R = record</li>
      * <li>H = long256</li>
      * <li>G = GeoHash</li>
-     * <li>Q = long128</li>
+     * <li>o = NULL - this type is used in cast()</li>
+     * <li>p = REGCLASS - this type is used in cast()</li>
+     * <li>q = REGPROCEDURE - this type is used in cast()</li>
+     * <li>J = long128</li>
      * </ul>
      *
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and

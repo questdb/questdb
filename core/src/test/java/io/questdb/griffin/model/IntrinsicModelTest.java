@@ -129,28 +129,28 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateCeilMicroWithTzHrs() throws NumericException {
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T08:22:44.556011-01");
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28 08:22:44.556011-01");
+        assertDateCeil("2015-02-28T09:22:44.556012Z", "2015-02-28T08:22:44.556011-01");
+        assertDateCeil("2015-02-28T09:22:44.556012Z", "2015-02-28 08:22:44.556011-01");
     }
 
     @Test
     public void testDateCeilMicroWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T06:00:44.556011+01:22");
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T06:00:44.556011+0122");
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28 06:00:44.556011+0122");
+        assertDateCeil("2015-02-28T04:38:44.556012Z", "2015-02-28T06:00:44.556011+01:22");
+        assertDateCeil("2015-02-28T04:38:44.556012Z", "2015-02-28T06:00:44.556011+0122");
+        assertDateCeil("2015-02-28T04:38:44.556012Z", "2015-02-28 06:00:44.556011+0122");
     }
 
     @Test
     public void testDateCeilMilsWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T07:00:44.557000Z", "2015-02-28T06:00:44.556+01:00");
-        assertDateCeil("2015-02-28T07:00:44.557000Z", "2015-02-28T06:00:44.556+0100");
+        assertDateCeil("2015-02-28T05:00:44.557000Z", "2015-02-28T06:00:44.556+01:00");
+        assertDateCeil("2015-02-28T05:00:44.557000Z", "2015-02-28T06:00:44.556+0100");
     }
 
     @Test
     public void testDateCeilSecsWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28T06:00:44+01:00");
-        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28T06:00:44+0100");
-        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28 06:00:44+0100");
+        assertDateCeil("2015-02-28T05:00:45.000000Z", "2015-02-28T06:00:44+01:00");
+        assertDateCeil("2015-02-28T05:00:45.000000Z", "2015-02-28T06:00:44+0100");
+        assertDateCeil("2015-02-28T05:00:45.000000Z", "2015-02-28 06:00:44+0100");
     }
     //////////////////////////////
 
@@ -221,28 +221,28 @@ public class IntrinsicModelTest {
 
     @Test
     public void testDateFloorMicroWithTzHrs() throws NumericException {
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T08:22:44.556011-01");
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28 08:22:44.556011-01");
+        assertDateFloor("2015-02-28T09:22:44.556011Z", "2015-02-28T08:22:44.556011-01");
+        assertDateFloor("2015-02-28T09:22:44.556011Z", "2015-02-28 08:22:44.556011-01");
     }
 
     @Test
     public void testDateFloorMicroWithTzHrsMins() throws NumericException {
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T06:00:44.556011+01:22");
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T06:00:44.556011+0122");
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28 06:00:44.556011+0122");
+        assertDateFloor("2015-02-28T04:38:44.556011Z", "2015-02-28T06:00:44.556011+01:22");
+        assertDateFloor("2015-02-28T04:38:44.556011Z", "2015-02-28T06:00:44.556011+0122");
+        assertDateFloor("2015-02-28T04:38:44.556011Z", "2015-02-28 06:00:44.556011+0122");
     }
 
     @Test
     public void testDateFloorMillsWithTzHrsMins() throws NumericException {
-        assertDateFloor("2015-02-28T05:30:44.555000Z", "2015-02-28T06:00:44.555-00:30");
-        assertDateFloor("2015-02-28T05:30:44.555000Z", "2015-02-28T06:00:44.555-0030");
+        assertDateFloor("2015-02-28T06:30:44.555000Z", "2015-02-28T06:00:44.555-00:30");
+        assertDateFloor("2015-02-28T06:30:44.555000Z", "2015-02-28T06:00:44.555-0030");
     }
 
     @Test
     public void testDateFloorSecsWithTzHrsMins() throws NumericException {
-        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28T06:00:44+01:00");
-        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28T06:00:44+0100");
-        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28 06:00:44+0100");
+        assertDateFloor("2015-02-28T05:00:44.000000Z", "2015-02-28T06:00:44+01:00");
+        assertDateFloor("2015-02-28T05:00:44.000000Z", "2015-02-28T06:00:44+0100");
+        assertDateFloor("2015-02-28T05:00:44.000000Z", "2015-02-28 06:00:44+0100");
     }
 
     @Test

@@ -25,8 +25,7 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.AbstractLockable;
-import io.questdb.std.Mutable;
+import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,9 +50,11 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     public boolean run(int workerId) {
         if (tryLock()) {
             if (pRosti != null) {
+                long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
                 if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {
                     oomCounter.incrementAndGet();
                 }
+                Rosti.updateMemoryUsage(pRosti[workerId], oldSize);
             } else {
                 func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
             }
