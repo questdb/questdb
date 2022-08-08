@@ -45,8 +45,6 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
@@ -1233,100 +1231,77 @@ public class SqlCompiler implements Closeable {
     private RecordCursorFactory executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
             int workerCount = executionContext.getWorkerCount();
-            ExpressionNode fileNameNode = model.getFileName();
-            final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
-                if (workerCount < 1) {
-                    throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
+            if (workerCount < 1) {
+                throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
+            }
+            if (model.isCancel()) {
+                cancelTextImport(model);
+                return null;
+            } else {
+                if (model.getTimestampColumnName() == null &&
+                        ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+                    throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
                 }
-                if (model.isCancel()) {
-                    addTextImportRequest(model, null);
-                    return null;
-                } else {
-                    if (model.getTimestampColumnName() == null &&
-                            ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
-                        throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-                    }
-                    if (model.getTimestampFormat() == null) {
-                        model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-                    }
-                    if (model.getDelimiter() < 0) {
-                        model.setDelimiter((byte) ',');
-                    }
-                    long importId = addTextImportRequest(model, fileName);
-                    return new CopyFactory(importId);
+                if (model.getTimestampFormat() == null) {
+                    model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
                 }
+                if (model.getDelimiter() < 0) {
+                    model.setDelimiter((byte) ',');
+                }
+                return compileTextImport(model);
+            }
         } catch (TextImportException | TextException e) {
             LOG.error().$((Throwable) e).$();
             throw SqlException.$(0, e.getMessage());
         }
     }
 
-    private long addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
-        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
-        final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
+    private void cancelTextImport(CopyModel model) throws SqlException {
+        assert model.isCancel();
+
         final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
         final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
 
         long inProgressImportId = textImportExecutionContext.getActiveImportId();
-        if (model.isCancel()) {
-            // The cancellation is based on the best effort, so we don't worry about potential races with imports.
-            if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
-                throw SqlException.$(0, "No active import to cancel.");
-            }
-            long importId;
-            try {
-                CharSequence idString = model.getTarget().token;
-                int start = 0;
-                int end = idString.length();
-                if (Chars.isQuoted(idString)) {
-                    start = 1;
-                    end--;
-                }
-                importId = Numbers.parseHexLong(idString, start, end);
-            } catch (NumericException e) {
-                throw SqlException.$(0, "Provided id has invalid format.");
-            }
-            if (inProgressImportId == importId) {
-                circuitBreaker.cancel();
-                return -1;
-            } else {
-                throw SqlException.$(0, "Active import has different id.");
-            }
-        } else {
-            if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
-                long processingCursor = textImportRequestPubSeq.next();
-                if (processingCursor > -1) {
-                    assert fileName != null;
-
-                    final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
-                    final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
-
-                    long importId = textImportExecutionContext.assignActiveImportId();
-                    task.of(
-                            importId,
-                            Chars.toString(tableName),
-                            Chars.toString(fileName),
-                            model.isHeader(),
-                            Chars.toString(model.getTimestampColumnName()),
-                            model.getDelimiter(),
-                            Chars.toString(model.getTimestampFormat()),
-                            model.getPartitionBy(),
-                            model.getAtomicity()
-                    );
-
-                    circuitBreaker.reset();
-                    textImportRequestPubSeq.done(processingCursor);
-                    return importId;
-                } else {
-                    throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
-                }
-            } else {
-                throw SqlException.$(0, "Another import request is in progress. ")
-                        .put("[activeImportId=")
-                        .put(inProgressImportId)
-                        .put(']');
-            }
+        // The cancellation is based on the best effort, so we don't worry about potential races with imports.
+        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
+            throw SqlException.$(0, "No active import to cancel.");
         }
+        long importId;
+        try {
+            CharSequence idString = model.getTarget().token;
+            int start = 0;
+            int end = idString.length();
+            if (Chars.isQuoted(idString)) {
+                start = 1;
+                end--;
+            }
+            importId = Numbers.parseHexLong(idString, start, end);
+        } catch (NumericException e) {
+            throw SqlException.$(0, "Provided id has invalid format.");
+        }
+        if (inProgressImportId == importId) {
+            circuitBreaker.cancel();
+        } else {
+            throw SqlException.$(0, "Active import has different id.");
+        }
+    }
+
+    private CopyFactory compileTextImport(CopyModel model) throws SqlException {
+        assert !model.isCancel();
+
+        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final ExpressionNode fileNameNode = model.getFileName();
+        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
+        assert fileName != null;
+
+        return new CopyFactory(
+                messageBus,
+                engine.getTextImportExecutionContext(),
+                Chars.toString(tableName),
+                Chars.toString(fileName),
+                model
+        );
     }
 
     /**
@@ -2101,6 +2076,10 @@ public class SqlCompiler implements Closeable {
 
             if (isSearchPath(tok)) {
                 return compiledQuery.of(new ShowSearchPathCursorFactory());
+            }
+
+            if (isDateStyle(tok)) {
+                return compiledQuery.of(new ShowDateStyleCursorFactory());
             }
 
             if (SqlKeywords.isTimeKeyword(tok)) {

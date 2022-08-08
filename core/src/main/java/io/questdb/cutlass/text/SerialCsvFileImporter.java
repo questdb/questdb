@@ -31,7 +31,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -52,8 +51,7 @@ public final class SerialCsvFileImporter implements Closeable {
     private int atomicity;
     private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
     private ExecutionCircuitBreaker circuitBreaker;
-    // Initialized only once per of() call.
-    private final StringSink importIdSink = new StringSink();
+    private long importId;
 
     public SerialCsvFileImporter(CairoEngine cairoEngine) {
         this.configuration = cairoEngine.getConfiguration();
@@ -89,14 +87,13 @@ public final class SerialCsvFileImporter implements Closeable {
         this.forceHeader = forceHeader;
         this.circuitBreaker = circuitBreaker;
         this.atomicity = atomicity;
+        this.importId = importId;
         inputFilePath.of(inputRoot).concat(inputFileName).$();
-        importIdSink.clear();
-        Numbers.appendHex(importIdSink, importId, true);
     }
 
     public void process() throws TextImportException {
         LOG.info()
-                .$("started [importId=").$(importIdSink)
+                .$("started [importId=").$hexPadded(importId)
                 .$(", file=`").$(inputFilePath).$('`').I$();
 
         final long startMs = getCurrentTimeMs();
@@ -144,7 +141,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
                 long endMs = getCurrentTimeMs();
                 LOG.info()
-                        .$("import complete [importId=").$(importIdSink)
+                        .$("import complete [importId=").$hexPadded(importId)
                         .$(", file=`").$(inputFilePath).$('`')
                         .$("', time=").$((endMs - startMs) / 1000).$('s')
                         .I$();

@@ -35,7 +35,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
-class StringToStringArrayFunction extends StrArrayFunction {
+public class StringToStringArrayFunction extends StrArrayFunction {
     private static final int BRANCH_BEFORE_ITEM = 0;
     private static final int BRANCH_ITEM = 1;
     private static final int BRANCH_AFTER_ITEM = 2;
@@ -44,7 +44,7 @@ class StringToStringArrayFunction extends StrArrayFunction {
 
     private final ObjList<CharSequence> items = new ObjList<>();
 
-    StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
+    public StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
         if (type == null) {
             throw SqlException.$(position, "NULL is not allowed");
         }
