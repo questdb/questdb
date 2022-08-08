@@ -48,13 +48,13 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Before
     public void setUp() {
         super.setUp();
-        currentMillis = 0L;
+        currentMicros = 0L;
     }
 
     @After
     public void tearDown() {
         super.tearDown();
-        currentMillis = -1L;
+        currentMicros = -1L;
     }
 
     @Test
@@ -1874,8 +1874,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             expectedRowCounts.add(4L);
 
             final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
-            rollStrategyUpdates.put(10, strategy -> currentMillis += 2000L);
-            rollStrategyUpdates.put(22, strategy -> currentMillis += 5000L);
+            rollStrategyUpdates.put(10, strategy -> currentMicros += 2000_000L);
+            rollStrategyUpdates.put(22, strategy -> currentMicros += 5000_000L);
             testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
         });
     }
@@ -1897,7 +1897,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
             rollStrategyUpdates.put(7, strategy -> strategy.setMaxSegmentSize(4096L));
             rollStrategyUpdates.put(17, strategy -> strategy.setMaxRowCount(100L));
-            rollStrategyUpdates.put(50, strategy -> currentMillis += 20000L);
+            rollStrategyUpdates.put(50, strategy -> currentMicros += 20_000_000L);
             testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
         });
     }
@@ -1947,7 +1947,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putSym(17, String.valueOf(i));
                     row.append();
 
-                    currentMillis += 1000L;
+                    currentMicros += 1000_000L;
                     final Consumer<WalWriterRollStrategy> rollStrategyUpdate = rollStrategyUpdates.get(i);
                     if (rollStrategyUpdate != null) {
                         rollStrategyUpdate.accept(rollStrategy);

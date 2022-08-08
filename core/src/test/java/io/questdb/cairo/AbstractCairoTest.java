@@ -37,13 +37,11 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -71,9 +69,6 @@ public class AbstractCairoTest {
     protected static MessageBus messageBus;
     protected static long currentMicros = -1;
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-    protected static long currentMillis = -1;
-    protected final static MillisecondClock testMillisClock =
-            () -> currentMillis >= 0 ? currentMillis : MillisecondClockImpl.INSTANCE.getTicks();
     protected static CairoEngine engine;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
@@ -241,6 +236,11 @@ public class AbstractCairoTest {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 return testMicrosClock;
+            }
+
+            @Override
+            public MillisecondClock getMillisecondClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
             }
 
             @Override
