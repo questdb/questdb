@@ -40,7 +40,7 @@ import io.questdb.std.Rows;
 class AsyncFilteredRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
-
+    private static final String exceptionMessage = "timeout, query aborted";
     private final Function filter;
     private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
@@ -118,7 +118,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         // do we have more frames?
         if (frameIndex < frameLimit) {
             fetchNextFrame();
-            if (frameRowCount > 0) {
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 record.setRowIndex(rows.get(rowIndex()));
                 frameRowIndex++;
                 return checkLimit();
@@ -126,7 +126,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
 
         if (!allFramesActive) {
-            throw CairoException.instance(0).put("timeout, query aborted").setInterruption(true);
+            throw CairoException.instance(0).put(exceptionMessage).setInterruption(true);
         }
         return false;
     }
@@ -180,33 +180,38 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void fetchNextFrame() {
-        do {
-            this.cursor = frameSequence.next();
-            if (cursor > -1) {
-                PageFrameReduceTask task = frameSequence.getTask(cursor);
-                LOG.debug()
-                        .$("collected [shard=").$(frameSequence.getShard())
-                        .$(", frameIndex=").$(task.getFrameIndex())
-                        .$(", frameCount=").$(frameSequence.getFrameCount())
-                        .$(", active=").$(frameSequence.isActive())
-                        .$(", cursor=").$(cursor)
-                        .I$();
-
-                this.allFramesActive &= frameSequence.isActive();
-                this.rows = task.getRows();
-                this.frameRowCount = rows.size();
-                this.frameIndex = task.getFrameIndex();
-                if (this.frameRowCount > 0 && frameSequence.isActive()) {
+        try {
+            do {
+                this.cursor = frameSequence.next();
+                if (cursor > -1) {
+                    PageFrameReduceTask task = frameSequence.getTask(cursor);
+                    LOG.debug()
+                            .$("collected [shard=").$(frameSequence.getShard())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", active=").$(frameSequence.isActive())
+                            .$(", cursor=").$(cursor)
+                            .I$();
+                    this.allFramesActive &= frameSequence.isActive();
+                    this.rows = task.getRows();
+                    this.frameRowCount = rows.size();
+                    this.frameIndex = task.getFrameIndex();
                     this.frameRowIndex = 0;
-                    record.setFrameIndex(task.getFrameIndex());
-                    break;
+                    if (this.frameRowCount > 0 && frameSequence.isActive()) {
+                        record.setFrameIndex(task.getFrameIndex());
+                        break;
+                    } else {
+                        this.frameRowCount = 0; // force reset frame size if frameSequence was canceled or failed
+                        collectCursor(false);
+                    }
                 } else {
-                    collectCursor(false);
+                    Os.pause();
                 }
-            } else {
-                Os.pause();
-            }
-        } while (this.frameIndex < frameLimit);
+            } while (this.frameIndex < frameLimit);
+        } catch (Throwable e) {
+            LOG.critical().$("unexpected error [ex=").$(e).I$();
+            throw CairoException.instance(0).put(exceptionMessage).setInterruption(true);
+        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
