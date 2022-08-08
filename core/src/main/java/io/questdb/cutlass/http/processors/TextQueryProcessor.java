@@ -108,7 +108,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return (tok.charAt(i++) | 32) == '/'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i)) == 'p';
+                && (tok.charAt(i) | 32) == 'p';
     }
 
     public void execute(
