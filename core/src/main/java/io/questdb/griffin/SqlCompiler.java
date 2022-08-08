@@ -1879,10 +1879,6 @@ public class SqlCompiler implements Closeable {
     @Nullable
     private RecordCursorFactory executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
-            int workerCount = executionContext.getWorkerCount();
-            if (workerCount < 1) {
-                throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
-            }
             if (model.isCancel()) {
                 cancelTextImport(model);
                 return null;
