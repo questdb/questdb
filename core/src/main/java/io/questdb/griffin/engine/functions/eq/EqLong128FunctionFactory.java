@@ -37,7 +37,7 @@ import io.questdb.std.ObjList;
 public class EqLong128FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "=(QQ)";
+        return "=(JJ)";
     }
 
     @Override

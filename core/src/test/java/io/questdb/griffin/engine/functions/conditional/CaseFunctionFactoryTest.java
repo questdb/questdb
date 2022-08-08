@@ -1434,10 +1434,12 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                     "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
                     ") timestamp(ts)", sqlExecutionContext);
 
+            // this is a bit confusing. for booleans, every value x != 0 will evaluate to 1
+            // however, for int etc, only the value 1 will evaluate to 1
             assertSql("select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
                             "from tt",
                     "sum\n" +
-                            "1\n"
+                            (type.equals("BOOLEAN") ? "10\n" : "1\n")
             );
 
             compiler.compile("drop table tt", sqlExecutionContext);

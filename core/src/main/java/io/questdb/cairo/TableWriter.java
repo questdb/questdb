@@ -1036,6 +1036,12 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     break;
             }
         } else {
+            LOG.info()
+                    .$("not my command [cmdTableId=").$(cmd.getTableId())
+                            .$(", cmdTableName=").$(cmd.getTableName())
+                            .$(", myTableId=").$(getMetadata().getId())
+                            .$(", myTableName=").$(tableName)
+                            .I$();
             commandSubSeq.done(cursor);
         }
     }

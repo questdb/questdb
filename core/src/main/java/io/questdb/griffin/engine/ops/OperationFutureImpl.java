@@ -212,7 +212,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                 TableWriterTask event = tableWriterEventQueue.get(seq);
                 int type = event.getType();
                 if (event.getInstance() != correlationId || (type != TSK_BEGIN && type != TSK_COMPLETE)) {
-                    LOG.debug()
+                    LOG.info()
                             .$("writer command response received and ignored [instance=").$(event.getInstance())
                             .$(", type=").$(type)
                             .$(", expectedInstance=").$(correlationId)

@@ -164,10 +164,19 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, metrics1) -> {
-                    PGConnectionContextFactory contextFactory = new PGConnectionContextFactory(engine, conf, workerPool.getWorkerCount());
-                    return new PGWireServer(conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory);
-                },
+                (conf, engine, workerPool, local, cache, agent, m) -> new PGWireServer(
+                        conf,
+                        engine,
+                        workerPool,
+                        local,
+                        cache,
+                        agent,
+                        new PGConnectionContextFactory(
+                                engine,
+                                conf,
+                                workerPool.getWorkerCount()
+                        )
+                ),
                 functionFactoryCache,
                 snapshotAgent,
                 metrics

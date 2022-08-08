@@ -24,13 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.tools.StationaryMicrosClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
@@ -39,16 +33,9 @@ import org.junit.Test;
 public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
 
     @BeforeClass
-    public static void setUp2() {
-        engine = new CairoEngine(new StaticClockCairoConfiguration(root));
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null, -1, null);
-        bindVariableService.clear();
+    public static void setUpStatic() {
+        testMicrosClock = StationaryMicrosClock.INSTANCE;
+        AbstractGriffinTest.setUpStatic();
     }
 
     @Test
@@ -122,17 +109,5 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 sqlExecutionContext.setRandom(null);
             }
         });
-    }
-
-    private final static class StaticClockCairoConfiguration extends DefaultCairoConfiguration {
-
-        public StaticClockCairoConfiguration(CharSequence root) {
-            super(root);
-        }
-
-        @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return StationaryMicrosClock.INSTANCE;
-        }
     }
 }

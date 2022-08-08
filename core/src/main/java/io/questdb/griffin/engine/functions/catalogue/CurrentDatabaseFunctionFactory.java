@@ -34,7 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CurrentDatabaseFunctionFactory implements FunctionFactory {
-    private final static StrFunction INSTANCE = new StrConstant("qdb");
+    private final static StrFunction INSTANCE = new StrConstant(Constants.DB_NAME);
 
     @Override
     public String getSignature() {

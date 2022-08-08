@@ -41,13 +41,13 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     @Before
     public void setUp() {
         super.setUp();
-        currentMillis = 0L;
+        currentMicros = 0L;
     }
 
     @After
     public void tearDown() {
         super.tearDown();
-        currentMillis = -1L;
+        currentMicros = -1L;
     }
 
     @Test
