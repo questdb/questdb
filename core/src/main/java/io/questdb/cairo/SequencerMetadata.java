@@ -50,24 +50,19 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         metaMem.close(false);
     }
 
-    public int getTableId() {
-        return tableId;
-    }
-
-    public void renameColumn(CharSequence columnName, CharSequence newName) {
-        int columnIndex = columnNameIndexMap.get(columnName);
-        if (columnIndex < 0) {
-            throw CairoException.instance(0).put("Column not found: ").put(columnName);
-        }
-        int columnType = columnMetadata.getQuick(columnIndex).getType();
-        columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newName.toString(), 0L, columnType));
+    public void addColumn(CharSequence columnName, int columnType) {
+        addColumn0(columnName, columnType);
         structureVersion++;
         syncToMetaFile();
     }
 
-    void create(TableDescriptor model, Path path, int pathLen, int tableId) {
+    @Override
+    public void close() {
+        Misc.free(metaMem);
+    }
+
+    public void copyFrom(TableDescriptor model, int tableId, int structureVersion) {
         reset();
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
         timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
 
@@ -77,12 +72,33 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
             addColumn0(name, type);
         }
 
-        structureVersion = 0;
+        this.structureVersion = structureVersion;
         columnCount = columnMetadata.size();
+    }
+
+    public void copyFrom(SequencerMetadata metadata) {
+        copyFrom(metadata, metadata.getTableId(), metadata.getStructureVersion());
+    }
+
+    public void create(TableDescriptor model, Path path, int pathLen, int tableId) {
+        copyFrom(model, tableId, 0);
+        dumpTo(path, pathLen);
+    }
+
+    public void dumpTo(Path path, int pathLen) {
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
         syncToMetaFile();
     }
 
-    void open(Path path, int pathLen) {
+    public int getStructureVersion() {
+        return structureVersion;
+    }
+
+    public int getTableId() {
+        return tableId;
+    }
+
+    public void open(Path path, int pathLen) {
         reset();
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
 
@@ -98,35 +114,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         tableId = metaMem.getInt(SEQ_META_TABLE_ID);
     }
 
-    private void reset() {
-        columnMetadata.clear();
-        columnNameIndexMap.clear();
-        columnCount = 0;
-        timestampIndex = -1;
-    }
-
-    public int getStructureVersion() {
-        return structureVersion;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(metaMem);
-    }
-
-    private void addColumn0(CharSequence columnName, int columnType) {
-        final String name = columnName.toString();
-        columnNameIndexMap.put(name, columnNameIndexMap.size());
-        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
-    }
-
-    void addColumn(CharSequence columnName, int columnType) {
-        addColumn0(columnName, columnType);
-        structureVersion++;
-        syncToMetaFile();
-    }
-
-    void removeColumn(CharSequence columnName) {
+    public void removeColumn(CharSequence columnName) {
         int columnIndex = columnNameIndexMap.get(columnName);
         if (columnIndex < 0) {
             throw CairoException.instance(0).put("Column not found: ").put(columnName);
@@ -136,6 +124,30 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         columnNameIndexMap.remove(deletedMeta.getName());
         structureVersion++;
         syncToMetaFile();
+    }
+
+    public void renameColumn(CharSequence columnName, CharSequence newName) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.instance(0).put("Column not found: ").put(columnName);
+        }
+        int columnType = columnMetadata.getQuick(columnIndex).getType();
+        columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newName.toString(), 0L, columnType));
+        structureVersion++;
+        syncToMetaFile();
+    }
+
+    private void addColumn0(CharSequence columnName, int columnType) {
+        final String name = columnName.toString();
+        columnNameIndexMap.put(name, columnNameIndexMap.size());
+        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
+    }
+
+    private void reset() {
+        columnMetadata.clear();
+        columnNameIndexMap.clear();
+        columnCount = 0;
+        timestampIndex = -1;
     }
 
     private void syncToMetaFile() {

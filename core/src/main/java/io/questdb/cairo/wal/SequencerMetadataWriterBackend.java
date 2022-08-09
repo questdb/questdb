@@ -22,92 +22,57 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableWriterBackend;
 import io.questdb.griffin.UpdateOperator;
 
-public class SequencerMetadataWriterBackend implements TableWriterBackend {
-    private final SequencerMetadata metadata;
-    private final CharSequence tableName;
-
-    public SequencerMetadataWriterBackend(SequencerMetadata metadata, CharSequence tableName) {
-        this.metadata = metadata;
-        this.tableName = tableName;
-    }
+public interface SequencerMetadataWriterBackend extends TableWriterBackend {
 
     @Override
-    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
-        metadata.addColumn(name, type);
-    }
-
-    @Override
-    public void addIndex(CharSequence columnName, int indexValueBlockSize) {
+    default void addIndex(CharSequence columnName, int indexValueBlockSize) {
         throw CairoException.instance(0).put("add index does not update sequencer metadata");
     }
 
     @Override
-    public int attachPartition(long partitionTimestamp) {
+    default int attachPartition(long partitionTimestamp) {
         throw CairoException.instance(0).put("attach partition does not update sequencer metadata");
     }
 
     @Override
-    public void changeCacheFlag(int columnIndex, boolean isCacheOn) {
-        // Do nothing, does not impact sequencer / wal metadata
+    default void changeCacheFlag(int columnIndex, boolean isCacheOn) {
         throw CairoException.instance(0).put("change cache flag does not update sequencer metadata");
     }
 
     @Override
-    public void dropIndex(CharSequence columnName) {
-        // Do nothing, does not impact sequencer / wal metadata
+    default void dropIndex(CharSequence columnName) {
         throw CairoException.instance(0).put("drop index does not update sequencer metadata");
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public int getPartitionBy() {
+    default int getPartitionBy() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public UpdateOperator getUpdateOperator() {
+    default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void removeColumn(CharSequence columnName) {
-        metadata.removeColumn(columnName);
-    }
-
-    @Override
-    public boolean removePartition(long partitionTimestamp) {
-        // Do nothing, does not impact sequencer / wal metadata
+    default boolean removePartition(long partitionTimestamp) {
         throw CairoException.instance(0).put("remove partition does not update sequencer metadata");
     }
 
     @Override
-    public void renameColumn(CharSequence columnName, CharSequence newName) {
-        metadata.renameColumn(columnName, newName);
-    }
-
-    @Override
-    public void setMetaCommitLag(long commitLag) {
-        // Do nothing, does not impact sequencer / wal metadata
+    default void setMetaCommitLag(long commitLag) {
         throw CairoException.instance(0).put("change commit lag does not update sequencer metadata");
     }
 
     @Override
-    public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        // Do nothing, does not impact sequencer / wal metadata
+    default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         throw CairoException.instance(0).put("change max uncommitted does not update sequencer metadata");
     }
 }
+

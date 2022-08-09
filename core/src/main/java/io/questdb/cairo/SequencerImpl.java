@@ -31,6 +31,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
@@ -47,7 +48,7 @@ public class SequencerImpl implements Sequencer {
     private final IDGenerator walIdGenerator;
     private final Path path;
     private final BinaryAlterFormatter alterCommandWalFormatter = new BinaryAlterFormatter();
-    private final SequencerMetadataWriterBackend sequencerMetadataWriterBackend;
+    private final SequencerMetadataUpdater sequencerMetadataUpdater;
 
     SequencerImpl(CairoEngine engine, CharSequence tableName) {
         this.engine = engine;
@@ -61,7 +62,7 @@ public class SequencerImpl implements Sequencer {
 
             createSequencerDir(ff, configuration.getMkDirMode());
             metadata = new SequencerMetadata(ff);
-            sequencerMetadataWriterBackend = new SequencerMetadataWriterBackend(metadata, tableName);
+            sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, tableName);
 
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             walIdGenerator.open(path);
@@ -86,8 +87,13 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public SequencerStructureChangeCursor getStructureChangeCursor(int fromSchemaVersion) {
-        return catalog.getStructureChangeCursor(fromSchemaVersion, alterCommandWalFormatter);
+    public void copyMetadataTo(@NotNull SequencerMetadata copyTo) {
+        schemaLock.readLock().lock();
+        try {
+            copyTo.copyFrom(metadata);
+        } finally {
+            schemaLock.readLock().unlock();
+        }
     }
 
     @Override
@@ -120,12 +126,12 @@ public class SequencerImpl implements Sequencer {
         return txn;
     }
 
-    private void applyToMetadata(AlterOperation operation) {
-        try {
-            operation.apply(sequencerMetadataWriterBackend, true);
-        } catch (SqlException e) {
-            throw CairoException.instance(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
-        }
+    @Override
+    public SequencerStructureChangeCursor getStructureChangeCursor(
+            @Nullable SequencerStructureChangeCursor reusableCursor,
+            int fromSchemaVersion
+    ) {
+        return catalog.getStructureChangeCursor(reusableCursor, fromSchemaVersion, alterCommandWalFormatter);
     }
 
     @Override
@@ -151,13 +157,11 @@ public class SequencerImpl implements Sequencer {
         return txn;
     }
 
-    @Override
-    public void copyMetadataTo(@NotNull SequencerMetadata copyTo, Path path, int rootLen) {
-        schemaLock.readLock().lock();
+    private void applyToMetadata(AlterOperation operation) {
         try {
-            copyTo.create(metadata, path, rootLen, metadata.getTableId());
-        } finally {
-            schemaLock.readLock().unlock();
+            operation.apply(sequencerMetadataUpdater, true);
+        } catch (SqlException e) {
+            throw CairoException.instance(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
         }
     }
 

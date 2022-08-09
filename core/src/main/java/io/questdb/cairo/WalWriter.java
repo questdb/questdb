@@ -24,12 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.cairo.wal.SequencerMetadataWriterBackend;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -82,6 +84,8 @@ public class WalWriter implements TableWriterFrontend {
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
     private long lastSegmentTxn = -1L;
+    private final TableWriterBackend walMetadataUpdater = new WalMetadataUpdater();
+    private SequencerStructureChangeCursor structureChangeCursor;
 
     public WalWriter(CharSequence tableName, int walId, Sequencer sequencer, CairoConfiguration configuration) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -100,7 +104,7 @@ public class WalWriter implements TableWriterFrontend {
             lock();
 
             metadata = new SequencerMetadata(ff);
-            sequencer.copyMetadataTo(metadata, path, rootLen);
+            sequencer.copyMetadataTo(metadata);
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -215,6 +219,7 @@ public class WalWriter implements TableWriterFrontend {
     @Override
     public void rollback() {
         // TODO: roll back current transaction
+        throw new UnsupportedOperationException();
     }
 
     public CharSequence getTableName() {
@@ -595,28 +600,45 @@ public class WalWriter implements TableWriterFrontend {
         return commit(false);
     }
 
+    private void applyStructureChanges() {
+        structureChangeCursor = sequencer.getStructureChangeCursor(structureChangeCursor, metadata.getStructureVersion());
+        while (structureChangeCursor.hasNext()) {
+            AlterOperation alterOperation = structureChangeCursor.next();
+            long metadataVersion = getStructureVersion();
+            try {
+                alterOperation.apply(walMetadataUpdater, true);
+            } catch (SqlException e) {
+                throw CairoException.instance(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+            }
+            if (metadataVersion >= getStructureVersion()) {
+                throw CairoException.instance(0).put("could not apply table definition changes to the current transaction, version unchanged");
+            }
+        }
+    }
+
     private long commit(boolean rollSegment) {
         rollSegmentOnNextRow = rollSegment;
         final long transientRowCount = getTransientRowCount();
-        if (transientRowCount != 0) {
-            lastSegmentTxn = events.data(startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        try {
+            if (transientRowCount != 0) {
+                lastSegmentTxn = events.data(startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
 
-            long txn;
-            do {
-                txn = sequencer.nextTxn(metadata.getStructureVersion(), walId, segmentId, lastSegmentTxn);
-                if (txn == Sequencer.NO_TXN) {
-                    applyStructureChanges();
-                }
-            } while (txn == Sequencer.NO_TXN);
+                long txn;
+                do {
+                    txn = sequencer.nextTxn(metadata.getStructureVersion(), walId, segmentId, lastSegmentTxn);
+                    if (txn == Sequencer.NO_TXN) {
+                        applyStructureChanges();
+                    }
+                } while (txn == Sequencer.NO_TXN);
 
-            resetDataTxnProperties();
-            return txn;
+                resetDataTxnProperties();
+                return txn;
+            }
+        } catch (Throwable th) {
+            rollback();
+            throw th;
         }
         return Sequencer.NO_TXN;
-    }
-
-    private void applyStructureChanges() {
-        sequencer.getStructureChangeCursor(metadata.getStructureVersion());
     }
 
     private void resetDataTxnProperties() {
@@ -652,7 +674,7 @@ public class WalWriter implements TableWriterFrontend {
                 }
             }
 
-            metadata.open(path, segmentPathLen);
+            metadata.dumpTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
@@ -946,6 +968,62 @@ public class WalWriter implements TableWriterFrontend {
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return columns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+    }
+
+    private class WalMetadataUpdater implements SequencerMetadataWriterBackend {
+        @Override
+        public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+            int columnIndex = metadata.getColumnIndexQuiet(name);
+            if (columnIndex > -1L) {
+                if (lastSegmentTxn == 0) {
+                    // this is the only transaction in the segment, column can be added in here
+                    // without rolling to the new segment
+                    metadata.addColumn(name, type);
+                    columnIndex = metadata.getColumnCount() - 1;
+
+                    // create column file
+                    configureColumn(columnIndex, type);
+                    path.trimTo(rootLen).slash().put(walId);
+                    openColumnFiles(name, columnIndex, rootLen);
+
+                    // set column values to null
+                    long segmentRowCount = rowCount - startRowCount;
+                    MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
+                    primaryColumn.jumpTo(segmentRowCount * ColumnType.sizeOf(type));
+                    // TODO: map the column and use TableUtils.setNull();
+                } else {
+                    // TODO: support the case
+                    throw CairoException.instance(0).put("column '").put(name).put("' added, cannot commit because of concurrent table definition change ");
+                }
+            } else {
+                // Assuming WAL added the column already added to the table
+                if (metadata.getColumnType(columnIndex) == type) {
+                    // Same column name, type added in this WAL and in another WAL
+                    // TODO: use specific exception that it's not a total fail
+                }
+                throw CairoException.instance(0).put("column '").put(name).put("' already exists");
+            }
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return null;
+        }
+
+        @Override
+        public void removeColumn(CharSequence columnName) {
+
+        }
+
+        @Override
+        public void renameColumn(CharSequence columnName, CharSequence newName) {
+
         }
     }
 }

@@ -24,40 +24,38 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.ops.AlterOperation;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.SequencerMetadataWriterBackend;
 
-import java.io.Closeable;
+public class SequencerMetadataUpdater implements SequencerMetadataWriterBackend {
+    private final SequencerMetadata metadata;
+    private final CharSequence tableName;
 
-public interface Sequencer extends Closeable {
-    String SEQ_DIR = "seq";
-
-    long NO_TXN = Long.MIN_VALUE;
-
-    void copyMetadataTo(SequencerMetadata metadata);
-
-    @NotNull
-    SequencerStructureChangeCursor getStructureChangeCursor(
-            @Nullable SequencerStructureChangeCursor reusableCursor,
-            int fromSchemaVersion
-    );
-
-    int getTableId();
-
-    long nextStructureTxn(long structureVersion, AlterOperation operation);
-
-    void open();
-
-    // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(int expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
-
-    // always creates a new wal with an increasing unique id
-    WalWriter createWal();
-
-    // return txn cursor to apply transaction from given point
-    SequencerCursor getCursor(long lastCommittedTxn);
+    public SequencerMetadataUpdater(SequencerMetadata metadata, CharSequence tableName) {
+        this.metadata = metadata;
+        this.tableName = tableName;
+    }
 
     @Override
-    void close();
+    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+        metadata.addColumn(name, type);
+    }
+
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public void removeColumn(CharSequence columnName) {
+        metadata.removeColumn(columnName);
+    }
+
+    public void renameColumn(CharSequence columnName, CharSequence newName) {
+        metadata.renameColumn(columnName, newName);
+    }
 }
