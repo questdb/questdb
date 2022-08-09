@@ -658,8 +658,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         src.timestamp("ts")
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(false, 4096)
-                        ,
+                                .col("s", ColumnType.SYMBOL).indexed(false, 4096),
                         10000,
                         "2022-08-01",
                         10);
@@ -672,8 +671,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         dst.timestamp("ts")
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(false, 4096)
-                        ,
+                                .col("s", ColumnType.SYMBOL).indexed(false, 4096),
                         10000,
                         "2022-08-01",
                         10);
@@ -838,8 +836,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachSamePartitionTwice() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src28", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst28", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src42", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst42", PartitionBy.DAY)) {
 
                 createPopulateTable(
                         1,
@@ -870,7 +868,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
-        AtomicInteger counter = new AtomicInteger(1);
+        AtomicInteger counter = new AtomicInteger(2);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             private long tsdFd;
 
@@ -914,7 +912,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
-        AtomicInteger counter = new AtomicInteger(1);
+        AtomicInteger counter = new AtomicInteger(2);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ name) {
@@ -952,7 +950,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         assertMemoryLeak(() -> {
-
             try (TableModel src = new TableModel(configuration, "src47", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst47", PartitionBy.DAY)) {
 
@@ -1083,7 +1080,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         8,
                         "2022-08-01",
                         4);
-
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, src.getName(), "testing")) {
                     writer.removeColumn("s");
                     writer.removeColumn("str");
@@ -1176,7 +1172,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     45000,
                     "2022-08-01",
                     10
-
             );
 
             if (afterCreateSrc != null) {
@@ -1333,6 +1328,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             ) {
 
                 createPopulateTable(
+                        1,
                         src.timestamp("ts")
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG),

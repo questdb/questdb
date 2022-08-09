@@ -358,6 +358,15 @@ public class LongList implements Mutable, LongVec, Sinkable {
         pos += length;
     }
 
+    public void insertFromSource(int index, LongList src, int srcLo, int srcHi) {
+        assert index > -1 && index < pos + 1 && srcLo > -1 && srcHi - 1 < src.size();
+        int len = srcHi - srcLo;
+        if (len > 0) {
+            insert(index, len);
+            System.arraycopy(src.data, srcLo, data, index, len);
+        }
+    }
+
     public void remove(long v) {
         int index = indexOf(v);
         if (index > -1) {

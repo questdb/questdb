@@ -336,34 +336,37 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             String tableName = "tabDetachAttach";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .timestamp("ts")
+                createPopulateTable(
+                        1,
+                        tab.timestamp("ts")
                                 .col("si", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
                                 .col("s", ColumnType.SYMBOL),
                         10,
                         "2022-06-01",
-                        3
+                        2
                 );
 
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
-                renameDetachedToAttachable(tableName, "2022-06-01", "2022-06-02");
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
-                assertContent(
-                        "ts\tsi\ti\tl\ts\n" +
-                                "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
-                                "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
-                                "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
-                                "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
-                                "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
-                                "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
-                                "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
-                                "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
-                                "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
-                                "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
-                        tableName
-                );
+                String expected = "ts\tsi\ti\tl\ts\n" +
+                        "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                        "2022-06-01T09:35:59.800000Z\tVTJW\t2\t2\t\n" +
+                        "2022-06-01T14:23:59.700000Z\t\t3\t3\tSXUX\n" +
+                        "2022-06-01T19:11:59.600000Z\t\t4\t4\t\n" +
+                        "2022-06-01T23:59:59.500000Z\t\t5\t5\tGPGW\n" +
+                        "2022-06-02T04:47:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
+                        "2022-06-02T09:35:59.300000Z\tCPSW\t7\t7\t\n" +
+                        "2022-06-02T14:23:59.200000Z\t\t8\t8\t\n" +
+                        "2022-06-02T19:11:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                        "2022-06-02T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
+
+                assertContent(expected, tableName);
+                for (int i = 0; i < 4; i++) {
+                    compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                    renameDetachedToAttachable(tableName, "2022-06-01");
+                    compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                }
+                assertContent(expected, tableName);
             }
         });
     }
@@ -430,14 +433,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
-
-                    TableWriter.Row row = writer.newRow(timestamp2);
-                    row.putLong(0, 137L);
-                    row.putInt(1, 137);
-                    row.putInt(3, 137);
-                    row.append(); // O3 append
-
-                    Assert.assertTrue(writer.inTransaction());
                     writer.detachPartition(timestamp);
                     Assert.assertEquals(9, writer.size());
                 }
@@ -459,7 +454,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
                                 "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                                "137\t137\t2022-06-01T09:59:59.999999Z\t137\n" +
                                 "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
                                 "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
                                 "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
@@ -639,15 +633,15 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             String tableName = "tabColumnTops";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .col("l", ColumnType.LONG)
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .timestamp("ts"),
                         12,
                         "2022-06-01",
                         4);
 
-                engine.clear();
                 String timestampDay = "2022-06-02";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
@@ -682,6 +676,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // detach the partition
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+
+                assertContent(
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
+                );
 
                 // insert data, which will create the partition again
                 engine.clear();

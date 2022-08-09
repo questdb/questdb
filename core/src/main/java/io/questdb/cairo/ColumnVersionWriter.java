@@ -26,18 +26,15 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.Nullable;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
     private final MemoryCMARW mem;
     private long version;
     private long size;
     private boolean hasChanges;
-
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
@@ -88,23 +85,25 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     public void removeColumnTop(long partitionTimestamp, int columnIndex) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex >= 0) {
-            getCachedList().setQuick(recordIndex + 3, 0);
+            cachedList.setQuick(recordIndex + COLUMN_TOP_OFFSET, 0);
             hasChanges = true;
         }
     }
 
-    public void removePartitionColumns(long partitionTimestamp, int columnCount) {
-        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            int recordIndex = getRecordIndex(partitionTimestamp, colIdx);
-            if (recordIndex >= 0) {
-                getCachedList().removeIndexBlock(recordIndex, BLOCK_SIZE);
-                hasChanges = true;
+    public void removePartitionColumns(long partitionTimestamp) {
+        int start = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (start > -1) {
+            int end = start + BLOCK_SIZE;
+            int limit = cachedList.size();
+            while (end < limit && cachedList.getQuick(end) == partitionTimestamp) {
+                cachedList.setQuick(end + COLUMN_TOP_OFFSET, -1L);
+                end += BLOCK_SIZE;
             }
+            hasChanges = true;
         }
     }
 
     public void truncate() {
-        LongList cachedList = getCachedList();
         if (cachedList.size() > 0) {
             cachedList.clear();
             hasChanges = true;
@@ -112,21 +111,56 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void upsert(long timestamp, ColumnVersionReader detachedColumnVersionReader) {
-        LongList detachedEntries = detachedColumnVersionReader.getCachedList();
-        LongList entries = getCachedList();
-        for (int i = 0, limit = detachedEntries.size(); i < limit; i += 4) {
-            // detachedEntries: [partitionTimestamp, columnIndex, columnNameTxn, columnTop]*
-            long columnTop = detachedEntries.getQuick(i + 3);
-            if (timestamp == detachedEntries.getQuick(i) && columnTop != entries.getQuick(i + 3)) {
-                upsert(
-                        timestamp,
-                        (int) detachedEntries.getQuick(i + 1),
-                        detachedEntries.getQuick(i + 2),
-                        columnTop
-                );
+    public void upsertPartition(
+            long partitionTimestamp,
+            ColumnVersionReader source,
+            @Nullable CharSequenceHashSet addColNames,
+            long partitionSize,
+            @Nullable TableWriterMetadata metadataRO
+    ) {
+        // set column tops for missing columns (.attachable did not have these columns)
+        for (int i = 0, limit = addColNames.size(); i < limit; i++) {
+            CharSequence columnName = addColNames.get(i);
+            int colIdx = metadataRO.getColumnIndex(columnName);
+            colIdx = metadataRO.getWriterIndex(colIdx);
+            long columnNameTxn = getColumnNameTxn(partitionTimestamp, colIdx);
+            upsert(partitionTimestamp, colIdx, columnNameTxn, partitionSize);
+        }
+
+        LongList srcCachedList = source.cachedList;
+        int srcIndex = srcCachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (srcIndex < 0) { // source does not have partition information
+            return;
+        }
+
+        int srcCachedListSize = srcCachedList.size();
+        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (index < 0) { // the cache does not contain this partition
+            index = -index - 1;
+            int srcEnd = srcIndex + BLOCK_SIZE;
+            while (srcEnd < srcCachedListSize && partitionTimestamp == srcCachedList.getQuick(srcEnd)) {
+                srcEnd += BLOCK_SIZE;
+            }
+            cachedList.insertFromSource(index, srcCachedList, srcIndex, srcEnd);
+        } else {
+            int srcEnd = srcIndex;
+            while (srcEnd < srcCachedListSize && partitionTimestamp == srcCachedList.getQuick(srcEnd)) {
+                if (partitionTimestamp != cachedList.getQuick(index)) {
+                    break;
+                }
+                int srcColIdx = (int) srcCachedList.get(srcEnd + COLUMN_INDEX_OFFSET);
+                int colIdx = (int) cachedList.get(index + COLUMN_INDEX_OFFSET);
+                if (srcColIdx == colIdx) {
+                    long srcColTop = srcCachedList.getQuick(srcEnd + COLUMN_TOP_OFFSET);
+                    cachedList.setQuick(index + COLUMN_TOP_OFFSET, srcColTop);
+                    index += BLOCK_SIZE;
+                } else if (colIdx > srcColIdx) {
+                    break;
+                }
+                srcEnd += BLOCK_SIZE;
             }
         }
+        hasChanges = true;
     }
 
     /**
@@ -140,20 +174,19 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * @param columnTop   column top
      */
     public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
-        LongList cachedList = getCachedList();
         final int sz = cachedList.size();
         int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         boolean insert = true;
         if (index > -1) {
             // brute force columns for this timestamp
             while (index < sz && cachedList.getQuick(index) == timestamp) {
-                final long thisIndex = cachedList.getQuick(index + 1);
+                final long thisIndex = cachedList.getQuick(index + COLUMN_INDEX_OFFSET);
 
                 if (thisIndex == columnIndex) {
                     if (txn > -1) {
-                        cachedList.setQuick(index + 2, txn);
+                        cachedList.setQuick(index + COLUMN_NAME_TXN_OFFSET, txn);
                     }
-                    cachedList.setQuick(index + 3, columnTop);
+                    cachedList.setQuick(index + COLUMN_TOP_OFFSET, columnTop);
                     insert = false;
                     break;
                 }
@@ -175,26 +208,25 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                 cachedList.setPos(Math.max(index + BLOCK_SIZE, sz + BLOCK_SIZE));
             }
             cachedList.setQuick(index, timestamp);
-            cachedList.setQuick(index + 1, columnIndex);
-            cachedList.setQuick(index + 2, txn);
-            cachedList.setQuick(index + 3, columnTop);
+            cachedList.setQuick(index + COLUMN_INDEX_OFFSET, columnIndex);
+            cachedList.setQuick(index + COLUMN_NAME_TXN_OFFSET, txn);
+            cachedList.setQuick(index + COLUMN_TOP_OFFSET, columnTop);
         }
         hasChanges = true;
     }
 
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
-        LongList cachedList = getCachedList();
         if (recordIndex > -1L) {
-            cachedList.setQuick(recordIndex + 3, colTop);
+            cachedList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);
             hasChanges = true;
         } else {
             // This is a 0 column top record we need to store it
             // to mark that the column is written in O3 even before the partition the column was originally added
             int defaultRecordIndex = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
             if (defaultRecordIndex >= 0) {
-                long columnNameTxn = cachedList.getQuick(defaultRecordIndex + 2);
-                long defaultPartitionTimestamp = cachedList.getQuick(defaultRecordIndex + 3);
+                long columnNameTxn = cachedList.getQuick(defaultRecordIndex + COLUMN_NAME_TXN_OFFSET);
+                long defaultPartitionTimestamp = cachedList.getQuick(defaultRecordIndex + COLUMN_TOP_OFFSET);
                 // Do not add 0 column top if the default parttion
                 if (defaultPartitionTimestamp > partitionTimestamp || colTop > 0) {
                     upsert(partitionTimestamp, columnIndex, columnNameTxn, colTop);
@@ -236,7 +268,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private void doCommit() {
-        LongList cachedList = getCachedList();
         int entryCount = cachedList.size() / BLOCK_SIZE;
         long areaSize = calculateSize(entryCount);
         long writeOffset = calculateWriteOffset(areaSize);
@@ -265,13 +296,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private void store(int entryCount, long offset) {
-        LongList cachedList = getCachedList();
         for (int i = 0; i < entryCount; i++) {
             int x = i * BLOCK_SIZE;
             mem.putLong(offset, cachedList.getQuick(x));
-            mem.putLong(offset + 8, cachedList.getQuick(x + 1));
-            mem.putLong(offset + 16, cachedList.getQuick(x + 2));
-            mem.putLong(offset + 24, cachedList.getQuick(x + 3));
+            mem.putLong(offset + 8, cachedList.getQuick(x + COLUMN_INDEX_OFFSET));
+            mem.putLong(offset + 16, cachedList.getQuick(x + COLUMN_NAME_TXN_OFFSET));
+            mem.putLong(offset + 24, cachedList.getQuick(x + COLUMN_TOP_OFFSET));
             offset += BLOCK_SIZE * 8;
         }
     }
