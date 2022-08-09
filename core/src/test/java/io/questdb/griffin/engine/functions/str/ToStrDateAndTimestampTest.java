@@ -55,7 +55,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "G",
                 "y",
                 "yy",
-                // "yyy",
+                "yyy",
                 "yyyy",
                 "M",
                 "MM",
@@ -84,8 +84,8 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "ss",
                 "S",
                 "SSS",
-                //"N",
-                //"NNN",
+                // "N", these don't make sense for millis
+                // "NNN",
                 "z",
                 "zz",
                 "zzz",
@@ -93,7 +93,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "x",
                 "xx",
                 "merge_copy_var_column",
-                //"U",
+                // "U", these also don't make sense for millis
                 // "UUU"
         };
         TimestampFormatCompiler tsc = new TimestampFormatCompiler();

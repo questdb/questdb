@@ -312,6 +312,13 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     DateFormatUtils.append0(sink, year % 100);
                     break;
+                case DateFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    if (year == Integer.MIN_VALUE) {
+                        year = Dates.getYear(datetime);
+                        leap = Dates.isLeapYear(year);
+                    }
+                    DateFormatUtils.append00(sink, year % 1000);
+                    break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Dates.getYear(datetime);

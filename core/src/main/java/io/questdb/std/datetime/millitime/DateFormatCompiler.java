@@ -35,6 +35,7 @@ public class DateFormatCompiler {
     static final int OP_ERA = 1;
     static final int OP_YEAR_ONE_DIGIT = 2;
     static final int OP_YEAR_TWO_DIGITS = 3;
+    static final int OP_YEAR_THREE_DIGITS = 39;
     static final int OP_YEAR_FOUR_DIGITS = 4;
     static final int OP_MONTH_ONE_DIGIT = 5;
     static final int OP_MONTH_TWO_DIGITS = 6;
@@ -124,6 +125,7 @@ public class DateFormatCompiler {
         addOp("G", OP_ERA);
         addOp("y", OP_YEAR_ONE_DIGIT);
         addOp("yy", OP_YEAR_TWO_DIGITS);
+        addOp("yyy", OP_YEAR_THREE_DIGITS);
         addOp("yyyy", OP_YEAR_FOUR_DIGITS);
         addOp("M", OP_MONTH_ONE_DIGIT);
         addOp("MM", OP_MONTH_TWO_DIGITS);
@@ -474,6 +476,13 @@ public class DateFormatCompiler {
                     asm.iconst(100);
                     asm.irem();
                     asm.invokeStatic(append0Index);
+                    break;
+                case DateFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_YEAR]);
+                    asm.iconst(1000);
+                    asm.irem();
+                    asm.invokeStatic(append00Index);
                     break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
@@ -1020,6 +1029,24 @@ public class DateFormatCompiler {
                     asm.iload(LOCAL_POS);
                     asm.invokeStatic(parseIntIndex);
                     asm.invokeStatic(adjustYearIndex);
+                    asm.istore(LOCAL_YEAR);
+                    break;
+                case OP_YEAR_THREE_DIGITS:
+                    // assertRemaining(pos + 2, hi);
+                    // year = Numbers.parseInt(in, pos, pos += 3);
+                    stackState &= ~(1 << LOCAL_YEAR);
+
+                    asm.iload(LOCAL_POS);
+                    asm.iconst(2);
+                    asm.iadd();
+                    asm.iload(P_HI);
+                    asm.invokeStatic(assertRemainingIndex);
+
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iinc(LOCAL_POS, 3);
+                    asm.iload(LOCAL_POS);
+                    asm.invokeStatic(parseIntIndex);
                     asm.istore(LOCAL_YEAR);
                     break;
                 case OP_YEAR_FOUR_DIGITS: {
@@ -1574,6 +1601,7 @@ public class DateFormatCompiler {
                 case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
                 case DateFormatCompiler.OP_YEAR_GREEDY:
                 case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case DateFormatCompiler.OP_YEAR_THREE_DIGITS:
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     // ERA
                 case DateFormatCompiler.OP_ERA:
@@ -1661,6 +1689,7 @@ public class DateFormatCompiler {
                     result |= (1 << LOCAL_TEMP_LONG);
                 case OP_YEAR_ONE_DIGIT:
                 case OP_YEAR_TWO_DIGITS:
+                case OP_YEAR_THREE_DIGITS:
                 case OP_YEAR_FOUR_DIGITS:
                     result |= (1 << LOCAL_YEAR);
                     break;
