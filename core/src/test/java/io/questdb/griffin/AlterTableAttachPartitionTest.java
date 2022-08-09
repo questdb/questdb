@@ -524,7 +524,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "-100] Detached partition metadata [missing_column=ts1] is not compatible with current table metadata"
+                            "[-100] Detached partition metadata [missing_column=ts1] is not compatible with current table metadata"
                     );
                 }
             }
@@ -923,7 +923,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", "path does not exist");
+        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", "[-100] Detached partition metadata [missing_column=ts]");
     }
 
     @Test

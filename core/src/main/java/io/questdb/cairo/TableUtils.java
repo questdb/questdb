@@ -1193,7 +1193,7 @@ public final class TableUtils {
                     ff.close(fd);
                 }
             } else {
-                throw CairoException.instance(0).put("path does not exist [path=").put(path).put(']');
+                return -1L;
             }
         } finally {
             path.trimTo(plen);
