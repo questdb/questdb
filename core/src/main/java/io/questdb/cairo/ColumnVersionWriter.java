@@ -119,7 +119,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             long partitionSize,
             @Nullable TableWriterMetadata metadataRO
     ) {
-        // set column tops for missing columns (.attachable did not have these columns)
+        // set column tops for missing columns
         for (int i = 0, limit = addColNames.size(); i < limit; i++) {
             CharSequence columnName = addColNames.get(i);
             int colIdx = metadataRO.getColumnIndex(columnName);

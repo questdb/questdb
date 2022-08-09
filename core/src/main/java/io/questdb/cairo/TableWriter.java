@@ -676,12 +676,9 @@ public class TableWriter implements Closeable {
                         throw CairoException.detachedMetadataMismatch("missing_column=" + timestampColName);
                     }
 
-                    // validate partition
                     prepareDetachedPartition(timestamp, partitionSize);
-                    if (partitionSize > 0L) {
-                        if (validateDataFiles) {
-                            attachPartitionCheckFilesMatchMetadata(partitionSize);
-                        }
+                    if (validateDataFiles && partitionSize > 0L) {
+                        attachPartitionCheckFilesMatchMetadata(partitionSize);
                     }
 
                     if (ff.rename(detachedPath.$(), path.$()) == Files.FILES_RENAME_OK) {
