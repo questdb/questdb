@@ -39,6 +39,7 @@ import java.io.IOException;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxnCatalog implements Closeable {
+    private static final int MEMORY_TAG = MemoryTag.MMAP_SEQUENCER;
     private final FilesFacade ff;
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
@@ -66,6 +67,7 @@ public class TxnCatalog implements Closeable {
 
         txnMem.putInt(METADATA_WALID);
         txnMem.putLong(newStructureVersion);
+        txnMem.jumpTo(++maxTxn * RECORD_SIZE + HEADER_SIZE);
 
         long varMemBegin = txnMetaMem.getAppendOffset();
         txnMetaMem.putInt(0);
@@ -75,7 +77,7 @@ public class TxnCatalog implements Closeable {
         txnMetaMemIndex.putLong(varMemBegin + len);
 
         Unsafe.getUnsafe().storeFence();
-        txnMem.putLong(MAX_TXN_OFFSET, ++maxTxn);
+        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);
         txnMem.putLong(MAX_STRUCTURE_VERSION_OFFSET, newStructureVersion);
         txnMem.putLong(TXN_META_SIZE_OFFSET, varMemBegin + len);
 
@@ -121,9 +123,9 @@ public class TxnCatalog implements Closeable {
     }
 
     void open(Path path) {
-        openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
-        openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MemoryTag.MMAP_SEQUENCER);
-        openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MemoryTag.MMAP_SEQUENCER);
+        openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MEMORY_TAG);
+        openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MEMORY_TAG);
+        openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MEMORY_TAG);
 
         maxTxn = txnMem.getLong(MAX_TXN_OFFSET);
         long maxStructureVersion = txnMetaMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);
@@ -163,7 +165,7 @@ public class TxnCatalog implements Closeable {
             this.fd = fd;
             this.txnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
-                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_SEQUENCER);
+                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MEMORY_TAG);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             }
             txn = txnLo;
@@ -171,7 +173,7 @@ public class TxnCatalog implements Closeable {
 
         @Override
         public void close() {
-            ff.munmap(address, getMappedLen(), MemoryTag.MMAP_SEQUENCER);
+            ff.munmap(address, getMappedLen(), MEMORY_TAG);
         }
 
         @Override
@@ -187,7 +189,7 @@ public class TxnCatalog implements Closeable {
                 long oldSize = getMappedLen();
                 this.txnCount = newTxnCount;
                 long newSize = getMappedLen();
-                this.address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_SEQUENCER);
+                this.address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MEMORY_TAG);
 
                 if (this.txnOffset + 2 * RECORD_SIZE <= newSize) {
                     this.txnOffset += RECORD_SIZE;
@@ -231,6 +233,7 @@ public class TxnCatalog implements Closeable {
         private long txnMetaOffsetHi;
         private long txnMetaAddress;
         private MemorySerializer serializer;
+        private FilesFacade ff;
 
         @Override
         public void close() throws IOException {
@@ -262,12 +265,13 @@ public class TxnCatalog implements Closeable {
                 long fdTxnMetaIndex,
                 long fdTxnMeta) {
             reset();
+            this.ff = ff;
             this.serializer = serializer;
             txnMetaOffset = ff.readULong(fdTxnMetaIndex, fromStructureVersion * Long.BYTES);
             if (txnMetaOffset > -1L) {
                 txnMetaOffsetHi = ff.readULong(fdTxn, TXN_META_SIZE_OFFSET);
                 if (txnMetaOffsetHi > txnMetaOffset) {
-                    txnMetaAddress = ff.mmap(fdTxnMeta, txnMetaOffsetHi, 0L, Files.MAP_RO, MemoryTag.MMAP_SEQUENCER);
+                    txnMetaAddress = ff.mmap(fdTxnMeta, txnMetaOffsetHi, 0L, Files.MAP_RO, MEMORY_TAG);
                     if (txnMetaAddress < 0) {
                         txnMetaAddress = 0;
                         reset();
@@ -280,9 +284,9 @@ public class TxnCatalog implements Closeable {
             throw CairoException.instance(0).put("expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');
         }
 
-        private void reset() {
+        public void reset() {
             if (txnMetaAddress > 0) {
-                Unsafe.free(txnMetaAddress, txnMetaOffsetHi, MemoryTag.MMAP_SEQUENCER);
+                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MEMORY_TAG);
                 txnMetaAddress = 0;
             }
             txnMetaOffset = 0;

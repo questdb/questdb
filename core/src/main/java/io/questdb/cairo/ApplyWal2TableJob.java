@@ -25,11 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.WalWriter.WAL_NAME_BASE;
 
@@ -37,23 +39,25 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public final static String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final CairoEngine engine;
+    private SequencerStructureChangeCursor reusableStructureChangeCursor;
 
     public ApplyWal2TableJob(CairoEngine engine) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
     }
 
-    public static void processWalTxnNotification(
+    public static SequencerStructureChangeCursor processWalTxnNotification(
             CharSequence tableName,
             int tableId,
             long txn,
-            CairoEngine engine
+            CairoEngine engine,
+            @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
     ) {
         // This is work steeling, security context is checked on writing to the WAL
         // and can be ignored here
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
             assert writer.getMetadata().getId() == tableId;
-            applyOutstandingWalTransactions(writer, engine);
+            return applyOutstandingWalTransactions(writer, engine, reusableStructureChangeCursor);
         } catch (EntryUnavailableException tableBusy) {
             // This is all good, someone else will apply the data
             if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
@@ -67,9 +71,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .$(", errno=").$(ex.getErrno())
                     .I$();
         }
+        return null;
     }
 
-    private static void applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine) {
+
+    private static SequencerStructureChangeCursor applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine, @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor) {
         Sequencer sequencer = engine.getSequencer(writer.getTableName());
         long lastCommitted = writer.getTxn();
 
@@ -88,9 +94,40 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw CairoException.instance(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
                 tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walid).slash().put(segmentId);
-                writer.processWalCommit(tempPath, segmentTxn);
+                if (walid != TxnCatalog.METADATA_WALID) {
+                    writer.processWalCommit(tempPath, segmentTxn);
+                } else {
+                    // This is metadata change
+                    // to be taken from Sequencer directly
+                    final int newStructureVersion = segmentId;
+                    if (writer.getStructureVersion() != newStructureVersion - 1) {
+                        throw CairoException.instance(0)
+                                .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
+                                .put(", tableStructureVersion=").put(writer.getStructureVersion())
+                                .put(']');
+                    }
+                    reusableStructureChangeCursor = sequencer.getStructureChangeCursor(reusableStructureChangeCursor, newStructureVersion - 1);
+                    if (reusableStructureChangeCursor.hasNext()) {
+                        try {
+                            reusableStructureChangeCursor.next().apply(writer, true);
+                        } catch (SqlException e) {
+                            throw CairoException.instance(0)
+                                    .put("cannot apply structure change from WAL to table. ").put(e.getFlyweightMessage());
+                        }
+                    } else {
+                        throw CairoException.instance(0)
+                                .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
+                                .put(newStructureVersion)
+                                .put(']');
+                    }
+                }
+            }
+        } finally {
+            if (reusableStructureChangeCursor != null) {
+                reusableStructureChangeCursor.reset();
             }
         }
+        return reusableStructureChangeCursor;
     }
 
     @Override
@@ -100,7 +137,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             int tableId = walTxnNotificationTask.getTableId();
             CharSequence tableName = walTxnNotificationTask.getTableName();
             long txn = walTxnNotificationTask.getTxn();
-            processWalTxnNotification(tableName, tableId, txn, engine);
+            reusableStructureChangeCursor = processWalTxnNotification(tableName, tableId, txn, engine, reusableStructureChangeCursor);
         } finally {
             subSeq.done(cursor);
         }

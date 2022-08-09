@@ -387,7 +387,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             copyWriter.commit();
             walTxn = walWriter.commit();
         }
-        ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, walTxn, engine);
+        ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, walTxn, engine, null);
     }
 
     @SuppressWarnings("SameParameterValue")

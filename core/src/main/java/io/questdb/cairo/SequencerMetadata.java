@@ -141,6 +141,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         final String name = columnName.toString();
         columnNameIndexMap.put(name, columnNameIndexMap.size());
         columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
+        columnCount++;
     }
 
     private void reset() {

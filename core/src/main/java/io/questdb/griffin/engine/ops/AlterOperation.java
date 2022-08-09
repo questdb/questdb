@@ -28,15 +28,17 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
-import org.jetbrains.annotations.NotNull;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static String CMD_NAME = "ALTER TABLE";
@@ -194,23 +196,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         clearCommandCorrelationId();
     }
 
-    public void deserializeBody(MemoryR buffer, long offset) {
+    public void deserializeBody(MemoryCR buffer, long offset) {
         long readPtr = offset;
         long hi = offset + buffer.size();
         command = buffer.getShort(readPtr);
         readPtr += 2;
-        tableNamePosition = Unsafe.getUnsafe().getInt(readPtr);
+        tableNamePosition = buffer.getInt(readPtr);
         readPtr += 4;
-        int longSize = Unsafe.getUnsafe().getInt(readPtr);
+        int longSize = buffer.getInt(readPtr);
         readPtr += 4;
         if (longSize < 0 || readPtr + longSize * 8L >= hi) {
             throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [2]");
         }
         for (int i = 0; i < longSize; i++) {
-            longList.add(Unsafe.getUnsafe().getLong(readPtr));
+            longList.add(buffer.getLong(readPtr));
             readPtr += 8;
         }
-        directCharList.of(readPtr, hi);
+        directCharList.of(buffer, readPtr, hi);
         charSequenceList = directCharList;
     }
 
@@ -548,23 +550,24 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             return offsets.size() / 2;
         }
 
-        public long of(long lo, long hi) {
+        public long of(MemoryCR buffer, long lo, long hi) {
             long initialAddress = lo;
             if (lo + Integer.BYTES >= hi) {
                 throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [11]");
             }
-            int size = Unsafe.getUnsafe().getInt(lo);
+            int size = buffer.getInt(lo);
             lo += 4;
             for (int i = 0; i < size; i++) {
-                if (lo + Integer.BYTES >= hi) {
+                if (lo + Integer.BYTES > hi) {
                     throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [12]");
                 }
-                int stringSize = 2 * Unsafe.getUnsafe().getInt(lo);
+                int stringSize = 2 * buffer.getInt(lo);
                 lo += 4;
-                if (lo + stringSize >= hi) {
+                if (lo + stringSize > hi) {
                     throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [13]");
                 }
-                offsets.add(lo, lo + stringSize);
+                long address = buffer.addressOf(lo);
+                offsets.add(address, address + stringSize);
                 lo += stringSize;
             }
             return lo - initialAddress;

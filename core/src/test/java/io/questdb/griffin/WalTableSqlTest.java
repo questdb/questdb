@@ -115,17 +115,18 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             ) {
 
                 insertMethod.execute();
-                compile("alter table " + tableName + " add column sym3 symbol");
+                compile("alter table " + tableName + " add column jjj int");
                 insertMethod.commit();
             }
 
-            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 'sym3val')");
+            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234)");
 
             drainWalQueue();
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
                     "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n");
+
         });
     }
 

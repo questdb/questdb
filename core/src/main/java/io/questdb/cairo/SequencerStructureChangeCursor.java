@@ -32,4 +32,6 @@ public interface SequencerStructureChangeCursor extends Closeable {
     boolean hasNext();
 
     AlterOperation next();
+
+    void reset();
 }

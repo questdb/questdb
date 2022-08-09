@@ -293,7 +293,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                                 // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
                                 subSeq.done(cursor);
 
-                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, taskTxn, this);
+                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, taskTxn, this, null);
                             }
                         }
                     } catch (Throwable throwable) {
