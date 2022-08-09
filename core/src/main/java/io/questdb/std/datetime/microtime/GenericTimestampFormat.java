@@ -259,7 +259,15 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     sink.put(dayOfWeek);
                     break;
-
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                    sink.put(Timestamps.getDayOfYear(micros));
+                    break;
+                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
+                    sink.put(Timestamps.getWeekOfMonth(micros));
+                    break;
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                    sink.put(Timestamps.getWeekOfYear(micros));
+                    break;
                 // MONTH
 
                 case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
@@ -589,6 +597,9 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
                     TimestampFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday
                     Numbers.parseInt(in, pos, ++pos);
