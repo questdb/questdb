@@ -672,7 +672,6 @@ public class TableWriter implements Closeable {
 
                     checkAttachablePartitionMetadata();
 
-                    // TODO do this via hard link
                     if (ff.rename(detachedPath, path) == Files.FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                         rollbackRename = true;
@@ -1217,10 +1216,10 @@ public class TableWriter implements Closeable {
         } else {
             LOG.info()
                     .$("not my command [cmdTableId=").$(cmd.getTableId())
-                            .$(", cmdTableName=").$(cmd.getTableName())
-                            .$(", myTableId=").$(getMetadata().getId())
-                            .$(", myTableName=").$(tableName)
-                            .I$();
+                    .$(", cmdTableName=").$(cmd.getTableName())
+                    .$(", myTableId=").$(getMetadata().getId())
+                    .$(", myTableName=").$(tableName)
+                    .I$();
             commandSubSeq.done(cursor);
         }
     }
