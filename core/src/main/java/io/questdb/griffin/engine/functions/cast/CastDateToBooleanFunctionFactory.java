@@ -59,7 +59,7 @@ public class CastDateToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getDate(rec) == 1;
+            return arg.getDate(rec) != 0;
         }
     }
 }

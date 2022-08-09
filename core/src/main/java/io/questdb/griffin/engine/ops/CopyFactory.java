@@ -24,29 +24,113 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+import io.questdb.cutlass.text.TextImportExecutionContext;
+import io.questdb.cutlass.text.TextImportRequestTask;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 
+/**
+ * Executes COPY statement lazily, i.e. on record cursor initialization, to play
+ * nicely with server-side statements in PG Wire and query caching in general.
+ */
 public class CopyFactory extends AbstractRecordCursorFactory {
+
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final StringValueRecord record = new StringValueRecord();
+
+    private final MessageBus messageBus;
+    private final TextImportExecutionContext textImportExecutionContext;
+    private final String tableName;
+    private final String fileName;
+    private final boolean headerFlag;
+    private final String timestampColumn;
+    private final String timestampFormat;
+    private final byte delimiter;
+    private final int partitionBy;
+    private final int atomicity;
+
+    private final StringSink importIdSink = new StringSink();
+    private final ImportIdRecord record = new ImportIdRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
 
-    public CopyFactory(String importId) {
+    public CopyFactory(
+            MessageBus messageBus,
+            TextImportExecutionContext textImportExecutionContext,
+            String tableName,
+            String fileName,
+            CopyModel model
+    ) {
         super(METADATA);
-        record.setValue(importId);
+        this.messageBus = messageBus;
+        this.textImportExecutionContext = textImportExecutionContext;
+        this.tableName = tableName;
+        this.fileName = fileName;
+        this.headerFlag = model.isHeader();
+        this.timestampColumn = Chars.toString(model.getTimestampColumnName());
+        this.timestampFormat = Chars.toString(model.getTimestampFormat());
+        this.delimiter = model.getDelimiter();
+        this.partitionBy = model.getPartitionBy();
+        this.atomicity = model.getAtomicity();
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
+        final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
+        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
+
+        long inProgressImportId = textImportExecutionContext.getActiveImportId();
+        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
+            long processingCursor = textImportRequestPubSeq.next();
+            if (processingCursor > -1) {
+                final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
+
+                long importId = textImportExecutionContext.assignActiveImportId();
+                task.of(
+                        importId,
+                        tableName,
+                        fileName,
+                        headerFlag,
+                        timestampColumn,
+                        delimiter,
+                        timestampFormat,
+                        partitionBy,
+                        atomicity
+                );
+
+                circuitBreaker.reset();
+                textImportRequestPubSeq.done(processingCursor);
+
+                importIdSink.clear();
+                Numbers.appendHex(importIdSink, importId, true);
+                record.setValue(importIdSink);
+                cursor.toTop();
+                return cursor;
+            } else {
+                throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
+            }
+        }
+
+        importIdSink.clear();
+        Numbers.appendHex(importIdSink, inProgressImportId, true);
+        throw SqlException.$(0, "Another import request is in progress. ")
+                .put("[activeImportId=")
+                .put(importIdSink)
+                .put(']');
     }
 
     @Override
@@ -54,10 +138,10 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private static class StringValueRecord implements Record {
-        private String value;
+    private static class ImportIdRecord implements Record {
+        private CharSequence value;
 
-        public void setValue(String value) {
+        public void setValue(CharSequence value) {
             this.value = value;
         }
 
@@ -67,13 +151,14 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public CharSequence getStrB(int col) {
-            return getStr(col);
+        public int getStrLen(int col) {
+            return value.length();
         }
 
         @Override
-        public int getStrLen(int col) {
-            return value.length();
+        public CharSequence getStrB(int col) {
+            // the sink is immutable
+            return getStr(col);
         }
     }
 

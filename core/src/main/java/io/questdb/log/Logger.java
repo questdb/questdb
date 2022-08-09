@@ -166,6 +166,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $hexPadded(long value) {
+        Numbers.appendHex(sink(), value, true);
+        return this;
+    }
+
+    @Override
     public LogRecord $(Throwable e) {
         if (e != null) {
             sink().put(Misc.EOL).put(e);

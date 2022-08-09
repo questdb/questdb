@@ -102,9 +102,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final TextImportJob localImportJob;
     private int taskCount;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
-    //input params end
     //path to import directory under, usually $inputWorkRoot/$tableName
     private CharSequence importRoot;
+    private long importId;
     //input params start
     private CharSequence tableName;
     //name of file to process in inputRoot dir
@@ -116,6 +116,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private TimestampAdapter timestampAdapter;
     private boolean forceHeader;
     private int atomicity;
+    //input params end
     //index of timestamp column in input file
     private int timestampIndex;
     private boolean targetTableCreated;
@@ -163,11 +164,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
         this.configuration = cairoEngine.getConfiguration();
 
-        CairoConfiguration cfg = this.cairoEngine.getConfiguration();
-
-        this.ff = cfg.getFilesFacade();
-        this.inputRoot = cfg.getSqlCopyInputRoot();
-        this.inputWorkRoot = cfg.getSqlCopyInputWorkRoot();
+        this.ff = configuration.getFilesFacade();
+        this.inputRoot = configuration.getSqlCopyInputRoot();
+        this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
 
         TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
@@ -234,6 +233,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @Override
     public void clear() {
+        importId = -1;
         chunkStats.clear();
         indexChunkStats.clear();
         partitionKeysAndSizes.clear();
@@ -281,16 +281,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void of(
             CharSequence tableName,
             CharSequence inputFileName,
+            long importId,
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
-            CharSequence tsFormat,
+            CharSequence timestampFormat,
             boolean forceHeader,
             ExecutionCircuitBreaker circuitBreaker,
             int atomicity
     ) {
         clear();
-
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
         this.importRoot = tmpPath.of(inputWorkRoot).concat(tableName).toString();
@@ -298,10 +298,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.timestampColumn = timestampColumn;
         this.partitionBy = partitionBy;
         this.columnDelimiter = columnDelimiter;
-        if (tsFormat != null) {
-            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(tsFormat);
-            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
-                    configuration.getTextConfiguration().getDefaultDateLocale());
+        if (timestampFormat != null) {
+            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
+                    false,
+                    dateFormat,
+                    configuration.getTextConfiguration().getDefaultDateLocale()
+            );
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
@@ -309,14 +312,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.phase = TextImportTask.PHASE_SETUP;
         this.targetTableStatus = -1;
         this.targetTableCreated = false;
-        this.atomicity = Atomicity.isValid(atomicity) ? atomicity : Atomicity.SKIP_COL;
-
+        this.atomicity = Atomicity.isValid(atomicity) ? atomicity : Atomicity.SKIP_ROW;
+        this.importId = importId;
         inputFilePath.of(inputRoot).concat(inputFileName).$();
     }
 
+    @TestOnly
     public void of(
             CharSequence tableName,
             CharSequence inputFileName,
+            long importId,
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
@@ -327,6 +332,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         of(
                 tableName,
                 inputFileName,
+                importId,
                 partitionBy,
                 columnDelimiter,
                 timestampColumn,
@@ -341,19 +347,21 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void of(
             CharSequence tableName,
             CharSequence inputFileName,
+            long importId,
             int partitionBy,
             byte columnDelimiter,
             CharSequence timestampColumn,
-            CharSequence tsFormat,
+            CharSequence timestampFormat,
             boolean forceHeader
     ) {
         of(
                 tableName,
                 inputFileName,
+                importId,
                 partitionBy,
                 columnDelimiter,
                 timestampColumn,
-                tsFormat,
+                timestampFormat,
                 forceHeader,
                 null,
                 Atomicity.SKIP_COL
@@ -361,7 +369,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public void process() throws TextImportException {
-        long startMs = getCurrentTimeMs();
+        final long startMs = getCurrentTimeMs();
 
         long fd = -1;
         try {
@@ -421,7 +429,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         long endMs = getCurrentTimeMs();
-        LOG.info().$("import complete [file='").$(inputFileName).$("', time=").$((endMs - startMs) / 1000).$("s").I$();
+        LOG.info()
+                .$("import complete [importId=").$hexPadded(importId)
+                .$(", file=`").$(inputFilePath).$('`')
+                .$("', time=").$((endMs - startMs) / 1000).$("s").I$();
     }
 
     public void setMinChunkSize(int minChunkSize) {
@@ -550,7 +561,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void collectChunkStats(final TextImportTask task) {
         updateStatus(task);
-        final TextImportTask.PhaseBoundaryCheck phaseBoundaryCheck = task.getCountQuotesStage();
+        final TextImportTask.PhaseBoundaryCheck phaseBoundaryCheck = task.getCountQuotesPhase();
         final int chunkOffset = 5 * task.getChunkIndex();
         chunkStats.set(chunkOffset, phaseBoundaryCheck.getQuoteCount());
         chunkStats.set(chunkOffset + 1, phaseBoundaryCheck.getNewLineCountEven());
@@ -562,21 +573,21 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void collectDataImportStats(final TextImportTask task) {
         updateStatus(task);
 
-        final TextImportTask.PhasePartitionImport stage = task.getImportPartitionDataStage();
-        LongList rows = stage.getImportedRows();
+        final TextImportTask.PhasePartitionImport phase = task.getImportPartitionDataPhase();
+        LongList rows = phase.getImportedRows();
 
         for (int i = 0, n = rows.size(); i < n; i += 2) {
             partitions.get((int) rows.get(i)).importedRows = rows.get(i + 1);
         }
-        rowsHandled += stage.getRowsHandled();
-        rowsImported += stage.getRowsImported();
-        phaseErrors += stage.getErrors();
-        errors += stage.getErrors();
+        rowsHandled += phase.getRowsHandled();
+        rowsImported += phase.getRowsImported();
+        phaseErrors += phase.getErrors();
+        errors += phase.getErrors();
     }
 
     private void collectIndexStats(final TextImportTask task) {
         updateStatus(task);
-        final TextImportTask.PhaseIndexing phaseIndexing = task.getBuildPartitionIndexStage();
+        final TextImportTask.PhaseIndexing phaseIndexing = task.getBuildPartitionIndexPhase();
         final LongList keys = phaseIndexing.getPartitionKeysAndSizes();
         this.partitionKeysAndSizes.add(keys);
         this.linesIndexed += phaseIndexing.getLineCount();
@@ -787,7 +798,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         final int textAnalysisMaxLines = configuration.getTextConfiguration().getTextAnalysisMaxLines();
         int len = configuration.getSqlCopyBufferSize();
-        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_PARALLEL_IMPORT);
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_IMPORT);
 
         try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
             long n = ff.read(fd, buf, len, 0);
@@ -828,7 +839,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         } catch (TextException e) {
             throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage());
         } finally {
-            Unsafe.free(buf, len, MemoryTag.NATIVE_PARALLEL_IMPORT);
+            Unsafe.free(buf, len, MemoryTag.NATIVE_IMPORT);
         }
     }
 
@@ -843,6 +854,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             indexChunkStats.add(0);
             indexChunkStats.add(fileLength);
             indexChunkStats.add(0);
+            phaseEpilogue(TextImportTask.PHASE_BOUNDARY_CHECK);
             return indexChunkStats;
         }
 
@@ -926,7 +938,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         throwErrorIfNotOk();
         long endMs = getCurrentTimeMs();
         LOG.info()
-                .$("finished [phase=").$(phase)
+                .$("finished [importId=").$hexPadded(importId)
+                .$(", phase=").$(TextImportTask.getPhaseName(phase))
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
                 .$(", errors=").$(phaseErrors)
@@ -1057,7 +1070,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void phasePrologue(byte phase) {
         phaseErrors = 0;
-        LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').$(", workerCount=").$(workerCount).I$();
+        LOG.info()
+                .$("started [importId=").$hexPadded(importId)
+                .$(", phase=").$(TextImportTask.getPhaseName(phase))
+                .$(", file=`").$(inputFilePath)
+                .$("`, workerCount=").$(workerCount).I$();
         updatePhaseStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }
