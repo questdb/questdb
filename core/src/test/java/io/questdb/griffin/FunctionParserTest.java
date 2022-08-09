@@ -56,19 +56,22 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.ColumnType.NO_OVERLOAD;
+
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
-    public void overloadBetweenNullAndAnyTypeIsZero() {
-        for (short type = ColumnType.BOOLEAN; type <= ColumnType.MAX; type++) {
-            Assert.assertEquals(0, ColumnType.overloadDistance(ColumnType.NULL, type));
-            Assert.assertEquals(0, ColumnType.overloadDistance(type, ColumnType.NULL));
+    public void testOverloadBetweenNullAndAnyType() {
+        for (short type = ColumnType.BOOLEAN; type < ColumnType.MAX; type++) {
+            String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
+            Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
+            Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
         }
     }
 
     @Test
     public void overloadFromCharToDoubleDoesNotExist() {
-        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), ColumnType.NO_OVERLOAD);
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), NO_OVERLOAD);
     }
 
     @Test

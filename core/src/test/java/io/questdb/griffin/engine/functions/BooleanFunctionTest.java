@@ -96,38 +96,38 @@ public class BooleanFunctionTest {
 
     @Test
     public void testGetByte() {
-        Assert.assertEquals(1, functionA.getByte(null));
-        Assert.assertEquals(0, functionB.getByte(null));
+        Assert.assertEquals(1, functionB.getByte(null));
+        Assert.assertEquals(0, functionA.getByte(null));
     }
 
     @Test
     public void testGetDate() {
-        Assert.assertEquals(1, functionA.getDate(null));
-        Assert.assertEquals(0, functionB.getDate(null));
+        Assert.assertEquals(1, functionB.getDate(null));
+        Assert.assertEquals(0, functionA.getDate(null));
     }
 
     @Test
     public void testGetDouble() {
-        Assert.assertEquals(1.0, functionA.getDouble(null), 0.000001);
-        Assert.assertEquals(0.0, functionB.getDouble(null), 0.000001);
+        Assert.assertEquals(1.0, functionB.getDouble(null), 0.000001);
+        Assert.assertEquals(0.0, functionA.getDouble(null), 0.000001);
     }
 
     @Test
     public void testGetFloat() {
-        Assert.assertEquals(1.0, functionA.getFloat(null), 0.000001);
-        Assert.assertEquals(0.0, functionB.getFloat(null), 0.000001);
+        Assert.assertEquals(1.0, functionB.getFloat(null), 0.000001);
+        Assert.assertEquals(0.0, functionA.getFloat(null), 0.000001);
     }
 
     @Test
     public void testGetInt() {
-        Assert.assertEquals(1, functionA.getInt(null));
-        Assert.assertEquals(0, functionB.getInt(null));
+        Assert.assertEquals(1, functionB.getInt(null));
+        Assert.assertEquals(0, functionA.getInt(null));
     }
 
     @Test
     public void testGetLong() {
-        Assert.assertEquals(1, functionA.getLong(null));
-        Assert.assertEquals(0, functionB.getLong(null));
+        Assert.assertEquals(1, functionB.getLong(null));
+        Assert.assertEquals(0, functionA.getLong(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -137,8 +137,8 @@ public class BooleanFunctionTest {
 
     @Test
     public void testGetShort() {
-        Assert.assertEquals(1, functionA.getShort(null));
-        Assert.assertEquals(0, functionB.getShort(null));
+        Assert.assertEquals(1, functionB.getShort(null));
+        Assert.assertEquals(0, functionA.getShort(null));
     }
 
     @Test
@@ -185,8 +185,8 @@ public class BooleanFunctionTest {
 
     @Test
     public void testGetTimestamp() {
-        Assert.assertEquals(1, functionA.getTimestamp(null));
-        Assert.assertEquals(0, functionB.getTimestamp(null));
+        Assert.assertEquals(1, functionB.getTimestamp(null));
+        Assert.assertEquals(0, functionA.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

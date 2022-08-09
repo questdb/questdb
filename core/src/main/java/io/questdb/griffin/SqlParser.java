@@ -64,7 +64,7 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewritePgCast0Ref = this::rewritePgCast0;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private boolean subQueryMode = false;
 
@@ -872,6 +872,15 @@ public final class SqlParser {
                 return model;
             }
 
+            if (prevModel.getNestedModel() != null) {
+                if (prevModel.getNestedModel().getOrderByPosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getOrderByPosition(), "unexpected token 'order'");
+                }
+                if (prevModel.getNestedModel().getLimitPosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getLimitPosition(), "unexpected token 'limit'");
+                }
+            }
+
             if (isUnionKeyword(tok)) {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
@@ -943,8 +952,11 @@ public final class SqlParser {
             }
         } else {
             lexer.unparseLast();
-            model.addBottomUpColumn(SqlUtil.nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
-            model.setArtificialStar(true);
+            SqlUtil.addSelectStar(
+                    model,
+                    queryColumnPool,
+                    expressionNodePool
+            );
         }
 
         QueryModel nestedModel = queryModelPool.next();
@@ -1276,14 +1288,15 @@ public final class SqlParser {
         // expect [order by]
 
         if (tok != null && isOrderKeyword(tok)) {
+            model.setOrderByPosition(lexer.lastTokenPosition());
             expectBy(lexer);
             do {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
 
                 ExpressionNode n = expr(lexer, model);
-                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT)) {
-                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
                 tok = optTok(lexer);
@@ -1311,6 +1324,7 @@ public final class SqlParser {
 
         // expect [limit]
         if (tok != null && isLimitKeyword(tok)) {
+            model.setLimitPosition(lexer.lastTokenPosition());
             ExpressionNode lo = expr(lexer, model);
             ExpressionNode hi = null;
 
@@ -1650,11 +1664,11 @@ public final class SqlParser {
 
                         if (isDescKeyword(tok)) {
                             ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
-                            tok = tok(lexer, "',' or ')'");
+                            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                         } else {
                             ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
                             if (isAscKeyword(tok)) {
-                                tok = tok(lexer, "',' or ')'");
+                                tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                             }
                         }
                     } while (Chars.equals(tok, ','));
@@ -1685,6 +1699,11 @@ public final class SqlParser {
             }
 
             col.setAlias(alias);
+
+            // correlated sub-queries do not have expr.token values (they are null)
+            if (expr.type == ExpressionNode.QUERY) {
+                expr.token = alias;
+            }
             model.addBottomUpColumn(colPosition, col, false);
 
             if (tok == null || Chars.equals(tok, ';')) {
@@ -1973,26 +1992,37 @@ public final class SqlParser {
     }
 
     private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
-        return rewriteConcat(rewriteCase(rewriteCount(rewriteTypeQualifier(parent))));
+        return rewritePgCast(
+                rewriteConcat(
+                        rewriteCase(
+                                rewriteCount(
+                                        parent
+                                )
+                        )
+                )
+        );
     }
 
-    private ExpressionNode rewriteTypeQualifier(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteTypeQualifier0Ref);
+    private ExpressionNode rewritePgCast(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewritePgCast0Ref);
         return parent;
     }
 
-    /**
-     * Rewrites 'abc'::blah - type qualifier
-     *
-     * @param node expression node, provided by tree walking algo
-     */
-    private void rewriteTypeQualifier0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && isColonColon(node.token)) {
-            if (node.paramCount == 2) {
-                ExpressionNode that = node.rhs;
-                if (that.type == ExpressionNode.LITERAL) {
-                    that.type = ExpressionNode.MEMBER_ACCESS;
-                }
+    private void rewritePgCast0(ExpressionNode node) {
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isColonColon(node.token)) {
+            node.token = "cast";
+            node.type = ExpressionNode.FUNCTION;
+            node.rhs.type = ExpressionNode.CONSTANT;
+            // In PG x::float casts x to "double precision" type
+            if (SqlKeywords.isFloatKeyword(node.rhs.token) || SqlKeywords.isFloat8Keyword(node.rhs.token)) {
+                node.rhs.token = "double";
+            } else if (SqlKeywords.isFloat4Keyword(node.rhs.token)) {
+                node.rhs.token = "float";
+            } else if (SqlKeywords.isDateKeyword(node.rhs.token)) {
+                node.token = "to_pg_date";
+                node.rhs = node.lhs;
+                node.lhs = null;
+                node.paramCount = 1;
             }
         }
     }

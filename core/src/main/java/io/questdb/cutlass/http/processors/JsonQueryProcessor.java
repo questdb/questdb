@@ -75,17 +75,21 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, null, null);
+        this(configuration, engine, workerCount, workerCount, null, null);
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
+            int sharedWorkerCount,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
-        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache, snapshotAgent), new SqlExecutionContextImpl(engine, workerCount));
+        this(configuration,
+                engine,
+                new SqlCompiler(engine, functionFactoryCache, snapshotAgent),
+                new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount));
     }
 
     public JsonQueryProcessor(

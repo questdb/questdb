@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
@@ -2640,11 +2641,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
         executeWithPool(1, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try {
-                compiler.compile("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+                runAndFetchImportId("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", compiler, sqlExecutionContext);
                 engine.getTextImportExecutionContext().resetActiveImportId();
-                compiler.compile("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+                runAndFetchImportId("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", compiler, sqlExecutionContext);
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. Another import request may be in progress."));
             }
@@ -2657,6 +2659,14 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             result.add(chunk);
         }
         return result;
+    }
+
+    private String runAndFetchImportId(String copySql, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(copySql, sqlExecutionContext);
+        try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getStr(0).toString();
+        }
     }
 
     private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextImportException {

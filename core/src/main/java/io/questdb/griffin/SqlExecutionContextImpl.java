@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
@@ -46,6 +45,7 @@ import org.jetbrains.annotations.Nullable;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
+    private final int sharedWorkerCount;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final MicrosecondClock clock;
@@ -62,10 +62,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int jitMode;
     private boolean cloneSymbolTables = false;
 
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
-        this.workerCount = workerCount;
         assert workerCount > 0;
+        this.workerCount = workerCount;
+        assert sharedWorkerCount > 0;
+        this.sharedWorkerCount = sharedWorkerCount;
         this.cairoEngine = cairoEngine;
         this.clock = cairoConfiguration.getMicrosecondClock();
         this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
@@ -76,6 +78,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
+    }
+
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
+       this(cairoEngine, workerCount, workerCount);
     }
 
     @Override
@@ -111,6 +117,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getWorkerCount() {
         return workerCount;
+    }
+
+    @Override
+    public int getSharedWorkerCount() {
+        return sharedWorkerCount;
     }
 
     @Override

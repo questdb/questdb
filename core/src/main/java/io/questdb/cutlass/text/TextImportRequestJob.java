@@ -229,7 +229,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 writer.commit();
             } catch (Throwable th) {
                 LOG.error()
-                        .$("could not update status table [importId=").$hex(task.getImportId())
+                        .$("could not update status table [importId=").$hexPadded(task.getImportId())
                         .$(", statusTableName=").$(statusTableName)
                         .$(", tableName=").$(task.getTableName())
                         .$(", fileName=").$(task.getFileName())

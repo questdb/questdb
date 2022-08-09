@@ -192,6 +192,12 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $hexPadded(long value) {
+        Numbers.appendHex(sink(), value, true);
+        return this;
+    }
+
+    @Override
     public boolean isEnabled() {
         return true;
     }

@@ -27,9 +27,15 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -584,12 +590,12 @@ public class UpdateTest extends AbstractGriffinTest {
 
             assertSql("up", "ts\txint\txbool\n" +
                     "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
-                    "1970-01-01T00:00:02.000000Z\t3\tfalse\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\tfalse\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\tfalse\n");
+                    "1970-01-01T00:00:01.000000Z\t2\ttrue\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n");
 
-            executeUpdate("UPDATE up SET xbool = true WHERE xint > 2");
+            executeUpdate("UPDATE up SET xbool = false WHERE xint = 2");
 
             assertSql("up", "ts\txint\txbool\n" +
                     "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
@@ -671,7 +677,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\tfalse\t0x02\n";
+                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
 
             executeUpdate("UPDATE up SET xint=xshort");
             assertSql("up", expected);
@@ -1411,6 +1417,52 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-08T10:40:00.000000Z\t\t13\t15\n" +
                     "1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2\n" +
                     "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n");
+        });
+    }
+
+    @Test
+    public void testUpdateGeohashColumnWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compile("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
+            compile("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
+            compile("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
+            compile("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x + 10 as lng2," +
+                    " rnd_geohash(5) as geo1," +
+                    " rnd_geohash(10) as geo2," +
+                    " rnd_geohash(25) as geo4," +
+                    " rnd_geohash(40) as geo8" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET geo1 = cast('q' as geohash(1c)), geo2 = 'qu', geo4='quest', geo8='questdb0' WHERE lng2 in (6, 8, 10, 12, 14)");
+
+            assertSql("up", "ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\t\t\t\t\n" +
+                    "1970-01-01T06:00:00.000000Z\t15\t2\t\t\t\t\n" +
+                    "1970-01-01T12:00:00.000000Z\t\t3\t\t\t\t\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\t4\t\t\t\t\n" +
+                    "1970-01-02T00:00:00.000000Z\t1\t5\t\t\t\t\n" +
+                    "1970-01-02T06:00:00.000000Z\t1\t6\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-02T12:00:00.000000Z\t190232\t7\t\t\t\t\n" +
+                    "1970-01-02T18:00:00.000000Z\t\t8\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-03T00:00:00.000000Z\t15\t9\t\t\t\t\n" +
+                    "1970-01-03T06:00:00.000000Z\t\t10\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-07T22:40:00.000000Z\t\t11\tn\tpn\t2gjm2\t7qgcr0y6\n" +
+                    "1970-01-08T04:40:00.000000Z\t\t12\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-08T10:40:00.000000Z\t\t13\t8\t1y\tcd0fj\t5h18p8vz\n" +
+                    "1970-01-08T16:40:00.000000Z\t\t14\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty\n");
         });
     }
 
