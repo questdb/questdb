@@ -678,7 +678,6 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
-        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         ioURingEnabled = false;
 
         CopyRunnable stmt = () -> runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +

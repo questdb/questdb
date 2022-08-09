@@ -651,9 +651,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put("_").put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableName);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDetachedRoot()).concat(tableName);
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
+
+                if (!ff.exists(dstPath.slash$())) {
+                    if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
+                        throw TextException.$("Cannot create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                    }
+                }
 
                 for (int j = lo; j < hi; j++) {
                     PartitionInfo partition = partitions.get(j);
@@ -662,10 +668,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                     final CharSequence partitionName = partition.name;
 
-                    srcPath.trimTo(srcPlen).concat(partitionName).slash$();
-                    dstPath.trimTo(dstPlen).concat(partitionName).slash$();
+                    srcPath.trimTo(srcPlen).concat(partitionName);
+                    dstPath.trimTo(dstPlen).concat(partitionName).put(TableUtils.ATTACHABLE_DIR_MARKER);
+                    int attachableLen = dstPath.length();
 
-                    int res = ff.rename(srcPath, dstPath);
+                    int res = ff.rename(srcPath.slash$(), dstPath.slash$());
+
                     if (res == Files.FILES_RENAME_ERR_EXDEV) {
                         LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
 
@@ -676,15 +684,26 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         ff.iterateDir(srcPath, (long name, int type) -> {
                             if (type == Files.DT_FILE) {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                                dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
+                                dstPath.trimTo(dstPlen).concat(partitionName).put(TableUtils.ATTACHABLE_DIR_MARKER).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
                                     throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                                 }
                             }
                         });
+                        srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
                     }
+
+                    // copy _meta and _cv to .attachable
+                    ff.copy(
+                            srcPath.parent().concat(TableUtils.META_FILE_NAME).$(),
+                            dstPath.trimTo(attachableLen).concat(TableUtils.META_FILE_NAME).$()
+                    );
+                    ff.copy(
+                            srcPath.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
+                            dstPath.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
+                    );
                 }
             }
         } catch (CairoException e) {
