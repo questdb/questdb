@@ -1057,8 +1057,10 @@ public final class TestUtils {
             }
         };
         WorkerPool pool = new WorkerPool(config, Metrics.disabled());
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
+        try {
             pool.assign(processingJob);
+            pool.freeOnHalt(processingJob);
             pool.start(null);
             task.run();
         } finally {

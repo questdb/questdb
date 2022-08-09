@@ -125,6 +125,7 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
+            int sharedWorkerCount,
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent
@@ -160,6 +161,7 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         workerPool.getWorkerCount(),
+                        sharedWorkerCount,
                         functionFactoryCache,
                         snapshotAgent
                 );
@@ -295,6 +297,7 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             boolean localPool,
+            int sharedWorkerCount,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
@@ -305,9 +308,10 @@ public class HttpServer implements Closeable {
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
+                sharedWorkerCount,
                 functionFactoryCache,
                 snapshotAgent);
-        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, jsonQueryProcessorBuilder, functionFactoryCache, snapshotAgent);
+        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, sharedWorkerCount, jsonQueryProcessorBuilder, functionFactoryCache, snapshotAgent);
         return s;
     }
 
@@ -316,6 +320,7 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             boolean localPool,
+            int sharedWorkerCount,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics

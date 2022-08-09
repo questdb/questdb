@@ -38,11 +38,10 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.core.StringContains;
 import org.jetbrains.annotations.Nullable;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -405,6 +404,49 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testFaultToleranceNPE() throws Exception {
+        withPool0((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            compiler.compile("create table x as (select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 100000) t from long_sequence(20)) timestamp(t) partition by hour", sqlExecutionContext);
+            final String sql = "select * from x where npe()";
+            try {
+                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {} // drain cursor until exception
+                        Assert.fail();
+                    }
+                }
+            } catch (Throwable e) {
+                MatcherAssert.assertThat(e.getMessage(), StringContains.containsString("timeout, query aborted"));
+            }
+        }, 4, 4);
+    }
+
+    @Test
+    public void testFaultToleranceWrongSharedWorkerConfiguration() throws Exception {
+        withPool0((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            compiler.compile("create table x as (select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 100000) t from long_sequence(20000)) timestamp(t) partition by hour", sqlExecutionContext);
+            final String sql = "select sum(a) from x where s='a'";
+            try {
+                // !!! test depends on thread scheduling
+                // should return the expected result or fail with a CairoException
+                assertQuery(compiler,
+                        "sum\n3354.3807411307785\n",
+                        sql,
+                        null,
+                        false,
+                        sqlExecutionContext,
+                        true
+                );
+            } catch (CairoException e) {
+                MatcherAssert.assertThat(e.getMessage(), StringContains.containsString("timeout, query aborted"));
+            }
+
+        }, 4, 1); // sharedWorkerCount < workerCount
+    }
+
     private void resetTaskCapacities() {
         // Tests that involve LIMIT clause may lead to only a fraction of the page frames being
         // reduced and/or collected before the factory gets closed. When that happens, row id and
@@ -675,6 +717,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     private void withPool(CustomisableRunnable runnable) throws Exception {
         int workerCount = 4;
+        withPool0(runnable, workerCount, workerCount);
+    }
+
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
         assertMemoryLeak(() -> {
 
             WorkerPool pool = new TestWorkerPool(workerCount);
@@ -694,6 +740,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     @Override
                     public int getWorkerCount() {
                         return workerCount;
+                    }
+
+                    @Override
+                    public int getSharedWorkerCount() {
+                        return sharedWorkerCount;
                     }
                 });
             } catch (Throwable e) {

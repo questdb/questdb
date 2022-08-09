@@ -1664,11 +1664,11 @@ public final class SqlParser {
 
                         if (isDescKeyword(tok)) {
                             ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
-                            tok = tok(lexer, "',' or ')'");
+                            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                         } else {
                             ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
                             if (isAscKeyword(tok)) {
-                                tok = tok(lexer, "',' or ')'");
+                                tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                             }
                         }
                     } while (Chars.equals(tok, ','));
