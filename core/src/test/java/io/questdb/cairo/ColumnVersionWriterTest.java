@@ -527,7 +527,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
         static String asTable(LongList cachedList) {
             sink.clear();
-            strF.format("%8s%8s%8s%8s%n", "pts", "colIdx", "colTxn", "colTop");
+            strF.format("%8s%8s%8s%8s\n", "pts", "colIdx", "colTxn", "colTop");
             for (int i = 0; i < cachedList.size(); i++) {
                 strF.format("%8d", cachedList.getQuick(i));
                 if (i > 0 && (i + 1) % ColumnVersionWriter.BLOCK_SIZE == 0) {

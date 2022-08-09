@@ -707,7 +707,6 @@ public class TableWriter implements Closeable {
                     }
                     detachedColumnVersionReader.ofRO(ff, other2);
                     detachedColumnVersionReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
-                    // TODO this needs to be rolled back if anything goes wrong
                     columnVersionWriter.upsertPartition(
                             timestamp,
                             detachedColumnVersionReader,
@@ -749,6 +748,7 @@ public class TableWriter implements Closeable {
                     LOG.info().$("fs error renaming partition folder [errno=").$(ff.errno())
                             .$(", from=").$(path).$(", to=").$(detachedPath).I$();
                 }
+                columnVersionWriter.readUnsafe(); // rollback
             }
             if (deleteExtraColumnFiles) {
                 // delete extra columns (present in .attachable - the table does not track/need them)
