@@ -471,7 +471,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 );
 
                 w.commit();
-                w.removePartitionColumns(0);
+                w.detachPartitionColumns(0);
                 w.commit();
 
                 String expected = "" +

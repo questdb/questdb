@@ -890,7 +890,7 @@ public class TableWriter implements Closeable {
                     nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
                 }
                 // all good, commit
-                columnVersionWriter.removePartitionColumns(timestamp);
+                columnVersionWriter.detachPartitionColumns(timestamp);
                 txWriter.beginPartitionSizeUpdate();
                 txWriter.removeAttachedPartitions(timestamp);
                 txWriter.setMinTimestamp(nextMinTimestamp);
@@ -1355,7 +1355,6 @@ public class TableWriter implements Closeable {
             nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
         }
         long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
-        columnVersionWriter.removePartitionColumns(timestamp);
         txWriter.beginPartitionSizeUpdate();
         txWriter.removeAttachedPartitions(timestamp);
         txWriter.setMinTimestamp(nextMinTimestamp);

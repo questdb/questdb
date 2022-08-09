@@ -35,6 +35,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private long version;
     private long size;
     private boolean hasChanges;
+
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
@@ -90,14 +91,14 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void removePartitionColumns(long partitionTimestamp) {
-        int start = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
-        if (start > -1) {
-            int end = start + BLOCK_SIZE;
+    public void detachPartitionColumns(long partitionTimestamp) {
+        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (index > -1) {
+            index += BLOCK_SIZE;
             int limit = cachedList.size();
-            while (end < limit && cachedList.getQuick(end) == partitionTimestamp) {
-                cachedList.setQuick(end + COLUMN_TOP_OFFSET, -1L);
-                end += BLOCK_SIZE;
+            while (index < limit && cachedList.getQuick(index) == partitionTimestamp) {
+                cachedList.setQuick(index + COLUMN_TOP_OFFSET, -1L);
+                index += BLOCK_SIZE;
             }
             hasChanges = true;
         }
