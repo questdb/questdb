@@ -140,7 +140,7 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
+                (conf, engine, workerPool, local, sharedWorkerCount, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
                         conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
                 ),
                 functionFactoryCache,
@@ -164,7 +164,7 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, cache, agent, m) -> new PGWireServer(
+                (conf, engine, workerPool, local, sharedWorkerCount, cache, agent, m) -> new PGWireServer(
                         conf,
                         engine,
                         workerPool,
@@ -174,7 +174,8 @@ public class PGWireServer implements Closeable {
                         new PGConnectionContextFactory(
                                 engine,
                                 conf,
-                                workerPool.getWorkerCount()
+                                workerPool.getWorkerCount(),
+                                sharedWorkerCount
                         )
                 ),
                 functionFactoryCache,
@@ -197,13 +198,13 @@ public class PGWireServer implements Closeable {
         private final ThreadLocal<WeakMutableObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
+        public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount, int sharedWorkerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(() ->
-                    new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount)), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount, sharedWorkerCount)), configuration.getConnectionPoolInitialCapacity()));
         }
 
-        protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
-            return new SqlExecutionContextImpl(engine, workerCount);
+        protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+            return new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
         }
 
         @Override

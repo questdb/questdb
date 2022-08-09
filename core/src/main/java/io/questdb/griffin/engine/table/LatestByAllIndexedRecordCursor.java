@@ -93,7 +93,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         rows.setCapacity(keyCount);
         GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
-        final int workerCount = executionContext.getWorkerCount();
+        final int workerCount = executionContext.getSharedWorkerCount();
 
         final long chunkSize = (keyCount + workerCount - 1) / workerCount;
         final int taskCount = (int) ((keyCount + chunkSize - 1) / chunkSize);
