@@ -41,7 +41,7 @@ public class SequencerImpl implements Sequencer {
 
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final CairoEngine engine;
-    private final CharSequence tableName;
+    private final String tableName;
     private final int rootLen;
     private final SequencerMetadata metadata;
     private final TxnCatalog catalog;
@@ -50,7 +50,7 @@ public class SequencerImpl implements Sequencer {
     private final BinaryAlterFormatter alterCommandWalFormatter = new BinaryAlterFormatter();
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
 
-    SequencerImpl(CairoEngine engine, CharSequence tableName) {
+    SequencerImpl(CairoEngine engine, String tableName) {
         this.engine = engine;
         this.tableName = tableName;
 
@@ -127,20 +127,21 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
+    @NotNull
     public SequencerStructureChangeCursor getStructureChangeCursor(
             @Nullable SequencerStructureChangeCursor reusableCursor,
-            int fromSchemaVersion
+            long fromSchemaVersion
     ) {
         return catalog.getStructureChangeCursor(reusableCursor, fromSchemaVersion, alterCommandWalFormatter);
     }
 
     @Override
     public void open() {
-        metadata.open(path, rootLen);
+        metadata.open(tableName, path, rootLen);
     }
 
     @Override
-    public long nextTxn(int expectedSchemaVersion, int walId, long segmentId, long segmentTxn) {
+    public long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn) {
         // Writing to Sequencer can happen from multiple threads, so we need to protect against concurrent writes.
         schemaLock.writeLock().lock();
         long txn;
@@ -202,7 +203,7 @@ public class SequencerImpl implements Sequencer {
     void create(int tableId, TableStructure model) {
         schemaLock.writeLock().lock();
         try {
-            metadata.create(model, path, rootLen, tableId);
+            metadata.create(model, tableName, path, rootLen, tableId);
         } finally {
             schemaLock.writeLock().unlock();
         }

@@ -22,46 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo.sql;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.QuietClosable;
 
-import java.io.Closeable;
+public interface TableRecordMetadata extends RecordMetadata, QuietClosable {
+    long getStructureVersion();
 
-public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> implements Closeable {
-    private final ObjectFactory<T> factory;
+    int getTableId();
 
-    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
-        this(factory, initSize, false);
-    }
+    String getTableName();
 
-    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize, boolean lazy) {
-        super(initSize);
-        this.factory = factory;
-        if (!lazy) {
-            fill();
-        }
-    }
-
-    @Override
-    public boolean push(T obj) {
-        return super.push(obj);
-    }
-
-    @Override
-    public void close() {
-        while (cache.size() > 0) {
-            Misc.free(cache.pop());
-        }
-    }
-
-    @Override
-    void close(T obj) {
-        Misc.free(obj);
-    }
-
-    @Override
-    T newInstance() {
-        return factory.newInstance();
-    }
+    boolean isWalEnabled();
 }

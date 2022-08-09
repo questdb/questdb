@@ -95,7 +95,7 @@ public class TxnCatalog implements Closeable {
     @NotNull
     public SequencerStructureChangeCursor getStructureChangeCursor(
             @Nullable SequencerStructureChangeCursor reusableCursor,
-            int fromStructureVersion,
+            long fromStructureVersion,
             MemorySerializer serializer
     ) {
         SequencerStructureChangeCursorImpl cursor = (SequencerStructureChangeCursorImpl) reusableCursor;
@@ -258,7 +258,7 @@ public class TxnCatalog implements Closeable {
         }
 
         public void of(
-                int fromStructureVersion,
+                long fromStructureVersion,
                 FilesFacade ff,
                 MemorySerializer serializer,
                 long fdTxn,

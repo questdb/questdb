@@ -62,7 +62,7 @@ public class WalWriter implements TableWriterFrontend {
     private final FilesFacade ff;
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
     private final int mkDirMode;
-    private final CharSequence tableName;
+    private final String tableName;
     private final String walName;
     private final int walId;
     private final SequencerMetadata metadata;
@@ -87,7 +87,7 @@ public class WalWriter implements TableWriterFrontend {
     private long lastSegmentTxn = -1L;
     private SequencerStructureChangeCursor structureChangeCursor;
 
-    public WalWriter(CharSequence tableName, int walId, Sequencer sequencer, CairoConfiguration configuration) {
+    public WalWriter(String tableName, int walId, Sequencer sequencer, CairoConfiguration configuration) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.sequencer = sequencer;
         this.configuration = configuration;
@@ -379,17 +379,23 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void applyStructureChanges() {
-        structureChangeCursor = sequencer.getStructureChangeCursor(structureChangeCursor, metadata.getStructureVersion());
-        while (structureChangeCursor.hasNext()) {
-            AlterOperation alterOperation = structureChangeCursor.next();
-            long metadataVersion = getStructureVersion();
-            try {
-                alterOperation.apply(walMetadataUpdater, true);
-            } catch (SqlException e) {
-                throw CairoException.instance(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+        try {
+            structureChangeCursor = sequencer.getStructureChangeCursor(structureChangeCursor, metadata.getStructureVersion());
+            while (structureChangeCursor.hasNext()) {
+                AlterOperation alterOperation = structureChangeCursor.next();
+                long metadataVersion = getStructureVersion();
+                try {
+                    alterOperation.apply(walMetadataUpdater, true);
+                } catch (SqlException e) {
+                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+                }
+                if (metadataVersion >= getStructureVersion()) {
+                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction, version unchanged");
+                }
             }
-            if (metadataVersion >= getStructureVersion()) {
-                throw CairoException.instance(0).put("could not apply table definition changes to the current transaction, version unchanged");
+        } finally {
+            if (structureChangeCursor != null) {
+                structureChangeCursor.reset();
             }
         }
     }

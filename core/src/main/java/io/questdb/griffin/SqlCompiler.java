@@ -115,6 +115,7 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
+    private final MetadataFactory metadataFactory;
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
@@ -133,6 +134,8 @@ public class SqlCompiler implements Closeable {
         this.characterStore = new CharacterStore(
                 configuration.getSqlCharacterStoreCapacity(),
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
+
+        this.metadataFactory = new PooledMetadataFactory(configuration);
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(
                 configuration,
@@ -875,6 +878,7 @@ public class SqlCompiler implements Closeable {
         Misc.free(renamePath);
         Misc.free(textLoader);
         Misc.free(rebuildIndex);
+        Misc.free(metadataFactory);
     }
 
     @NotNull
@@ -1990,6 +1994,9 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
             this.insertCount = copyTableData(cursor, cursorMetadata, writerFrontend, writerMetadata, recordToRowCopier);
             return writer;
+        } catch (Throwable e) {
+            Misc.free(writer);
+            throw e;
         } finally {
             if (isWalEnabled) {
                 writerFrontend.close();
@@ -2097,9 +2104,7 @@ public class SqlCompiler implements Closeable {
                     tableStructureAdapter.of(model, metadata, typeCast)
             );
             boolean wallEnabled = model.isWallEnabled();
-            if (wallEnabled) {
-                // Unlock the table
-            }
+            // TODO: if it's WAL enabled, table unlock can happen here, before the data is written
 
             try {
                 return copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, wallEnabled, cursor, metadata);
@@ -2267,15 +2272,13 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
-        try (TableReader reader = engine.getReader(
+        try (TableRecordMetadata metadata = engine.getMetadata(
                 executionContext.getCairoSecurityContext(),
                 name.token,
-                TableUtils.ANY_TABLE_ID,
-                TableUtils.ANY_TABLE_VERSION
+                metadataFactory
         )) {
-            final long structureVersion = reader.getVersion();
-            final RecordMetadata metadata = reader.getMetadata();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, reader.getTableName(), structureVersion);
+            final long structureVersion = metadata.getStructureVersion();
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableName(), structureVersion);
             final int writerTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
@@ -2513,14 +2516,16 @@ public class SqlCompiler implements Closeable {
 
         int columnNameListSize = model.getColumnNameList().size();
 
-        for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
-            if (columnNameListSize > 0 && columnNameListSize != model.getRowTupleValues(i).size()) {
-                throw SqlException.$(
-                                model.getEndOfRowTupleValuesPosition(i),
-                                "row value count does not match column count [expected=").put(columnNameListSize)
-                        .put(", actual=").put(model.getRowTupleValues(i).size())
-                        .put(", tuple=").put(i + 1)
-                        .put(']');
+        if (columnNameListSize > 0) {
+            for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
+                if (columnNameListSize != model.getRowTupleValues(i).size()) {
+                    throw SqlException.$(
+                                    model.getEndOfRowTupleValuesPosition(i),
+                                    "row value count does not match column count [expected=").put(columnNameListSize)
+                            .put(", actual=").put(model.getRowTupleValues(i).size())
+                            .put(", tuple=").put(i + 1)
+                            .put(']');
+                }
             }
         }
 

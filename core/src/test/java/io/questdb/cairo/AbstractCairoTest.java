@@ -31,8 +31,8 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,7 +48,9 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
+import org.junit.runner.Description;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -117,6 +119,15 @@ public class AbstractCairoTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    @Rule
+    public TestWatcher failedWatcher = new TestWatcher() {
+        @Override
+        protected void failed(Throwable e, Description description) {
+            // Flush all logs
+            LogFactory.INSTANCE.flushJobs();
+        }
+    };
 
     @BeforeClass
     public static void setUpStatic() {
@@ -353,6 +364,11 @@ public class AbstractCairoTest {
             @Override
             public int getSqlCopyBufferSize() {
                 return sqlCopyBufferSize;
+            }
+
+            @Override
+            public int getMetadataPoolCapacity() {
+                return 1;
             }
         };
         engine = new CairoEngine(configuration, metrics);

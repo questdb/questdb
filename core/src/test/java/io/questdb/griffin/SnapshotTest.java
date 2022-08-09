@@ -130,16 +130,13 @@ public class SnapshotTest extends AbstractGriffinTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 try (TableReader tableReader = new TableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
-
-                        try (TableReaderMetadata metadata = new TableReaderMetadata(ff)) {
+                        path.concat(TableUtils.META_FILE_NAME).$();
+                        try (TableReaderMetadata metadata = new TableReaderMetadata(ff, "t", path)) {
                             // Assert _meta contents.
-                            path.concat(TableUtils.META_FILE_NAME).$();
-                            metadata.deferredInit(path, ColumnType.VERSION);
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
                             Assert.assertEquals(metadata0.getPartitionBy(), metadata.getPartitionBy());
                             Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
-                            Assert.assertEquals(metadata0.getVersion(), metadata.getVersion());
                             Assert.assertEquals(metadata0.getId(), metadata.getId());
                             Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
                             Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());

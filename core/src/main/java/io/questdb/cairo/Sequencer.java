@@ -37,10 +37,9 @@ public interface Sequencer extends Closeable {
 
     void copyMetadataTo(SequencerMetadata metadata);
 
-    @NotNull
-    SequencerStructureChangeCursor getStructureChangeCursor(
+    @NotNull SequencerStructureChangeCursor getStructureChangeCursor(
             @Nullable SequencerStructureChangeCursor reusableCursor,
-            int fromSchemaVersion
+            long fromSchemaVersion
     );
 
     int getTableId();
@@ -50,7 +49,7 @@ public interface Sequencer extends Closeable {
     void open();
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(int expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
+    long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
 
     // always creates a new wal with an increasing unique id
     WalWriter createWal();

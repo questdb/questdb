@@ -2025,6 +2025,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMetadataPoolCapacity() {
+            return sqlModelPoolCapacity;
+        }
+
+        @Override
         public boolean getWallEnabledDefault() {
             return walEnabledDefault;
         }

@@ -259,6 +259,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMetadataPoolCapacity() {
+        return getSqlModelPoolCapacity();
+    }
+
+    @Override
     public boolean getWallEnabledDefault() {
         return false;
     }

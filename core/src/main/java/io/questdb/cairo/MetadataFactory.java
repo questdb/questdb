@@ -22,46 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.sql.TableRecordMetadata;
 
-import java.io.Closeable;
+public interface MetadataFactory {
+    TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
 
-public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> implements Closeable {
-    private final ObjectFactory<T> factory;
-
-    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
-        this(factory, initSize, false);
-    }
-
-    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize, boolean lazy) {
-        super(initSize);
-        this.factory = factory;
-        if (!lazy) {
-            fill();
-        }
-    }
-
-    @Override
-    public boolean push(T obj) {
-        return super.push(obj);
-    }
-
-    @Override
-    public void close() {
-        while (cache.size() > 0) {
-            Misc.free(cache.pop());
-        }
-    }
-
-    @Override
-    void close(T obj) {
-        Misc.free(obj);
-    }
-
-    @Override
-    T newInstance() {
-        return factory.newInstance();
-    }
+    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
 }

@@ -43,8 +43,8 @@ public class TableRegistry implements Closeable {
         this.engine = engine;
     }
 
-    public boolean hasSequencer(String tableNameStr) {
-        Sequencer sequencer = tableRegistry.get(tableNameStr);
+    public boolean hasSequencer(String tableName) {
+        Sequencer sequencer = tableRegistry.get(tableName);
         if (sequencer != null) {
             return true;
         }
@@ -52,7 +52,7 @@ public class TableRegistry implements Closeable {
         // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
         Path tempPath = Path.PATH2.get();
         CairoConfiguration configuration = engine.getConfiguration();
-        tempPath.of(configuration.getRoot()).concat(tableNameStr).concat(SEQ_DIR);
+        tempPath.of(configuration.getRoot()).concat(tableName).concat(SEQ_DIR);
         return configuration.getFilesFacade().exists(tempPath.$());
     }
 

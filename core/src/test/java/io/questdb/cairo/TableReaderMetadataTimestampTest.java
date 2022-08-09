@@ -199,13 +199,14 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
     private void assertThat(String expected, int expectedInitialTimestampIndex) throws Exception {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(root).concat("all")) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+            String tableName = "all";
+            try (Path path = new Path().of(root).concat(tableName)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                     long structureVersion;
-                    try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+                    try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
                         writer.removeColumn("timestamp");
                         structureVersion = writer.getStructureVersion();
                     }
@@ -235,13 +236,14 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                                             int expectedFinalTimestampIndex,
                                             int expectedColumnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(root).concat("all")) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+            String tableName = "all";
+            try (Path path = new Path().of(root).concat(tableName)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                     long structVersion;
-                    try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+                    try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
                         manipulator.restructure(writer);
                         structVersion = writer.getStructureVersion();
                     }

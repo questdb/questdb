@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.std.*;
@@ -33,14 +34,15 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class SequencerMetadata extends BaseRecordMetadata implements Closeable, TableDescriptor {
+public class SequencerMetadata extends BaseRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
     private final FilesFacade ff;
     private final MemoryMAR metaMem = Vm.getMARInstance();
 
-    private int structureVersion = -1;
+    private long structureVersion = -1;
     private int tableId;
+    private String tableName;
 
-    SequencerMetadata(FilesFacade ff) {
+    public SequencerMetadata(FilesFacade ff) {
         this.ff = ff;
         columnMetadata = new ObjList<>();
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
@@ -58,11 +60,12 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
 
     @Override
     public void close() {
-        Misc.free(metaMem);
+        clear();
     }
 
-    public void copyFrom(TableDescriptor model, int tableId, int structureVersion) {
+    public void copyFrom(TableDescriptor model, String tableName, int tableId, long structureVersion) {
         reset();
+        this.tableName = tableName;
         timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
 
@@ -77,11 +80,11 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
     }
 
     public void copyFrom(SequencerMetadata metadata) {
-        copyFrom(metadata, metadata.getTableId(), metadata.getStructureVersion());
+        copyFrom(metadata, metadata.getTableName(), metadata.getTableId(), metadata.getStructureVersion());
     }
 
-    public void create(TableDescriptor model, Path path, int pathLen, int tableId) {
-        copyFrom(model, tableId, 0);
+    public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {
+        copyFrom(model, tableName, tableId, 0);
         dumpTo(path, pathLen);
     }
 
@@ -90,7 +93,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         syncToMetaFile();
     }
 
-    public int getStructureVersion() {
+    public long getStructureVersion() {
         return structureVersion;
     }
 
@@ -98,8 +101,19 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         return tableId;
     }
 
-    public void open(Path path, int pathLen) {
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public boolean isWalEnabled() {
+        return true;
+    }
+
+    public void open(String tableName, Path path, int pathLen) {
         reset();
+        this.tableName = tableName;
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
 
         // get written data size
@@ -108,7 +122,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         metaMem.jumpTo(size);
 
         loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap);
-        structureVersion = metaMem.getInt(SEQ_META_OFFSET_SCHEMA_VERSION);
+        structureVersion = metaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
         columnCount = columnMetadata.size();
         timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = metaMem.getInt(SEQ_META_TABLE_ID);
@@ -144,11 +158,17 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         columnCount++;
     }
 
+    protected void clear() {
+        reset();
+        Misc.free(metaMem);
+    }
+
     private void reset() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
         columnCount = 0;
         timestampIndex = -1;
+        tableName = null;
     }
 
     private void syncToMetaFile() {
@@ -156,7 +176,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable, 
         // Size of metadata
         metaMem.putInt(0);
         metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
-        metaMem.putInt(structureVersion);
+        metaMem.putLong(structureVersion);
         metaMem.putInt(columnMetadata.size());
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);

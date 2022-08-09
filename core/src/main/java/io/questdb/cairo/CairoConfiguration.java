@@ -120,6 +120,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    int getMetadataPoolCapacity();
+
     boolean getWallEnabledDefault();
 
     int getDoubleToStrCastScale();

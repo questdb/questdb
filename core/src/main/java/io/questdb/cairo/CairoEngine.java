@@ -31,6 +31,7 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -68,7 +69,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final IDGenerator tableIdGenerator;
     private final TableRegistry tableRegistry;
-
 
     private final TextImportExecutionContext textImportExecutionContext;
     // Kept for embedded API purposes. The second constructor (the one with metrics)
@@ -211,6 +211,18 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     @TestOnly
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
+    }
+
+    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName, MetadataFactory metadataFactory) {
+        securityContext.checkWritePermission();
+        String tableNameStr = Chars.toString(tableName);
+        if (tableRegistry.hasSequencer(tableNameStr)) {
+            // This is WAL table because sequencer exists
+            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
+            return metadataFactory.openSequencerMetadata(sequencer);
+        }
+
+        return metadataFactory.openTableReaderMetadata(tableName);
     }
 
     public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {

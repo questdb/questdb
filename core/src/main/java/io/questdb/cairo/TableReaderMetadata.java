@@ -24,21 +24,21 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-import java.io.Closeable;
-
-public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final Path path;
+public class TableReaderMetadata extends BaseRecordMetadata implements TableRecordMetadata {
+    private Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private String tableName;
     private MemoryMR metaMem;
     private int partitionBy;
-    private int version;
     private int tableId;
     private int maxUncommittedRows;
     private long commitLag;
@@ -46,17 +46,30 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private MemoryMR transitionMeta;
     private boolean walEnabled;
 
-    public TableReaderMetadata(FilesFacade ff) {
+    public TableReaderMetadata(FilesFacade ff, String tableName) {
         this.path = new Path();
+        this.tableName = tableName;
         this.ff = ff;
         this.metaMem = Vm.getMRInstance();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    public TableReaderMetadata(FilesFacade ff, Path path) {
-        this(ff);
-        deferredInit(path, ColumnType.VERSION);
+    public TableReaderMetadata(FilesFacade ff, String tableName, Path path) {
+        this(ff, tableName);
+        try {
+            deferredInit(path, tableName, ColumnType.VERSION);
+        } catch (Throwable th) {
+            close();
+        }
+    }
+
+    @Override
+    public void close() {
+        // TableReaderMetadata is re-usable after close, don't assign nulls
+        Misc.free(metaMem);
+        path = Misc.free(path);
+        Misc.free(transitionMeta);
     }
 
     public void applyTransitionIndex() {
@@ -145,12 +158,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         Misc.free(metaMem);
     }
 
-    @Override
-    public void close() {
-        // TableReaderMetadata is re-usable after close, don't assign nulls
-        Misc.free(metaMem);
-        Misc.free(path);
-        Misc.free(transitionMeta);
+    public void deferredInit(CharSequence path, String tableName, int expectedVersion) {
+        this.path.of(path).$();
+        deferredInit(tableName, expectedVersion);
     }
 
     public long createTransitionIndex(long txnStructureVersion) {
@@ -168,57 +178,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         tmpValidationMap.clear();
         TableUtils.validate(transitionMeta, tmpValidationMap, ColumnType.VERSION);
         return TableUtils.createTransitionIndex(transitionMeta, this);
-    }
-
-    public TableReaderMetadata deferredInit(Path path, int expectedVersion) {
-        this.path.of(path).$();
-        try {
-            this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-            this.columnNameIndexMap.clear();
-            TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
-            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-            this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-            this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-            this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-            this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-            this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
-            this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
-            this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
-            this.columnMetadata.clear();
-            long offset = TableUtils.getColumnNameOffset(columnCount);
-            this.timestampIndex = -1;
-
-            // don't create strings in this loop, we already have them in columnNameIndexMap
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metaMem.getStr(offset);
-                assert name != null;
-                int columnType = TableUtils.getColumnType(metaMem, i);
-                if (columnType > 0) {
-                    columnMetadata.add(
-                            new TableColumnMetadata(
-                                    Chars.toString(name),
-                                    TableUtils.getColumnHash(metaMem, i),
-                                    columnType,
-                                    TableUtils.isColumnIndexed(metaMem, i),
-                                    TableUtils.getIndexBlockCapacity(metaMem, i),
-                                    true,
-                                    null,
-                                    i
-                            )
-                    );
-                    if (i == timestampIndex) {
-                        this.timestampIndex = columnMetadata.size() - 1;
-                    }
-                }
-                offset += Vm.getStorageLength(name);
-            }
-            this.columnCount = columnMetadata.size();
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-        return this;
     }
 
     public void dumpTo(MemoryMA mem) {
@@ -257,8 +216,87 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return structureVersion;
     }
 
-    public int getVersion() {
-        return version;
+    @Override
+    public int getTableId() {
+        return tableId;
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    public void readSafe(CharSequence dbRoot, String tableName, MillisecondClock millisecondClock, long timeout) {
+        long deadline = millisecondClock.getTicks() + timeout;
+        this.path.of(dbRoot).concat(tableName);
+        int rootLen = this.path.length();
+        this.path.concat(TableUtils.META_FILE_NAME).$();
+        boolean existenceChecked = false;
+        while (true) {
+            try {
+                deferredInit(tableName, ColumnType.VERSION);
+                return;
+            } catch (CairoException ex) {
+                if (!existenceChecked) {
+                    path.trimTo(rootLen).slash$();
+                    if (!ff.exists(path)) {
+                        throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
+                    }
+                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                }
+                existenceChecked = true;
+                TableUtils.handleMetadataLoadException(tableName, deadline, ex, millisecondClock, timeout);
+            }
+        }
+    }
+
+    private void deferredInit(String tableName, int expectedVersion) {
+        try {
+            this.tableName = tableName;
+            this.metaMem.smallFile(ff, this.path, MemoryTag.MMAP_DEFAULT);
+            this.columnNameIndexMap.clear();
+            TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
+            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+            this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+            this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+            this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+            this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+            this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
+            this.columnMetadata.clear();
+            long offset = TableUtils.getColumnNameOffset(columnCount);
+            this.timestampIndex = -1;
+
+            // don't create strings in this loop, we already have them in columnNameIndexMap
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence name = metaMem.getStr(offset);
+                assert name != null;
+                int columnType = TableUtils.getColumnType(metaMem, i);
+                if (columnType > 0) {
+                    columnMetadata.add(
+                            new TableColumnMetadata(
+                                    Chars.toString(name),
+                                    TableUtils.getColumnHash(metaMem, i),
+                                    columnType,
+                                    TableUtils.isColumnIndexed(metaMem, i),
+                                    TableUtils.getIndexBlockCapacity(metaMem, i),
+                                    true,
+                                    null,
+                                    i
+                            )
+                    );
+                    if (i == timestampIndex) {
+                        this.timestampIndex = columnMetadata.size() - 1;
+                    }
+                }
+                offset += Vm.getStorageLength(name);
+            }
+            this.columnCount = columnMetadata.size();
+        } catch (Throwable e) {
+            clear();
+            throw e;
+        }
     }
 
     public boolean isWalEnabled() {

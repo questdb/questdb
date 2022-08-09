@@ -160,8 +160,9 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
         expected.put("zall.sym", -1);
 
-        try (Path path = new Path().of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
-             TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
+        String tableName = "all";
+        try (Path path = new Path().of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+             TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -402,13 +403,14 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(root).concat("all")) {
+            String tableName = "all";
+            try (Path path = new Path().of(root).concat(tableName)) {
                 int tableId;
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
                     tableId = metadata.getId();
                     for (ColumnManipulator manipulator : manipulators) {
                         long structVersion;
-                        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+                        try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
                             manipulator.restructure(writer);
                             structVersion = writer.getStructureVersion();
                         }
@@ -438,7 +440,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 }
 
                 // Check that table has same tableId.
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
                     Assert.assertEquals(tableId, metadata.getId());
                 }
             }

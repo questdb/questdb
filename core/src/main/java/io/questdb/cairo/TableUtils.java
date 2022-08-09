@@ -83,8 +83,8 @@ public final class TableUtils {
     public static final long WAL_META_OFFSET_COLUMNS = 12;
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
-    public static final long SEQ_META_OFFSET_SCHEMA_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
-    public static final long SEQ_META_OFFSET_COLUMN_COUNT = SEQ_META_OFFSET_SCHEMA_VERSION + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_COLUMN_COUNT = SEQ_META_OFFSET_STRUCTURE_VERSION + Long.BYTES;
     public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = SEQ_META_OFFSET_COLUMN_COUNT + Integer.BYTES;
 
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
@@ -1355,16 +1355,16 @@ public final class TableUtils {
         void close(long prevSize);
     }
 
-    static void handleMetadataLoadException(CairoConfiguration configuration, CharSequence tableName, long deadline, CairoException ex) {
+    public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (isMetaFileMissingFileSystemError(ex)) {
-            if (configuration.getMillisecondClock().getTicks() < deadline) {
+            if (millisecondClock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").$(tableName)
                         .$(", errno=").$(ex.getErrno())
                         .$(", error=").$(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
-                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("μs]").$();
+                LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
                 throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
             }
         } else {

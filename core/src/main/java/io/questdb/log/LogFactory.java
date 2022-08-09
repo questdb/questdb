@@ -45,21 +45,18 @@ public class LogFactory implements Closeable {
     public static final String DEBUG_TRIGGER = "ebug";
     public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
     public static final String CONFIG_SYSTEM_PROPERTY = "out";
-
-    private static final int DEFAULT_QUEUE_DEPTH = 1024;
-    private static final int DEFAULT_MSG_SIZE = 4 * 1024;
-
     //name of default logging configuration file (in jar and in $root/conf/ dir )
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
-    private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
-
-    //placeholder that can be used in log.conf to point to $root/log/ dir 
+    //placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
-
+    private static final int DEFAULT_QUEUE_DEPTH = 1024;
+    private static final int DEFAULT_MSG_SIZE = 4 * 1024;
+    private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
-
+    static boolean envEnabled = true;
+    static boolean overwriteWithSyncLogging = false;
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
@@ -69,8 +66,6 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
-    static boolean envEnabled = true;
-    static boolean overwriteWithSyncLogging = false;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -268,31 +263,6 @@ public class LogFactory implements Closeable {
         }
     }
 
-    /**
-     * Flush remaining log lines and close
-     */
-    public void flushJobsAndClose() {
-        haltThread();
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            LogWriter job = jobs.get(i);
-            if (job != null) {
-                try {
-                    // noinspection StatementWithEmptyBody
-                    while (job.run(0)) {
-                        // Keep running the job until it returns false to log all the buffered messages
-                    }
-                } catch (Exception th) {
-                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                    // Switch to the next job.
-                }
-                Misc.free(job);
-            }
-        }
-        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-            Misc.free(scopeConfigs.getQuick(i));
-        }
-    }
-
     public Log create(CharSequence key) {
         if (!configured) {
             throw new LogError("Not configured");
@@ -353,13 +323,53 @@ public class LogFactory implements Closeable {
         );
     }
 
-    public int getQueueDepth() {
-        return queueDepth;
+    @TestOnly
+    public void flushJobs() {
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                try {
+                    // noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // Keep running the job until it returns false to log all the buffered messages
+                    }
+                } catch (Exception th) {
+                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                    // Switch to the next job.
+                }
+            }
+        }
+        startThread();
     }
 
-    @TestOnly
-    ObjHashSet<LogWriter> getJobs() {
-        return jobs;
+    /**
+     * Flush remaining log lines and close
+     */
+    public void flushJobsAndClose() {
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                try {
+                    // noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // Keep running the job until it returns false to log all the buffered messages
+                    }
+                } catch (Exception th) {
+                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                    // Switch to the next job.
+                }
+                Misc.free(job);
+            }
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
+        }
+    }
+
+    public int getQueueDepth() {
+        return queueDepth;
     }
 
     private void setQueueDepth(int queueDepth) {
@@ -522,7 +532,7 @@ public class LogFactory implements Closeable {
      * Converts fully qualified class name into an abbreviated form:
      * com.questdb.mp.Sequence -> c.n.m.Sequence
      *
-     * @param key typically class name
+     * @param key     typically class name
      * @param builder used for producing the resulting form
      * @return abbreviated form of key
      */
@@ -555,7 +565,7 @@ public class LogFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL |LogLevel.ADVISORY;
+        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
         if (isForcedDebug()) {
             level = level | LogLevel.DEBUG;
         }
@@ -580,6 +590,11 @@ public class LogFactory implements Closeable {
         }
 
         return scopeConfigMap.get(k);
+    }
+
+    @TestOnly
+    ObjHashSet<LogWriter> getJobs() {
+        return jobs;
     }
 
     private static class ScopeConfiguration implements Closeable {
