@@ -133,6 +133,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return NullConstant.NULL;
             case ColumnType.LONG256:
                 return Long256Column.newInstance(index);
+            case ColumnType.LONG128:
+                return Long128Column.newInstance(index);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")

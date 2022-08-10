@@ -85,6 +85,7 @@
                 <version>3.8.1</version>
                 <configuration>
                     <compilerArgs>
+                        <arg>${compilerArg0}</arg>
                         <arg>${compilerArg1}</arg>
                         <arg>${compilerArg2}</arg>
                     </compilerArgs>
@@ -218,6 +219,7 @@
                 </executions>
                 <configuration>
                     <additionalJOptions>
+                        <additionalJOption>${compilerArg0}</additionalJOption>
                         <additionalJOption>${compilerArg1}</additionalJOption>
                         <additionalJOption>${compilerArg2}</additionalJOption>
                     </additionalJOptions>
@@ -523,6 +525,7 @@
                 <jdk.version>8</jdk.version>
                 <java.enforce.version>1.8.0_242</java.enforce.version>
                 <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+                <compilerArg0>-XDignore.symbol.file</compilerArg0>
                 <excludePattern1>module-info.java</excludePattern1>
                 <excludeTestPattern1>module-info.java</excludeTestPattern1>
                 <javac.compile.source>1.8</javac.compile.source>

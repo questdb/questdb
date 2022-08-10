@@ -195,6 +195,16 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public long getLong128Hi(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+    }
+
+    @Override
     public Long256 getLong256A(int columnIndex) {
         return getLong256Generic(long256A, columnIndex);
     }

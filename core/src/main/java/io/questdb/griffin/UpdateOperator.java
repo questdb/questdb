@@ -398,6 +398,10 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
                     break;
+                case ColumnType.LONG128:
+                    dstFixMem.putLong(masterRecord.getLong128Lo(i));
+                    dstFixMem.putLong(masterRecord.getLong128Hi(i));
+                    break;
                 default:
                     throw SqlException.$(0, "Column type ")
                             .put(ColumnType.nameOf(columnType))
