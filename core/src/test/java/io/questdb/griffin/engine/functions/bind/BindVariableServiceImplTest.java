@@ -109,7 +109,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setChar(2, 'o');
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 2 is defined as INT and cannot accept CHAR");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }
 
@@ -120,7 +120,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setChar("a", 'k');
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable 'a' is defined as LONG and cannot accept CHAR");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }
 

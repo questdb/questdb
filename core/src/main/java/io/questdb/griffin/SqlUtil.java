@@ -24,11 +24,19 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 
 public class SqlUtil {
 
@@ -82,6 +90,36 @@ public class SqlUtil {
             }
         }
         return null;
+    }
+
+    public static byte parseChar(char value, int columnNumber, int toType) throws SqlException {
+        byte v = (byte) (value - '0');
+        if (v > -1 && v < 10) {
+            return v;
+        }
+        throw SqlException.inconvertibleValue(columnNumber, value, ColumnType.CHAR, toType);
+    }
+
+    public static Function parseStr(CharSequence value, int columnNumber, int toType) throws SqlException {
+        try {
+            return LongConstant.newInstance(Numbers.parseLong(value));
+        } catch (NumericException e) {
+            // not a long, perhaps a double?
+            try {
+                return DoubleConstant.newInstance(Numbers.parseDouble(value));
+            } catch (NumericException ex) {
+                // could be date or timestamp
+                try {
+                    return DateConstant.getInstance(DateFormatUtils.parseUTCDate(value));
+                } catch (NumericException exc) {
+                    try {
+                        return TimestampConstant.newInstance(TimestampFormatUtils.parseTimestamp(value));
+                    } catch (NumericException exc1) {
+                        throw SqlException.inconvertibleValue(columnNumber, value, ColumnType.STRING, toType);
+                    }
+                }
+            }
+        }
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {

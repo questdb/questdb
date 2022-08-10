@@ -339,7 +339,17 @@ public final class ColumnType {
                 || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
                 || (fromType == LONG && toType >= BYTE && toType <= INT)
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
-                || (fromType == SHORT && toType == BYTE);
+                || (fromType == SHORT && toType == BYTE)
+                || (fromType == CHAR && toType == BYTE)
+                || (fromType == STRING && toType == BYTE)
+                || (fromType == STRING && toType == SHORT)
+                || (fromType == STRING && toType == INT)
+                || (fromType == STRING && toType == LONG)
+                || (fromType == STRING && toType == DATE)
+                || (fromType == STRING && toType == TIMESTAMP)
+                || (fromType == STRING && toType == FLOAT)
+                || (fromType == STRING && toType == DOUBLE)
+                ;
     }
 
     static {

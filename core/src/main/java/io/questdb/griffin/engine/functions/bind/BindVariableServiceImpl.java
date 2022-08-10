@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
@@ -809,7 +810,32 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     private static void setChar0(Function function, char value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
+        // treat char as string representation of numeric type
         switch (functionType) {
+            case ColumnType.BYTE:
+                ((ByteBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.BYTE);
+                break;
+            case ColumnType.SHORT:
+                ((ShortBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.SHORT);
+                break;
+            case ColumnType.INT:
+                ((IntBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.INT);
+                break;
+            case ColumnType.LONG:
+                ((LongBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.LONG);
+                break;
+            case ColumnType.DATE:
+                ((DateBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.DATE);
+                break;
+            case ColumnType.TIMESTAMP:
+                ((TimestampBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.TIMESTAMP);
+                break;
+            case ColumnType.FLOAT:
+                ((FloatBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.FLOAT);
+                break;
+            case ColumnType.DOUBLE:
+                ((DoubleBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.DOUBLE);
+                break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = value;
                 break;

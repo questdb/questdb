@@ -36,15 +36,9 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class InsertTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        bindVariableService.clear();
-    }
 
     @Test
     public void testGeoHash() throws Exception {
@@ -374,7 +368,7 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColum2() throws Exception {
+    public void testInsertISOMilliWithTzDateStringTimestampColumn2() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T03:30:00.000000Z\n";
 
@@ -387,7 +381,7 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
+    public void testInsertISOMilliWithTzDateStringTimestampColumnFails() throws Exception {
         assertInsertTimestamp(
                 "Invalid timestamp",
                 "insert into tab values (1, '2021-01-03T02:00:00-:30')",

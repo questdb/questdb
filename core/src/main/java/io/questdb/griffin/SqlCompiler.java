@@ -36,6 +36,7 @@ import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
@@ -1616,7 +1617,7 @@ public class SqlCompiler implements Closeable {
             final int writerTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
-            for (int t = 0, n = model.getRowTupleCount(); t < n; t++) {
+            for (int tupleIndex = 0, n = model.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
                 Function timestampFunction = null;
                 listColumnFilter.clear();
                 if (columnSetSize > 0) {
@@ -1624,8 +1625,7 @@ public class SqlCompiler implements Closeable {
                     for (int i = 0; i < columnSetSize; i++) {
                         int index = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
                         if (index > -1) {
-                            final ExpressionNode node = model.getRowTupleValues(t).getQuick(i);
-
+                            final ExpressionNode node = model.getRowTupleValues(tupleIndex).getQuick(i);
                             Function function = functionParser.parseFunction(
                                     node,
                                     GenericRecordMetadata.EMPTY,
@@ -1634,7 +1634,7 @@ public class SqlCompiler implements Closeable {
 
                             function = validateAndConsume(
                                     model,
-                                    t,
+                                    tupleIndex,
                                     valueFunctions,
                                     metadata,
                                     writerTimestampIndex,
@@ -1655,13 +1655,13 @@ public class SqlCompiler implements Closeable {
                     }
                 } else {
                     final int columnCount = metadata.getColumnCount();
-                    final ObjList<ExpressionNode> values = model.getRowTupleValues(t);
+                    final ObjList<ExpressionNode> values = model.getRowTupleValues(tupleIndex);
                     final int valueCount = values.size();
                     if (columnCount != valueCount) {
                         throw SqlException.$(
-                                        model.getEndOfRowTupleValuesPosition(t),
+                                        model.getEndOfRowTupleValuesPosition(tupleIndex),
                                         "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
-                                .put(", tuple=").put(t + 1).put(']');
+                                .put(", tuple=").put(tupleIndex + 1).put(']');
                     }
                     valueFunctions = new ObjList<>(columnCount);
 
@@ -1671,7 +1671,7 @@ public class SqlCompiler implements Closeable {
                         Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
                         validateAndConsume(
                                 model,
-                                t,
+                                tupleIndex,
                                 valueFunctions,
                                 metadata,
                                 writerTimestampIndex,
@@ -2285,20 +2285,57 @@ public class SqlCompiler implements Closeable {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return function;
             }
-            if (ColumnType.isGeoHash(columnType)) {
-                switch (ColumnType.tagOf(function.getType())) {
-                    case ColumnType.GEOBYTE:
-                    case ColumnType.GEOSHORT:
-                    case ColumnType.GEOINT:
-                    case ColumnType.GEOLONG:
-                        break;
-                    case ColumnType.CHAR:
-                        function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
-                        // fall through to STRING
-                    default:
-                        function = CastStrToGeoHashFunctionFactory.newInstance(functionPosition, columnType, function);
-                        break;
-                }
+            // cast char and string to target column types
+            switch (ColumnType.tagOf(function.getType())) {
+                case ColumnType.CHAR:
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.BYTE:
+                        case ColumnType.SHORT:
+                        case ColumnType.INT:
+                        case ColumnType.LONG:
+                        case ColumnType.DATE:
+                        case ColumnType.TIMESTAMP:
+                        case ColumnType.FLOAT:
+                        case ColumnType.DOUBLE:
+                            if (function.isConstant()) {
+                                function = ByteConstant.newInstance(SqlUtil.parseChar(function.getChar(null), tupleIndex, ColumnType.tagOf(columnType)));
+                            }
+                            break;
+                        case ColumnType.GEOBYTE:
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                            function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
+                            break;
+                        default:
+                            // no cast by default
+                            break;
+                    }
+                    break;
+                case ColumnType.STRING:
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.BYTE:
+                        case ColumnType.SHORT:
+                        case ColumnType.INT:
+                        case ColumnType.LONG:
+                        case ColumnType.DATE:
+                        case ColumnType.TIMESTAMP:
+                        case ColumnType.FLOAT:
+                        case ColumnType.DOUBLE:
+                            if (function.isConstant()) {
+                                function = SqlUtil.parseStr(function.getStr(null), tupleIndex, ColumnType.tagOf(columnType));
+                            }
+                            break;
+                        case ColumnType.GEOBYTE:
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                            function = CastStrToGeoHashFunctionFactory.newInstance(functionPosition, columnType, function);
+                            break;
+                        default:
+                            // no cast by default
+                            break;
+                    }
             }
             valueFunctions.add(function);
             listColumnFilter.add(metadataColumnIndex + 1);

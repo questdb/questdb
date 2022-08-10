@@ -89,6 +89,30 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(columnNumber);
     }
 
+    public static SqlException inconvertibleValue(int columnNumber, char value, int fromType, int toType) {
+        return $(-1, "inconvertible value: ")
+                .put(value)
+                .put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']')
+                .put(" in target column number: ")
+                .put(columnNumber);
+    }
+
+    public static SqlException inconvertibleValue(int columnNumber, CharSequence value, int fromType, int toType) {
+        return $(-1, "inconvertible value: ")
+                .put(value)
+                .put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']')
+                .put(" in target column number: ")
+                .put(columnNumber);
+    }
+
     public static SqlException inconvertibleValue(int columnNumber, long value, int fromType, int toType) {
         return $(-1, "inconvertible value: ")
                 .put(value)

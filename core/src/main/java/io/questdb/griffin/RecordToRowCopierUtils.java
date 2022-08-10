@@ -459,6 +459,42 @@ public class RecordToRowCopierUtils {
                 case ColumnType.CHAR:
                     asm.invokeInterface(rGetChar);
                     switch (toColumnTypeTag) {
+                        // todo: add type checking
+                        case ColumnType.BYTE:
+                            asm.i2b();
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        // todo: add type checking
+                        case ColumnType.SHORT:
+                            asm.i2s();
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.CHAR:
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
+                        case ColumnType.INT:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.i2l();
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.i2l();
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.i2l();
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.i2f();
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.i2d();
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
                         case ColumnType.STRING:
                             asm.invokeInterface(wPutStrChar, 2);
                             break;
@@ -478,7 +514,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         default:
-                            asm.invokeInterface(wPutChar, 2);
+                            assert false;
                             break;
                     }
                     break;
