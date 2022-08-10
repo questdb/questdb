@@ -641,6 +641,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                         Assert.fail("Write failed [e=" + e + "]");
                         throw new RuntimeException(e);
                     } finally {
+                        Path.clearThreadLocals();
                         writeFinished.countDown();
                     }
                 }).start();

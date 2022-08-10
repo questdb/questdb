@@ -1100,6 +1100,7 @@ public final class TableUtils {
             }
         } catch (Throwable e) {
             nameIndex.clear();
+            columnMetadata.clear();
             throw e;
         }
     }

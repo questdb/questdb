@@ -80,13 +80,14 @@ public class TableRegistry implements Closeable {
                 sequencer = tableRegistry.get(tableName);
                 if (sequencer == null) {
                     sequencer = new SequencerImpl(engine, tableName);
+                    sequencer.open();
                     tableRegistry.put(tableName, sequencer);
                 }
             } finally {
                 lock.unlock();
             }
         }
-        return sequencer.waitOpen();
+        return sequencer;
     }
 
     void clear() {

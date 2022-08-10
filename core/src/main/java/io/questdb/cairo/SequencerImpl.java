@@ -51,7 +51,6 @@ public class SequencerImpl implements Sequencer {
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
     private final FilesFacade ff;
     private final int mkDirMode;
-    private volatile boolean isOpen = false;
 
     SequencerImpl(CairoEngine engine, String tableName) {
         this.engine = engine;
@@ -75,27 +74,11 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    public SequencerImpl waitOpen() {
-        if (isOpen) {
-            return this;
-        }
-
-        waitOpenSync();
-        return this;
-    }
-
-    private  void waitOpenSync() {
-        if (isOpen) {
-            return;
-        }
-
-        synchronized (this) {
-            createSequencerDir(ff, mkDirMode);
-            walIdGenerator.open(path);
-            metadata.open(tableName, path, rootLen);
-            catalog.open(path);
-            isOpen = true;
-        }
+    public void open() {
+        createSequencerDir(ff, mkDirMode);
+        walIdGenerator.open(path);
+        metadata.open(tableName, path, rootLen);
+        catalog.open(path);
     }
 
     @Override
