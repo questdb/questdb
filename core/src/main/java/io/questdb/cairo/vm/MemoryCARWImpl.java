@@ -148,15 +148,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public void replacePage(long address, long size) {
-        long appendOffset = getAppendOffset();
-        this.pageAddress = this.appendAddress = address;
-        this.lim = pageAddress + size;
-        this.size = size;
-        jumpTo(appendOffset);
-    }
-
-    @Override
     public long size() {
         return size;
     }
@@ -171,7 +162,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     private void extend0(long size) {
-        long nPages = (size >>> sizeMsb) + 1;
+        long nPages = size > 0 ? ((size - 1) >>> sizeMsb) + 1 : 1;
         size = nPages << sizeMsb;
         final long oldSize = size();
         if (nPages > maxPages) {

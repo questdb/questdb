@@ -121,6 +121,16 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public long getLong128Hi(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public RecordCursorFactory getRecordCursorFactory() {
             return null;
         }

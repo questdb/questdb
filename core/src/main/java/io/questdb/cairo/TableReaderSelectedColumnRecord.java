@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -193,6 +194,27 @@ public class TableReaderSelectedColumnRecord implements Record {
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong256B(offset);
     }
+
+    @Override
+    public long getLong128Hi(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * 16;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        MemoryR column = reader.getColumn(absoluteColumnIndex);
+        return column.getLong(offset + Long.BYTES); // Store Lo then Hi
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * 16;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        MemoryR column = reader.getColumn(absoluteColumnIndex);
+        return column.getLong(offset); // Store Lo then Hi
+    }
+
 
     @Override
     public CharSequence getStrB(int columnIndex) {

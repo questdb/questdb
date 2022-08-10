@@ -2621,7 +2621,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 distinctColumnMetadata,
                                 arrayColumnTypes,
                                 tempVaf,
-                                executionContext.getWorkerCount(),
+                                executionContext.getSharedWorkerCount(),
                                 tempSymbolSkewIndexes
 
                         );
@@ -2785,7 +2785,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
                     int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
                     int indexInThis = tempAggIndex.getQuick(i);
-                    VectorAggregateFunction vaf = constructor.create(tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
+                    VectorAggregateFunction vaf = constructor.create(tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getSharedWorkerCount());
                     tempVaf.add(vaf);
                     meta.add(indexInThis,
                             new TableColumnMetadata(
@@ -2823,7 +2823,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory,
                             meta,
                             arrayColumnTypes,
-                            executionContext.getWorkerCount(),
+                            executionContext.getSharedWorkerCount(),
                             tempVaf,
                             tempKeyIndexesInBase.getQuick(0),
                             tempKeyIndex.getQuick(0),
@@ -3856,7 +3856,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         if (!filterFunction.isReadThreadSafe()) {
             ObjList<Function> perWorkerFilters = new ObjList<>();
-            for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
+            for (int i = 0, c = executionContext.getSharedWorkerCount(); i < c; i++) {
                 final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
                 perWorkerFilters.extendAndSet(i, perWorkerFilter);
             }

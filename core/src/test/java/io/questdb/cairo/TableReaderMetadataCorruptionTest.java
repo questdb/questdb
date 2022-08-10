@@ -108,7 +108,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 5,
-                "File is too small, column length for column 3 is missing",
+                "File is too small, size=341, required=342",
                 4906,
                 341
         );
@@ -124,7 +124,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length - 1,
                 -1,
-                "Column name length of 0 is invalid at offset 308",
+                "String length of 0 is invalid at offset 308",
                 4906,
                 342
         );

@@ -45,19 +45,24 @@ public class IDGenerator implements Closeable {
 
     @Override
     public void close() {
+        final FilesFacade ff = configuration.getFilesFacade();
         if (uniqueIdMem != 0) {
-            configuration.getFilesFacade().munmap(uniqueIdMem, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
+            ff.munmap(uniqueIdMem, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
             uniqueIdMem = 0;
         }
         if (uniqueIdFd != -1) {
-            configuration.getFilesFacade().close(uniqueIdFd);
+            ff.close(uniqueIdFd);
             uniqueIdFd = -1;
         }
     }
 
+    long getCurrentId() {
+        return Unsafe.getUnsafe().getLong(uniqueIdMem);
+    }
+
     public long getNextId() {
         long next;
-        long x = Unsafe.getUnsafe().getLong(uniqueIdMem);
+        long x = getCurrentId();
         do {
             next = x;
             x = Os.compareAndSwap(uniqueIdMem, next, next + 1);
@@ -71,17 +76,20 @@ public class IDGenerator implements Closeable {
 
     public void open(Path path) {
         close();
-        FilesFacade ff = configuration.getFilesFacade();
         if (path == null) {
             path = Path.getThreadLocal(configuration.getRoot());
         }
-        path.concat(uniqueIdFileName).$();
+        final int rootLen = path.length();
         try {
+            path.concat(uniqueIdFileName).$();
+            final FilesFacade ff = configuration.getFilesFacade();
             uniqueIdFd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
             uniqueIdMem = TableUtils.mapRW(ff, uniqueIdFd, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             close();
             throw e;
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 

@@ -61,6 +61,10 @@ public interface SqlExecutionContext extends Closeable {
 
     int getWorkerCount();
 
+    default int getSharedWorkerCount() {
+        return getWorkerCount();
+    }
+
     Rnd getRandom();
 
     default Rnd getAsyncRandom() {

@@ -61,7 +61,12 @@ public final class MemoryTag {
     public static final int MMAP_IMPORT = 33;
     public static final int NATIVE_IMPORT = 34;
     public static final int NATIVE_ROSTI = 35;
-    public static final int SIZE = NATIVE_ROSTI + 1;
+    public static final int MMAP_TABLE_WAL_READER = 36;
+    public static final int MMAP_TABLE_WAL_WRITER = 37;
+    public static final int MMAP_SEQUENCER = 38;
+    public static final int MMAP_PARALLEL_IMPORT = 39;
+    public static final int NATIVE_PARALLEL_IMPORT = 40;
+    public static final int SIZE = NATIVE_PARALLEL_IMPORT + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -105,5 +110,10 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_IMPORT, "MMAP_IMPORT");
         tagNameMap.extendAndSet(NATIVE_IMPORT, "NATIVE_IMPORT");
         tagNameMap.extendAndSet(NATIVE_ROSTI, "NATIVE_ROSTI");
+        tagNameMap.extendAndSet(MMAP_TABLE_WAL_READER, "MMAP_TABLE_WAL_READER");
+        tagNameMap.extendAndSet(MMAP_TABLE_WAL_WRITER, "MMAP_TABLE_WALD_WRITER");
+        tagNameMap.extendAndSet(MMAP_SEQUENCER, "MMAP_SEQUENCER");
+        tagNameMap.extendAndSet(MMAP_PARALLEL_IMPORT, "MMAP_PARALLEL_IMPORT");
+        tagNameMap.extendAndSet(NATIVE_PARALLEL_IMPORT, "NATIVE_PARALLEL_IMPORT");
     }
 }

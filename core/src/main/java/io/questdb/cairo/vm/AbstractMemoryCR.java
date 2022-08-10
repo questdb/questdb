@@ -40,7 +40,6 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     protected long fd = -1;
     protected long size = 0;
     protected long lim;
-    protected long grownLength;
 
     @Override
     public long offsetInPage(long offset) {
