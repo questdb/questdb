@@ -49,6 +49,9 @@ public class SequencerImpl implements Sequencer {
     private final Path path;
     private final BinaryAlterFormatter alterCommandWalFormatter = new BinaryAlterFormatter();
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
+    private final FilesFacade ff;
+    private final int mkDirMode;
+    private volatile boolean isOpen = false;
 
     SequencerImpl(CairoEngine engine, String tableName) {
         this.engine = engine;
@@ -59,30 +62,39 @@ public class SequencerImpl implements Sequencer {
         try {
             path = new Path().of(configuration.getRoot()).concat(tableName).concat(SEQ_DIR);
             rootLen = path.length();
+            this.ff = ff;
+            this.mkDirMode = configuration.getMkDirMode();
 
-            createSequencerDir(ff, configuration.getMkDirMode());
             metadata = new SequencerMetadata(ff);
             sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, tableName);
-
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            walIdGenerator.open(path);
             catalog = new TxnCatalog(ff);
-            catalog.open(path);
         } catch (Throwable th) {
             close();
             throw th;
         }
     }
 
-    public void abortClose() {
-        schemaLock.writeLock().lock();
-        try {
-            metadata.abortClose();
-            catalog.abortClose();
-            Misc.free(walIdGenerator);
-            Misc.free(path);
-        } finally {
-            schemaLock.writeLock().unlock();
+    public SequencerImpl waitOpen() {
+        if (isOpen) {
+            return this;
+        }
+
+        waitOpenSync();
+        return this;
+    }
+
+    private  void waitOpenSync() {
+        if (isOpen) {
+            return;
+        }
+
+        synchronized (this) {
+            createSequencerDir(ff, mkDirMode);
+            walIdGenerator.open(path);
+            metadata.open(tableName, path, rootLen);
+            catalog.open(path);
+            isOpen = true;
         }
     }
 
@@ -133,11 +145,6 @@ public class SequencerImpl implements Sequencer {
             long fromSchemaVersion
     ) {
         return catalog.getStructureChangeCursor(reusableCursor, fromSchemaVersion, alterCommandWalFormatter);
-    }
-
-    @Override
-    public void open() {
-        metadata.open(tableName, path, rootLen);
     }
 
     @Override
@@ -203,6 +210,7 @@ public class SequencerImpl implements Sequencer {
     void create(int tableId, TableStructure model) {
         schemaLock.writeLock().lock();
         try {
+            createSequencerDir(ff, mkDirMode);
             metadata.create(model, tableName, path, rootLen, tableId);
         } finally {
             schemaLock.writeLock().unlock();

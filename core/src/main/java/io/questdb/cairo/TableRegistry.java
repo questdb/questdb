@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -35,7 +36,7 @@ import java.util.Set;
 import static io.questdb.cairo.Sequencer.SEQ_DIR;
 
 public class TableRegistry implements Closeable {
-    private final ConcurrentHashMap<Sequencer> tableRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<SequencerImpl> tableRegistry = new ConcurrentHashMap<>();
 
     private final CairoEngine engine;
 
@@ -43,7 +44,7 @@ public class TableRegistry implements Closeable {
         this.engine = engine;
     }
 
-    public boolean hasSequencer(String tableName) {
+    public boolean hasSequencer(CharSequence tableName) {
         Sequencer sequencer = tableRegistry.get(tableName);
         if (sequencer != null) {
             return true;
@@ -71,26 +72,24 @@ public class TableRegistry implements Closeable {
     }
 
     Sequencer getSequencer(String tableName) {
-        Sequencer sequencer = tableRegistry.get(tableName);
+        SequencerImpl sequencer = tableRegistry.get(tableName);
         if (sequencer == null) {
-            SequencerImpl newSequencer = new SequencerImpl(engine, tableName);
-            newSequencer.open();
+            sequencer = new SequencerImpl(engine, tableName);
+            final SequencerImpl other = tableRegistry.putIfAbsent(tableName, sequencer);
 
-            final Sequencer other = tableRegistry.putIfAbsent(tableName, newSequencer);
             if (other != null) {
+                Misc.free(sequencer);
                 // Race is lost
-                newSequencer.abortClose();
-                return other;
+                sequencer = other;
             }
-            return newSequencer;
         }
-        return sequencer;
+        return sequencer.waitOpen();
     }
 
     void clear() {
         // create proper clear() and close() methods
-        final Set<Map.Entry<CharSequence, Sequencer>> entries =  tableRegistry.entrySet();
-        for (Map.Entry<CharSequence, Sequencer> entry: entries) {
+        final Set<Map.Entry<CharSequence, SequencerImpl>> entries =  tableRegistry.entrySet();
+        for (Map.Entry<CharSequence, SequencerImpl> entry: entries) {
             entry.getValue().close();
         }
         tableRegistry.clear();

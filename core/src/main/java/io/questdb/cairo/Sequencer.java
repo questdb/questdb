@@ -46,8 +46,6 @@ public interface Sequencer extends Closeable {
 
     long nextStructureTxn(long structureVersion, AlterOperation operation);
 
-    void open();
-
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
 

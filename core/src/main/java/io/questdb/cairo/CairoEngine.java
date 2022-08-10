@@ -269,9 +269,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             @Nullable String lockReason
     ) {
         securityContext.checkWritePermission();
-        String tableNameStr = Chars.toString(tableName);
-        if (tableRegistry.hasSequencer(tableNameStr)) {
+        if (tableRegistry.hasSequencer(tableName)) {
             // This is WAL table because sequencer exists
+            String tableNameStr = Chars.toString(tableName);
             final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
             return sequencer.createWal();
         }
@@ -361,7 +361,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             int segmentId,
             long walRowCount
     ) {
-        return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
+        securityContext.checkWritePermission();
+        if (tableRegistry.hasSequencer(tableName)) {
+            // This is WAL table because sequencer exists
+            String tableNameStr = Chars.toString(tableName);
+            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
+            return new WalReader(configuration, tableName, walName, sequencer, segmentId, walRowCount);
+        }
+        throw CairoException.instance(0).put("WAL reader is not supported for table ").put(tableName);
     }
 
     public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
