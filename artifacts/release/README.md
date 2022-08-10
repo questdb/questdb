@@ -39,13 +39,13 @@ Build for multiple platforms at once and release version tag, `6.0.2` in this
 case. This will take some time.
 
 ```
-docker buildx build --build-arg tag_name=master --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:6.0.2 .
+docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:6.0.2 .
 ```
 
 Then build `latest`. This should be instant.
 
 ```
-docker buildx build --build-arg tag_name=master --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:latest .
+docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:latest .
 ```
 
 ## Release Java Library
