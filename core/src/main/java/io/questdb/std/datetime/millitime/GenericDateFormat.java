@@ -543,8 +543,11 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 case DateFormatCompiler.OP_WEEK_OF_YEAR:
-                case DateFormatCompiler.OP_WEEK_OF_MONTH:
                 case DateFormatCompiler.OP_DAY_OF_YEAR:
+                    l = Numbers.parseIntSafely(in, pos, hi);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+                case DateFormatCompiler.OP_WEEK_OF_MONTH:
                 case DateFormatCompiler.OP_DAY_OF_WEEK:
                     DateFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday and day of year
@@ -583,6 +586,10 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
                     DateFormatUtils.assertRemaining(pos + 1, hi);
                     year = DateFormatUtils.adjustYear(Numbers.parseInt(in, pos, pos += 2));
+                    break;
+                case DateFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    DateFormatUtils.assertRemaining(pos + 2, hi);
+                    year = DateFormatUtils.adjustYearMillenium(Numbers.parseInt(in, pos, pos += 3));
                     break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {

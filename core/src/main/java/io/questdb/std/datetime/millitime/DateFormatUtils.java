@@ -141,6 +141,10 @@ public class DateFormatUtils {
         return thisCenturyLow + year;
     }
 
+    public static int adjustYearMillenium(int year) {
+        return thisCenturyLow - thisCenturyLow % 1000 + year;
+    }
+
     public static void appendAmPm(CharSink sink, int hour, DateLocale locale) {
         if (hour < 12) {
             sink.put(locale.getAMPM(0));

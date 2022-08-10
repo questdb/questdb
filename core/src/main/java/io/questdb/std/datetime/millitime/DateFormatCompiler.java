@@ -629,6 +629,7 @@ public class DateFormatCompiler {
             int assertCharIndex,
             int computeMillisIndex,
             int adjustYearIndex,
+            int adjustYearMilleniumIndex,
             int parseYearGreedyIndex,
             int parseOffsetIndex,
             int parseNameIndex,
@@ -950,9 +951,19 @@ public class DateFormatCompiler {
                     invokeMatch(matchWeekdayIndex);
                     addTempToPos(decodeLenIndex);
                     break;
-                case OP_WEEK_OF_MONTH:
                 case OP_WEEK_OF_YEAR:
                 case OP_DAY_OF_YEAR:
+                    // l = Numbers.parseIntSafely(in, pos, hi);
+                    // pos += Numbers.decodeHighInt(l);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iload(P_HI);
+                    asm.invokeStatic(parseIntSafelyIndex);
+                    asm.lstore(LOCAL_TEMP_LONG);
+                    addTempToPos(decodeLenIndex);
+                    break;
+                case OP_WEEK_OF_MONTH:
                 case OP_DAY_OF_WEEK:
                     // assertRemaining(pos, hi);
                     // // ignore weekday
@@ -1047,6 +1058,7 @@ public class DateFormatCompiler {
                     asm.iinc(LOCAL_POS, 3);
                     asm.iload(LOCAL_POS);
                     asm.invokeStatic(parseIntIndex);
+                    asm.invokeStatic(adjustYearMilleniumIndex);
                     asm.istore(LOCAL_YEAR);
                     break;
                 case OP_YEAR_FOUR_DIGITS: {
@@ -1391,6 +1403,7 @@ public class DateFormatCompiler {
         int assertCharIndex = asm.poolMethod(DateFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
         int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIJI)J");
         int adjustYearIndex = asm.poolMethod(DateFormatUtils.class, "adjustYear", "(I)I");
+        int adjustYearMilleniumIndex = asm.poolMethod(DateFormatUtils.class, "adjustYearMillenium", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(DateFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
         int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
         int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
@@ -1474,6 +1487,7 @@ public class DateFormatCompiler {
                 assertCharIndex,
                 computeMillisIndex,
                 adjustYearIndex,
+                adjustYearMilleniumIndex,
                 parseYearGreedyIndex,
                 parseOffsetIndex,
                 parseNameIndex,
