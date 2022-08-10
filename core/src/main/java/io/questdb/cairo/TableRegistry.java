@@ -26,17 +26,18 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.Sequencer.SEQ_DIR;
 
 public class TableRegistry implements Closeable {
     private final ConcurrentHashMap<SequencerImpl> tableRegistry = new ConcurrentHashMap<>();
+    private final ReentrantLock lock = new ReentrantLock();
 
     private final CairoEngine engine;
 
@@ -74,13 +75,15 @@ public class TableRegistry implements Closeable {
     Sequencer getSequencer(String tableName) {
         SequencerImpl sequencer = tableRegistry.get(tableName);
         if (sequencer == null) {
-            sequencer = new SequencerImpl(engine, tableName);
-            final SequencerImpl other = tableRegistry.putIfAbsent(tableName, sequencer);
-
-            if (other != null) {
-                Misc.free(sequencer);
-                // Race is lost
-                sequencer = other;
+            lock.lock();
+            try {
+                sequencer = tableRegistry.get(tableName);
+                if (sequencer == null) {
+                    sequencer = new SequencerImpl(engine, tableName);
+                    tableRegistry.put(tableName, sequencer);
+                }
+            } finally {
+                lock.unlock();
             }
         }
         return sequencer.waitOpen();

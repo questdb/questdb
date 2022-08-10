@@ -606,6 +606,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.SYMBOL)
                     .timestamp("ts")
+                    .wal()
             ) {
                 createTable(model);
             }
@@ -653,6 +654,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.SYMBOL)
                     .timestamp("ts")
+                    .wal()
             ) {
                 for (int i = 0; i < numOfThreads; i++) {
                     final String walName = WalWriter.WAL_NAME_BASE + (i + 1);
@@ -766,6 +768,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
                     .timestamp("ts")
+                    .wal()
             ) {
                 createTable(model);
             }
@@ -1925,6 +1928,12 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
+    private void createTable(String tableName, boolean withTimestamp) {
+        try (TableModel model = defaultModel(tableName, withTimestamp)) {
+            createTable(model);
+        }
+    }
+
     private void createTable(TableModel model) {
         engine.createTableUnsafe(
                 AllowAllCairoSecurityContext.INSTANCE,
@@ -1934,9 +1943,19 @@ public class WalWriterTest extends AbstractGriffinTest {
         );
     }
 
-    @SuppressWarnings("resource")
     private TableModel defaultModel(String tableName) {
-        return new TableModel(configuration, tableName, PartitionBy.HOUR)
+        return defaultModel(tableName, false);
+    }
+
+    @SuppressWarnings("resource")
+    private TableModel defaultModel(String tableName, boolean withTimestamp) {
+        return withTimestamp
+                ? new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.STRING)
+                .timestamp("ts")
+                .wal()
+                : new TableModel(configuration, tableName, PartitionBy.NONE)
                 .col("a", ColumnType.BYTE)
                 .col("b", ColumnType.STRING)
                 .wal();
@@ -1945,7 +1964,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
-            createTable(tableName);
+            createTable(tableName, true);
 
             final String walName;
             final long ts = Os.currentTimeMicros();
@@ -1989,7 +2008,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertEquals(2, ((WalDataRecord) record).getDesignatedTimestampRowId(2));
                 assertFalse(cursor.hasNext());
 
-                try (TableModel model = defaultModel(tableName)) {
+                try (TableModel model = defaultModel(tableName, true)) {
                     assertColumnMetadata(model, reader);
                 }
 
