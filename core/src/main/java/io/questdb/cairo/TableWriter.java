@@ -1815,13 +1815,18 @@ public class TableWriter implements Closeable {
                 }
                 detachedColumnVersionReader.ofRO(ff, other2);
                 detachedColumnVersionReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
-                columnVersionWriter.upsertPartition(
-                        partitionTimestamp,
-                        detachedColumnVersionReader,
-                        detachedAddMissingColNames,
-                        partitionSize,
-                        metadata
-                );
+
+                // set column tops for missing columns
+                for (int i = 0, limit = detachedAddMissingColNames.size(); i < limit; i++) {
+                    CharSequence columnName = detachedAddMissingColNames.get(i);
+                    int colIdx = metadata.getColumnIndex(columnName);
+                    colIdx = metadata.getWriterIndex(colIdx);
+                    long columnNameTxn = getColumnNameTxn(partitionTimestamp, colIdx);
+                    columnVersionWriter.upsert(partitionTimestamp, colIdx, columnNameTxn, partitionSize);
+                }
+
+                // override column tops
+                columnVersionWriter.upsertPartition(partitionTimestamp, detachedColumnVersionReader);
 
                 // delete extra columns (present in .attachable - the table does not track/need them)
                 for (int i = 0, limit = detachedDeleteExtraColNames.size(); i < limit; i++) {

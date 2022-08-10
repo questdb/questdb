@@ -493,8 +493,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         });
     }
 
-    private static final CharSequenceHashSet addColNames = new CharSequenceHashSet();
-
     private static void assertUpsertPartitionFromSourceCV(
             String srcExpected,
             String dstExpected,
@@ -512,7 +510,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 CVStringTable.setupColumnVersionWriter(w1, srcExpected);
                 CVStringTable.setupColumnVersionWriter(w2, dstExpected);
                 for (long p : partitionTimestamp) {
-                    w2.upsertPartition(p, w1, addColNames, -1, null);
+                    w2.upsertPartition(p, w1);
                 }
                 TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedList()));
                 w2.commit();

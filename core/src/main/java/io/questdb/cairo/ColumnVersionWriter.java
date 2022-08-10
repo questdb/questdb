@@ -112,22 +112,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void upsertPartition(
-            long partitionTimestamp,
-            ColumnVersionReader source,
-            @Nullable CharSequenceHashSet addColNames,
-            long partitionSize,
-            @Nullable TableWriterMetadata metadataRO
-    ) {
-        // set column tops for missing columns
-        for (int i = 0, limit = addColNames.size(); i < limit; i++) {
-            CharSequence columnName = addColNames.get(i);
-            int colIdx = metadataRO.getColumnIndex(columnName);
-            colIdx = metadataRO.getWriterIndex(colIdx);
-            long columnNameTxn = getColumnNameTxn(partitionTimestamp, colIdx);
-            upsert(partitionTimestamp, colIdx, columnNameTxn, partitionSize);
-        }
-
+    public void upsertPartition(long partitionTimestamp, ColumnVersionReader source) {
         LongList srcCachedList = source.cachedList;
         int srcIndex = srcCachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
         if (srcIndex < 0) { // source does not have partition information
