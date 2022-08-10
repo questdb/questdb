@@ -32,8 +32,8 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -75,21 +75,22 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         return new SequenceRowNumberFunction();
     }
 
-    private class SequenceRowNumberFunction extends LongFunction implements ScalarFunction {
+    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction {
         private long next = 1;
+
         @Override
         public long getLong(Record rec) {
             return next++;
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            toTop();
+        public void toTop() {
+            next = 1;
         }
 
         @Override
-        public void toTop() {
-            next = 1;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            toTop();
         }
     }
 
@@ -115,6 +116,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             // not called
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -149,11 +155,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
     }
 }
