@@ -1659,7 +1659,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore("assumption is incorrect")
     public void testImportURingShuffleCqe() throws Exception {
 
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
@@ -1742,7 +1741,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore("assumption is not true")
     public void testImportURingEnqueueFails() throws Exception {
 
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
@@ -1783,7 +1781,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore("assumption is incorrect")
     public void testImportURingReadFails() throws Exception {
 
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
@@ -1832,7 +1829,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore("assumption is incorrect")
     public void testImportTooSmallFileBufferURing() throws Exception {
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         testImportTooSmallFileBuffer0();
