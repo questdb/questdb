@@ -372,6 +372,96 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDetachAttachPartition2() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "testDetachAttachPartition2";
+            String brokenTableName = "testDetachAttachPartition22";
+            try (
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                String expected = "ts\ts1\ti\tl\ts2\n" +
+                        "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                        "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
+                        "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
+                        "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
+                        "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
+                        "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
+                        "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
+                        "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
+                        "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                        "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
+                assertContent(expected, tableName);
+
+                // create populate broken metadata table
+                TableUtils.createTable(
+                        configuration,
+                        mem,
+                        path,
+                        brokenMeta.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("ss", ColumnType.SHORT),
+                        1
+                );
+                TestUtils.insertFromSelectIntoTable(compiler, sqlExecutionContext, brokenMeta, 100, "2022-06-01", 3);
+                compile("ALTER TABLE " + brokenTableName + " ADD COLUMN s SHORT", sqlExecutionContext);
+
+                // detach partitions and override detached metadata with "broken" metadata (structure version differs, but it is ok)
+                engine.clear();
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-02'", sqlExecutionContext);
+                compile("ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '2022-06-02'", sqlExecutionContext);
+                engine.clear();
+                path.of(configuration.getDetachedRoot())
+                        .concat(tableName)
+                        .concat("2022-06-02")
+                        .put(DETACHED_DIR_MARKER)
+                        .concat(META_FILE_NAME)
+                        .$();
+                Assert.assertTrue(Files.remove(path));
+                other.of(configuration.getDetachedRoot())
+                        .concat(brokenTableName)
+                        .concat("2022-06-02")
+                        .put(DETACHED_DIR_MARKER)
+                        .concat(META_FILE_NAME)
+                        .$();
+                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
+                path.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                Assert.assertTrue(Files.remove(path));
+                other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
+
+                renameDetachedToAttachable(tableName, "2022-06-02");
+
+                assertContent(
+                        "ts\ts1\ti\tl\ts2\n" +
+                                "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                                "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
+                                "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
+                                "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
+                                "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
+                                "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                                "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDetachAttachPartitionFailsYouDidNotRenameTheFolderToAttachable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabDetachAttachNotAttachable";
@@ -829,90 +919,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 "ALTER TABLE tabBrokenTimestampIdx2 ADD COLUMN s SHORT",
                 "[-100] Detached partition metadata [timestamp_index] is not compatible with current table metadata"
         );
-    }
-
-    @Test
-    public void testDetachAttachPartitionBrokenMetadataStructureVersion() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "tabBrokenStructureVersion";
-            String brokenTableName = "tabBrokenStructureVersion2";
-            try (
-                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
-                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
-                    MemoryMARW mem = Vm.getMARWInstance()
-            ) {
-                createPopulateTable(tab
-                                .timestamp("ts")
-                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s2", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        3
-                );
-                String expected = "ts\ts1\ti\tl\ts2\n" +
-                        "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
-                        "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
-                        "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
-                        "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
-                        "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
-                        "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
-                        "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
-                        "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
-                        "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
-                        "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
-                assertContent(expected, tableName);
-
-                // create populate broken metadata table
-                TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        brokenMeta.timestamp("ts")
-                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s2", ColumnType.SYMBOL)
-                                .col("ss", ColumnType.SHORT),
-                        1
-                );
-                TestUtils.insertFromSelectIntoTable(compiler, sqlExecutionContext, brokenMeta, 100, "2022-06-01", 3);
-                compile("ALTER TABLE " + brokenTableName + " ADD COLUMN s SHORT", sqlExecutionContext);
-
-                // detach partitions and override detached metadata with broken metadata
-                engine.clear();
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-02'", sqlExecutionContext);
-                compile("ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '2022-06-02'", sqlExecutionContext);
-                engine.clear();
-                path.of(configuration.getDetachedRoot())
-                        .concat(tableName)
-                        .concat("2022-06-02")
-                        .put(DETACHED_DIR_MARKER)
-                        .concat(META_FILE_NAME)
-                        .$();
-                Assert.assertTrue(Files.remove(path));
-                other.of(configuration.getDetachedRoot())
-                        .concat(brokenTableName)
-                        .concat("2022-06-02")
-                        .put(DETACHED_DIR_MARKER)
-                        .concat(META_FILE_NAME)
-                        .$();
-                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
-                path.parent().concat(COLUMN_VERSION_FILE_NAME).$();
-                Assert.assertTrue(Files.remove(path));
-                other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
-                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
-
-                renameDetachedToAttachable(tableName, "2022-06-02");
-
-                // attempt to reattach
-                assertFailure(
-                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'",
-                        "[-100] Detached partition metadata [structure_version] is not compatible with current table metadata"
-                );
-            }
-        });
     }
 
     @Test

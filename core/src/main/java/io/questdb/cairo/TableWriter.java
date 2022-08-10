@@ -1753,7 +1753,6 @@ public class TableWriter implements Closeable {
             // check column name, type and isIndexed
             detachedDeleteExtraColNames.clear(); // .attachable may have extra columns we do not need
             detachedAddMissingColNames.clear();  // .attachable may lack columns that we need to add
-            boolean colsNegativeTypeMatch = false;
             for (int i = 0; i < columnCount; i++) {
                 int colIdx = metadata.getWriterIndex(i);
                 String columnName = metadata.getColumnName(colIdx);
@@ -1775,7 +1774,6 @@ public class TableWriter implements Closeable {
                             // column was added to the table, and does not exist in attaching
                             detachedAddMissingColNames.add(columnName);
                         }
-                        colsNegativeTypeMatch = true;
                     } else {
                         throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");
                     }
@@ -1785,15 +1783,6 @@ public class TableWriter implements Closeable {
                 if (metadata.isColumnIndexed(colIdx) != detachedMetadata.isColumnIndexed(detColIdx)) {
                     throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "is_indexed");
                 }
-            }
-
-            // check structure version
-            if (colsNegativeTypeMatch) {
-                if (metadata.getStructureVersion() == detachedMetadata.getStructureVersion()) {
-                    throw CairoException.detachedMetadataMismatch("structure_version should be different");
-                }
-            } else if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
-                throw CairoException.detachedMetadataMismatch("structure_version");
             }
 
             // detached could have had more columns than we need

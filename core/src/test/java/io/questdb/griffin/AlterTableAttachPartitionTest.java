@@ -43,14 +43,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private final static StringSink partitions = new StringSink();
     private Path path;
     private Path other;
-    private Path other2;
 
     @Override
     @Before
     public void setUp() {
         super.setUp();
         other = new Path();
-        other2 = new Path();
         path = new Path();
     }
 
@@ -60,7 +58,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         super.tearDown();
         path = Misc.free(path);
         other = Misc.free(other);
-        other2 = Misc.free(other);
     }
 
     @Test
@@ -385,25 +382,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     },
                     s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
                     "dataAddress=" + -1L
-            );
-        });
-    }
-
-    @Test
-    public void testAttachPartitionColumnChangedTypeAndMetaShouldMismatch() throws Exception {
-        assertMemoryLeak(() -> {
-            AddColumn src = s -> s.col("i", ColumnType.INT)
-                    .col("l", ColumnType.LONG)
-                    .timestamp("ts")
-                    .col("sh", ColumnType.SHORT);
-
-            assertSchemaMismatch(
-                    "src29",
-                    src,
-                    "dst29",
-                    dst -> dst.col("sh", -1 * ColumnType.SHORT),
-                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
-                    "[-100] Detached partition metadata [structure_version should be different]"
             );
         });
     }
