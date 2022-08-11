@@ -19,14 +19,6 @@ jobs:
     timeoutInMinutes: 60
 
     steps:
-      - task: CmdLine@2
-        displayName: Setup buildx
-        inputs:
-          script: |
-            docker run --privileged --rm tonistiigi/binfmt --install arm64
-            docker run --privileged --rm tonistiigi/binfmt
-            docker buildx create --use
-
       - bash: |
           export hub_tag_name=$(git describe --tags)-$(echo "$(tag)" | sed -e 's/^patch\///' | sed -e 's/\//-/g')  
           echo hub_tag_name=$hub_tag_name
@@ -43,6 +35,9 @@ jobs:
         displayName: Release Nightly MASTER
         inputs:
           script: |
+            docker run --privileged --rm tonistiigi/binfmt --install arm64
+            docker run --privileged --rm tonistiigi/binfmt
+            docker buildx create --use
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
@@ -51,6 +46,9 @@ jobs:
         displayName: Release Patch
         inputs:
           script: |
+            docker run --privileged --rm tonistiigi/binfmt --install arm64
+            docker run --privileged --rm tonistiigi/binfmt
+            docker buildx create --use
             docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(hub_tag_name) .
           workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
