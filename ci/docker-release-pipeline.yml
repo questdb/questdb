@@ -14,7 +14,7 @@ jobs:
 
     pool:
       name: "Azure Pipelines"
-      vmImage: "ubuntu-latest"
+      vmImage: "windows-latest"
 
     timeoutInMinutes: 60
 
@@ -22,7 +22,6 @@ jobs:
       - bash: |
           export hub_tag_name=$(git describe --tags | sed -e 's/^patch\///')  
           echo "##vso[task.setvariable variable=tag_name;isOutput=true]$tag_name"
-          fi
         name: check_changes
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
@@ -37,7 +36,7 @@ jobs:
         displayName: Release Nightly MASTER
         inputs:
           script: |
-            docker buildx build --platform linux/amd64 --push -t questdb/questdb:nightly .
+            docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
@@ -45,6 +44,6 @@ jobs:
         displayName: Release Patch
         inputs:
           script: |
-            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64 --push -t questdb/questdb:$(hub_tag_name) .
+            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(hub_tag_name) .
           workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
