@@ -802,12 +802,17 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<MemoryMR> columns,
             int primaryIndex,
             MemoryMR mem,
-            long columnSize
+            long columnSize,
+            long columnTop
     ) {
         if (mem != null && mem != NullMemoryMR.INSTANCE) {
             mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
-            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
+            if (columnTop < 0) {
+                mem = NullMemoryMR.INSTANCE;
+            } else {
+                mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
+            }
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -1050,14 +1055,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (ColumnType.isVariableLength(columnType)) {
                     long columnSize = columnRowCount * 8L + 8L;
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
-                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
+                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize, columnTop);
                     columnSize = mem2.getLong(columnRowCount * 8L);
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize, columnTop);
                 } else {
                     long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize, columnTop);
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                 }
 

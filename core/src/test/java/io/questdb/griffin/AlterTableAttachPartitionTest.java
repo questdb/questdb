@@ -309,31 +309,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachPartitionMissingColumnType() throws Exception {
-        assertMemoryLeak(() -> {
-
-            AddColumn src = s -> s.col("l", ColumnType.LONG)
-                    .col("i", ColumnType.INT)
-                    .timestamp("ts");
-
-            assertSchemaMismatch("src12", src, "dst12", dst -> dst.col("str", ColumnType.STRING), "[-100] Detached partition metadata [missing_column=str]");
-            assertSchemaMismatch("src13", src, "dst13", dst -> dst.col("sym", ColumnType.SYMBOL), "[-100] Detached partition metadata [missing_column=sym]");
-            assertSchemaMismatch("src14", src, "dst14", dst -> dst.col("l1", ColumnType.LONG), "[-100] Detached partition metadata [missing_column=l1]");
-            assertSchemaMismatch("src15", src, "dst15", dst -> dst.col("i1", ColumnType.INT), "[-100] Detached partition metadata [missing_column=i1]");
-            assertSchemaMismatch("src16", src, "dst16", dst -> dst.col("b", ColumnType.BOOLEAN), "[-100] Detached partition metadata [missing_column=b]");
-            assertSchemaMismatch("src17", src, "dst17", dst -> dst.col("db", ColumnType.DOUBLE), "[-100] Detached partition metadata [missing_column=db]");
-            assertSchemaMismatch("src18", src, "dst18", dst -> dst.col("fl", ColumnType.FLOAT), "[-100] Detached partition metadata [missing_column=fl]");
-            assertSchemaMismatch("src19", src, "dst19", dst -> dst.col("dt", ColumnType.DATE), "[-100] Detached partition metadata [missing_column=dt]");
-            assertSchemaMismatch("src20", src, "dst20", dst -> dst.col("tss", ColumnType.TIMESTAMP), "[-100] Detached partition metadata [missing_column=tss]");
-            assertSchemaMismatch("src21", src, "dst21", dst -> dst.col("l256", ColumnType.LONG256), "[-100] Detached partition metadata [missing_column=l256]");
-            assertSchemaMismatch("src22", src, "dst22", dst -> dst.col("bin", ColumnType.BINARY), "[-100] Detached partition metadata [missing_column=bin]");
-            assertSchemaMismatch("src23", src, "dst23", dst -> dst.col("byt", ColumnType.BYTE), "[-100] Detached partition metadata [missing_column=byt]");
-            assertSchemaMismatch("src24", src, "dst24", dst -> dst.col("chr", ColumnType.CHAR), "[-100] Detached partition metadata [missing_column=chr]");
-            assertSchemaMismatch("src25", src, "dst25", dst -> dst.col("shrt", ColumnType.SHORT), "[-100] Detached partition metadata [missing_column=shrt]");
-        });
-    }
-
-    @Test
     public void testAttachPartitionStringColIndexMessedNotInOrder() throws Exception {
         assertMemoryLeak(() -> {
             AddColumn src = s -> {
@@ -673,23 +648,40 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                 .col("i", ColumnType.INT)
                                 .col("s2", ColumnType.SYMBOL)
                                 .col("l", ColumnType.LONG),
-                        10000,
+                        20,
                         "2022-08-01",
-                        10);
+                        3);
 
                 CairoTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s", ColumnType.SYMBOL));
+                        .col("s", ColumnType.SYMBOL)
+                        .col("l", ColumnType.LONG));
 
-                try {
-                    attachFromSrcIntoDst(src, dst, "2022-08-09");
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[-100] Detached partition metadata [missing_column=s] is not compatible with current table metadata"
-                    );
-                }
+                attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
+                engine.clear();
+                assertQuery(
+                        "ts\ti\ts\tl\n" +
+                                "2022-08-01T03:35:59.950000Z\t1\t\t1\n" +
+                                "2022-08-01T07:11:59.900000Z\t2\t\t2\n" +
+                                "2022-08-01T10:47:59.850000Z\t3\t\t3\n" +
+                                "2022-08-01T14:23:59.800000Z\t4\t\t4\n" +
+                                "2022-08-01T17:59:59.750000Z\t5\t\t5\n" +
+                                "2022-08-01T21:35:59.700000Z\t6\t\t6\n" +
+                                "2022-08-02T01:11:59.650000Z\t7\t\t7\n" +
+                                "2022-08-02T04:47:59.600000Z\t8\t\t8\n" +
+                                "2022-08-02T08:23:59.550000Z\t9\t\t9\n" +
+                                "2022-08-02T11:59:59.500000Z\t10\t\t10\n" +
+                                "2022-08-02T15:35:59.450000Z\t11\t\t11\n" +
+                                "2022-08-02T19:11:59.400000Z\t12\t\t12\n" +
+                                "2022-08-02T22:47:59.350000Z\t13\t\t13\n" +
+                                "2022-08-02T23:59:59.999000Z\t1\t\tNaN\n",
+                        dst.getName(),
+                        null,
+                        "ts",
+                        true,
+                        false,
+                        true
+                );
             }
         });
     }

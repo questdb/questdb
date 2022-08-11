@@ -91,7 +91,7 @@ public class TableWriter implements Closeable {
     private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
     private final CharSequenceHashSet detachedDeleteExtraColNames = new CharSequenceHashSet();
-    private final CharSequenceHashSet detachedAddMissingColNames = new CharSequenceHashSet();
+    private final CharSequenceIntHashMap detachedAddMissingColNames = new CharSequenceIntHashMap();
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int rootLen;
@@ -1760,7 +1760,8 @@ public class TableWriter implements Closeable {
                 // check name
                 int detColIdx = detachedMetadata.getColumnIndexQuiet(columnName);
                 if (detColIdx == -1) {
-                    throw CairoException.detachedMetadataMismatch("missing_column=" + columnName);
+                    detachedAddMissingColNames.put(columnName, colIdx);
+                    continue;
                 }
 
                 // check type
@@ -1772,7 +1773,7 @@ public class TableWriter implements Closeable {
                             detachedDeleteExtraColNames.add(columnName);
                         } else {
                             // column was added to the table, and does not exist in attaching
-                            detachedAddMissingColNames.add(columnName);
+                            detachedAddMissingColNames.put(columnName, -1);
                         }
                     } else {
                         throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");
@@ -1806,12 +1807,21 @@ public class TableWriter implements Closeable {
                 detachedColumnVersionReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
 
                 // set column tops for missing columns
-                for (int i = 0, limit = detachedAddMissingColNames.size(); i < limit; i++) {
-                    CharSequence columnName = detachedAddMissingColNames.get(i);
-                    int colIdx = metadata.getColumnIndex(columnName);
-                    colIdx = metadata.getWriterIndex(colIdx);
+                ObjList<CharSequence> keys = detachedAddMissingColNames.keys();
+                for (int i = 0, limit = keys.size(); i < limit; i++) {
+                    CharSequence columnName = keys.get(i);
+                    long columnTop;
+                    int colIdx = detachedAddMissingColNames.get(columnName);
+                    if (colIdx < 0) {
+                        colIdx = metadata.getColumnIndex(columnName);
+                        colIdx = metadata.getWriterIndex(colIdx);
+                        columnTop = partitionSize;
+                    } else {
+                        colIdx = metadata.getWriterIndex(colIdx);
+                        columnTop = -1L;
+                    }
                     long columnNameTxn = getColumnNameTxn(partitionTimestamp, colIdx);
-                    columnVersionWriter.upsert(partitionTimestamp, colIdx, columnNameTxn, partitionSize);
+                    columnVersionWriter.upsert(partitionTimestamp, colIdx, columnNameTxn, columnTop);
                 }
 
                 // override column tops
