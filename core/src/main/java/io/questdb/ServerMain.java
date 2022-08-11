@@ -98,7 +98,6 @@ public class ServerMain {
                 .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
                 .$(", all rights reserved.")
                 .$();
-
         extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
