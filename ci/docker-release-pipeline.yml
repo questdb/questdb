@@ -37,7 +37,7 @@ jobs:
         inputs:
           script: |
             docker buildx build --platform linux/arm64,linux/amd64 --push .
-        workingDirectory: core
+          workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
@@ -45,7 +45,7 @@ jobs:
         inputs:
           script: |
             docker buildx build --build-arg tag_name=$(tag) --platform linux/arm64,linux/amd64 --push .
-        workingDirectory: core
+          workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: Docker@2
