@@ -32,7 +32,7 @@ jobs:
         displayName: Release multi arch build MASTER
         inputs:
           script: |
-            docker buildx build --platform linux/arm64,linux/amd64 --push .
+            docker buildx build --platform linux/arm64,linux/amd64 --push -t questdb/questdb:nightly .
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
@@ -40,7 +40,7 @@ jobs:
         displayName: Multi arch build TAG
         inputs:
           script: |
-            docker buildx build --build-arg tag_name=$(tag) --platform linux/arm64,linux/amd64 --push .
+            docker buildx build --build-arg tag_name=$(tag) --platform linux/arm64,linux/amd64 --push -t questdb/questdb:$(tag) .
           workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
