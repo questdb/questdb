@@ -2034,6 +2034,9 @@ public class TableWriter implements Closeable {
                 detachedMetaMem.closeFile();
             }
             removeFileAndOrLog(ff, other2.parent().concat(DETACHED_META_FILE_NAME).$());
+            if (detachedIndexBuilder != null) {
+                detachedIndexBuilder.clear();
+            }
         }
     }
 
