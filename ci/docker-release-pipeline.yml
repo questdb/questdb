@@ -21,6 +21,6 @@ jobs:
           containerRegistry: quest_docker_hub
 
       - bash: |
-          export tag_name=$(git describe --tags) && docker buildx build --build-arg tag_name --push --platform linux/amd64 --tag questdb/$tag_name .
+          export tag_name=$(git describe --tags) && docker buildx build --build-arg tag_name --push --platform linux/amd64,linux/arm64 --tag questdb/$tag_name .
         workingDirectory: core
         displayName: Build And Push
