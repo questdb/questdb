@@ -23,7 +23,9 @@ jobs:
         displayName: Setup buildx
         inputs:
           script: |
-            docker buildx use docker/setup-buildx-action@v2
+            docker run --privileged --rm tonistiigi/binfmt --install arm64
+            docker run --privileged --rm tonistiigi/binfmt
+            docker buildx create --use
 
       - bash: |
           export hub_tag_name=$(git describe --tags)-$(echo "$(tag)" | sed -e 's/^patch\///' | sed -e 's/\//-/g')  
