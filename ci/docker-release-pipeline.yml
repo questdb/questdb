@@ -20,8 +20,8 @@ jobs:
 
     steps:
       - bash: |
-          export hub_tag_name=$(git describe --tags | sed -e 's/^patch\///')  
-          echo "##vso[task.setvariable variable=tag_name;isOutput=true]$tag_name"
+          export hub_tag_name=$(git describe --tags)-$(git rev-parse --abbrev-ref HEAD | sed -e 's/^patch\///' | sed -e 's/\//-/g')  
+          echo "##vso[task.setvariable variable=hub_tag_name;isOutput=true]$hub_tag_name"
         name: check_changes
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
