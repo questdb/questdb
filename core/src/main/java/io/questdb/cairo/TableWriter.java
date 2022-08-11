@@ -268,7 +268,6 @@ public class TableWriter implements Closeable {
 
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
-            this.metadata.readFromMem();
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -628,6 +627,7 @@ public class TableWriter implements Closeable {
                         throw CairoException.detachedMetadataMismatch("missing_column=" + timestampColName);
                     }
 
+                    // detached metadata files validation
                     if (validateDataFiles) {
                         prepareDetachedPartition(timestamp, partitionSize);
                         if (partitionSize > 0L) {
@@ -668,6 +668,7 @@ public class TableWriter implements Closeable {
                     freeColumns(true);
                     configureAppendPosition();
                 }
+
                 LOG.info().$("partition attached [path=").$(path).I$();
                 rollbackRename = false;
             }
@@ -1847,23 +1848,22 @@ public class TableWriter implements Closeable {
     }
 
     private void prepareDetachedPartition(long partitionTimestamp, long partitionSize) {
+        boolean deleteDetachedMetadataFiles = false;
         try {
             // load/check _dmeta
             other2.of(detachedPath).concat(DETACHED_META_FILE_NAME).$();
             if (!ff.exists(other2)) {
-                // Backups and older versions of detached partitions will not have _meta
-                // we attach with minimum checks
-                LOG.info().$("detached _meta not found, skipping check [path=").$(other2).I$();
+                // Backups and older versions of detached partitions will not have _dmeta
+                LOG.info().$("detached ").$(DETACHED_META_FILE_NAME).$(" file not found, skipping check [path=").$(other2).I$();
                 return;
             }
 
             if (detachedMetadata == null) {
                 detachedMetaMem = new MemoryCMRImpl();
-                detachedMetadata = new TableWriterMetadata(detachedMetaMem);
+                detachedMetadata = new TableWriterMetadata(detachedMetaMem, false);
             }
-
             detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
-            detachedMetadata.readFromMem();
+            detachedMetadata.reload();
 
             if (metadata.getId() != detachedMetadata.getId()) {
                 // very same table, attaching foreign partitions is not allowed
@@ -1994,8 +1994,8 @@ public class TableWriter implements Closeable {
                 }
 
                 // delete extra index files
-                keys = detachedRemoveIndexColNames.keys();
                 int other2Len = other2.parent().length();
+                keys = detachedRemoveIndexColNames.keys();
                 for (int i = 0, limit = keys.size(); i < limit; i++) {
                     CharSequence columnName = keys.get(i);
                     int colIdx = detachedRemoveIndexColNames.get(columnName);
@@ -2026,16 +2026,19 @@ public class TableWriter implements Closeable {
                         );
                     }
                 }
+                deleteDetachedMetadataFiles = true;
             }
         } finally {
             Misc.free(detachedColumnVersionReader);
-            removeFileAndOrLog(ff, other2.$());
             if (detachedMetaMem != null) {
                 detachedMetaMem.closeFile();
             }
-            removeFileAndOrLog(ff, other2.parent().concat(DETACHED_META_FILE_NAME).$());
             if (detachedIndexBuilder != null) {
                 detachedIndexBuilder.clear();
+            }
+            if (deleteDetachedMetadataFiles) {
+                removeFileAndOrLog(ff, other2.of(detachedPath).concat(DETACHED_META_FILE_NAME).$());
+                removeFileAndOrLog(ff, other2.parent().concat(DETACHED_COLUMN_VERSION_FILE_NAME).$());
             }
         }
     }

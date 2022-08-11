@@ -1169,10 +1169,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         engine.clear();
-        compile(
-                "ALTER TABLE " + src.getName() + " DETACH PARTITION LIST " + partitions + ";",
-                sqlExecutionContext
-        );
+        compile("ALTER TABLE " + src.getName() + " DETACH PARTITION LIST " + partitions + ";", sqlExecutionContext);
 
         engine.clear();
         path.of(configuration.getDetachedRoot()).concat(src.getName());
@@ -1188,10 +1185,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         int rowCount = readAllRows(dst.getName());
         engine.clear();
-        compile(
-                "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";",
-                sqlExecutionContext
-        );
+        compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";", sqlExecutionContext);
         int newRowCount = readAllRows(dst.getName());
         Assert.assertTrue(newRowCount > rowCount);
 

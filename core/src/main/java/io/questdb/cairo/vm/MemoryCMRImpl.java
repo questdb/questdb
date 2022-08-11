@@ -44,20 +44,21 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     public MemoryCMRImpl() {
+        // intentionally left empty
     }
 
     @Override
     public void close() {
         if (pageAddress != 0) {
             ff.munmap(pageAddress, size, memoryTag);
-            this.size = 0;
-            this.pageAddress = 0;
+            LOG.debug().$("unmapped [pageAddress=").$(pageAddress)
+                    .$(", size=").$(size)
+                    .$(", tag=").$(memoryTag)
+                    .I$();
+            size = 0;
+            pageAddress = 0;
         }
-        if (fd != -1) {
-            ff.close(fd);
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
-            fd = -1;
-        }
+        closeFile();
     }
 
     @Override
@@ -88,7 +89,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     public void closeFile() {
         if (fd != -1) {
             ff.close(fd);
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+            LOG.debug().$("closed [fd=").$(fd).I$();
             fd = -1;
         }
     }
