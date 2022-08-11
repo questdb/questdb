@@ -49,9 +49,9 @@ jobs:
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: Docker@2
-          inputs:
-            command: 'login'
-            containerRegistry: questdb_docker_hub
+        inputs:
+          command: 'login'
+          containerRegistry: questdb_docker_hub
 
       - task: Docker@2
         displayName: Build base image (mirror)
