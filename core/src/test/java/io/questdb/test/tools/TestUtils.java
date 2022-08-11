@@ -56,6 +56,7 @@ import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -884,6 +885,14 @@ public final class TestUtils {
         return new Rnd(s0, s1);
     }
 
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        return new Rnd(s0, s1);
+    }
+
     public static int getJavaVersion() {
         String version = System.getProperty("java.version");
         if (version.startsWith("1.")) {
@@ -1006,6 +1015,14 @@ public final class TestUtils {
                 break;
             case ColumnType.LONG256:
                 r.getLong256(i, sink);
+                break;
+            case ColumnType.LONG128:
+                long long128Hi = r.getLong128Hi(i);
+                long long128Lo = r.getLong128Lo(i);
+                if (!Long128Util.isNull(long128Hi, long128Lo)) {
+                    UUID guid = new UUID(long128Hi, long128Lo);
+                    sink.put(guid.toString());
+                }
                 break;
             default:
                 break;

@@ -101,6 +101,10 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     Long256 getLong256B(Record rec);
 
+    long getLong128Hi(Record rec);
+
+    long getLong128Lo(Record rec);
+
     default RecordMetadata getMetadata() {
         return null;
     }

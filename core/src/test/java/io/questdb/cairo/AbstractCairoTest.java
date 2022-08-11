@@ -38,6 +38,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -237,6 +238,11 @@ public class AbstractCairoTest {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 return testMicrosClock;
+            }
+
+            @Override
+            public MillisecondClock getMillisecondClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
             }
 
             @Override

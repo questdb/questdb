@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.Long128Function;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.ThreadLocal;
@@ -279,6 +280,7 @@ public class CaseCommon {
         constructors.extendAndSet(ColumnType.DATE, (position, picker, args) -> new DateCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.TIMESTAMP, (position, picker, args) -> new TimestampCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
+        constructors.extendAndSet(ColumnType.LONG128, (position, picker, args) -> new Long128CaseFunction(picker, args));
     }
 
     static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
