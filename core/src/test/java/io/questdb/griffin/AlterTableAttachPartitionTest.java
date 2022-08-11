@@ -1237,23 +1237,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         // copy _meta
         Files.copy(
                 path.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
-                other.parent().concat(TableUtils.META_FILE_NAME).$()
+                other.parent().concat(TableUtils.DETACHED_META_FILE_NAME).$()
         );
         // copy _cv
         Files.copy(
                 path.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                other.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
+                other.parent().concat(TableUtils.DETACHED_COLUMN_VERSION_FILE_NAME).$()
         );
-    }
-
-    private CharSequence executeSql(String sql) throws SqlException {
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                sql,
-                sink
-        );
-        return sink;
     }
 
     private int readAllRows(String tableName) {

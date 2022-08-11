@@ -769,9 +769,9 @@ public class TableWriter implements Closeable {
                 return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
             }
 
-            // copy _meta and _cv to partition.detached
+            // copy _meta and _cv to partition.detached _dmeta and _dcv
             other.of(path).trimTo(rootLen).concat(META_FILE_NAME).$(); // exists already checked
-            other2.of(detachedPath).trimTo(detachedPathLen).concat(META_FILE_NAME).$();
+            other2.of(detachedPath).trimTo(detachedPathLen).concat(DETACHED_META_FILE_NAME).$();
             StatusCode statusCode = StatusCode.OK;
             boolean copiedDetachedMeta = false;
             if (-1 == ff.copy(other, other2)) {
@@ -783,7 +783,7 @@ public class TableWriter implements Closeable {
             } else {
                 copiedDetachedMeta = true;
                 other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
-                other2.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                other2.parent().concat(DETACHED_COLUMN_VERSION_FILE_NAME).$();
                 if (-1 == ff.copy(other, other2)) {
                     statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
                     LOG.error().$("cannot copy [errno=").$(ff.errno())
@@ -793,7 +793,6 @@ public class TableWriter implements Closeable {
                 }
             }
             if (statusCode == StatusCode.OK) {
-
                 // find out if we are removing min partition
                 long nextMinTimestamp = minTimestamp;
                 if (timestamp == txWriter.getPartitionTimestamp(0)) {
@@ -810,14 +809,13 @@ public class TableWriter implements Closeable {
                 commit();
             } else {
                 if (copiedDetachedMeta) {
-                    other2.parent().concat(META_FILE_NAME).$();
+                    other2.parent().concat(DETACHED_META_FILE_NAME).$();
                     if (!ff.remove(other2)) {
                         LOG.error().$("cannot remove [errno=").$(ff.errno())
                                 .$(", path=").$(other2)
                                 .I$();
                     }
                 }
-
                 // rollback rename
                 if (ff.rename(detachedPath, path) != Files.FILES_RENAME_OK) {
                     LOG.error()
@@ -1853,8 +1851,8 @@ public class TableWriter implements Closeable {
 
     private void prepareDetachedPartition(long partitionTimestamp, long partitionSize) {
         try {
-            // load/check _meta
-            other2.of(detachedPath).concat(META_FILE_NAME).$();
+            // load/check _dmeta
+            other2.of(detachedPath).concat(DETACHED_META_FILE_NAME).$();
             if (!ff.exists(other2)) {
                 // Backups and older versions of detached partitions will not have _meta
                 // we attach with minimum checks
@@ -1863,8 +1861,10 @@ public class TableWriter implements Closeable {
             }
 
             if (detachedMetaMem == null) {
+                // TODO at some point refactor code so that we can reuse these two objects
+                // and not have to instantiate them on every attach
                 detachedMetaMem = Vm.getMRInstance();
-                openMetaFile(ff, other2.parent(), other2.length(), detachedMetaMem);
+                detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
                 detachedMetadata = new TableWriterMetadata(detachedMetaMem);
             }
 
@@ -1940,9 +1940,9 @@ public class TableWriter implements Closeable {
                 detachedDeleteExtraColNames.add(columnName);
             }
 
-            // load/check _cv, updating local column tops
-            // set current _cv to where the partition was
-            other2.concat(COLUMN_VERSION_FILE_NAME).$();
+            // load/check _dcv, updating local column tops
+            // set current _dcv to where the partition was
+            other2.parent().concat(DETACHED_COLUMN_VERSION_FILE_NAME).$();
             if (!ff.exists(other2)) {
                 // Backups and older versions of detached partitions will not have _cv
                 LOG.error().$("detached _cv not found, skipping check [path=").$(other2).I$();

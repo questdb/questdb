@@ -2827,4 +2827,3 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
 }
-

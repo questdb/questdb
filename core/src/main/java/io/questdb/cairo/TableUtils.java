@@ -53,10 +53,12 @@ public final class TableUtils {
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
+    public static final String DETACHED_META_FILE_NAME = "_dmeta";
     public static final String EVENT_FILE_NAME = "_event";
     public static final String CATALOG_FILE_NAME = "_catalog";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    public static final String DETACHED_COLUMN_VERSION_FILE_NAME = "_dcv";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String DETACHED_DIR_MARKER = ".detached";

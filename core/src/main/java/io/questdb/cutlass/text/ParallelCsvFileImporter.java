@@ -694,16 +694,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
                     }
-
-                    // copy _meta and _cv to .attachable
-                    ff.copy(
-                            srcPath.parent().concat(TableUtils.META_FILE_NAME).$(),
-                            dstPath.trimTo(attachableLen).concat(TableUtils.META_FILE_NAME).$()
-                    );
-                    ff.copy(
-                            srcPath.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                            dstPath.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
-                    );
                 }
             }
         } catch (CairoException e) {
