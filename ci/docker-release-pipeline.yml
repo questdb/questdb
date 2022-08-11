@@ -19,10 +19,6 @@ jobs:
     timeoutInMinutes: 60
 
     steps:
-      - task: Docker@2
-        inputs:
-          command: 'login'
-          containerRegistry: sl_docker
       - task: CmdLine@2
         displayName: Setup buildx
         inputs:
