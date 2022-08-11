@@ -29,6 +29,7 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
+import io.questdb.cairo.pool.WalWriterSource;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -69,6 +70,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final IDGenerator tableIdGenerator;
     private final TableRegistry tableRegistry;
+
 
     private final TextImportExecutionContext textImportExecutionContext;
     // Kept for embedded API purposes. The second constructor (the one with metrics)

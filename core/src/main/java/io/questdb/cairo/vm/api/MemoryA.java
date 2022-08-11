@@ -62,7 +62,7 @@ public interface MemoryA extends Closeable {
 
     void putLong(long value);
 
-    default void putLong128BigEndian(long hi, long lo) {
+    default void putLong128LittleEndian(long hi, long lo) {
         putLongLong(lo, hi);
     }
 

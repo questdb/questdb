@@ -891,17 +891,23 @@ public final class TableUtils {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
                 Vect.memset(addr, count, 0);
+                break;
+            case ColumnType.GEOBYTE:
+                Vect.memset(addr, count, GeoHashes.BYTE_NULL);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
                 Vect.setMemoryShort(addr, (short) 0, count);
                 break;
+            case ColumnType.GEOSHORT:
+                Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);
+                break;
             case ColumnType.INT:
-            case ColumnType.GEOINT:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                break;
+            case ColumnType.GEOINT:
+                Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);
                 break;
             case ColumnType.FLOAT:
                 Vect.setMemoryFloat(addr, Float.NaN, count);
@@ -912,8 +918,10 @@ public final class TableUtils {
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-            case ColumnType.GEOLONG:
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
+                break;
+            case ColumnType.GEOLONG:
+                Vect.setMemoryLong(addr, GeoHashes.NULL, count);
                 break;
             case ColumnType.DOUBLE:
                 Vect.setMemoryDouble(addr, Double.NaN, count);
@@ -921,6 +929,10 @@ public final class TableUtils {
             case ColumnType.LONG256:
                 // Long256 is null when all 4 longs are NaNs
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
+                break;
+            case ColumnType.LONG128:
+                // Long128 is null when all 2 longs are NaNs
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
                 break;
             case ColumnType.LONG128:
                 // Long128 is null when all 2 longs are NaNs

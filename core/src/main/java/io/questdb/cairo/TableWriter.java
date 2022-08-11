@@ -159,9 +159,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private final IntList symbolRewriteMap = new IntList();
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
-    private ObjList<MemoryCARW> o3Columns;
-    private ObjList<MemoryCARW> o3Columns2;
-    private ReadOnlyObjList<? extends MemoryCR> o3ColumnSources;
+    private ObjList<MemoryCARW> o3MemColumns;
+    private ObjList<MemoryCARW> o3MemColumns2;
+    private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
     private Row row = regularRow;
@@ -287,9 +287,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             }
             this.rowValueIsNotNull.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
-            this.o3Columns = new ObjList<>(columnCount * 2);
-            this.o3Columns2 = new ObjList<>(columnCount * 2);
-            this.o3ColumnSources = this.o3Columns;
+            this.o3MemColumns = new ObjList<>(columnCount * 2);
+            this.o3MemColumns2 = new ObjList<>(columnCount * 2);
+            this.o3Columns = this.o3MemColumns;
             this.activeColumns = columns;
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
@@ -722,6 +722,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
+    public long commit() {
+        return commit(defaultCommitMode);
+    }
+
     public long commit(int commitMode) {
         return commit(commitMode, 0);
     }
@@ -734,13 +738,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         return commit(defaultCommitMode, lagMicros);
     }
 
-    @Override
-    public TableWriterMetadata getMetadata() {
-        return metadata;
-    }
-
-    public long commit() {
-        return commit(defaultCommitMode);
+    public long commitWithLag(int commitMode) {
+        return commit(commitMode, metadata.getCommitLag());
     }
 
     public void dropIndex(CharSequence columnName) {
@@ -838,8 +837,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         return txWriter.getMaxTimestamp();
     }
 
-    public long commitWithLag(int commitMode) {
-        return commit(commitMode, metadata.getCommitLag());
+    public TableWriterMetadata getMetadata() {
+        return metadata;
     }
 
     public long getO3RowCount() {
@@ -1046,8 +1045,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    public boolean processO3Append(
+    public boolean processWalAppend(
             Path walPath,
+            long segmentId,
             int timestampIndex,
             boolean ordered,
             long rowLo,
@@ -1064,7 +1064,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             mmapWalColumn(walPath, timestampIndex, rowLo, rowHi);
 
             try {
-                o3ColumnSources = walMappedColumns;
+                o3Columns = walMappedColumns;
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
                 long timestampAddr;
                 long o3Lo = rowLo;
@@ -1093,11 +1093,11 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     timestampAddr = walTimestampColumn.addressOf(0);
                 }
 
-                o3ColumnSources = remapWalSymbols(mapDiffCursor, o3Lo, o3Hi, walPath);
-                processO3Append(0L, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
+                o3Columns = remapWalSymbols(mapDiffCursor, o3Lo, o3Hi, walPath);
+                processWalAppend(0L, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
             } finally {
                 finishO3Append(0L);
-                o3ColumnSources = o3Columns;
+                o3Columns = o3MemColumns;
                 for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
                     MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
                     if (mappedColumnMem != null) {
@@ -1113,91 +1113,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    public void processWalCommit(Path walPath, long segmentTxn) {
-        var walCursor = walEventReader.of(walPath, WalWriter.WAL_FORMAT_VERSION, segmentTxn);
-        var dataInfo = walCursor.getDataInfo();
-
-        processWalCommit(
-                walPath,
-                !dataInfo.isOutOfOrder(),
-                dataInfo.getStartRowID(),
-                dataInfo.getEndRowID(),
-                dataInfo.getMinTimestamp(),
-                dataInfo.getMaxTimestamp(),
-                dataInfo
-        );
-    }
-
-    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
-        walMappedColumns.clear();
-        int walPathLen = walPath.length();
-        final int columnCount = metadata.getColumnCount();
-
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int type = metadata.getColumnType(columnIndex);
-            o3RowCount = rowHi - rowLo;
-            if (type > 0) {
-                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
-                if (columnIndex == timestampIndex) {
-                    sizeBitsPow2 += 1;
-                }
-
-                if (!ColumnType.isVariableLength(type)) {
-                    MemoryCMOR primary = walColumnMemoryPool.pop();
-
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    primary.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            rowHi << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    walMappedColumns.add(primary);
-                    walMappedColumns.add(null);
-                } else {
-                    sizeBitsPow2 = 3;
-                    MemoryCMOR fixed = walColumnMemoryPool.pop();
-                    MemoryCMOR var = walColumnMemoryPool.pop();
-
-                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    fixed.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            (rowHi + 1) << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
-                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    var.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            varOffset,
-                            varOffset + varLen,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    walMappedColumns.add(var);
-                    walMappedColumns.add(fixed);
-                }
-            } else {
-                walMappedColumns.add(null);
-            }
-        }
-    }
-
     public void processWalCommit(
             Path walPath,
+            long segmentId,
             boolean inOrder,
             long rowLo,
             long rowHi,
@@ -1210,7 +1128,17 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         txWriter.beginPartitionSizeUpdate();
-        if (processO3Append(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
+        if (processWalAppend(
+                walPath,
+                segmentId,
+                metadata.getTimestampIndex(),
+                inOrder,
+                rowLo,
+                rowHi,
+                o3TimestampMin,
+                o3TimestampMax,
+                mapDiffCursor
+        )) {
             return;
         }
 
@@ -1843,7 +1771,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128BigEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                nullers.add(() -> mem1.putLong128LittleEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG256:
                 nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
@@ -2340,10 +2268,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         int baseIndex = getPrimaryColumnIndex(index);
         columns.extendAndSet(baseIndex, primary);
         columns.extendAndSet(baseIndex + 1, secondary);
-        o3Columns.extendAndSet(baseIndex, oooPrimary);
-        o3Columns.extendAndSet(baseIndex + 1, oooSecondary);
-        o3Columns2.extendAndSet(baseIndex, oooPrimary2);
-        o3Columns2.extendAndSet(baseIndex + 1, oooSecondary2);
+        o3MemColumns.extendAndSet(baseIndex, oooPrimary);
+        o3MemColumns.extendAndSet(baseIndex + 1, oooSecondary);
+        o3MemColumns2.extendAndSet(baseIndex, oooPrimary2);
+        o3MemColumns2.extendAndSet(baseIndex + 1, oooSecondary2);
         configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         configureNullSetters(o3NullSetters2, type, oooPrimary2, oooSecondary2);
@@ -2379,8 +2307,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
-            o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            o3TimestampMemCpy = o3Columns2.getQuick(getPrimaryColumnIndex(timestampIndex));
+            o3TimestampMem = o3MemColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+            o3TimestampMemCpy = o3MemColumns2.getQuick(getPrimaryColumnIndex(timestampIndex));
         }
     }
 
@@ -2669,8 +2597,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         if (columns != null) {
             closeAppendMemoryTruncate(truncate);
         }
-        Misc.freeObjListAndKeepObjects(o3Columns);
-        Misc.freeObjListAndKeepObjects(o3Columns2);
+        Misc.freeObjListAndKeepObjects(o3MemColumns);
+        Misc.freeObjListAndKeepObjects(o3MemColumns2);
     }
 
     private void freeIndexers() {
@@ -2866,6 +2794,74 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
+    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
+        walMappedColumns.clear();
+        int walPathLen = walPath.length();
+        final int columnCount = metadata.getColumnCount();
+
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            int type = metadata.getColumnType(columnIndex);
+            o3RowCount = rowHi - rowLo;
+            if (type > 0) {
+                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
+                if (columnIndex == timestampIndex) {
+                    sizeBitsPow2 += 1;
+                }
+
+                if (!ColumnType.isVariableLength(type)) {
+                    MemoryCMOR primary = walColumnMemoryPool.pop();
+
+                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    primary.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            rowHi << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    walMappedColumns.add(primary);
+                    walMappedColumns.add(null);
+                } else {
+                    sizeBitsPow2 = 3;
+                    MemoryCMOR fixed = walColumnMemoryPool.pop();
+                    MemoryCMOR var = walColumnMemoryPool.pop();
+
+                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    fixed.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            (rowHi + 1) << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
+                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
+                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    var.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            varOffset,
+                            varOffset + varLen,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    walMappedColumns.add(var);
+                    walMappedColumns.add(fixed);
+                }
+            } else {
+                walMappedColumns.add(null);
+            }
+        }
+    }
+
     private Row newRowO3(long timestamp) {
         LOG.info().$("switched to o3 [table=").utf8(tableName).$(']').$();
         txWriter.beginPartitionSizeUpdate();
@@ -3002,7 +2998,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
             LOG.info().$("sorted [table=").utf8(tableName).I$();
 
-            processO3Append(o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin, o3TimestampMax, true, 0L);
+            processWalAppend(o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin, o3TimestampMax, true, 0L);
         } finally {
             finishO3Append(o3LagRowCount);
         }
@@ -3033,7 +3029,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     path,
                     partitionBy,
                     columns,
-                    o3ColumnSources,
+                    o3Columns,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
@@ -3057,7 +3053,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     path,
                     partitionBy,
                     columns,
-                    o3ColumnSources,
+                    o3Columns,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
@@ -3217,8 +3213,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             long o3RowCount
     ) {
         if (columnIndex > -1) {
-            MemoryARW o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            MemoryARW o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            MemoryARW o3DataMem = o3MemColumns.get(getPrimaryColumnIndex(columnIndex));
+            MemoryARW o3IndexMem = o3MemColumns.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
             long sourceOffset;
@@ -3287,8 +3283,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             MemoryMA srcDataMem = getPrimaryColumn(colIndex);
             int shl = ColumnType.pow2SizeOf(columnType);
             long srcFixOffset;
-            final MemoryARW o3DataMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
-            final MemoryARW o3IndexMem = o3Columns.get(getSecondaryColumnIndex(colIndex));
+            final MemoryARW o3DataMem = o3MemColumns.get(getPrimaryColumnIndex(colIndex));
+            final MemoryARW o3IndexMem = o3MemColumns.get(getSecondaryColumnIndex(colIndex));
 
             long extendedSize;
             long dstVarOffset = o3DataMem.getAppendOffset();
@@ -3418,16 +3414,16 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private void o3OpenColumns() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0) {
-                MemoryARW mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
+                MemoryARW mem1 = o3MemColumns.getQuick(getPrimaryColumnIndex(i));
                 mem1.jumpTo(0);
-                MemoryARW mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
+                MemoryARW mem2 = o3MemColumns.getQuick(getSecondaryColumnIndex(i));
                 if (mem2 != null) {
                     mem2.jumpTo(0);
                     mem2.putLong(0);
                 }
             }
         }
-        activeColumns = o3Columns;
+        activeColumns = o3MemColumns;
         activeNullSetters = o3NullSetters;
         LOG.debug().$("switched partition to memory").$();
     }
@@ -3637,8 +3633,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             long o3RowCount
     ) {
         if (columnIndex != metadata.getTimestampIndex()) {
-            MemoryARW o3DataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            MemoryARW o3IndexMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            MemoryARW o3DataMem = o3MemColumns.get(getPrimaryColumnIndex(columnIndex));
+            MemoryARW o3IndexMem = o3MemColumns.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
             if (null == o3IndexMem) {
@@ -3776,8 +3772,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             long valueCount
     ) {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
-        final MemoryCR mem = o3ColumnSources.getQuick(columnOffset);
-        final MemoryCARW mem2 = o3Columns2.getQuick(columnOffset);
+        final MemoryCR mem = o3Columns.getQuick(columnOffset);
+        final MemoryCARW mem2 = o3MemColumns2.getQuick(columnOffset);
         final int shl = ColumnType.pow2SizeOf(columnType);
         final long src = mem.addressOf(0);
         mem2.jumpTo(valueCount << shl);
@@ -3812,10 +3808,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
-        final MemoryCR dataMem = o3ColumnSources.getQuick(primaryIndex);
-        final MemoryCR indexMem = o3ColumnSources.getQuick(secondaryIndex);
-        final MemoryCARW dataMem2 = o3Columns2.getQuick(primaryIndex);
-        final MemoryCARW indexMem2 = o3Columns2.getQuick(secondaryIndex);
+        final MemoryCR dataMem = o3Columns.getQuick(primaryIndex);
+        final MemoryCR indexMem = o3Columns.getQuick(secondaryIndex);
+        final MemoryCARW dataMem2 = o3MemColumns2.getQuick(primaryIndex);
+        final MemoryCARW indexMem2 = o3MemColumns2.getQuick(secondaryIndex);
         // ensure we have enough memory allocated
         final long srcDataAddr = dataMem.addressOf(0);
         final long srcIndxAddr = indexMem.addressOf(0);
@@ -4085,7 +4081,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    private void processO3Append(
+    private void processWalAppend(
             long o3LagRowCount,
             int timestampIndex,
             long sortedTimestampsAddr,
@@ -4249,8 +4245,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                             final CharSequence columnName = metadata.getColumnName(i);
                             final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
                             final BitmapIndexWriter indexWriter = indexBlockCapacity > -1 ? getBitmapIndexWriter(i) : null;
-                            final MemoryR oooMem1 = o3ColumnSources.getQuick(colOffset);
-                            final MemoryR oooMem2 = o3ColumnSources.getQuick(colOffset + 1);
+                            final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
+                            final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
                             final MemoryMA mem1 = columns.getQuick(colOffset);
                             final MemoryMA mem2 = columns.getQuick(colOffset + 1);
                             final long srcDataTop = getColumnTop(i);
@@ -4569,24 +4565,24 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 boolean identical = createWalSymbolMapping(symbolMapDiff, sym++, symbolRewriteMap);
 
                 if (!identical) {
-                    MemoryCR symbolColumnSrc = o3ColumnSources.getQuick(getPrimaryColumnIndex(columnIndex));
+                    MemoryCR o3SymbolColumn = o3Columns.getQuick(getPrimaryColumnIndex(columnIndex));
 
                     final MemoryCARW symbolColumnDest;
-                    if (symbolColumnSrc instanceof MemoryCARW) {
+                    if (o3SymbolColumn instanceof MemoryCARW) {
                         // The column is already in RAM, so we rewrite it
-                        symbolColumnDest = (MemoryCARW) symbolColumnSrc;
+                        symbolColumnDest = (MemoryCARW) o3SymbolColumn;
                     } else {
                         // Column is read-only mapped memory, so we need to take in RAM column and remap values into it
                         if (o3ColumnOverrides == null) {
                             // Copy list of columns to change symbol columns to be from RAM columns and
                             // other to be mapped memory
-                            o3ColumnOverrides = new ObjList<>(o3ColumnSources.size());
-                            for (int c = 0; c < o3ColumnSources.size(); c++) {
-                                o3ColumnOverrides.add(o3ColumnSources.getQuick(c));
+                            o3ColumnOverrides = new ObjList<>(o3Columns.size());
+                            for (int c = 0; c < o3Columns.size(); c++) {
+                                o3ColumnOverrides.add(o3Columns.getQuick(c));
                             }
                         }
 
-                        symbolColumnDest = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+                        symbolColumnDest = o3MemColumns.get(getPrimaryColumnIndex(columnIndex));
                         symbolColumnDest.jumpTo(rowHi << 2);
                         o3ColumnOverrides.setQuick(getPrimaryColumnIndex(columnIndex), symbolColumnDest);
                     }
@@ -4595,7 +4591,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     for (long rowId = rowLo; rowId < rowHi; rowId++) {
                         long offset = rowId << 2;
 
-                        int symKey = symbolColumnSrc.getInt(offset);
+                        int symKey = o3SymbolColumn.getInt(offset);
                         if (symKey >= cleanSymbolCount) {
                             int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
                             if (newKey < 0) {
@@ -4618,7 +4614,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
         if (o3ColumnOverrides == null) {
             // Columns copied in place.
-            return o3ColumnSources;
+            return o3Columns;
         }
         return o3ColumnOverrides;
     }
@@ -4630,8 +4626,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         freeNullSetter(o3NullSetters, columnIndex);
         freeNullSetter(o3NullSetters2, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
-        freeAndRemoveO3ColumnPair(o3Columns, pi, si);
-        freeAndRemoveO3ColumnPair(o3Columns2, pi, si);
+        freeAndRemoveO3ColumnPair(o3MemColumns, pi, si);
+        freeAndRemoveO3ColumnPair(o3MemColumns2, pi, si);
         if (columnIndex < indexers.size()) {
             Misc.free(indexers.getAndSetQuick(columnIndex, null));
             populateDenseIndexerList();
@@ -5385,18 +5381,18 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {
-        ObjList<MemoryCARW> temp = o3Columns;
-        o3Columns = o3Columns2;
-        o3Columns2 = temp;
+        ObjList<MemoryCARW> temp = o3MemColumns;
+        o3MemColumns = o3MemColumns2;
+        o3MemColumns2 = temp;
 
         // Swap timestamp column back, timestamp column is not sorted, it's the sort key.
         final int timestampMemoryIndex = getPrimaryColumnIndex(timestampIndex);
-        o3Columns2.setQuick(
+        o3MemColumns2.setQuick(
                 timestampMemoryIndex,
-                o3Columns.getAndSetQuick(timestampMemoryIndex, o3Columns2.getQuick(timestampMemoryIndex))
+                o3MemColumns.getAndSetQuick(timestampMemoryIndex, o3MemColumns2.getQuick(timestampMemoryIndex))
         );
-        o3ColumnSources = o3Columns;
-        activeColumns = o3Columns;
+        o3Columns = o3MemColumns;
+        activeColumns = o3MemColumns;
 
         ObjList<Runnable> tempNullSetters = o3NullSetters;
         o3NullSetters = o3NullSetters2;
@@ -5695,7 +5691,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
         void putLong(int columnIndex, long value);
 
-        void putLong128BigEndian(int columnIndex, long first, long second);
+        void putLong128LittleEndian(int columnIndex, long first, long second);
 
         void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
 
@@ -5826,7 +5822,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         @Override
-        public void putLong128BigEndian(int columnIndex, long hi, long lo) {
+        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);

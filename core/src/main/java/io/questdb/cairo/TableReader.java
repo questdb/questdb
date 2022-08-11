@@ -1049,6 +1049,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // these indexes have state and may not be always required
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                 Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
+
+                // Column to present in the partition. Set column top to be the size of the partition.
+                columnTops.setQuick(columnBase / 2 + columnIndex, columnRowCount);
             }
         } finally {
             path.trimTo(plen);

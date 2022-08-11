@@ -33,34 +33,35 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
+public class WalReaderEvents implements Closeable {
     private final FilesFacade ff;
-    private final MemoryMR metaMem;
+    private final MemoryMR eventMem;
+    private final WalEventCursor eventCursor;
 
-    public WalReaderMetadata(FilesFacade ff) {
+    public WalReaderEvents(FilesFacade ff) {
         this.ff = ff;
-        this.metaMem = Vm.getMRInstance();
-        this.columnMetadata = new ObjList<>(columnCount);
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+        eventMem = Vm.getMRInstance();
+        eventCursor = new WalEventCursor(eventMem);
     }
 
     @Override
     public void close() {
-        // WalReaderMetadata is re-usable after close, don't assign nulls
-        Misc.free(metaMem);
+        // WalReaderEvents is re-usable after close, don't assign nulls
+        Misc.free(eventMem);
     }
 
-    public WalReaderMetadata of(Path path, int pathLen, long segmentId, int expectedVersion) {
+    public WalEventCursor of(Path path, int pathLen, long segmentId, int expectedVersion) {
         try {
-            openSmallFile(ff, path.slash().put(segmentId), pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
-            columnNameIndexMap.clear();
-            loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, expectedVersion);
-            columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COLUMN_COUNT);
-            timestampIndex = metaMem.getInt(TableUtils.WAL_META_OFFSET_TIMESTAMP_INDEX);
+            openSmallFile(ff, path.slash().put(segmentId), pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
+
+            // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
+            checkMemSize(eventMem, Integer.BYTES + Long.BYTES);
+            validateMetaVersion(eventMem, 0, expectedVersion);
+            eventCursor.reset();
         } catch (Throwable e) {
             close();
             throw e;
         }
-        return this;
+        return eventCursor;
     }
 }

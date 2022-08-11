@@ -6345,12 +6345,17 @@ create table tab as (
         });
     }
 
-    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount,
-                                                                                     SOCountDownLatch queryStartedCount, SOCountDownLatch queryScheduledCount) {
-        return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount) {
+    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(
+            PGWireConfiguration conf,
+            int workerCount,
+            int sharedWorkerCount,
+            SOCountDownLatch queryStartedCount,
+            SOCountDownLatch queryScheduledCount
+    ) {
+        return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount, sharedWorkerCount) {
             @Override
-            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
-                return new SqlExecutionContextImpl(engine, workerCount) {
+            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+                return new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
                     @Override
                     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                         return new QueryFutureUpdateListener() {
@@ -6402,7 +6407,7 @@ create table tab as (
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,
                 metrics,
-                createPGConnectionContextFactory(conf, workerCount, null, queryScheduledCount)
+                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount)
         );
     }
 
@@ -6586,7 +6591,7 @@ create table tab as (
                         compiler.getFunctionFactoryCache(),
                         snapshotAgent,
                         metrics,
-                        createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch, null)
+                        createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
             pool.start(LOG);

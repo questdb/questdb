@@ -266,7 +266,7 @@ public class SqlCompiler implements Closeable {
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
-        int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128BigEndian", "(IJJ)V");
+        int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128LittleEndian", "(IJJ)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -719,6 +719,14 @@ public class SqlCompiler implements Closeable {
                 case ColumnType.LONG256:
                     asm.invokeInterface(rGetLong256);
                     asm.invokeInterface(wPutLong256, 2);
+                    break;
+                case ColumnType.LONG128:
+
+                    asm.invokeInterface(rGetLong128Hi);
+                    asm.aload(1);
+                    asm.iconst(i);
+                    asm.invokeInterface(rGetLong128Lo);
+                    asm.invokeInterface(wPutLong128, 5);
                     break;
                 case ColumnType.LONG128:
 
@@ -1894,10 +1902,6 @@ public class SqlCompiler implements Closeable {
     @Nullable
     private RecordCursorFactory executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
-            int workerCount = executionContext.getWorkerCount();
-            if (workerCount < 1) {
-                throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
-            }
             if (model.isCancel()) {
                 cancelTextImport(model);
                 return null;

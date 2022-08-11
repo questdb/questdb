@@ -34,6 +34,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 // Contiguous mapped with offset readable memory
+// todo: investigate if we can map file from 0 offset and have the logc in this class done by the OS
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
     private long mapFileOffset;

@@ -80,8 +80,19 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
         final T server;
         if (configuration.isEnabled()) {
             final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool, metrics);
+            assert localPool != null;
             final boolean local = localPool != sharedWorkerPool;
-            server = factory.create(configuration, cairoEngine, localPool, local, functionFactoryCache, snapshotAgent, metrics);
+            final int sharedWorkerCount = sharedWorkerPool == null ? localPool.getWorkerCount() : sharedWorkerPool.getWorkerCount();
+            server = factory.create(
+                    configuration,
+                    cairoEngine,
+                    localPool,
+                    local,
+                    sharedWorkerCount,
+                    functionFactoryCache,
+                    snapshotAgent,
+                    metrics
+            );
 
             if (local) {
                 localPool.assignCleaner(Path.CLEANER);
@@ -102,6 +113,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
                 CairoEngine engine,
                 WorkerPool workerPool,
                 boolean local,
+                int sharedWorkerCount,
                 @Nullable FunctionFactoryCache functionFactoryCache,
                 @Nullable DatabaseSnapshotAgent snapshotAgent,
                 Metrics metrics

@@ -1404,7 +1404,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void freeUpdateCommand(UpdateOperation op) {
         // Create a copy of sqlExecutionContext here
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount());
+        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(
+                engine,
+                sqlExecutionContext.getWorkerCount(),
+                sqlExecutionContext.getSharedWorkerCount()
+        );
         newSqlExecutionContext.with(
                 sqlExecutionContext.getCairoSecurityContext(),
                 bindVariableService,
