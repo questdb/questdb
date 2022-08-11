@@ -1,7 +1,7 @@
 trigger:
   tags:
     include:
-      - 'patch*'
+      - 'patch/*'
 
 pool:
   vmImage: 'ubuntu-20.04'
@@ -19,13 +19,22 @@ jobs:
     timeoutInMinutes: 60
 
     steps:
+      - bash: |
+          export hub_tag_name=$(git describe --tags | sed -e 's/^patch\///')  
+          echo "##vso[task.setvariable variable=tag_name;isOutput=true]$tag_name"
+          fi
+        name: check_changes
+        env:
+          PRID: $(System.PullRequest.PullRequestNumber)
+        displayName: "Check changed files"
+
       - task: Docker@2
         inputs:
           command: 'login'
           containerRegistry: quest_docker_hub
 
       - task: CmdLine@2
-        displayName: Release multi arch build MASTER
+        displayName: Release Nightly MASTER
         inputs:
           script: |
             docker buildx build --platform linux/amd64 --push -t questdb/questdb:nightly .
@@ -33,37 +42,9 @@ jobs:
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
-        displayName: Multi arch build TAG
+        displayName: Release Patch
         inputs:
           script: |
-            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64 --push -t questdb/questdb:$(tag) .
+            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64 --push -t questdb/questdb:$(hub_tag_name) .
           workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
-
-#      - task: Docker@2
-#        inputs:
-#          command: 'login'
-#          containerRegistry: quest_docker_hub
-#
-#      - task: Docker@2
-#        displayName: Publish master
-#        inputs:
-#          command: 'buildAndPush'
-#          dockerfile: 'core/Dockerfile'
-#          repository: questdb/questdb
-#          addPipelineData: false
-#          tags: |
-#            $(tag)
-#        condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
-#
-#      - task: Docker@2
-#        displayName: Publish tag
-#        inputs:
-#          command: 'buildAndPush'
-#          dockerfile: 'core/Dockerfile'
-#          repository: questdb/questdb
-#          addPipelineData: false
-#          tags: |
-#            nightly
-#          condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
-
