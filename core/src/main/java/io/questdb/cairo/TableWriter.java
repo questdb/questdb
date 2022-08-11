@@ -29,7 +29,6 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryFMCRImpl;
@@ -1861,15 +1860,15 @@ public class TableWriter implements Closeable {
             }
 
             if (detachedMetaMem == null) {
-                // TODO at some point refactor code so that we can reuse these two objects
-                // and not have to instantiate them on every attach
+                // TODO refactor these two classes so that we can reuse these two objects
+                //  instead of having to instantiate them on every attach query
                 detachedMetaMem = Vm.getMRInstance();
                 detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
                 detachedMetadata = new TableWriterMetadata(detachedMetaMem);
             }
 
             if (metadata.getId() != detachedMetadata.getId()) {
-                // very same table, no foreign partition attaching is allowed
+                // very same table, attaching foreign partitions is not allowed
                 throw CairoException.detachedMetadataMismatch("table_id");
             }
             if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
@@ -1905,11 +1904,12 @@ public class TableWriter implements Closeable {
                 int colType = metadata.getColumnType(colIdx);
                 int detColType = detachedMetadata.getColumnType(detColIdx);
                 if (colType != detColType) {
-                    if (colType == -detColType) { // a column was deleted
+                    if (colType == -detColType) {
                         if (colType < detColType) {
+                            // column was deleted from the table
                             detachedDeleteExtraColNames.add(columnName);
                         } else {
-                            // column was added to the table, and does not exist in attaching
+                            // column was added to the table, and does not exist in .attaching
                             detachedAddMissingColNames.put(columnName, -1); // column index
                         }
                     } else {

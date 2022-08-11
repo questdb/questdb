@@ -28,7 +28,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
-import org.jetbrains.annotations.Nullable;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
     private final MemoryCMARW mem;
