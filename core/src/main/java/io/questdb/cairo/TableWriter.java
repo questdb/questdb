@@ -30,10 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.MemoryFCRImpl;
-import io.questdb.cairo.vm.MemoryFMCRImpl;
-import io.questdb.cairo.vm.NullMapWriter;
-import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.*;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
@@ -90,7 +87,7 @@ public class TableWriter implements Closeable {
     private Path detachedPath; // lazy
     private Path other2; // lazy
     private int detachedRootLen;
-    private MemoryMR detachedMetaMem;
+    private MemoryCMRImpl detachedMetaMem;
     private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
     private CharSequenceHashSet detachedDeleteExtraColNames;
@@ -271,6 +268,7 @@ public class TableWriter implements Closeable {
 
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
+            this.metadata.readFromMem();
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -592,7 +590,7 @@ public class TableWriter implements Closeable {
 
     public StatusCode attachPartition(long timestamp, boolean validateDataFiles) {
         // Partitioned table must have a timestamp
-        // SQL compiler will check that table is partitioned
+        // SQL compiler will check that table has it
         assert metadata.getTimestampIndex() > -1;
 
         if (txWriter.attachedPartitionsContains(timestamp)) {
@@ -1859,13 +1857,13 @@ public class TableWriter implements Closeable {
                 return;
             }
 
-            if (detachedMetaMem == null) {
-                // TODO refactor these two classes so that we can reuse these two objects
-                //  instead of having to instantiate them on every attach query
-                detachedMetaMem = Vm.getMRInstance();
-                detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
+            if (detachedMetadata == null) {
+                detachedMetaMem = new MemoryCMRImpl();
                 detachedMetadata = new TableWriterMetadata(detachedMetaMem);
             }
+
+            detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
+            detachedMetadata.readFromMem();
 
             if (metadata.getId() != detachedMetadata.getId()) {
                 // very same table, attaching foreign partitions is not allowed
@@ -2032,9 +2030,10 @@ public class TableWriter implements Closeable {
         } finally {
             Misc.free(detachedColumnVersionReader);
             removeFileAndOrLog(ff, other2.$());
-            detachedMetaMem = Misc.free(detachedMetaMem);
-            detachedMetadata = null;
-            removeFileAndOrLog(ff, other2.parent().concat(META_FILE_NAME).$());
+            if (detachedMetaMem != null) {
+                detachedMetaMem.closeFile();
+            }
+            removeFileAndOrLog(ff, other2.parent().concat(DETACHED_META_FILE_NAME).$());
         }
     }
 

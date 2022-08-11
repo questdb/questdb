@@ -450,6 +450,58 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDetachPartitionsTableAddColumnAndData() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabInAddColumnAndData";
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
+
+                engine.clear();
+                String timestampDay = "2022-06-01";
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    // structural change
+                    writer.addColumn("new_column", ColumnType.INT);
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putLong(0, 33L);
+                    row.putInt(1, 33);
+                    row.append();
+                    writer.detachPartition(timestamp);
+                    Assert.assertEquals(9, writer.size());
+                }
+
+                renameDetachedToAttachable(tableName, timestampDay);
+
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                assertContent(
+                        "l\ti\tts\tnew_column\n" +
+                                "33\t33\t2022-06-01T00:00:00.000000Z\tNaN\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDetachPartitionsTableAddColumn2() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabInAddColumn2";
@@ -481,6 +533,63 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
                                 "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
                                 "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionsTableAddColumnAndData2() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabInAddColumn2";
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
+
+                engine.clear();
+                String timestampDay = "2022-06-01";
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    writer.detachPartition(timestamp);
+
+                    // structural change
+                    writer.addColumn("new_column", ColumnType.INT);
+
+                    TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2022-06-02T00:00:00.000000Z"));
+                    row.putLong(0, 33L);
+                    row.putInt(1, 33);
+                    row.putInt(3, 333);
+                    row.append();
+
+                    Assert.assertEquals(10, writer.size());
+                    writer.commit();
+                }
+
+                renameDetachedToAttachable(tableName, timestampDay);
+
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                assertContent(
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "33\t33\t2022-06-02T00:00:00.000000Z\t333\n" +
                                 "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
                                 "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
                                 "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +

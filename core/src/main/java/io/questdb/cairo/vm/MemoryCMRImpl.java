@@ -85,6 +85,14 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         map(ff, name, size);
     }
 
+    public void closeFile() {
+        if (fd != -1) {
+            ff.close(fd);
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+            fd = -1;
+        }
+    }
+
     protected void map(FilesFacade ff, LPSZ name, final long size) {
         this.size = size;
         if (size > 0) {
