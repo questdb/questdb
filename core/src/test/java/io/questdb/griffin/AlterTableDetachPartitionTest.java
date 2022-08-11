@@ -583,6 +583,230 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDetachPartitionIndexFilesGetRemoved() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabIndexFiles";
+            String brokenTableName = "tabIndexFiles2";
+
+            try (
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
+                String timestampDay = "2022-06-01";
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4
+                );
+
+                TableUtils.createTable(
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                                .timestamp("ts"),
+                        1
+                );
+                compiler.compile(
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
+                );
+
+                String expected = "l\ti\ts\tts\n" +
+                        "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
+                        "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
+                        "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
+                        "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
+                        "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
+                        "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
+                        "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
+                        "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
+                        "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
+                        "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
+                        "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
+                        "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n";
+
+                assertContent(expected, tableName);
+                assertContent(expected, brokenTableName);
+
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, brokenTableName, "testing")) {
+                    writer.detachPartition(timestamp);
+                }
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    writer.detachPartition(timestamp);
+                }
+                path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                Assert.assertTrue(Files.rename(path, other) > -1);
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    writer.attachPartition(timestamp);
+                }
+
+                Assert.assertFalse(Files.exists(other.of(configuration.getRoot()).concat(tableName).concat(timestampDay).concat("s.k").$()));
+                Assert.assertFalse(Files.exists(other.parent().concat("s.v").$()));
+
+                assertContent(expected, tableName);
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionIndexFilesGetReIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabIndexFilesReIndex";
+            String brokenTableName = "tabIndexFilesReIndex2";
+
+            try (
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
+                String timestampDay = "2022-06-01";
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 512)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4
+                );
+
+                TableUtils.createTable(
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                                .timestamp("ts"),
+                        1
+                );
+                compiler.compile(
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
+                );
+
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, brokenTableName, "testing")) {
+                    writer.detachPartition(timestamp);
+                }
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    writer.detachPartition(timestamp);
+                }
+                path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                Assert.assertTrue(Files.rename(path, other) > -1);
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    writer.attachPartition(timestamp);
+                }
+
+                assertContent(
+                        "l\ti\ts\tts\n" +
+                                "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionIndexFilesGetIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabIndexFilesIndex";
+            String brokenTableName = "tabIndexFilesIndex2";
+
+            try (
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
+                String timestampDay = "2022-06-01";
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 512)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4
+                );
+
+                TableUtils.createTable(
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL)
+                                .timestamp("ts"),
+                        1
+                );
+                compiler.compile(
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
+                );
+
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, brokenTableName, "testing")) {
+                    writer.detachPartition(timestamp);
+                }
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    writer.detachPartition(timestamp);
+                }
+                path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                Assert.assertTrue(Files.rename(path, other) > -1);
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    writer.attachPartition(timestamp);
+                }
+
+                assertContent(
+                        "l\ti\ts\tts\n" +
+                                "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAttachWillFailIfThePartitionWasRecreated() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabTimeTravel2";
@@ -762,6 +986,27 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDetachPartitionsIndexCapacityDiffers() throws Exception {
+        assertFailedAttachBecauseOfMetadata(
+                2,
+                "tabBrokenIndexCapacity",
+                "tabBrokenIndexCapacity2",
+                brokenMeta -> brokenMeta
+                        .timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                "insert into tabBrokenIndexCapacity2 " +
+                        "select " +
+                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
+                        "cast(x as int) i, " +
+                        "x l " +
+                        "from long_sequence(100))",
+                "ALTER TABLE tabBrokenIndexCapacity2 ADD COLUMN s SHORT",
+                "[-100] Detached partition metadata [table_id] is not compatible with current table metadata"
+        );
+    }
+
+    @Test
     public void testDetachAttachPartitionMissingMetadata() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabDetachAttachMissingMeta";
@@ -852,52 +1097,58 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDetachAttachPartitionBrokenMetadataColumnType() throws Exception {
-        assertFailedAttachBecauseOfMetadata(
-                1,
-                "tabBrokenColumnType",
-                "tabBrokenColumnType2",
-                brokenMeta -> brokenMeta
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.INT)
-                        .col("s2", ColumnType.SYMBOL),
-                "insert into tabBrokenColumnType2 " +
-                        "select " +
-                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
-                        "'SUGUS' s1, " +
-                        "cast(x as int) i, " +
-                        "x l, " +
-                        "'PINE' s2 " +
-                        "from long_sequence(100))",
-                null,
-                "[-100] Detached column [index=3, name=l, attribute=type] does not match current table metadata"
-        );
-    }
+        assertMemoryLeak(() -> {
+            String tableName = "tabBrokenColType";
+            String brokenTableName = "tabBrokenColType2";
+            try (
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
+                String timestampDay = "2022-06-01";
+                createPopulateTable(
+                        1,
+                        tab.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 256)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        timestampDay,
+                        3
+                );
+                TableUtils.createTable(
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 256)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL),
+                        1
+                );
+                compiler.compile(
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
+                );
 
-    @Test
-    public void testDetachAttachPartitionBrokenMetadataIsIndexed() throws Exception {
-        assertFailedAttachBecauseOfMetadata(
-                1,
-                "tabBrokenIsIndexed",
-                "tabBrokenIsIndexed2",
-                brokenMeta -> brokenMeta
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL).indexed(true, 32),
-                "insert into tabBrokenIsIndexed2 " +
-                        "select " +
-                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
-                        "'SUGUS' s1, " +
-                        "cast(x as int) i, " +
-                        "x l, " +
-                        "'PINE' s2 " +
-                        "from long_sequence(100))",
-                null,
-                "[-100] Detached column [index=4, name=s2, attribute=is_indexed] does not match current table metadata"
-        );
+                engine.clear();
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+                compile("ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+
+                engine.clear();
+                path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                Assert.assertTrue(Files.rename(path, other) > -1);
+
+                // attempt to reattach
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
+                        "[-100] Detached column [index=3, name=l, attribute=type] does not match current table metadata"
+                );
+            }
+        });
     }
 
     @Test
@@ -1063,8 +1314,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
                     MemoryMARW mem = Vm.getMARWInstance()
             ) {
-                createPopulateTable(tab
-                                .timestamp("ts")
+                createPopulateTable(
+                        1,
+                        tab.timestamp("ts")
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)

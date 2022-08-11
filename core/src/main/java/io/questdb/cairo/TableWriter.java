@@ -94,8 +94,11 @@ public class TableWriter implements Closeable {
     private MemoryMR detachedMetaMem;
     private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
-    private final CharSequenceHashSet detachedDeleteExtraColNames = new CharSequenceHashSet();
-    private final CharSequenceIntHashMap detachedAddMissingColNames = new CharSequenceIntHashMap();
+    private CharSequenceHashSet detachedDeleteExtraColNames;
+    private CharSequenceIntHashMap detachedAddMissingColNames; // name -> idx
+    private CharSequenceIntHashMap detachedRemoveIndexColNames; // name -> idx
+    private CharSequenceHashSet detachedReIndexColNames;
+    private IndexBuilder detachedIndexBuilder;
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int rootLen;
@@ -1875,8 +1878,18 @@ public class TableWriter implements Closeable {
             }
 
             // check column name, type and isIndexed
-            detachedDeleteExtraColNames.clear(); // .attachable may have extra columns we do not need
-            detachedAddMissingColNames.clear();  // .attachable may lack columns that we need to add
+            if (detachedDeleteExtraColNames != null) {
+                detachedDeleteExtraColNames.clear(); // .attachable may have extra columns we do not need
+                detachedAddMissingColNames.clear();  // .attachable may lack columns that we need to add
+                detachedRemoveIndexColNames.clear(); // .attachable may have extra index files we do not need
+                detachedReIndexColNames.clear();     // .attachable may need a reindex
+            } else {
+                detachedDeleteExtraColNames = new CharSequenceHashSet();
+                detachedAddMissingColNames = new CharSequenceIntHashMap();
+                detachedRemoveIndexColNames = new CharSequenceIntHashMap();
+                detachedReIndexColNames = new CharSequenceHashSet();
+            }
+
             for (int i = 0; i < columnCount; i++) {
                 int colIdx = metadata.getWriterIndex(i);
                 String columnName = metadata.getColumnName(colIdx);
@@ -1897,7 +1910,7 @@ public class TableWriter implements Closeable {
                             detachedDeleteExtraColNames.add(columnName);
                         } else {
                             // column was added to the table, and does not exist in attaching
-                            detachedAddMissingColNames.put(columnName, -1);
+                            detachedAddMissingColNames.put(columnName, -1); // column index
                         }
                     } else {
                         throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");
@@ -1905,15 +1918,25 @@ public class TableWriter implements Closeable {
                 }
 
                 // check is indexed
-                if (metadata.isColumnIndexed(colIdx) != detachedMetadata.isColumnIndexed(detColIdx)) {
-                    throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "is_indexed");
+                boolean isIndexed = metadata.isColumnIndexed(colIdx);
+                if (isIndexed != detachedMetadata.isColumnIndexed(detColIdx)) {
+                    if (!isIndexed) {
+                        if (ColumnType.isSymbol(colType)) {
+                            detachedRemoveIndexColNames.put(columnName, colIdx);
+                        }
+                    } else {
+                        detachedReIndexColNames.add(columnName);
+                    }
+                }
+
+                if (isIndexed && metadata.getIndexValueBlockCapacity(colIdx) != detachedMetadata.getIndexValueBlockCapacity(detColIdx)) {
+                    detachedReIndexColNames.add(columnName);
                 }
             }
 
             // detached could have had more columns than we need
             for (int i = columnCount, limit = detachedMetadata.getColumnCount(); i < limit; i++) {
-                int detColIdx = detachedMetadata.getWriterIndex(i);
-                String columnName = detachedMetadata.getColumnName(detColIdx);
+                String columnName = detachedMetadata.getColumnName(i);
                 detachedDeleteExtraColNames.add(columnName);
             }
 
@@ -1936,19 +1959,25 @@ public class TableWriter implements Closeable {
                     CharSequence columnName = keys.get(i);
                     long columnTop;
                     int colIdx = detachedAddMissingColNames.get(columnName);
-                    if (colIdx < 0) {
+                    if (colIdx < 0) { // column was added, we have no data
                         colIdx = metadata.getColumnIndex(columnName);
-                        colIdx = metadata.getWriterIndex(colIdx);
                         columnTop = partitionSize;
                     } else {
-                        colIdx = metadata.getWriterIndex(colIdx);
                         columnTop = -1L;
+                        for (int j = colIdx, limit2 = detachedMetadata.getColumnCount(); j < limit2; j++) {
+                            if (j == metadata.getColumnIndex(columnName) && metadata.getColumnType(j) == detachedMetadata.getColumnType(j)) {
+                                CharSequence dColumnName = detachedMetadata.getColumnName(j);
+                                throw CairoException.instance(CairoException.METADATA_VALIDATION)
+                                        .put("Potential rename of column ")
+                                        .put(columnName).put(" to ").put(dColumnName)
+                                        .put(", this is not supported, seek manual intervention");
+                            }
+                        }
                     }
-                    long columnNameTxn = getColumnNameTxn(partitionTimestamp, colIdx);
-                    columnVersionWriter.upsert(partitionTimestamp, colIdx, columnNameTxn, columnTop);
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, columnTop);
                 }
 
-                // override column tops
+                // override column tops for existing columns
                 columnVersionWriter.upsertPartition(partitionTimestamp, detachedColumnVersionReader);
 
                 // delete extra columns (present in .attachable - the table does not track/need them)
@@ -1963,6 +1992,40 @@ public class TableWriter implements Closeable {
                     } else if (ColumnType.isSymbol(columnType)) {
                         removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(other2.parent(), columnName, columnNameTxn));
                         removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(other2.parent(), columnName, columnNameTxn));
+                    }
+                }
+
+                // delete extra index files
+                keys = detachedRemoveIndexColNames.keys();
+                int other2Len = other2.parent().length();
+                for (int i = 0, limit = keys.size(); i < limit; i++) {
+                    CharSequence columnName = keys.get(i);
+                    int colIdx = detachedRemoveIndexColNames.get(columnName);
+                    long columnNameTxn = detachedColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
+                    removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(other2.trimTo(other2Len), columnName, columnNameTxn));
+                    removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(other2.trimTo(other2Len), columnName, columnNameTxn));
+                }
+
+                // reindex
+                int limit = detachedReIndexColNames.size();
+                if (limit > 0) {
+                    if (detachedIndexBuilder == null) {
+                        detachedIndexBuilder = new IndexBuilder();
+                    }
+                    PartitionBy.setSinkForPartition(other.trimTo(0), partitionBy, partitionTimestamp, false);
+                    other.put(ATTACHABLE_DIR_MARKER);
+                    detachedIndexBuilder.of(other2.trimTo(other2Len).parent(), configuration);
+                    for (int i = 0; i < limit; i++) {
+                        CharSequence columnName = detachedReIndexColNames.get(i);
+                        detachedIndexBuilder.reindexColumn(
+                                detachedColumnVersionReader,
+                                metadata,
+                                metadata.getColumnIndex(columnName),
+                                other,
+                                -1L,
+                                partitionTimestamp,
+                                partitionSize
+                        );
                     }
                 }
             }
@@ -2771,6 +2834,7 @@ public class TableWriter implements Closeable {
         Misc.free(detachedMetaMem);
         Misc.free(detachedMetadata);
         Misc.free(detachedColumnVersionReader);
+        Misc.free(detachedIndexBuilder);
         Misc.free(columnVersionWriter);
         Misc.free(o3ColumnTopSink);
         Misc.free(slaveTxReader);

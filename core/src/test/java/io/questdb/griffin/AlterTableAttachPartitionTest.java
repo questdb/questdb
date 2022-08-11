@@ -657,31 +657,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("s", ColumnType.SYMBOL)
                         .col("l", ColumnType.LONG));
 
-                attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
-                engine.clear();
-                assertQuery(
-                        "ts\ti\ts\tl\n" +
-                                "2022-08-01T03:35:59.950000Z\t1\t\t1\n" +
-                                "2022-08-01T07:11:59.900000Z\t2\t\t2\n" +
-                                "2022-08-01T10:47:59.850000Z\t3\t\t3\n" +
-                                "2022-08-01T14:23:59.800000Z\t4\t\t4\n" +
-                                "2022-08-01T17:59:59.750000Z\t5\t\t5\n" +
-                                "2022-08-01T21:35:59.700000Z\t6\t\t6\n" +
-                                "2022-08-02T01:11:59.650000Z\t7\t\t7\n" +
-                                "2022-08-02T04:47:59.600000Z\t8\t\t8\n" +
-                                "2022-08-02T08:23:59.550000Z\t9\t\t9\n" +
-                                "2022-08-02T11:59:59.500000Z\t10\t\t10\n" +
-                                "2022-08-02T15:35:59.450000Z\t11\t\t11\n" +
-                                "2022-08-02T19:11:59.400000Z\t12\t\t12\n" +
-                                "2022-08-02T22:47:59.350000Z\t13\t\t13\n" +
-                                "2022-08-02T23:59:59.999000Z\t1\t\tNaN\n",
-                        dst.getName(),
-                        null,
-                        "ts",
-                        true,
-                        false,
-                        true
-                );
+                try {
+                    attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
+                } catch (SqlException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                            "[-100] Potential rename of column s to s2, this is not supported, seek manual intervention"
+                    );
+                }
             }
         });
     }

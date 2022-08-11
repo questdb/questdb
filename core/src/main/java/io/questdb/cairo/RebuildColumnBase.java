@@ -233,7 +233,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    private void reindexColumn(
+    public void reindexColumn(
             ColumnVersionReader columnVersionReader,
             RecordMetadata metadata,
             int columnIndex,
