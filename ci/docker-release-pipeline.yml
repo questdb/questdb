@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - bash: |
-          export hub_tag_name=$(git describe --tags)-$(git rev-parse --abbrev-ref HEAD | sed -e 's/^patch\///' | sed -e 's/\//-/g')  
+          export hub_tag_name=$(git describe --tags)-$(echo "$(tag)" | sed -e 's/^patch\///' | sed -e 's/\//-/g')  
           echo hub_tag_name=$hub_tag_name
           echo "##vso[task.setvariable variable=hub_tag_name]$hub_tag_name"
         name: check_changes
@@ -35,7 +35,7 @@ jobs:
         displayName: Release Nightly MASTER
         inputs:
           script: |
-            docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
+            docker buildx build --platform linux/amd64,linux/arm64 --use docker/setup-buildx-action@v2 --push -t questdb/questdb:nightly .
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
@@ -43,6 +43,6 @@ jobs:
         displayName: Release Patch
         inputs:
           script: |
-            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(hub_tag_name) .
+            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64,linux/arm64 --use docker/setup-buildx-action@v2 --push -t questdb/questdb:$(hub_tag_name) .
           workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
