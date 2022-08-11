@@ -361,11 +361,17 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "2022-06-02T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
 
                 assertContent(expected, tableName);
-                for (int i = 0; i < 4; i++) {
-                    compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                    renameDetachedToAttachable(tableName, "2022-06-01");
-                    compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                }
+
+                engine.clear();
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                renameDetachedToAttachable(tableName, "2022-06-01");
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+                engine.clear();
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                renameDetachedToAttachable(tableName, "2022-06-01");
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
                 assertContent(expected, tableName);
             }
         });
