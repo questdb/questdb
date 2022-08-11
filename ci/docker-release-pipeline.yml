@@ -9,7 +9,7 @@ jobs:
 
     pool:
       name: "Azure Pipelines"
-      vmImage: "linux-latest"
+      vmImage: "ubuntu-latest"
 
     timeoutInMinutes: 60
 
