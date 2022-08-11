@@ -1,7 +1,12 @@
 trigger:
   tags:
     include:
-      - '*patch*'
+      - patch*
+
+pool:
+  vmImage: 'ubuntu-20.04'
+variables:
+  tag: '$(Build.SourceBranchName)'
 
 jobs:
   - job: RunOn
@@ -15,12 +20,58 @@ jobs:
 
     steps:
       - task: Docker@2
-        displayName: Login to Docker Hub
         inputs:
-          command: login
-          containerRegistry: quest_docker_hub
+          command: 'login'
+          containerRegistry: sl_docker
+      - task: CmdLine@2
+        displayName: Setup buildx
+        inputs:
+          script: |
+            docker buildx ls
+            docker buildx rm build
+            docker buildx create --use --name build --node build --driver-opt network=host
+            docker buildx use build
 
-      - bash: |
-          export tag_name=$(git describe --tags) && docker buildx build --build-arg tag_name --push --platform linux/amd64 --tag questdb/$tag_name .
+      - task: CmdLine@2
+        displayName: Release multi arch build MASTER
+        inputs:
+          script: |
+            docker buildx build --platform linux/arm64,linux/amd64 --push .
         workingDirectory: core
-        displayName: Build And Push
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
+        displayName: Multi arch build TAG
+        inputs:
+          script: |
+            docker buildx build --build-arg tag_name=$(tag) --platform linux/arm64,linux/amd64 --push .
+        workingDirectory: core
+        condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: Docker@2
+          inputs:
+            command: 'login'
+            containerRegistry: questdb_docker_hub
+
+      - task: Docker@2
+        displayName: Build base image (mirror)
+        inputs:
+          command: 'buildAndPush'
+          dockerfile: 'core/Dockerfile'
+          repository: questdb/questdb
+          addPipelineData: false
+          tags: |
+            $(tag)
+        condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: Docker@2
+        displayName: Release base image (mirror)
+        inputs:
+          command: 'buildAndPush'
+          dockerfile: 'core/Dockerfile'
+          repository: questdb/questdb
+          addPipelineData: false
+          tags: |
+            nightly
+          condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+
