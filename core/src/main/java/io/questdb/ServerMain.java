@@ -99,8 +99,6 @@ public class ServerMain {
                 .$(", all rights reserved.")
                 .$();
 
-        log.advisoryW().$("PATCH TEST").$();
-
         extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
