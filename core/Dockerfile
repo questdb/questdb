@@ -1,4 +1,5 @@
 FROM debian:bullseye
+ARG tag_name
 
 RUN apt-get update \
   && apt-get install git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
@@ -11,9 +12,11 @@ RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/ap
 ENV JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
 WORKDIR /build
 
+RUN echo tag_name ${tag_name:-master}
+
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
   && unzip maven.zip \
-  && git clone --depth=1 --progress --verbose https://github.com/questdb/questdb.git
+  && git clone --depth=1 --progress --branch ${tag_name:-master} --verbose https://github.com/questdb/questdb.git
 
 WORKDIR /build/questdb
 
