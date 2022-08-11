@@ -49,6 +49,6 @@ jobs:
             docker run --privileged --rm tonistiigi/binfmt --install arm64
             docker run --privileged --rm tonistiigi/binfmt
             docker buildx create --use
-            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(hub_tag_name) .
+            docker buildx build --build-arg tag_name=$(tag) --platform linux/amd64 --push -t questdb/questdb:$(hub_tag_name) .
           workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
