@@ -87,7 +87,7 @@ public class TableWriter implements Closeable {
     private Path detachedPath; // lazy
     private Path other2; // lazy
     private int detachedRootLen;
-    private MemoryCMRImpl detachedMetaMem;
+    private MemoryCMR detachedMetaMem;
     private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
     private CharSequenceHashSet detachedDeleteExtraColNames;
@@ -1859,7 +1859,7 @@ public class TableWriter implements Closeable {
             }
 
             if (detachedMetadata == null) {
-                detachedMetaMem = new MemoryCMRImpl();
+                detachedMetaMem = Vm.getCMRInstance();
                 detachedMetadata = new TableWriterMetadata(detachedMetaMem, false);
             }
             detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
@@ -2031,7 +2031,7 @@ public class TableWriter implements Closeable {
         } finally {
             Misc.free(detachedColumnVersionReader);
             if (detachedMetaMem != null) {
-                detachedMetaMem.closeFile();
+                detachedMetaMem.close();
             }
             if (detachedIndexBuilder != null) {
                 detachedIndexBuilder.clear();

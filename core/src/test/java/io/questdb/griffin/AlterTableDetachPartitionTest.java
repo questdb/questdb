@@ -339,7 +339,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 createPopulateTable(
                         1,
                         tab.timestamp("ts")
-                                .col("si", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("si", ColumnType.SYMBOL).indexed(true, 250)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
                                 .col("s", ColumnType.SYMBOL),

@@ -58,7 +58,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             size = 0;
             pageAddress = 0;
         }
-        closeFile();
+        if (fd != -1) {
+            ff.close(fd);
+            LOG.debug().$("closed [fd=").$(fd).I$();
+            fd = -1;
+        }
     }
 
     @Override
@@ -84,14 +88,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             }
         }
         map(ff, name, size);
-    }
-
-    public void closeFile() {
-        if (fd != -1) {
-            ff.close(fd);
-            LOG.debug().$("closed [fd=").$(fd).I$();
-            fd = -1;
-        }
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size) {
