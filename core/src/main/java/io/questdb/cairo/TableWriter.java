@@ -1047,7 +1047,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
     public boolean processWalAppend(
             Path walPath,
-            long segmentId,
             int timestampIndex,
             boolean ordered,
             long rowLo,
@@ -1113,9 +1112,23 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
+    public void processWalCommit(Path walPath, long segmentTxn) {
+        var walCursor = walEventReader.of(walPath, WalWriter.WAL_FORMAT_VERSION, segmentTxn);
+        var dataInfo = walCursor.getDataInfo();
+
+        processWalCommit(
+                walPath,
+                !dataInfo.isOutOfOrder(),
+                dataInfo.getStartRowID(),
+                dataInfo.getEndRowID(),
+                dataInfo.getMinTimestamp(),
+                dataInfo.getMaxTimestamp(),
+                dataInfo
+        );
+    }
+
     public void processWalCommit(
             Path walPath,
-            long segmentId,
             boolean inOrder,
             long rowLo,
             long rowHi,
@@ -1130,7 +1143,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         txWriter.beginPartitionSizeUpdate();
         if (processWalAppend(
                 walPath,
-                segmentId,
                 metadata.getTimestampIndex(),
                 inOrder,
                 rowLo,

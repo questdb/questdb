@@ -728,14 +728,6 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetLong128Lo);
                     asm.invokeInterface(wPutLong128, 5);
                     break;
-                case ColumnType.LONG128:
-
-                    asm.invokeInterface(rGetLong128Hi);
-                    asm.aload(1);
-                    asm.iconst(i);
-                    asm.invokeInterface(rGetLong128Lo);
-                    asm.invokeInterface(wPutLong128, 5);
-                    break;
                 case ColumnType.GEOBYTE:
                     asm.invokeInterface(rGetGeoByte, 1);
                     if (fromColumnType != toColumnType && (fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOBYTE)) {

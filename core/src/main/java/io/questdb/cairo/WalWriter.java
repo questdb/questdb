@@ -880,7 +880,7 @@ public class WalWriter implements TableWriterFrontend {
         }
 
         @Override
-        public void putLong128BigEndian(int columnIndex, long hi, long lo) {
+        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
