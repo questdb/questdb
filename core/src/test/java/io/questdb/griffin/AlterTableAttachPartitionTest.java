@@ -33,7 +33,10 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -989,10 +992,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyPartitionToAttachable(src.getName(), "2022-08-01", dst.getName(), "2022-08-01");
 
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
+                long txn;
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+                    txn = writer.getTxn();
                     writer.attachPartition(timestamp);
                 }
                 path.of(configuration.getRoot()).concat(dst.getName()).concat("2022-08-01");
+                TableUtils.txnPartitionConditionally(path, txn);
                 int pathLen = path.length();
                 Assert.assertFalse(Files.exists(path.concat("s.d").$()));
                 Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.i").$()));

@@ -39,38 +39,25 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private long commitLag;
     private long structureVersion;
 
-    private final MemoryMR metaMem;
-
     public TableWriterMetadata(MemoryMR metaMem) {
-        this(metaMem, true);
+        reload(metaMem);
     }
 
-    public TableWriterMetadata(MemoryMR metaMem, boolean fileIsOpen) {
-        this.metaMem = metaMem;
-        if (fileIsOpen) {
-            reload();
-        }
-    }
-
-    public TableWriterMetadata reload() {
-        columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        if (columnNameIndexMap == null) {
-            columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
-            columnMetadata = new ObjList<>(columnCount);
-        } else {
-            columnNameIndexMap.clear();
-            columnMetadata.clear();
-        }
-        version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-        id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-        maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+    public void reload(MemoryMR metaMem) {
+        this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
+        this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+        this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+        this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+        this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
         TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
-        timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+        this.columnMetadata = new ObjList<>(this.columnCount);
+        this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
-        symbolMapCount = 0;
+        this.symbolMapCount = 0;
+        columnNameIndexMap.clear();
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
             CharSequence name = metaMem.getStr(offset);
@@ -96,7 +83,6 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             offset += Vm.getStorageLength(name);
         }
         metaFileSize = (int) offset;
-        return this;
     }
 
     public long getCommitLag() {

@@ -30,7 +30,10 @@ import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.vm.MemoryFMCRImpl;
+import io.questdb.cairo.vm.NullMapWriter;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
@@ -608,6 +611,7 @@ public class TableWriter implements Closeable {
 
             // final name of partition folder after attach
             setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
+            TableUtils.txnPartitionConditionally(path, getTxn());
             path.slash$();
 
             long partitionSize = 0;
@@ -628,11 +632,9 @@ public class TableWriter implements Closeable {
                     }
 
                     // detached metadata files validation
-                    if (validateDataFiles) {
+                    if (validateDataFiles && partitionSize > 0) {
                         prepareDetachedPartition(timestamp, partitionSize);
-                        if (partitionSize > 0L) {
-                            attachPartitionCheckFilesMatchMetadata(partitionSize);
-                        }
+                        attachPartitionCheckFilesMatchMetadata(partitionSize);
                     }
 
                     if (ff.rename(detachedPath.$(), path.$()) == Files.FILES_RENAME_OK) {
@@ -659,7 +661,7 @@ public class TableWriter implements Closeable {
                 boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
 
                 txWriter.beginPartitionSizeUpdate();
-                txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, -1L);
+                txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
                 txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
                 txWriter.bumpTruncateVersion();
                 commit();
@@ -1434,11 +1436,16 @@ public class TableWriter implements Closeable {
             nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
         }
         long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        columnVersionWriter.detachPartitionColumns(timestamp);
+
         txWriter.beginPartitionSizeUpdate();
         txWriter.removeAttachedPartitions(timestamp);
         txWriter.setMinTimestamp(nextMinTimestamp);
         txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
         txWriter.bumpTruncateVersion();
+
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
@@ -1860,10 +1867,12 @@ public class TableWriter implements Closeable {
 
             if (detachedMetadata == null) {
                 detachedMetaMem = Vm.getCMRInstance();
-                detachedMetadata = new TableWriterMetadata(detachedMetaMem, false);
+                detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
+                detachedMetadata = new TableWriterMetadata(detachedMetaMem);
+            } else {
+                detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
+                detachedMetadata.reload(detachedMetaMem);
             }
-            detachedMetaMem.smallFile(ff, other2, MemoryTag.MMAP_TABLE_WRITER);
-            detachedMetadata.reload();
 
             if (metadata.getId() != detachedMetadata.getId()) {
                 // very same table, attaching foreign partitions is not allowed

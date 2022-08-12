@@ -387,30 +387,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUpsertPartitionDstContainsPartition() throws Exception {
-        assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       2      11       0      99\n" +
-                        "       2      12       1      17\n" +
-                        "       3      11       1       8\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       5      12\n" +
-                        "       2      12       5      12\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       5      99\n" +
-                        "       2      12       5      17\n",
-                2
-        );
-    }
-
-    @Test
     public void testUpsertPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
                 "" +
@@ -436,15 +412,40 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         "       3       0       3     110\n",
                 "" +
                         "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3      10\n" +
-                        "       0       3       1      10\n" +
+                        "       0       2      -1      10\n" +
+                        "       0       3      -1      10\n" +
+                        "       0       5      -1      10\n" +
                         "       1       0      -1      10\n" +
-                        "       2       2       1      10\n" +
-                        "       2      11       2      10\n" +
-                        "       2      15       2      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
                         "       3       0       3     110\n" +
                         "       4       7      -1      10\n",
                 0, 2, 4
+        );
+    }
+
+    @Test
+    public void testUpsertPartitionDstContainsPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       2      11       0      99\n" +
+                        "       2      12       1      17\n" +
+                        "       3      11       1       8\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       5      12\n" +
+                        "       2      12       5      12\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       0      99\n" +
+                        "       2      12       1      17\n",
+                2
         );
     }
 
@@ -476,9 +477,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                 String expected = "" +
                         "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2      -1      10\n" +
-                        "       0       3      -1      -1\n" +
-                        "       0       5      -1      -1\n" +
                         "       1       0      -1      10\n" +
                         "       1       2      -1      10\n" +
                         "       2       2      -1      10\n" +

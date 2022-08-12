@@ -26,7 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
@@ -91,14 +95,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void detachPartitionColumns(long partitionTimestamp) {
-        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
-        if (index > -1) {
-            index += BLOCK_SIZE;
-            int limit = cachedList.size();
-            while (index < limit && cachedList.getQuick(index) == partitionTimestamp) {
-                cachedList.setQuick(index + COLUMN_TOP_OFFSET, -1L);
-                index += BLOCK_SIZE;
-            }
+        int from = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (from > -1) {
+            int to = cachedList.binarySearchBlock(from, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
+            int len = to - from + BLOCK_SIZE;
+            cachedList.removeIndexBlock(from, len);
             hasChanges = true;
         }
     }
@@ -112,38 +113,30 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void upsertPartition(long partitionTimestamp, ColumnVersionReader source) {
-        LongList srcCachedList = source.cachedList;
-        int srcIndex = srcCachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        LongList src = source.cachedList;
+        LongList dest = this.cachedList;
+
+        int srcIndex = src.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
         if (srcIndex < 0) { // source does not have partition information
             return;
         }
 
-        int srcCachedListSize = srcCachedList.size();
-        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        int index = dest.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (index > -1L) {
+            // Wipe out all the information about this partition to replace with the new one.
+            detachPartitionColumns(partitionTimestamp);
+            index = dest.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        }
+
         if (index < 0) { // the cache does not contain this partition
             index = -index - 1;
-            int srcEnd = srcIndex + BLOCK_SIZE;
-            while (srcEnd < srcCachedListSize && partitionTimestamp == srcCachedList.getQuick(srcEnd)) {
-                srcEnd += BLOCK_SIZE;
-            }
-            cachedList.insertFromSource(index, srcCachedList, srcIndex, srcEnd);
+            int srcEnd = src.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
+            dest.insertFromSource(index, src, srcIndex, srcEnd + BLOCK_SIZE);
         } else {
-            int srcEnd = srcIndex;
-            while (srcEnd < srcCachedListSize && partitionTimestamp == srcCachedList.getQuick(srcEnd)) {
-                if (partitionTimestamp != cachedList.getQuick(index)) {
-                    break;
-                }
-                int srcColIdx = (int) srcCachedList.get(srcEnd + COLUMN_INDEX_OFFSET);
-                int colIdx = (int) cachedList.get(index + COLUMN_INDEX_OFFSET);
-                if (srcColIdx == colIdx) {
-                    long srcColTop = srcCachedList.getQuick(srcEnd + COLUMN_TOP_OFFSET);
-                    cachedList.setQuick(index + COLUMN_TOP_OFFSET, srcColTop);
-                    index += BLOCK_SIZE;
-                } else if (colIdx > srcColIdx) {
-                    break;
-                }
-                srcEnd += BLOCK_SIZE;
-            }
+            throw CairoException.instance(0)
+                    .put("invalid partition ")
+                    .put(Timestamps.toString(partitionTimestamp))
+                    .put(" column version state, cannot update partition information");
         }
         hasChanges = true;
     }

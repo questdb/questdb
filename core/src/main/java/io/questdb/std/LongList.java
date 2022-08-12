@@ -28,7 +28,7 @@ import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.*;
+import java.util.Arrays;
 
 public class LongList implements Mutable, LongVec, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
@@ -167,7 +167,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
         // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
         // please ensure these implementations are in sync
 
-        int low = 0;
+        return binarySearchBlock(0, shl, value, scanDir);
+    }
+
+    public int binarySearchBlock(int offset, int shl, long value, int scanDir) {
+        int low = offset >> shl;
         int high = (pos - 1) >> shl;
         while (high - low > 65) {
             final int mid = (low + high) / 2;
