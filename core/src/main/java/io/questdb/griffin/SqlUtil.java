@@ -31,10 +31,10 @@ import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 
@@ -113,7 +113,7 @@ public class SqlUtil {
                     return DateConstant.getInstance(DateFormatUtils.parseUTCDate(value));
                 } catch (NumericException exc) {
                     try {
-                        return TimestampConstant.newInstance(TimestampFormatUtils.parseTimestamp(value));
+                        return TimestampConstant.newInstance(IntervalUtils.parseFloorPartialDate(value));
                     } catch (NumericException exc1) {
                         throw SqlException.inconvertibleValue(columnNumber, value, ColumnType.STRING, toType);
                     }

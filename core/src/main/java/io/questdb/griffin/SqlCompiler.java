@@ -1229,7 +1229,7 @@ public class SqlCompiler implements Closeable {
     }
 
     @Nullable
-    private RecordCursorFactory executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+    private RecordCursorFactory executeCopy0(CopyModel model) throws SqlException {
         try {
             if (model.isCancel()) {
                 cancelTextImport(model);
@@ -1518,7 +1518,7 @@ public class SqlCompiler implements Closeable {
             setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
-        RecordCursorFactory copyFactory = executeCopy0(executionContext, executionModel);
+        RecordCursorFactory copyFactory = executeCopy0(executionModel);
         return compiledQuery.ofCopyLocal(copyFactory);
     }
 

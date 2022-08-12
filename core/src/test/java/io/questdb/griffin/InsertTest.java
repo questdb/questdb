@@ -383,9 +383,9 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumnFails() throws Exception {
         assertInsertTimestamp(
-                "Invalid timestamp",
+                "inconvertible value: 2021-01-03T02:00:00-:30 [STRING -> TIMESTAMP]",
                 "insert into tab values (1, '2021-01-03T02:00:00-:30')",
-                "io.questdb.cairo.CairoException",
+                "io.questdb.griffin.SqlException",
                 true
         );
     }
@@ -962,10 +962,10 @@ public class InsertTest extends AbstractGriffinTest {
                     Assert.fail("SqlException expected");
                 }
                 assertSql("tab", expected);
-            } catch (CairoException e) {
+            } catch (Throwable e) {
                 if (exceptionType == null) throw e;
                 Assert.assertEquals(exceptionType, e.getClass().getName());
-                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+                TestUtils.assertContains(e.getMessage(), expected);
             }
         } else {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);

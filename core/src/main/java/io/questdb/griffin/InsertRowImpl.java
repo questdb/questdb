@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
@@ -64,13 +63,13 @@ public class InsertRowImpl {
         return tableWriter.newRow(timestamp);
     }
 
-    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) {
+    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) throws SqlException {
         CharSequence tsStr = timestampFunction.getStr(null);
         try {
             long timestamp = IntervalUtils.parseFloorPartialDate(tsStr);
             return tableWriter.newRow(timestamp);
         } catch (NumericException e) {
-            throw CairoException.instance(0).put("Invalid timestamp: ").put(tsStr);
+            throw SqlException.$(0, "Invalid timestamp: ").put(tsStr);
         }
     }
 
@@ -86,7 +85,7 @@ public class InsertRowImpl {
         }
     }
 
-    public void append(TableWriter writer) {
+    public void append(TableWriter writer) throws SqlException {
         final TableWriter.Row row = rowFactory.getRow(writer);
         copier.copy(virtualRecord, row);
         row.append();
@@ -94,6 +93,6 @@ public class InsertRowImpl {
 
     @FunctionalInterface
     private interface RowFactory {
-        TableWriter.Row getRow(TableWriter tableWriter);
+        TableWriter.Row getRow(TableWriter tableWriter) throws SqlException;
     }
 }
