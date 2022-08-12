@@ -566,8 +566,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (e instanceof CairoException && ((CairoException) e).isInterruption()) {
-            state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
+        if (e instanceof CairoException) {
+            CairoException ce = (CairoException) e;
+            if (ce.isInterruption()) {
+                state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(ce.getFlyweightMessage()).$("`]").$();
+            } else {
+                state.error().$("query error [q=`").utf8(state.getQuery()).$("`, reason=`").$(ce.getFlyweightMessage()).$("`]").$();
+            }
         } else if (e instanceof HttpException) {
             state.error().$("internal HTTP server error [q=`").utf8(state.getQuery()).$("`, reason=`").$(((HttpException) e).getFlyweightMessage()).$("`]").$();
         } else {

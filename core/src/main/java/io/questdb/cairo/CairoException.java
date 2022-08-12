@@ -41,7 +41,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     protected final StringSink message = new StringSink();
     protected int errno;
     private boolean cacheable;
-    private boolean interruption;
+    private boolean interruption; // used when a query times out
 
     public static CairoException duplicateColumn(CharSequence columnName) {
         return duplicateColumn(columnName, null);
