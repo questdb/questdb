@@ -34,6 +34,7 @@ import org.jetbrains.annotations.NotNull;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int METADATA_VALIDATION = -100;
+    public static final int ILLEGAL_OPERATION = -101;
 
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};

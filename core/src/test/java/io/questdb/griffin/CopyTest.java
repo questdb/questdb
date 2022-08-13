@@ -84,23 +84,32 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSetAllParallelCopyOptions() throws SqlException {
+        boolean[] useUpperCase = new boolean[]{true, false};
         Object[] partitionBy = new Object[]{"HOUR", PartitionBy.HOUR, "DAY", PartitionBy.DAY, "MONTH", PartitionBy.MONTH, "YEAR", PartitionBy.YEAR};
         Object[] onError = new Object[]{"SKIP_COLUMN", Atomicity.SKIP_COL, "SKIP_ROW", Atomicity.SKIP_ROW, "ABORT", Atomicity.SKIP_ALL};
 
-        for (int p = 0; p < partitionBy.length / 2; p += 2) {
-            for (int o = 0; o < onError.length / 2; o += 2) {
+        for (boolean upperCase : useUpperCase) {
+            for (int p = 0; p < partitionBy.length / 2; p += 2) {
+                for (int o = 0; o < onError.length / 2; o += 2) {
 
-                CopyModel model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true " +
-                        "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
+                    CopyModel model;
+                    if (upperCase) {
+                        model = (CopyModel) compiler.testCompileModel("COPY x FROM 'somefile.csv' WITH HEADER TRUE " +
+                                "PARTITION BY " + partitionBy[p] + " TIMESTAMP 'ts1' FORMAT 'yyyy-MM-ddTHH:mm:ss' DELIMITER ';' ON ERROR " + onError[o] + ";'", sqlExecutionContext);
+                    } else {
+                        model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true " +
+                                "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
+                    }
 
-                assertEquals("x", model.getTarget().token.toString());
-                assertEquals("'somefile.csv'", model.getFileName().token.toString());
-                assertTrue(model.isHeader());
-                assertEquals(partitionBy[p + 1], model.getPartitionBy());
-                assertEquals("ts1", model.getTimestampColumnName().toString());
-                assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
-                assertEquals(';', model.getDelimiter());
-                assertEquals(onError[o + 1], model.getAtomicity());
+                    assertEquals("x", model.getTarget().token.toString());
+                    assertEquals("'somefile.csv'", model.getFileName().token.toString());
+                    assertTrue(model.isHeader());
+                    assertEquals(partitionBy[p + 1], model.getPartitionBy());
+                    assertEquals("ts1", model.getTimestampColumnName().toString());
+                    assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
+                    assertEquals(';', model.getDelimiter());
+                    assertEquals(onError[o + 1], model.getAtomicity());
+                }
             }
         }
     }

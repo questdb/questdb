@@ -41,6 +41,37 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
+    public void testPartitionByOrderByAcceptsDesc() throws SqlException {
+        assertPartitionByOverOrderByAcceptsDirection("desc", " desc");
+    }
+
+    @Test
+    public void testPartitionByOrderByAcceptsAsc() throws SqlException {
+        assertPartitionByOverOrderByAcceptsDirection("asc", "");
+    }
+
+    @Test
+    public void testPartitionByOrderByAcceptsDefault() throws SqlException {
+        assertPartitionByOverOrderByAcceptsDirection("", "");
+    }
+
+    private void assertPartitionByOverOrderByAcceptsDirection(String orderInQuery, String orderInModel) throws SqlException {
+        assertQuery("select-choose ts, temperature from " +
+                        "(select-analytic [ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ")] ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ") " +
+                        "from (select [ts, temperature] from weather) where rid = 0) inq order by ts",
+                "select ts, temperature from \n" +
+                        "( \n" +
+                        "  select ts, temperature,  \n" +
+                        "         row_number() over (partition by timestamp_floor('y', ts) order by temperature " + orderInQuery + ")  rid \n" +
+                        "  from weather \n" +
+                        ") inq \n" +
+                        "where rid = 0 \n" +
+                        "order by ts\n",
+                modelOf("weather").col("ts", ColumnType.TIMESTAMP).col("temperature", ColumnType.FLOAT)
+        );
+    }
+
+    @Test
     public void testSampleByEndingWithSemicolon() throws SqlException {
         assertQuery(
                 "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",

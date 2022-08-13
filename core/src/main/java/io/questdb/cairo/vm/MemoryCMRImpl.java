@@ -37,7 +37,7 @@ import io.questdb.std.str.LPSZ;
 //contiguous mapped readable 
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
-    private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    protected int memoryTag = MemoryTag.MMAP_DEFAULT;
 
     public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         of(ff, name, 0, size, memoryTag);
@@ -58,7 +58,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
-        grownLength = 0;
     }
 
     @Override
@@ -68,7 +67,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
 
     @Override
     public void extend(long newSize) {
-        grownLength = Math.max(newSize, grownLength);
         if (newSize > size) {
             setSize0(newSize);
         }

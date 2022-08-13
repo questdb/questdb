@@ -142,15 +142,16 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                     final long currentRow = Rows.toLocalRowID(rowId);
 
                     if (rowPartitionIndex != partitionIndex) {
-                        LOG.info()
-                                .$("updating partition [partitionIndex=").$(partitionIndex)
-                                .$(", rowPartitionIndex=").$(rowPartitionIndex)
-                                .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                .$(", affectedColumnCount=").$(affectedColumnCount)
-                                .$(", prevRow=").$(prevRow)
-                                .$(", minRow=").$(minRow)
-                                .I$();
                         if (partitionIndex > -1) {
+                            LOG.info()
+                                    .$("updating partition [partitionIndex=").$(partitionIndex)
+                                    .$(", rowPartitionIndex=").$(rowPartitionIndex)
+                                    .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                    .$(", affectedColumnCount=").$(affectedColumnCount)
+                                    .$(", prevRow=").$(prevRow)
+                                    .$(", minRow=").$(minRow)
+                                    .I$();
+
                             copyColumns(
                                     partitionIndex,
                                     affectedColumnCount,
@@ -396,6 +397,10 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                     break;
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
+                    break;
+                case ColumnType.LONG128:
+                    dstFixMem.putLong(masterRecord.getLong128Lo(i));
+                    dstFixMem.putLong(masterRecord.getLong128Hi(i));
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")

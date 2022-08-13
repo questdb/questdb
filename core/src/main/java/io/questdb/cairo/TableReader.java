@@ -529,11 +529,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int fromIndex = getPrimaryColumnIndex(fromBase, fromColumnIndex);
         final int toIndex = getPrimaryColumnIndex(toBase, toColumnIndex);
 
-        toColumns.getAndSetQuick(toIndex, columns.getAndSetQuick(fromIndex, null));
-        toColumns.getAndSetQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));
-        toColumnTops.getAndSetQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
-        toIndexReaders.getAndSetQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));
-        toIndexReaders.getAndSetQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
+        toColumns.setQuick(toIndex, columns.getAndSetQuick(fromIndex, null));
+        toColumns.setQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));
+        toColumnTops.setQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
+        toIndexReaders.setQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));
+        toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
     }
 
     private void copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
@@ -706,23 +706,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txnScoreboard;
     }
 
-    private void handleMetadataLoadException(long deadline, CairoException ex) {
-        // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (isMetaFileMissingFileSystemError(ex)) {
-            if (clock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$(tableName)
-                        .$(", errno=").$(ex.getErrno())
-                        .$(", error=").$(ex.getFlyweightMessage()).I$();
-                Os.pause();
-            } else {
-                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
-            }
-        } else {
-            throw ex;
-        }
-    }
-
     private void insertPartition(int partitionIndex, long timestamp) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
@@ -748,11 +731,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     boolean isColumnCached(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex).isCached();
-    }
-
-    private boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
     }
 
     @NotNull
@@ -788,7 +766,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                     }
                     existenceChecked = true;
-                    handleMetadataLoadException(deadline, ex);
+                    TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
                 }
             }
         } finally {
@@ -1086,6 +1064,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // these indexes have state and may not be always required
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                 Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
+
+                // Column to present in the partition. Set column top to be the size of the partition.
+                columnTops.setQuick(columnBase / 2 + columnIndex, columnRowCount);
             }
         } finally {
             path.trimTo(plen);
@@ -1118,7 +1099,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                handleMetadataLoadException(deadline, ex);
+                TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
                 continue;
             }
 
