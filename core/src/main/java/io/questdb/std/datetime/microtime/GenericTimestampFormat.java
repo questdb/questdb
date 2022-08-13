@@ -595,10 +595,13 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     // ignore weekday
                     pos += Numbers.decodeHighInt(l);
                     break;
-
-                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
                 case TimestampFormatCompiler.OP_DAY_OF_YEAR:
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                    l = Numbers.parseIntSafely(in, pos, hi);
+                    month = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
                 case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
                     TimestampFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday

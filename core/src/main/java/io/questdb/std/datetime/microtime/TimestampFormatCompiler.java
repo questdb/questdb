@@ -1062,9 +1062,19 @@ public class TimestampFormatCompiler {
                     invokeMatch(matchWeekdayIndex);
                     addTempToPos(decodeLenIndex);
                     break;
-                case OP_DAY_OF_YEAR:
-                case OP_WEEK_OF_MONTH:
                 case OP_WEEK_OF_YEAR:
+                case OP_DAY_OF_YEAR:
+                    // l = Numbers.parseIntSafely(in, pos, hi);
+                    // pos += Numbers.decodeHighInt(l);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iload(P_HI);
+                    asm.invokeStatic(parseIntSafelyIndex);
+                    asm.lstore(LOCAL_TEMP_LONG);
+                    addTempToPos(decodeLenIndex);
+                    break;
+                case OP_WEEK_OF_MONTH:
                 case OP_DAY_OF_WEEK:
                     // assertRemaining(pos, hi);
                     // // ignore weekday

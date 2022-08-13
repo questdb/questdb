@@ -95,6 +95,21 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testDayOfYear() throws Exception {
+        assertThat("D, MM-yyyy", "2010-11-01T00:00:00.000Z", "25, 11-2010");
+    }
+
+    @Test
+    public void testWeekOfYear() throws Exception {
+        assertThat("w, MM-yyyy", "2010-11-01T00:00:00.000Z", "6, 11-2010");
+    }
+
+    @Test
+    public void testWeekOfMonth() throws Exception {
+        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
+    }
+
+    @Test
     public void testDayMonthYear() throws Exception {
         assertThat("dd-MM-yyyy", "2010-03-10T00:00:00.000Z", "10-03-2010");
     }
