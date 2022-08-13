@@ -268,6 +268,9 @@ public class CompactMap implements Map {
                 case ColumnType.LONG256:
                     sz = Long256.BYTES;
                     break;
+                case ColumnType.LONG128:
+                    sz = 2 * Long.BYTES;
+                    break;
                 default:
                     throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
             }
@@ -471,6 +474,11 @@ public class CompactMap implements Map {
         @Override
         public void putLong256(Long256 value) {
             entries.putLong256(value);
+        }
+
+        @Override
+        public void putLong128LittleEndian(long hi, long lo) {
+            entries.putLong128LittleEndian(hi, lo);
         }
 
         @Override

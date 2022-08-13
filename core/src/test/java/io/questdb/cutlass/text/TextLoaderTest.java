@@ -3176,9 +3176,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             @Override
             public int rmdir(Path name) {
-                rmdirCallCount.getAndIncrement();
-                if (!expectedPartitionNames.contains(extractLast(name))) {
-                    Assert.fail();
+                final String dirName = extractLast(name);
+                if (!dirName.equals("seq")) {
+                    rmdirCallCount.getAndIncrement();
+                    if (!expectedPartitionNames.contains(dirName)) {
+                        Assert.fail();
+                    }
                 }
                 return Files.rmdir(name);
             }

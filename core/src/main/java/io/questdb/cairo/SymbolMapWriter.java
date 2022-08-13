@@ -179,8 +179,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return put(symbol, valueCountCollector);
     }
 
+    @Override
     public int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector) {
-
         if (symbol == null) {
             if (!nullValue) {
                 nullValue = true;

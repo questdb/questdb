@@ -517,6 +517,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.GEOLONG:
                 putGeoHashStringValue(socket, rec.getGeoLong(col), type);
                 break;
+            case ColumnType.LONG128:
+                throw new UnsupportedOperationException();
             default:
                 assert false;
         }
