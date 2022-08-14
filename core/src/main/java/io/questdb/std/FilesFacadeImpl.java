@@ -312,6 +312,63 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.write(fd, address, len, offset);
     }
 
+    @Override
+    public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+        int dstLen = dst.length();
+        int srcLen = src.length();
+        int len = src.length();
+        long p = findFirst(src);
+
+        if (-1 == mkdir(dst.$(), dirMode)) {
+            return -1;
+        }
+        dst.trimTo(dstLen);
+
+        if (p > 0) {
+            try {
+                do {
+                    long name = findName(p);
+                    if (Files.notDots(name)) {
+                        int type = findType(p);
+                        src.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            src.concat(name);
+                            dst.concat(name);
+
+                            if (-1 == hardLink(src.$(), dst.$())) {
+                                return -1;
+                            }
+
+                            src.trimTo(srcLen);
+                            dst.trimTo(dstLen);
+
+                        } else {
+                            src.concat(name);
+                            dst.concat(name);
+
+                            if (-1 == mkdir(dst.$(), dirMode)) {
+                                return -1;
+                            }
+
+                            if (-1 == hardLinkDirRecursive(src, dst, dirMode)) {
+                                return -1;
+                            }
+
+                            src.trimTo(srcLen);
+                            dst.trimTo(dstLen);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+                src.trimTo(srcLen);
+                dst.trimTo(dstLen);
+            }
+        }
+
+        return 0;
+    }
+
     private long computeMapPageSize() {
         long pageSize = getPageSize();
         long mapPageSize = pageSize * pageSize;

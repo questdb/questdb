@@ -1000,10 +1000,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 path.of(configuration.getRoot()).concat(dst.getName()).concat("2022-08-01");
                 TableUtils.txnPartitionConditionally(path, txn);
                 int pathLen = path.length();
-                Assert.assertFalse(Files.exists(path.concat("s.d").$()));
-                Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.i").$()));
-                Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
-                Assert.assertFalse(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
+
+                // Extra columns not deleted
+                Assert.assertTrue(Files.exists(path.concat("s.d").$()));
+                Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
+                Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
                 Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("l.d").$()));
 
                 engine.clear();

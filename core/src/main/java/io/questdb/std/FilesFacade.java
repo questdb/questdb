@@ -68,6 +68,8 @@ public interface FilesFacade {
 
     int hardLink(LPSZ src, LPSZ hardLink);
 
+    int hardLinkDirRecursive(Path src, Path dst, int dirMode);
+
     boolean isRestrictedFileSystem();
 
     void iterateDir(LPSZ path, FindVisitor func);
