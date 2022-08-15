@@ -248,7 +248,7 @@ static jboolean kIntMinInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pI
             if (old != I_MIN) {
                 *reinterpret_cast<jint *>(pVal) = MIN(val, old);
             } else {
-                *reinterpret_cast<jlong *>(pVal) = val;
+                *reinterpret_cast<jint *>(pVal) = val;
             }
         }
     }
