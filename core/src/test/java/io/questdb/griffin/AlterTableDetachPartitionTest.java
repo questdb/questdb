@@ -486,7 +486,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 engine.clear();
                 path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachableDirSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
                 // attempt to reattach
@@ -755,7 +755,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
                 path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachableDirSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
@@ -828,7 +828,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
                 path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachableDirSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
@@ -918,7 +918,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
                 path.of(configuration.getDetachedRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(ATTACHABLE_DIR_MARKER).$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachableDirSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
@@ -1649,7 +1649,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     partition,
                     false
             );
-            other.put(ATTACHABLE_DIR_MARKER).$();
+            other.put(configuration.getAttachableDirSuffix()).$();
             Assert.assertTrue(Files.rename(path, other) > -1);
         }
     }
@@ -1657,7 +1657,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     private void renameDetachedToAttachable(String tableName, String... partitions) {
         for (String partition : partitions) {
             path.of(configuration.getDetachedRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
-            other.of(configuration.getDetachedRoot()).concat(tableName).concat(partition).put(ATTACHABLE_DIR_MARKER).$();
+            other.of(configuration.getDetachedRoot()).concat(tableName).concat(partition).put(configuration.getAttachableDirSuffix()).$();
             Assert.assertTrue(Files.rename(path, other) > -1);
         }
     }

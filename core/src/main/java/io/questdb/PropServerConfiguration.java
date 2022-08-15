@@ -411,6 +411,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
     private final boolean walEnabledDefault;
+    private final String attachableDirSuffix;
 
     public PropServerConfiguration(
             String root,
@@ -443,6 +444,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
             this.detachedRoot = new File(root, detached).getAbsolutePath();
         }
+        this.attachableDirSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACHABLE_PARTITION_SUFFIX, ".attachable");
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
@@ -1868,6 +1870,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
+        }
+
+        @Override
+        public String getAttachableDirSuffix() {
+            return attachableDirSuffix;
         }
 
         @Override

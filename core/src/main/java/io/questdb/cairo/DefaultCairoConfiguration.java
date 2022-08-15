@@ -76,6 +76,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public String getAttachableDirSuffix() {
+        return ".attachable";
+    }
+
+    @Override
     public DateFormat getBackupDirTimestampFormat() {
         return null;
     }

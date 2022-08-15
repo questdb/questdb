@@ -49,6 +49,8 @@ public interface CairoConfiguration {
 
     int getAnalyticColumnPoolCapacity();
 
+    String getAttachableDirSuffix();
+
     DateFormat getBackupDirTimestampFormat();
 
     int getBackupMkDirMode();

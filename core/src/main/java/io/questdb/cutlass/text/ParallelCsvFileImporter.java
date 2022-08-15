@@ -669,8 +669,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final CharSequence partitionName = partition.name;
 
                     srcPath.trimTo(srcPlen).concat(partitionName);
-                    dstPath.trimTo(dstPlen).concat(partitionName).put(TableUtils.ATTACHABLE_DIR_MARKER);
-                    int attachableLen = dstPath.length();
+                    dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachableDirSuffix());
 
                     int res = ff.rename(srcPath.slash$(), dstPath.slash$());
 
@@ -684,7 +683,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         ff.iterateDir(srcPath, (long name, int type) -> {
                             if (type == Files.DT_FILE) {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(TableUtils.ATTACHABLE_DIR_MARKER).concat(name).$();
+                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachableDirSuffix()).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
                                     throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                                 }

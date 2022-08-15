@@ -1373,18 +1373,23 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+    public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, "1972-09" + TableUtils.ATTACHABLE_DIR_MARKER + File.separator + "ts.d")) {
-                    return false;
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
+            }
+
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Chars.contains(path, File.separator + "tab41" + File.separator + "1970-06" + configuration.getAttachableDirSuffix())) {
+                    return -1;
                 }
-                return super.exists(path);
+                return super.mkdirs(path, mode);
             }
         };
 
-        assertImportFailsWith("tab19", brokenFf, "could not attach [partition='1972-09'");
+        testImportThrowsException(ff, "tab41", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot create partition directory");
     }
 
     private void assertImportFailsWith(String tableName, FilesFacade brokenFf, String expectedError) throws Exception {
@@ -1444,7 +1449,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, "1972-09" + TableUtils.ATTACHABLE_DIR_MARKER + File.separator + "ts.d")) {
+                if (Chars.endsWith(path, "1972-09" + configuration.getAttachableDirSuffix() + File.separator + "ts.d")) {
                     return false;
                 }
                 return super.exists(path);
@@ -2088,23 +2093,18 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+    public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public int rename(LPSZ from, LPSZ to) {
-                return Files.FILES_RENAME_ERR_EXDEV;
-            }
-
-            @Override
-            public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, File.separator + "tab41" + File.separator + "1970-06" + TableUtils.ATTACHABLE_DIR_MARKER)) {
-                    return -1;
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, "1972-09" + configuration.getAttachableDirSuffix() + File.separator + "ts.d")) {
+                    return false;
                 }
-                return super.mkdirs(path, mode);
+                return super.exists(path);
             }
         };
 
-        testImportThrowsException(ff, "tab41", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot create partition directory");
+        assertImportFailsWith("tab19", brokenFf, "could not attach [partition='1972-09'");
     }
 
     @Test

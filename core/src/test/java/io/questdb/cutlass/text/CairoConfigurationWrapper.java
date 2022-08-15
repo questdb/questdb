@@ -53,6 +53,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public String getAttachableDirSuffix() {
+        return conf.getAttachableDirSuffix();
+    }
+
+    @Override
     public DateFormat getBackupDirTimestampFormat() {
         return conf.getBackupDirTimestampFormat();
     }

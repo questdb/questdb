@@ -350,6 +350,7 @@ public class FilesFacadeImpl implements FilesFacade {
                                 return -1;
                             }
 
+                            dst.chop$();
                             if (-1 == hardLinkDirRecursive(src, dst, dirMode)) {
                                 return -1;
                             }

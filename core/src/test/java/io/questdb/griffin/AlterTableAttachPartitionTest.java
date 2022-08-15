@@ -1156,7 +1156,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
-            Files.rmdir(path.of(root).concat(dstTableName).concat("2022-08-01").put(TableUtils.ATTACHABLE_DIR_MARKER).$());
+            Files.rmdir(path.of(root).concat(dstTableName).concat("2022-08-01").put(configuration.getAttachableDirSuffix()).$());
         }
     }
 
@@ -1183,7 +1183,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
             path.trimTo(pathLen).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
-            other.trimTo(otherLen).concat(partition).put(TableUtils.ATTACHABLE_DIR_MARKER).$();
+            other.trimTo(otherLen).concat(partition).put(configuration.getAttachableDirSuffix()).$();
             TestUtils.copyDirectory(path, other, DIR_MODE);
         }
 
@@ -1227,7 +1227,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         other.of(configuration.getDetachedRoot())
                 .concat(dstTableName)
                 .concat(dstPartitionName)
-                .put(TableUtils.ATTACHABLE_DIR_MARKER)
+                .put(configuration.getAttachableDirSuffix())
                 .slash$();
 
         TestUtils.copyDirectory(path, other, DIR_MODE);

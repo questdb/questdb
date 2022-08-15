@@ -608,7 +608,7 @@ public class TableWriter implements Closeable {
             long partitionSize = 0;
             if (!ff.exists(path)) {
                 setPathForPartition(detachedPath, partitionBy, timestamp, false);
-                detachedPath.put(ATTACHABLE_DIR_MARKER).slash$();
+                detachedPath.put(configuration.getAttachableDirSuffix()).slash$();
                 int detachedRootLen = detachedPath.length();
 
                 if (ff.exists(detachedPath)) {
@@ -5066,7 +5066,7 @@ public class TableWriter implements Closeable {
 
             if (
                     Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
-                            || Chars.endsWith(fileNameSink, ATTACHABLE_DIR_MARKER)
+                            || Chars.endsWith(fileNameSink, configuration.getAttachableDirSuffix())
                             || Chars.startsWith(fileNameSink, WalWriter.WAL_NAME_BASE)
                             || Chars.startsWith(fileNameSink, Sequencer.SEQ_DIR)
             ) {

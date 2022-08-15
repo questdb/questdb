@@ -136,6 +136,7 @@ public enum PropertyKey {
 
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_SQL_DETACHED_ROOT("cairo.sql.detached.root"),
+    CAIRO_ATTACHABLE_PARTITION_SUFFIX("cairo.sql.attachable.partition.suffix"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
     CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY("cairo.column.indexer.queue.capacity"),
