@@ -4273,14 +4273,16 @@ public class TableWriter implements Closeable {
                 }
             }
 
+            Misc.free(detachedColumnVersionReader);
+            Misc.free(detachedMetaMem);
+            Misc.free(detachedIndexBuilder);
+
             removeFileAndOrLog(ff, detachedPath.trimTo(detachedPartitionRoot).concat(DETACHED_META_FILE_NAME).$());
             removeFileAndOrLog(ff, detachedPath.trimTo(detachedPartitionRoot).concat(DETACHED_COLUMN_VERSION_FILE_NAME).$());
         } finally {
             Misc.free(detachedColumnVersionReader);
             Misc.free(detachedMetaMem);
-            if (detachedIndexBuilder != null) {
-                detachedIndexBuilder.clear();
-            }
+            Misc.free(detachedIndexBuilder);
         }
     }
 
