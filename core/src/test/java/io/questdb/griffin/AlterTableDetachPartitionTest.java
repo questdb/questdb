@@ -104,6 +104,61 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachPartitionWithColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        100,
+                        "2020-01-01",
+                        2);
+
+                compile("alter table " + tableName + " add column str string");
+
+                compile("insert into " + tableName +
+                        " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null)" +
+                        " from long_sequence(100)");
+
+                compile("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
+
+                assertSql(
+                        "select first(ts), str from " + tableName + " sample by 1d",
+                        "first\tstr\n" +
+                                "2020-01-01T00:28:47.990000Z\t\n" +
+                                "2020-01-04T00:19:59.000000Z\ta\n" +
+                                "2020-01-04T00:39:59.000000Z\tc\n" +
+                                "2020-01-04T01:19:59.000000Z\tb\n" +
+                                "2020-01-04T01:39:59.000000Z\t\n" +
+                                "2020-01-04T01:59:59.000000Z\ta\n"
+                );
+
+                renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
+                compile("alter table " + tableName + " attach partition list '2020-01-02', '2020-01-03'");
+
+                assertSql(
+                        "select first(ts), str from " + tableName + " sample by 1d",
+                        "first\tstr\n" +
+                                "2020-01-01T00:28:47.990000Z\t\n" +
+                                "2020-01-02T00:57:35.480000Z\t\n" +
+                                "2020-01-02T23:59:59.000000Z\tc\n" +
+                                "2020-01-03T00:39:59.000000Z\t\n" +
+                                "2020-01-03T01:19:59.000000Z\ta\n" +
+                                "2020-01-03T02:39:59.000000Z\tb\n" +
+                                "2020-01-03T02:59:59.000000Z\tc\n" +
+                                "2020-01-04T00:39:59.000000Z\tc\n" +
+                                "2020-01-04T01:19:59.000000Z\tb\n" +
+                                "2020-01-04T01:39:59.000000Z\t\n" +
+                                "2020-01-04T01:59:59.000000Z\ta\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAttachWillFailIfThePartitionWasRecreated() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabTimeTravel2";

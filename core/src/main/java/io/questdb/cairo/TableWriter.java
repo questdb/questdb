@@ -2047,42 +2047,44 @@ public class TableWriter implements Closeable {
     private void attachPartitionCheckFilesMatchMetadata(long partitionSize, Path partitionPath, long partitionTimestamp, ColumnVersionReader columnVersionReader) throws CairoException {
         // for each column, check that file exists in the partition folder
         int rootLen = partitionPath.length();
-        for (int i = 0, size = metadata.getColumnCount(); i < size; i++) {
+        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
             try {
-                int columnIndex = metadata.getWriterIndex(i);
                 final String columnName = metadata.getColumnName(columnIndex);
-                long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, i);
-                if (columnTop < 0 || columnTop == partitionSize) {
-                    // Column does not exists in the partition
-                    continue;
-                }
                 int columnType = metadata.getColumnType(columnIndex);
-                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.INT:
-                    case ColumnType.LONG:
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.BYTE:
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.DATE:
-                    case ColumnType.DOUBLE:
-                    case ColumnType.CHAR:
-                    case ColumnType.SHORT:
-                    case ColumnType.FLOAT:
-                    case ColumnType.LONG256:
-                    case ColumnType.GEOBYTE:
-                    case ColumnType.GEOSHORT:
-                    case ColumnType.GEOINT:
-                    case ColumnType.GEOLONG:
-                        attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.BINARY:
-                        attachPartitionCheckFilesMatchVarLenColumn(partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
-                        break;
-                    case ColumnType.SYMBOL:
-                        attachPartitionCheckSymbolColumn(columnIndex, partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
-                        break;
+
+                if (columnType > -1L) {
+                    long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                    if (columnTop < 0 || columnTop == partitionSize) {
+                        // Column does not exist in the partition
+                        continue;
+                    }
+                    long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.INT:
+                        case ColumnType.LONG:
+                        case ColumnType.BOOLEAN:
+                        case ColumnType.BYTE:
+                        case ColumnType.TIMESTAMP:
+                        case ColumnType.DATE:
+                        case ColumnType.DOUBLE:
+                        case ColumnType.CHAR:
+                        case ColumnType.SHORT:
+                        case ColumnType.FLOAT:
+                        case ColumnType.LONG256:
+                        case ColumnType.GEOBYTE:
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                            attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
+                            break;
+                        case ColumnType.STRING:
+                        case ColumnType.BINARY:
+                            attachPartitionCheckFilesMatchVarLenColumn(partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
+                            break;
+                        case ColumnType.SYMBOL:
+                            attachPartitionCheckSymbolColumn(columnIndex, partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
+                            break;
+                    }
                 }
             } finally {
                 partitionPath.trimTo(rootLen);
