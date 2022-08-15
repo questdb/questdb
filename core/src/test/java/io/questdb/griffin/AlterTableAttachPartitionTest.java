@@ -314,13 +314,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachPartitionStringColIndexMessedNotInOrder() throws Exception {
         assertMemoryLeak(() -> {
-            AddColumn src = s -> {
-                s.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts")
-                        .col("str", ColumnType.STRING);
-
-            };
+            AddColumn src = s -> s.col("l", ColumnType.LONG)
+                    .col("i", ColumnType.INT)
+                    .timestamp("ts")
+                    .col("str", ColumnType.STRING);
 
             assertSchemaMismatch(
                     "src26",
@@ -1026,8 +1023,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachPartitionsDeletedColumnFromSrc() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src49", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst49", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, testName.getMethodName() + "_src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, testName.getMethodName() + "_dst", PartitionBy.DAY)) {
 
                 createPopulateTable(
                         1,

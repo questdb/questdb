@@ -780,17 +780,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<MemoryMR> columns,
             int primaryIndex,
             MemoryMR mem,
-            long columnSize,
-            long columnTop
+            long columnSize
     ) {
         if (mem != null && mem != NullMemoryMR.INSTANCE) {
             mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
-            if (columnTop < 0) {
-                mem = NullMemoryMR.INSTANCE;
-            } else {
-                mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
-            }
+            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -1027,20 +1022,20 @@ public class TableReader implements Closeable, SymbolTableSource {
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check the partition timestamp in Column Version file
             // of when the column was added.
-            if (partitionRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
+            if (columnRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(columnType)) {
                     long columnSize = columnRowCount * 8L + 8L;
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
-                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize, columnTop);
+                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
                     columnSize = mem2.getLong(columnRowCount * 8L);
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize, columnTop);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
                 } else {
                     long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize, columnTop);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                 }
 
@@ -1070,8 +1065,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                 Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
 
-                // Column to present in the partition. Set column top to be the size of the partition.
-                columnTops.setQuick(columnBase / 2 + columnIndex, columnRowCount);
+                // Column is not present in the partition. Set column top to be the size of the partition.
+                columnTops.setQuick(columnBase / 2 + columnIndex, partitionRowCount);
             }
         } finally {
             path.trimTo(plen);
