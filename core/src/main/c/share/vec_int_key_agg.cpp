@@ -1521,10 +1521,12 @@ Java_io_questdb_std_Rosti_keyedIntMinIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jint *>(dest + value_offset) = MIN(
-                    valueAtNull,
-                    *reinterpret_cast<jint *>(dest + value_offset)
-            );
+            const jint old = *reinterpret_cast<jint *>(dest + value_offset);
+            if (old != I_MIN) {
+                *reinterpret_cast<jint *>(pVal) = MIN(valueAtNull, old);
+            } else {
+                *reinterpret_cast<jint *>(pVal) = valueAtNull;
+            }
         }
     }
     return JNI_TRUE;
@@ -1726,10 +1728,12 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jlong *>(dest + value_offset) = MIN(
-                    valueAtNull,
-                    *reinterpret_cast<jlong *>(dest + value_offset)
-            );
+            const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
+            if (old != L_MIN) {
+                *reinterpret_cast<jlong *>(pVal) = MIN(valueAtNull, old);
+            } else {
+                *reinterpret_cast<jlong *>(pVal) = valueAtNull;
+            }
         }
     }
     return JNI_TRUE;
