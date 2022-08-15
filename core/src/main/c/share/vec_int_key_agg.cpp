@@ -1523,9 +1523,9 @@ Java_io_questdb_std_Rosti_keyedIntMinIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
         } else {
             const jint old = *reinterpret_cast<jint *>(dest + value_offset);
             if (old != I_MIN) {
-                *reinterpret_cast<jint *>(pVal) = MIN(valueAtNull, old);
+                *reinterpret_cast<jint *>(dest + value_offset) = MIN(valueAtNull, old);
             } else {
-                *reinterpret_cast<jint *>(pVal) = valueAtNull;
+                *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
             }
         }
     }
@@ -1730,9 +1730,9 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
         } else {
             const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
             if (old != L_MIN) {
-                *reinterpret_cast<jlong *>(pVal) = MIN(valueAtNull, old);
+                *reinterpret_cast<jlong *>(dest + value_offset) = MIN(valueAtNull, old);
             } else {
-                *reinterpret_cast<jlong *>(pVal) = valueAtNull;
+                *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
             }
         }
     }
