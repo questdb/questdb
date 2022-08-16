@@ -672,7 +672,10 @@ public class TableWriter implements Closeable {
                 txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
                 txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
                 txWriter.bumpTruncateVersion();
-                commit();
+
+                columnVersionWriter.commit();
+                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
                 committed = true;
 
                 if (appendPartitionAttached) {
@@ -690,13 +693,13 @@ public class TableWriter implements Closeable {
             if (partitionDirCreated && !committed) {
                 detachedPath.trimTo(detachedRootLen).$();
                 if (!configuration.copyPartitionOnAttach()) {
-                    // rename back to .detached
-                    // otherwise it can be deleted on writer re-open
+                    // rename back to .attachable
                     if (ff.rename(path.slash$(), detachedPath) != Files.FILES_RENAME_OK) {
                         LOG.info().$("fs error renaming partition folder [errno=").$(ff.errno())
                                 .$(", from=").$(path).$(", to=").$(detachedPath).I$();
                     }
                 } else {
+                    // delete the copy
                     if (ff.rmdir(path.slash$()) != 0) {
                         LOG.info().$("fs error deleting partition folder [errno=").$(ff.errno())
                                 .$(", from=").$(path).$(", to=").$(detachedPath).I$();
@@ -826,19 +829,21 @@ public class TableWriter implements Closeable {
             }
 
             // Hard link partition folder recursive to partition.detached
-            boolean copied = true;
             if (ff.hardLinkDirRecursive(path, detachedPath, mkDirMode) != 0) {
                 if (ff.isCrossDeviceCopyError(ff.errno())) {
                     // Cross drive operation. Make full copy to another device.
-                    copied = ff.copyRecursive(path, detachedPath, mkDirMode) == 0;
-                }
-
-                if (!copied) {
-                    LOG.error().$("cannot rename [errno=").$(ff.errno())
+                    if (ff.copyRecursive(path, detachedPath, mkDirMode) != 0) {
+                        LOG.error().$("cannot copy partition detach [errno=").$(ff.errno())
+                                .$(", from=").$(path)
+                                .$(", to=").$(detachedPath)
+                                .I$();
+                        return StatusCode.PARTITION_FOLDER_CANNOT_DETACH_COPY;
+                    }
+                } else {
+                    LOG.error().$("cannot hard link partition detach [errno=").$(ff.errno())
                             .$(", from=").$(path)
                             .$(", to=").$(detachedPath)
                             .I$();
-                    return StatusCode.PARTITION_FOLDER_CANNOT_DETACH_COPY;
                 }
             }
 
@@ -889,7 +894,7 @@ public class TableWriter implements Closeable {
             } else {
                 // rollback detached copy
                 detachedPath.trimTo(detachedPathLen).slash().$();
-                if (!ff.remove(detachedPath)) {
+                if (ff.rmdir(detachedPath) != 0) {
                     LOG.error()
                             .$("undo detached partition folder copy failed [errno=").$(ff.errno())
                             .$(", undo=").$(detachedPath)
@@ -4289,13 +4294,7 @@ public class TableWriter implements Closeable {
                     }
                 }
             }
-
-            Misc.free(detachedColumnVersionReader);
-            Misc.free(detachedMetaMem);
-            Misc.free(detachedIndexBuilder);
-
-            removeFileAndOrLog(ff, detachedPath.trimTo(detachedPartitionRoot).concat(DETACHED_META_FILE_NAME).$());
-            removeFileAndOrLog(ff, detachedPath.trimTo(detachedPartitionRoot).concat(DETACHED_COLUMN_VERSION_FILE_NAME).$());
+            // Do not remove _dmeta and _dcv to keep partition attachable in case of fs copy / rename failure
         } finally {
             Misc.free(detachedColumnVersionReader);
             Misc.free(detachedMetaMem);

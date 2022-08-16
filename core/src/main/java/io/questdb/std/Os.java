@@ -124,6 +124,10 @@ public final class Os {
         return type == LINUX_AMD64 || type == LINUX_ARM64;
     }
 
+    public static boolean isPosix() {
+        return type != Os.WINDOWS;
+    }
+
     public static void pause() {
         if (Os.type != Os.WINDOWS) {
             LockSupport.parkNanos(1);

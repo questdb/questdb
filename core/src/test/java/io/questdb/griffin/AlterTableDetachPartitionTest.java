@@ -147,6 +147,117 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachFailsCopyDmeta() throws Exception {
+        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+            int i = 0;
+
+            @Override
+            public int copy(LPSZ src, LPSZ dest) {
+                if (Chars.contains(dest, DETACHED_META_FILE_NAME)) {
+                    i++;
+                    if (i > 2 && i < 4) {
+                        return -1;
+                    }
+                }
+                return super.copy(src, dest);
+            }
+        };
+        attachableDirSuffix = DETACHED_DIR_MARKER;
+        assertMemoryLeak(ff1, () -> {
+            String tableName = testName.getMethodName();
+
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertSql(
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                );
+
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertFailure("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", "PARTITION_CANNOT_COPY_META");
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+
+                assertSql(
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsRetried() throws Exception {
+        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+            int i = 0;
+
+            @Override
+            public int rename(LPSZ src, LPSZ dst) {
+                if (Chars.contains(src, DETACHED_DIR_MARKER) && i++ < 2) {
+                    return -1;
+                }
+                super.rename(src, dst);
+                return 0;
+            }
+        };
+        assertMemoryLeak(ff1, () -> {
+            String tableName = "tabDetachAttachMissingMeta";
+            attachableDirSuffix = DETACHED_DIR_MARKER;
+
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertSql(
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                );
+
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                        "PARTITION_FOLDER_CANNOT_RENAME"
+                );
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                        "PARTITION_FOLDER_CANNOT_RENAME"
+                );
+
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertSql(
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAttachPartitionWithColumnTops() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -388,106 +499,111 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotUndoRenameAfterBrokenCopyMeta() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "tabUndoRenameCopyMeta";
-            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10,
-                        "2022-06-01",
-                        4
-                );
+        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+            private boolean copyCalled = false;
 
-                AbstractCairoTest.ff = new FilesFacadeImpl() {
-                    private boolean copyCalled = false;
-
-                    @Override
-                    public int copy(LPSZ from, LPSZ to) {
-                        copyCalled = true;
-                        return -1;
-                    }
-
-                    @Override
-                    public int rmdir(Path path) {
-                        if (!copyCalled) {
-                            return super.rmdir(path);
-                        }
-                        return 1;
-                    }
-                };
-
-                engine.clear();
-                long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
-                    StatusCode statusCode = writer.detachPartition(timestamp);
-                    Assert.assertEquals(StatusCode.PARTITION_CANNOT_COPY_META, statusCode);
-                }
-                assertContent("ts\ti\tl\n" +
-                        "2022-06-01T09:35:59.900000Z\t1\t1\n" +
-                        "2022-06-01T19:11:59.800000Z\t2\t2\n" +
-                        "2022-06-02T04:47:59.700000Z\t3\t3\n" +
-                        "2022-06-02T14:23:59.600000Z\t4\t4\n" +
-                        "2022-06-02T23:59:59.500000Z\t5\t5\n" +
-                        "2022-06-03T09:35:59.400000Z\t6\t6\n" +
-                        "2022-06-03T19:11:59.300000Z\t7\t7\n" +
-                        "2022-06-04T04:47:59.200000Z\t8\t8\n" +
-                        "2022-06-04T14:23:59.100000Z\t9\t9\n" +
-                        "2022-06-04T23:59:59.000000Z\t10\t10\n", tableName);
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                copyCalled = true;
+                return -1;
             }
-        });
+
+            @Override
+            public int rmdir(Path path) {
+                if (!copyCalled) {
+                    return super.rmdir(path);
+                }
+                return 1;
+            }
+        };
+        assertMemoryLeak(
+                ff1,
+                () -> {
+                    String tableName = "tabUndoRenameCopyMeta";
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG),
+                                10,
+                                "2022-06-01",
+                                4
+                        );
+
+
+                        engine.clear();
+                        long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
+                            StatusCode statusCode = writer.detachPartition(timestamp);
+                            Assert.assertEquals(StatusCode.PARTITION_CANNOT_COPY_META, statusCode);
+                        }
+                        assertContent("ts\ti\tl\n" +
+                                "2022-06-01T09:35:59.900000Z\t1\t1\n" +
+                                "2022-06-01T19:11:59.800000Z\t2\t2\n" +
+                                "2022-06-02T04:47:59.700000Z\t3\t3\n" +
+                                "2022-06-02T14:23:59.600000Z\t4\t4\n" +
+                                "2022-06-02T23:59:59.500000Z\t5\t5\n" +
+                                "2022-06-03T09:35:59.400000Z\t6\t6\n" +
+                                "2022-06-03T19:11:59.300000Z\t7\t7\n" +
+                                "2022-06-04T04:47:59.200000Z\t8\t8\n" +
+                                "2022-06-04T14:23:59.100000Z\t9\t9\n" +
+                                "2022-06-04T23:59:59.000000Z\t10\t10\n", tableName);
+                    }
+                });
     }
 
     @Test
     public void testDetachAttachAnotherDrive() throws Exception {
-        assertMemoryLeak(() -> {
-            copyPartitionOnAttach = true;
-            String tableName = "tabDetachAttachMissingMeta";
-            attachableDirSuffix = DETACHED_DIR_MARKER;
-            ff = new FilesFacadeImpl() {
-                @Override
-                public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
-                    return 100018;
-                }
-
-                public boolean isCrossDeviceCopyError(int errno) {
-                    return true;
-                }
-            };
-
-            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .timestamp("ts")
-                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s2", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        3
-                );
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                assertSql(
-                        "select first(ts), ts from " + tableName + " sample by 1d",
-                        "first\tts\n" +
-                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
-                );
-
-                for (int i = 0; i < 2; i++) {
-                    compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                    assertSql(
-                            "select first(ts), ts from " + tableName + " sample by 1d",
-                            "first\tts\n" +
-                                    "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
-                                    "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                                    "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
-                    );
-                    compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
-
-                }
+        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+            @Override
+            public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+                return 100018;
             }
-        });
+
+            public boolean isCrossDeviceCopyError(int errno) {
+                return true;
+            }
+        };
+
+        assertMemoryLeak(
+                ff1,
+                () -> {
+                    copyPartitionOnAttach = true;
+                    String tableName = "tabDetachAttachMissingMeta";
+                    attachableDirSuffix = DETACHED_DIR_MARKER;
+
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                3
+                        );
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                        assertSql(
+                                "select first(ts), ts from " + tableName + " sample by 1d",
+                                "first\tts\n" +
+                                        "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                        );
+
+                        for (int i = 0; i < 2; i++) {
+                            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                            assertSql(
+                                    "select first(ts), ts from " + tableName + " sample by 1d",
+                                    "first\tts\n" +
+                                            "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                            "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                            );
+                            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
+
+                        }
+                    }
+                });
     }
 
     @Test
@@ -800,6 +916,57 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(exceptions.poll() instanceof EntryUnavailableException);
             }
             Assert.assertEquals(detachedCount.get(), attachedCount.get() + detachedPartitionTimestamps.size());
+        });
+    }
+
+    @Test
+    public void testDetachAttachSameDrive() throws Exception {
+        assertMemoryLeak(() -> {
+            copyPartitionOnAttach = true;
+            String tableName = "tabDetachAttachMissingMeta";
+            attachableDirSuffix = DETACHED_DIR_MARKER;
+            ff = new FilesFacadeImpl() {
+                @Override
+                public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+                    return 100018;
+                }
+
+                public boolean isCrossDeviceCopyError(int errno) {
+                    return true;
+                }
+            };
+
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertSql(
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                );
+
+                for (int i = 0; i < 2; i++) {
+                    compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                    assertSql(
+                            "select first(ts), ts from " + tableName + " sample by 1d",
+                            "first\tts\n" +
+                                    "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                    "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                    "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                    );
+                    compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
+
+                }
+            }
         });
     }
 

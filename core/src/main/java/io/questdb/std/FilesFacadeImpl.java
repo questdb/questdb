@@ -161,7 +161,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean isCrossDeviceCopyError(int errno) {
-        return Os.isLinux() && errno == 18;
+        return Os.isPosix() && errno == 18;
     }
 
     @Override
@@ -356,6 +356,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
         if (p > 0) {
             try {
+                int res;
                 do {
                     long name = findName(p);
                     if (Files.notDots(name)) {
@@ -365,8 +366,8 @@ public class FilesFacadeImpl implements FilesFacade {
                             src.concat(name);
                             dst.concat(name);
 
-                            if (-1 == operation.invoke(src.$(), dst.$())) {
-                                return -1;
+                            if ((res = operation.invoke(src.$(), dst.$())) < 0) {
+                                return res;
                             }
 
                             src.trimTo(srcLen);
@@ -376,13 +377,12 @@ public class FilesFacadeImpl implements FilesFacade {
                             src.concat(name);
                             dst.concat(name);
 
-                            if (-1 == mkdir(dst.$(), dirMode)) {
-                                return -1;
-                            }
+                            // Ignore if subfolder already exists
+                            mkdir(dst.$(), dirMode);
 
                             dst.chop$();
-                            if (-1 == hardLinkDirRecursive(src, dst, dirMode)) {
-                                return -1;
+                            if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
+                                return res;
                             }
 
                             src.trimTo(srcLen);
