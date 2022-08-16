@@ -33,6 +33,8 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
     private long mapPageSize = 0;
+    private final FsOperation copyFsOperation = this::copy;
+    private final FsOperation hardLinkFsOperation = this::hardLink;
 
     @Override
     public boolean allocate(long fd, long size) {
@@ -56,6 +58,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int copy(LPSZ from, LPSZ to) {
         return Files.copy(from, to);
+    }
+
+    @Override
+    public int copyRecursive(Path src, Path dst, int dirMode) {
+        return runRecursive(src, dst, dirMode, copyFsOperation);
     }
 
     @Override
@@ -145,6 +152,16 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int hardLink(LPSZ src, LPSZ hardLink) {
         return Files.hardLink(src, hardLink);
+    }
+
+    @Override
+    public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+        return runRecursive(src, dst, dirMode, hardLinkFsOperation);
+    }
+
+    @Override
+    public boolean isCrossDeviceCopyError(int errno) {
+        return Os.isLinux() && errno == 18;
     }
 
     @Override
@@ -312,17 +329,30 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.write(fd, address, len, offset);
     }
 
-    @Override
-    public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+    private long computeMapPageSize() {
+        long pageSize = getPageSize();
+        long mapPageSize = pageSize * pageSize;
+        if (mapPageSize < pageSize || mapPageSize > _16M) {
+            if (_16M % pageSize == 0) {
+                return _16M;
+            }
+            return pageSize;
+        } else {
+            return mapPageSize;
+        }
+    }
+
+    private int runRecursive(Path src, Path dst, int dirMode, FsOperation operation) {
         int dstLen = dst.length();
         int srcLen = src.length();
         int len = src.length();
-        long p = findFirst(src);
+        long p = findFirst(src.$());
+        src.chop$();
 
-        if (-1 == mkdir(dst.$(), dirMode)) {
+        if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
             return -1;
         }
-        dst.trimTo(dstLen);
+        dst.chop$();
 
         if (p > 0) {
             try {
@@ -335,7 +365,7 @@ public class FilesFacadeImpl implements FilesFacade {
                             src.concat(name);
                             dst.concat(name);
 
-                            if (-1 == hardLink(src.$(), dst.$())) {
+                            if (-1 == operation.invoke(src.$(), dst.$())) {
                                 return -1;
                             }
 
@@ -370,16 +400,8 @@ public class FilesFacadeImpl implements FilesFacade {
         return 0;
     }
 
-    private long computeMapPageSize() {
-        long pageSize = getPageSize();
-        long mapPageSize = pageSize * pageSize;
-        if (mapPageSize < pageSize || mapPageSize > _16M) {
-            if (_16M % pageSize == 0) {
-                return _16M;
-            }
-            return pageSize;
-        } else {
-            return mapPageSize;
-        }
+    @FunctionalInterface
+    private interface FsOperation {
+        int invoke(LPSZ src, LPSZ dst);
     }
 }

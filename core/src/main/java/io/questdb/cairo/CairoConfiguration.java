@@ -45,6 +45,8 @@ public interface CairoConfiguration {
 
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
+    boolean copyPartitionOnAttach();
+
     boolean enableTestFactories();
 
     int getAnalyticColumnPoolCapacity();

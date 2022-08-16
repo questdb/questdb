@@ -28,8 +28,8 @@ import io.questdb.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -107,6 +107,9 @@ public class AbstractCairoTest {
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
     protected static int defaultTableWriteMode = -1;
+    protected static Boolean copyPartitionOnAttach = null;
+    protected static String attachableDirSuffix = null;
+
 
     private static TelemetryConfiguration telemetryConfiguration;
     @Rule
@@ -356,6 +359,16 @@ public class AbstractCairoTest {
             public int getSqlCopyBufferSize() {
                 return sqlCopyBufferSize;
             }
+
+            @Override
+            public boolean copyPartitionOnAttach() {
+                return copyPartitionOnAttach == null ? super.copyPartitionOnAttach() : copyPartitionOnAttach;
+            }
+
+            @Override
+            public String getAttachableDirSuffix() {
+                return attachableDirSuffix == null ? super.getAttachableDirSuffix() : attachableDirSuffix;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -418,6 +431,8 @@ public class AbstractCairoTest {
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
         defaultTableWriteMode = -1;
+        copyPartitionOnAttach = null;
+        attachableDirSuffix = null;
         sink.clear();
     }
 

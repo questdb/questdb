@@ -412,6 +412,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short integerDefaultColumnType;
     private final boolean walEnabledDefault;
     private final String attachableDirSuffix;
+    private final boolean copyPartitionOnAttach;
 
     public PropServerConfiguration(
             String root,
@@ -445,6 +446,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.detachedRoot = new File(root, detached).getAbsolutePath();
         }
         this.attachableDirSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACHABLE_PARTITION_SUFFIX, ".attachable");
+        this.copyPartitionOnAttach = getBoolean(properties, env, PropertyKey.CAIRO_COPY_PARTITION_ON_ATTACH, false);
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
@@ -1861,6 +1863,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+
+        @Override
+        public boolean copyPartitionOnAttach() {
+            return copyPartitionOnAttach;
+        }
 
         @Override
         public boolean enableTestFactories() {

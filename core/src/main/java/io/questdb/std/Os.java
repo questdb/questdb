@@ -120,6 +120,10 @@ public final class Os {
     public static void init() {
     }
 
+    public static boolean isLinux() {
+        return type == LINUX_AMD64 || type == LINUX_ARM64;
+    }
+
     public static void pause() {
         if (Os.type != Os.WINDOWS) {
             LockSupport.parkNanos(1);
