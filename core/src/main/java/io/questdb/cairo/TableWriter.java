@@ -662,6 +662,7 @@ public class TableWriter implements Closeable {
             }
             checkPassed = true;
         } finally {
+            path.trimTo(rootLen);
             if (!checkPassed) {
                 columnVersionWriter.readUnsafe();
             }
@@ -685,10 +686,12 @@ public class TableWriter implements Closeable {
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
-            LOG.info().$("partition attached [path=").$(path).I$();
+            LOG.info().$("partition attached [table=").$(tableName)
+                    .$(", partition=").$ts(timestamp).I$();
 
             if (appendPartitionAttached) {
-                LOG.info().$("switch partition after partition attach [path=").$(tableName).I$();
+                LOG.info().$("switch partition after partition attach [tableName=").$(tableName)
+                        .$(", partition=").$ts(timestamp).I$();
                 freeColumns(true);
                 configureAppendPosition();
             }
@@ -698,11 +701,8 @@ public class TableWriter implements Closeable {
             // Do full rollback to clean up the state
             LOG.critical().$("failed on attaching partition to the table and rolling back [tableName=").$(tableName)
                     .$(", error=").$(e).I$();
-            path.trimTo(rootLen);
             rollback();
             throw e;
-        } finally {
-            path.trimTo(rootLen);
         }
     }
 
