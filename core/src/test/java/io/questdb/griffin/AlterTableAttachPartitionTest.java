@@ -945,7 +945,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcMap", "dstMap", "could not mmap");
+        testSqlFailedOnFsOperation(ff, "srcMap", "dstMap", false, "could not mmap");
     }
 
     @Test
@@ -961,7 +961,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs", "dstTs", "could not open read-only");
+        testSqlFailedOnFsOperation(ff, "srcTs", "dstTs", false, "could not open read-only");
     }
 
     @Test
@@ -977,7 +977,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", "[-100] Detached partition metadata [missing_column=ts]");
+        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", false, "[-100] Detached partition metadata [missing_column=ts]");
     }
 
     @Test
@@ -993,7 +993,23 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcRen", "dstRen", "PARTITION_FOLDER_CANNOT_RENAME");
+        testSqlFailedOnFsOperation(ff, "srcRen", "dstRen", false, "PARTITION_FOLDER_CANNOT_RENAME");
+    }
+
+    @Test
+    public void testCannotSwitchPartition() throws Exception {
+        AtomicInteger counter = new AtomicInteger(1);
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "dst" + testName.getMethodName()) && Chars.contains(name, "2020-01-01") && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        testSqlFailedOnFsOperation(ff, "src" + testName.getMethodName(), "dst" + testName.getMethodName(), true, " is distressed");
     }
 
     @Test
@@ -1260,7 +1276,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
     }
 
-    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String srcTableName, String dstTableName, String... errorContains) throws Exception {
+    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String srcTableName, String dstTableName, boolean catchAll, String... errorContains) throws Exception {
         assertMemoryLeak(ff, () -> {
             try (
                     TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);
@@ -1286,6 +1302,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 } catch (SqlException e) {
                     for (String error : errorContains) {
                         TestUtils.assertContains(e.getFlyweightMessage(), error);
+                    }
+                } catch (Throwable e) {
+                    if (catchAll) {
+                        for (String error : errorContains) {
+                            TestUtils.assertContains(e.getMessage(), error);
+                        }
+                    } else {
+                        throw e;
                     }
                 }
 

@@ -155,7 +155,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             public int copy(LPSZ src, LPSZ dest) {
                 if (Chars.contains(dest, DETACHED_META_FILE_NAME)) {
                     i++;
-                    if (i > 2 && i < 4) {
+                    if (i == 3) {
                         return -1;
                     }
                 }
@@ -569,7 +569,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 ff1,
                 () -> {
                     copyPartitionOnAttach = true;
-                    String tableName = "tabDetachAttachMissingMeta";
+                    String tableName = testName.getMethodName();
                     attachableDirSuffix = DETACHED_DIR_MARKER;
 
                     try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
@@ -602,6 +602,82 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
                         }
+                    }
+                });
+    }
+
+    @Test
+    public void testDetachAttachAnotherDriveFailsToCopy() throws Exception {
+        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+            @Override
+            public int copyRecursive(Path src, Path dst, int dirMode) {
+                return 100018;
+            }
+
+            @Override
+            public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+                return 100018;
+            }
+
+            public boolean isCrossDeviceCopyError(int errno) {
+                return true;
+            }
+        };
+
+        assertMemoryLeak(
+                ff1,
+                () -> {
+                    copyPartitionOnAttach = true;
+                    String tableName = testName.getMethodName();
+                    attachableDirSuffix = DETACHED_DIR_MARKER;
+
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                3
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                "PARTITION_FOLDER_CANNOT_DETACH_COPY"
+                        );
+                    }
+                });
+    }
+
+    @Test
+    public void testDetachAttachAnotherDriveFailsToHardLink() throws Exception {
+        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+            @Override
+            public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+                return 100018;
+            }
+        };
+
+        assertMemoryLeak(
+                ff1,
+                () -> {
+                    String tableName = testName.getMethodName();
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                3
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                "PARTITION_FOLDER_CANNOT_DETACH_MOVE"
+                        );
                     }
                 });
     }
@@ -968,6 +1044,30 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testDetachNonPartitionedNotAllowed() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    String tableName = testName.getMethodName();
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                1
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                "table is not partitioned"
+                        );
+                    }
+                });
     }
 
     @Test
