@@ -111,7 +111,6 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 fmt.format(micros, defaultLocale, "GMT", ss);
                 StringSink ss2 = new StringSink();
                 fmt2.format(millis, defaultLocale, "GMT", ss2);
-                System.out.println(op + "/" + s +"->" + ss + " - " + ss2);
                 TestUtils.assertEqualsIgnoreCase(ss, ss2);
             }
         }
