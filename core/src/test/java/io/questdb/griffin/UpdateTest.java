@@ -46,6 +46,8 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.function.Consumer;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class UpdateTest extends AbstractGriffinTest {
 
     @Test
@@ -332,7 +334,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 }
 
                 try (TxReader txReader = new TxReader(ff)) {
-                    txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat("up"), PartitionBy.DAY);
+                    txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat("up").concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                     txReader.unsafeLoadAll();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));

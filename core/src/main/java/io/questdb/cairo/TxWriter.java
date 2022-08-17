@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
@@ -129,6 +129,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    @Override
+    public TxWriter ofRO(@Transient LPSZ path, int partitionBy) {
+        throw new IllegalStateException();
+    }
+
     public boolean unsafeLoadAll() {
         super.unsafeLoadAll();
         this.baseVersion = getVersion();
@@ -141,11 +146,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             return true;
         }
         return false;
-    }
-
-    @Override
-    public TxWriter ofRO(@Transient Path path, int partitionBy) {
-        throw new IllegalStateException();
     }
 
     protected long unsafeGetRawMemorySize() {
@@ -222,7 +222,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
     }
 
-    public TxWriter ofRW(@Transient Path path, int partitionBy) {
+    public TxWriter ofRW(@Transient LPSZ path, int partitionBy) {
         clear();
         openTxnFile(ff, path);
         try {
@@ -457,21 +457,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1);
     }
 
-    private void openTxnFile(FilesFacade ff, Path path) {
-        int pathLen = path.length();
-        try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                if (txMemBase == null) {
-                    txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-                } else {
-                    txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-                }
-                return;
+    private void openTxnFile(FilesFacade ff, LPSZ path) {
+        if (ff.exists(path)) {
+            if (txMemBase == null) {
+                txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            } else {
+                txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
             }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
-        } finally {
-            path.trimTo(pathLen);
+            return;
         }
+        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     private void putInt(long offset, int value) {
@@ -538,11 +533,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 
-    private void updatePartitionSizeByIndex(int index, long partitionSize) {
-        if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
-            recordStructureVersion++;
-            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-        }
+    void updatePartitionColumnVersion(long partitionTimestamp) {
+        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
     void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
@@ -551,9 +544,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 
-    void updatePartitionColumnVersion(long partitionTimestamp) {
-        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
+    private void updatePartitionSizeByIndex(int index, long partitionSize) {
+        if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
+            recordStructureVersion++;
+            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+        }
     }
 
     private void writeTransientSymbolCount(int symbolIndex, int symCount) {

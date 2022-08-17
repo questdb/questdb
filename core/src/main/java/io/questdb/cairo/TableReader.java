@@ -43,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final int PARTITIONS_SLOT_SIZE = 4;
@@ -100,12 +102,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.partitionBy = this.metadata.getPartitionBy();
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
-            path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
                     .$(", table=").$(this.tableName)
                     .I$();
-            this.txFile = new TxReader(ff).ofRO(path, partitionBy);
+            this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
             openSymbolMaps();

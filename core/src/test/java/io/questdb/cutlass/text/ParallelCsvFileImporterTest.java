@@ -1448,11 +1448,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhenAttachingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ path) {
+            public long openRO(LPSZ path) {
                 if (Chars.endsWith(path, "1972-09" + configuration.getAttachableDirSuffix() + File.separator + "ts.d")) {
-                    return false;
+                    return -1;
                 }
-                return super.exists(path);
+                return super.openRO(path);
             }
         };
 
@@ -2096,11 +2096,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ path) {
+            public long openRO(LPSZ path) {
                 if (Chars.endsWith(path, "1972-09" + configuration.getAttachableDirSuffix() + File.separator + "ts.d")) {
-                    return false;
+                    return -1;
                 }
-                return super.exists(path);
+                return super.openRO(path);
             }
         };
 

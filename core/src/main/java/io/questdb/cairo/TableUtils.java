@@ -53,12 +53,13 @@ public final class TableUtils {
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
-    public static final String DETACHED_META_FILE_NAME = "_dmeta";
     public static final String EVENT_FILE_NAME = "_event";
     public static final String CATALOG_FILE_NAME = "_catalog";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DETACHED_COLUMN_VERSION_FILE_NAME = "_dcv";
+    public static final String DETACHED_META_FILE_NAME = "_dmeta";
+    public static final String DETACHED_TXN_FILE_NAME = "_dtxn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String DETACHED_DIR_MARKER = ".detached";
@@ -1325,52 +1326,6 @@ public final class TableUtils {
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
-    // Scans timestamp file
-    // returns size of partition detected, e.g. size of monotonic increase
-    // of timestamp longs read from 0 offset to the end of the file
-    // It also writes min and max values found in tempMem16b
-    static long readPartitionSizeMinMax(FilesFacade ff, Path path, CharSequence columnName, long tempMem16b, long timestamp) {
-        int plen = path.chop$().length();
-        try {
-            if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
-                try {
-                    long fileSize = ff.length(fd);
-                    long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                    try {
-                        long minTimestamp;
-                        long maxTimestamp = timestamp;
-                        long size = 0L;
-
-                        for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
-                            long ts = Unsafe.getUnsafe().getLong(ptr);
-                            if (ts >= maxTimestamp) {
-                                maxTimestamp = ts;
-                                size++;
-                            } else {
-                                break;
-                            }
-                        }
-                        if (size > 0) {
-                            minTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
-                            Unsafe.getUnsafe().putLong(tempMem16b, minTimestamp);
-                            Unsafe.getUnsafe().putLong(tempMem16b + Long.BYTES, maxTimestamp);
-                        }
-                        return size;
-                    } finally {
-                        ff.munmap(mappedMem, fileSize, MemoryTag.MMAP_DEFAULT);
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                return -1L;
-            }
-        } finally {
-            path.trimTo(plen);
         }
     }
 

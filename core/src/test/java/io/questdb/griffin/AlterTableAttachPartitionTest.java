@@ -477,7 +477,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[-100] Detached partition metadata [missing_column=ts1] is not compatible with current table metadata"
+                            "[2] could not open read-only"
+                    );
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "ts1.d"
                     );
                 }
             }
@@ -763,7 +766,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
                 } catch (SqlException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "[-100] Potential rename of column s to s2, this is not supported, seek manual intervention"
+                            "Column file does not exist"
                     );
                 }
             }
@@ -837,7 +840,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                 } catch (SqlException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "[-100] Detached column [index=2, name=s, attribute=is_indexed] does not match current table metadata"
+                            "Symbol index value file does not exist"
                     );
                 }
             }
@@ -922,7 +925,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
-        AtomicInteger counter = new AtomicInteger(2);
+        AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             private long tsdFd;
 
@@ -966,18 +969,18 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
-        AtomicInteger counter = new AtomicInteger(2);
+        AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
-                    return false;
+                    return -1;
                 }
-                return super.exists(name);
+                return super.openRO(name);
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", false, "[-100] Detached partition metadata [missing_column=ts]");
+        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", false, "could not open read-only", "ts.d");
     }
 
     @Test
@@ -1189,16 +1192,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         engine.clear();
-        compile("ALTER TABLE " + src.getName() + " DETACH PARTITION LIST " + partitions + ";", sqlExecutionContext);
-
-        engine.clear();
-        path.of(configuration.getDetachedRoot()).concat(src.getName());
+        path.of(configuration.getRoot()).concat(src.getName());
         int pathLen = path.length();
         other.of(configuration.getDetachedRoot()).concat(dst.getName());
         int otherLen = other.length();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
-            path.trimTo(pathLen).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
+            path.trimTo(pathLen).concat(partition).$();
             other.trimTo(otherLen).concat(partition).put(configuration.getAttachableDirSuffix()).$();
             TestUtils.copyDirectory(path, other, DIR_MODE);
         }

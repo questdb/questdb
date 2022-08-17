@@ -49,6 +49,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.function.Consumer;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 
 /**
  * Class is responsible for importing of large unordered import files into partitioned tables.
@@ -509,7 +511,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void attachPartitions(TableWriter writer) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ATTACH_PARTITIONS);
 
-        for (int i = 0, sz = partitions.size(); i < sz; i++) {
+        // Go descending, attaching last partition is more expensive than others
+        for (int i = partitions.size() - 1; i > -1; i--) {
             PartitionInfo partition = partitions.getQuick(i);
             if (partition.importedRows == 0) {
                 continue;
@@ -518,7 +521,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final CharSequence partitionDirName = partition.name;
             try {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
-                writer.attachPartition(timestamp, false);
+                writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
                 throw TextImportException.instance(
                                 TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
@@ -1141,7 +1144,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int t = 0; t < tmpTableCount; ++t) {
             tmpPath.of(importRoot).concat(tableName).put("_").put(t);
 
-            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath, partitionBy)) {
+            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txFile.unsafeLoadAll();
                 final int partitionCount = txFile.getPartitionCount();
 

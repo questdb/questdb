@@ -598,18 +598,8 @@ public final class TestUtils {
         if (Files.mkdirs(dst, dirMode) != 0) {
             Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
         }
-
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        final int srcLen = src.length();
-        final int dstLen = dst.length();
-        ff.walk(
-                src, (pUtf8NameZ, type) -> {
-                    src.concat(pUtf8NameZ).$();
-                    dst.trimTo(dstLen).concat(src.address() + srcLen).$();
-                    ff.mkdirs(dst, dirMode);
-                    ff.copy(src, dst);
-                }
-        );
+        Assert.assertEquals(0, ff.copyRecursive(src, dst, dirMode));
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {

@@ -29,10 +29,15 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class O3PartitionPurgeTest extends AbstractGriffinTest {
     private static O3PartitionPurgeJob purgeJob;
@@ -252,7 +257,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     path.of(engine.getConfiguration().getRoot()).concat(tableName);
                     int len = path.length();
                     int partitionBy = PartitionBy.DAY;
-                    txReader.ofRO(path, partitionBy);
+                    txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
                     txReader.unsafeLoadAll();
 
                     Assert.assertEquals(2, txReader.getPartitionCount());

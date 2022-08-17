@@ -159,6 +159,9 @@ public class TableWriter implements Closeable {
     private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
     private IndexBuilder detachedIndexBuilder;
+    private TxReader detachedTxReader;
+    private long detachedMinTimestamp;
+    private long detachedMaxTimestamp;
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
     private ObjList<MemoryCARW> o3MemColumns;
@@ -266,7 +269,7 @@ public class TableWriter implements Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
+            this.txWriter = new TxWriter(ff).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
@@ -581,29 +584,34 @@ public class TableWriter implements Closeable {
     }
 
     public StatusCode attachPartition(long timestamp) {
-        return attachPartition(timestamp, true);
+        // -1 means unknown size
+        return attachPartition(timestamp, -1L);
     }
 
-    public StatusCode attachPartition(long timestamp, boolean validateDataFiles) {
+    /**
+     * Attaches a partition to the table. If size is given, partition file data is not validated.
+     *
+     * @param timestamp     partition timestamp
+     * @param partitionSize partition size in rows. Negative means unknown size.
+     * @return attached status code
+     */
+    public StatusCode attachPartition(long timestamp, long partitionSize) {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table has it
         assert metadata.getTimestampIndex() > -1;
-        Path detachedPath = Path.PATH.get();
 
         if (txWriter.attachedPartitionsContains(timestamp)) {
             LOG.info().$("partition is already attached [path=").$(path).I$();
             // TODO: potentially we can merge with existing data
             return StatusCode.PARTITION_ALREADY_ATTACHED;
         }
-
-        detachedPath.of(configuration.getDetachedRoot()).concat(tableName);
+        Path detachedPath = Path.PATH.get().of(configuration.getDetachedRoot()).concat(tableName);
 
         // final name of partition folder after attach
         setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
         TableUtils.txnPartitionConditionally(path, getTxn());
         path.slash$();
 
-        final long partitionSize;
         if (ff.exists(path)) {
             // Very unlikely since txn is part of the folder name
             return StatusCode.PARTITION_CANNOT_ATTACH_FOLDER_EXISTS;
@@ -612,6 +620,7 @@ public class TableWriter implements Closeable {
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachableDirSuffix()).slash$();
         int detachedRootLen = detachedPath.length();
+        boolean validateDataFiles = partitionSize < 0;
 
         if (inTransaction()) {
             LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
@@ -622,24 +631,26 @@ public class TableWriter implements Closeable {
         boolean checkPassed = false;
         try {
             if (ff.exists(detachedPath)) {
+                // detached metadata files validation
                 CharSequence timestampColName = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
-                partitionSize = readPartitionSizeMinMax(ff, detachedPath, timestampColName, tempMem16b, timestamp);
-                if (partitionSize == -1) {
-                    throw CairoException.detachedMetadataMismatch("missing_column=" + timestampColName);
+                if (partitionSize > -1L) {
+                    // read detachedMinTimestamp and detachedMaxTimestamp
+                    readPartitionMinMax(ff, timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, partitionSize);
+                } else {
+                    // read size, detachedMinTimestamp and detachedMaxTimestamp
+                    partitionSize = readPartitionSizeMinMax(ff, timestamp, detachedPath.trimTo(detachedRootLen), timestampColName);
                 }
-
 
                 if (partitionSize < 1) {
                     return StatusCode.EMPTY_PARTITION;
                 }
 
-                // detached metadata files validation
-                if (validateDataFiles) {
-                    prepareDetachedPartition(timestamp, partitionSize, detachedPath, detachedRootLen);
-                    // main columnVersionWriter is now aligned with the detached partition values
-                    attachPartitionCheckFilesMatchMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp, columnVersionWriter);
+                if (validateDataFiles && !prepareDetachedPartition(timestamp, partitionSize, detachedPath, detachedRootLen)) {
+                    attachPartitionCheckFilesMatchMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
                 }
 
+                // main columnVersionWriter is now aligned with the detached partition values read from partition _cv file
+                // in case of an error it has to be clean up
                 if (!configuration.copyPartitionOnAttach()) {
                     if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path.$()) == Files.FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
@@ -649,18 +660,19 @@ public class TableWriter implements Closeable {
                     }
                 } else {
                     // Copy
-                    if (ff.copyRecursive(detachedPath, path, configuration.getMkDirMode()) == 0) {
+                    if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
                         LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     } else {
                         LOG.error().$("cannot copy [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
                         return StatusCode.PARTITION_FOLDER_CANNOT_COPY;
                     }
                 }
+
+                checkPassed = true;
             } else {
                 LOG.info().$("attach partition command failed, partition to attach does not exist [path=").$(detachedPath).I$();
                 return StatusCode.PARTITION_CANNOT_ATTACH_MISSING;
             }
-            checkPassed = true;
         } finally {
             path.trimTo(rootLen);
             if (!checkPassed) {
@@ -670,11 +682,9 @@ public class TableWriter implements Closeable {
 
         try {
             // find out lo, hi ranges of partition attached as well as size
-            long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
-            long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
-            assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
-            long nextMinTimestamp = Math.min(minPartitionTimestamp, txWriter.getMinTimestamp());
-            long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txWriter.getMaxTimestamp());
+            assert timestamp <= detachedMinTimestamp && detachedMinTimestamp <= detachedMaxTimestamp;
+            long nextMinTimestamp = Math.min(detachedMinTimestamp, txWriter.getMinTimestamp());
+            long nextMaxTimestamp = Math.max(detachedMaxTimestamp, txWriter.getMaxTimestamp());
             boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
 
             txWriter.beginPartitionSizeUpdate();
@@ -862,6 +872,16 @@ public class TableWriter implements Closeable {
                             .$(", from=").$(other)
                             .$(", to=").$(detachedPath)
                             .I$();
+                } else {
+                    other.parent().concat(TXN_FILE_NAME).$();
+                    detachedPath.parent().concat(DETACHED_TXN_FILE_NAME).$();
+                    if (-1 == ff.copy(other, detachedPath)) {
+                        statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
+                        LOG.error().$("cannot copy [errno=").$(ff.errno())
+                                .$(", from=").$(other)
+                                .$(", to=").$(detachedPath)
+                                .I$();
+                    }
                 }
             }
 
@@ -2043,17 +2063,34 @@ public class TableWriter implements Closeable {
         return index;
     }
 
-    private void attachPartitionCheckFilesMatchFixedColumn(int columnType, long partitionSize, String columnName, long columnNameTxn, Path partitionPath) {
+    private void attachPartitionCheckFilesMatchFixedColumn(
+            int columnType,
+            long partitionSize,
+            long columnTop,
+            String columnName,
+            long columnNameTxn,
+            Path partitionPath,
+            long partitionTimestamp,
+            int columnIndex
+    ) {
+        long columnSize = partitionSize - columnTop;
+        if (columnSize == 0) {
+            return;
+        }
+
         TableUtils.dFile(partitionPath, columnName, columnNameTxn);
-        if (ff.exists(partitionPath.$())) {
+        if (!ff.exists(partitionPath.$())) {
+            LOG.info().$("attaching partition with missing column [path=").$(partitionPath).I$();
+            columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, partitionSize);
+        } else {
             long fileSize = ff.length(partitionPath);
-            if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
+            if (fileSize < (columnSize << ColumnType.pow2SizeOf(columnType))) {
                 throw CairoException.instance(0)
                         .put("Column file is too small. ")
                         .put("Partition files inconsistent [file=")
                         .put(partitionPath)
                         .put(", expectedSize=")
-                        .put(partitionSize << ColumnType.pow2SizeOf(columnType))
+                        .put(columnSize << ColumnType.pow2SizeOf(columnType))
                         .put(", actual=")
                         .put(fileSize)
                         .put(']');
@@ -2061,7 +2098,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void attachPartitionCheckFilesMatchMetadata(long partitionSize, Path partitionPath, long partitionTimestamp, ColumnVersionReader columnVersionReader) throws CairoException {
+    private void attachPartitionCheckFilesMatchMetadata(long partitionSize, Path partitionPath, long partitionTimestamp) throws CairoException {
         // for each column, check that file exists in the partition folder
         int rootLen = partitionPath.length();
         for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
@@ -2070,7 +2107,7 @@ public class TableWriter implements Closeable {
                 int columnType = metadata.getColumnType(columnIndex);
 
                 if (columnType > -1L) {
-                    long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                    long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                     if (columnTop < 0 || columnTop == partitionSize) {
                         // Column does not exist in the partition
                         continue;
@@ -2092,14 +2129,14 @@ public class TableWriter implements Closeable {
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
-                            attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
+                            attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
                         case ColumnType.STRING:
                         case ColumnType.BINARY:
-                            attachPartitionCheckFilesMatchVarLenColumn(partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
+                            attachPartitionCheckFilesMatchVarLenColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
                         case ColumnType.SYMBOL:
-                            attachPartitionCheckSymbolColumn(columnIndex, partitionSize - columnTop, columnName, columnNameTxn, partitionPath);
+                            attachPartitionCheckSymbolColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
                     }
                 }
@@ -2109,20 +2146,33 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void attachPartitionCheckFilesMatchVarLenColumn(long partitionSize, String columnName, long columnNameTxn, Path partitionPath) {
+    private void attachPartitionCheckFilesMatchVarLenColumn(
+            long partitionSize,
+            long columnTop,
+            String columnName,
+            long columnNameTxn,
+            Path partitionPath,
+            long partitionTimestamp,
+            int columnIndex
+    ) throws CairoException {
+        long columnSize = partitionSize - columnTop;
+        if (columnSize == 0) {
+            return;
+        }
+
         int pathLen = partitionPath.length();
         TableUtils.dFile(partitionPath, columnName, columnNameTxn);
         long dataLength = ff.length(partitionPath.$());
 
-        partitionPath.trimTo(pathLen);
-        TableUtils.iFile(partitionPath, columnName, columnNameTxn);
+        if (dataLength > 0) {
+            partitionPath.trimTo(pathLen);
+            TableUtils.iFile(partitionPath, columnName, columnNameTxn);
 
-        if (dataLength >= 0 && ff.exists(partitionPath.$())) {
             int typeSize = Long.BYTES;
             long indexFd = openRO(ff, partitionPath, LOG);
             try {
                 long fileSize = ff.length(indexFd);
-                long expectedFileSize = (partitionSize + 1) * typeSize;
+                long expectedFileSize = (columnSize + 1) * typeSize;
                 if (fileSize < expectedFileSize) {
                     throw CairoException.instance(0)
                             .put("Column file is too small. ")
@@ -2138,7 +2188,7 @@ public class TableWriter implements Closeable {
                 long mappedAddr = mapRO(ff, indexFd, expectedFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     long prevDataAddress = dataLength;
-                    for (long offset = partitionSize * typeSize; offset >= 0; offset -= typeSize) {
+                    for (long offset = columnSize * typeSize; offset >= 0; offset -= typeSize) {
                         long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
                         if (dataAddress < 0 || dataAddress > dataLength) {
                             throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
@@ -2165,13 +2215,22 @@ public class TableWriter implements Closeable {
             } finally {
                 ff.close(indexFd);
             }
+        } else {
+            LOG.info().$("attaching partition with missing column [path=").$(partitionPath).I$();
+            columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, partitionSize);
         }
     }
 
-    private void attachPartitionCheckSymbolColumn(int columnIndex, long partitionSize, String columnName, long columnNameTxn, Path partitionPath) {
+    private void attachPartitionCheckSymbolColumn(long partitionSize, long columnTop, String columnName, long columnNameTxn, Path partitionPath, long partitionTimestamp, int columnIndex) {
+        long columnSize = partitionSize - columnTop;
+        if (columnSize == 0) {
+            return;
+        }
+
         int pathLen = partitionPath.length();
         TableUtils.dFile(partitionPath, columnName, columnNameTxn);
         if (!ff.exists(partitionPath.$())) {
+            columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, partitionSize);
             return;
         }
 
@@ -2179,7 +2238,7 @@ public class TableWriter implements Closeable {
         try {
             long fileSize = ff.length(fd);
             int typeSize = Integer.BYTES;
-            long expectedSize = partitionSize * typeSize;
+            long expectedSize = columnSize * typeSize;
             if (fileSize < expectedSize) {
                 throw CairoException.instance(0)
                         .put("Column file is too small. ")
@@ -2194,7 +2253,7 @@ public class TableWriter implements Closeable {
 
             long address = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
             try {
-                int maxKey = Vect.maxInt(address, partitionSize);
+                int maxKey = Vect.maxInt(address, columnSize);
                 int symbolValues = symbolMapWriters.getQuick(columnIndex).getSymbolCount();
                 if (maxKey >= symbolValues) {
                     throw CairoException.instance(0)
@@ -2206,7 +2265,7 @@ public class TableWriter implements Closeable {
                             .put(symbolValues)
                             .put(']');
                 }
-                int minKey = Vect.minInt(address, partitionSize);
+                int minKey = Vect.minInt(address, columnSize);
                 if (minKey != SymbolTable.VALUE_IS_NULL && minKey < 0) {
                     throw CairoException.instance(0)
                             .put("Symbol file does not match symbol column, invalid key [file=")
@@ -4192,14 +4251,14 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
-    private void prepareDetachedPartition(long partitionTimestamp, long partitionSize, Path detachedPath, int detachedPartitionRoot) {
+    private boolean prepareDetachedPartition(long partitionTimestamp, long partitionSize, Path detachedPath, int detachedPartitionRoot) {
         try {
             // load/check _dmeta
             detachedPath.trimTo(detachedPartitionRoot).concat(DETACHED_META_FILE_NAME);
             if (!ff.exists(detachedPath.$())) {
                 // Backups and older versions of detached partitions will not have _dmeta
                 LOG.info().$("detached ").$(DETACHED_META_FILE_NAME).$(" file not found, skipping check [path=").$(detachedPath).I$();
-                return;
+                return false;
             }
 
             if (detachedMetadata == null) {
@@ -4226,7 +4285,7 @@ public class TableWriter implements Closeable {
             if (!ff.exists(detachedPath)) {
                 // Backups and older versions of detached partitions will not have _cv
                 LOG.error().$("detached _dcv file not found, skipping check [path=").$(detachedPath).I$();
-                return;
+                return false;
             } else {
                 if (detachedColumnVersionReader == null) {
                     detachedColumnVersionReader = new ColumnVersionReader();
@@ -4289,6 +4348,7 @@ public class TableWriter implements Closeable {
                     }
                 }
             }
+            return true;
             // Do not remove _dmeta and _dcv to keep partition attachable in case of fs copy / rename failure
         } finally {
             Misc.free(detachedColumnVersionReader);
@@ -4782,6 +4842,101 @@ public class TableWriter implements Closeable {
             }
         } finally {
             other.trimTo(rootLen);
+        }
+    }
+
+    private void readPartitionMinMax(FilesFacade ff, long prtitionTimestamp, Path path, CharSequence columnName, long partitionSize) {
+        dFile(path, columnName, COLUMN_NAME_TXN_NONE);
+        final long fd = TableUtils.openRO(ff, path, LOG);
+        try {
+            detachedMinTimestamp = ff.readULong(fd, 0);
+            detachedMaxTimestamp = ff.readULong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
+            if (detachedMinTimestamp < 0 || detachedMaxTimestamp < 0) {
+                throw CairoException.instance(ff.errno())
+                        .put("invalid timestamp column in detached partition [path=").put(path).put(']');
+            }
+            if (partitionFloorMethod.floor(detachedMinTimestamp) != prtitionTimestamp || partitionFloorMethod.floor(detachedMaxTimestamp) != prtitionTimestamp) {
+                throw CairoException.instance(0)
+                        .put("invalid timestamp column in detached partition [path=").put(path)
+                        .put(", minTimestamp=").put(Timestamps.toString(detachedMinTimestamp))
+                        .put(", maxTimestamp=").put(Timestamps.toString(detachedMaxTimestamp)).put(']');
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    // Scans timestamp file
+    // returns size of partition detected, e.g. size of monotonic increase
+    // of timestamp longs read from 0 offset to the end of the file
+    // It also writes min and max values found in detachedMinTimestamp and detachedMaxTimestamp
+    private long readPartitionSizeMinMax(FilesFacade ff, long partitionTimestamp, Path path, CharSequence columnName) {
+        int pathLen = path.length();
+        try {
+            path.concat(DETACHED_TXN_FILE_NAME).$();
+            if (ff.exists(path)) {
+                if (detachedTxReader == null) {
+                    detachedTxReader = new TxReader(ff);
+                }
+                detachedTxReader.ofRO(path, partitionBy);
+                detachedTxReader.unsafeLoadAll();
+
+                try {
+                    path.trimTo(pathLen);
+                    long partitionSize = detachedTxReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
+                    if (partitionSize <= 0) {
+                        throw CairoException.instance(0)
+                                .put("partition is not preset in detached txn file [path=")
+                                .put(path).put(", partitionSize=").put(partitionSize).put(']');
+                    }
+
+                    // Read min and max timestamp values from the file
+                    readPartitionMinMax(ff, partitionTimestamp, path.trimTo(pathLen), columnName, partitionSize);
+                    return partitionSize;
+                } finally {
+                    Misc.free(detachedTxReader);
+                }
+            }
+
+            // No txn file found, scan the file to get min, max timestamp
+            // Scan forward while value increases
+
+            dFile(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE);
+            final long fd = TableUtils.openRO(ff, path, LOG);
+            try {
+                long fileSize = ff.length(fd);
+                if (fileSize <= 0) {
+                    throw CairoException.instance(ff.errno())
+                            .put("timestamp column is too small to attach the partition [path=")
+                            .put(path).put(", fileSize=").put(fileSize).put(']');
+                }
+                long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    long maxTimestamp = partitionTimestamp;
+                    long size = 0L;
+
+                    for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
+                        long ts = Unsafe.getUnsafe().getLong(ptr);
+                        if (ts >= maxTimestamp) {
+                            maxTimestamp = ts;
+                            size++;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (size > 0) {
+                        detachedMinTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
+                        detachedMaxTimestamp = maxTimestamp;
+                    }
+                    return size;
+                } finally {
+                    ff.munmap(mappedMem, fileSize, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            path.trimTo(pathLen);
         }
     }
 
