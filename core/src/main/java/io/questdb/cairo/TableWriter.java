@@ -926,19 +926,6 @@ public class TableWriter implements Closeable {
         return StatusCode.OK;
     }
 
-    private int copyOverwrite(Path file) {
-        int res = ff.copy(other, file);
-        if (Os.type == Os.WINDOWS && res == 0x50) {
-            // Windows throws an error that file already exists, other platforms do not
-            if (!ff.remove(file)) {
-                // If file is open, return here so that errno is 5 in the error message
-                return -1;
-            }
-            return ff.copy(other, file);
-        }
-        return res;
-    }
-
     public void dropIndex(CharSequence columnName) {
 
         checkDistressed();
@@ -2630,6 +2617,19 @@ public class TableWriter implements Closeable {
         } finally {
             ddlMem.close();
         }
+    }
+
+    private int copyOverwrite(Path file) {
+        int res = ff.copy(other, file);
+        if (Os.type == Os.WINDOWS && res == -1 && ff.errno() == 0x50) {
+            // Windows throws an error that file already exists, other platforms do not
+            if (!ff.remove(file)) {
+                // If file is open, return here so that errno is 5 in the error message
+                return -1;
+            }
+            return ff.copy(other, file);
+        }
+        return res;
     }
 
     private void copyVersionAndLagValues() {
