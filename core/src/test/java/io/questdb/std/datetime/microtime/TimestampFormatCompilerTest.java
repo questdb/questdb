@@ -95,6 +95,21 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testDayOfYear() throws Exception {
+        assertThat("D, MM-yyyy", "2010-11-01T00:00:00.000Z", "25, 11-2010");
+    }
+
+    @Test
+    public void testWeekOfYear() throws Exception {
+        assertThat("w, MM-yyyy", "2010-11-01T00:00:00.000Z", "6, 11-2010");
+    }
+
+    @Test
+    public void testWeekOfMonth() throws Exception {
+        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
+    }
+
+    @Test
     public void testDayMonthYear() throws Exception {
         assertThat("dd-MM-yyyy", "2010-03-10T00:00:00.000Z", "10-03-2010");
     }
@@ -139,6 +154,27 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testFormatDay() throws Exception {
         assertFormat("03", "dd", "2014-04-03T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatDayOfYear() throws Exception {
+        assertFormat("1", "D", "2010-01-01T00:00:00.000Z");
+        assertFormat("69", "D", "2010-03-10T00:00:00.000Z");
+        assertFormat("70", "D", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatWeekOfYear() throws Exception {
+        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
+        assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
+        assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatWeekOfMonth() throws Exception {
+        assertFormat("1", "W", "2010-01-01T00:00:00.000Z");
+        assertFormat("2", "W", "2010-03-10T00:00:00.000Z");
+        assertFormat("2", "W", "2020-03-10T00:00:00.000Z");
     }
 
     @Test
