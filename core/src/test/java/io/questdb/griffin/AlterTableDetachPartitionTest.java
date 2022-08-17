@@ -379,12 +379,17 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotCopyColumnVersions() throws Exception {
-        assertCannotCopyMeta("testCannotCopyColumnVersions", 2);
+        assertCannotCopyMeta(testName.getMethodName(), 2);
     }
 
     @Test
     public void testCannotCopyMeta() throws Exception {
-        assertCannotCopyMeta("testCannotCopyMeta", 1);
+        assertCannotCopyMeta(testName.getMethodName(), 1);
+    }
+
+    @Test
+    public void testCannotCopyTxn() throws Exception {
+        assertCannotCopyMeta(testName.getMethodName(), 3);
     }
 
     @Test
@@ -1719,6 +1724,86 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "11\t11\t2022-06-04T15:59:59.083326Z\n" +
                                 "12\t12\t2022-06-04T23:59:58.999992Z\n",
                         tableName
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionsTimestampColumnTooShort() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
+
+                String timestampDay = "2022-06-01";
+                String timestampWrongDay2 = "2022-06-02";
+
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
+                renameDetachedToAttachable(tableName, timestampDay);
+
+                Path src = Path.PATH.get().of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachableDirSuffix()).slash$();
+                FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                dFile(src.chop$(), "ts", -1);
+                long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
+                try {
+                    ff.truncate(fd, 8);
+                } finally {
+                    ff.close(fd);
+                }
+
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
+                        "cannot read min, max timestamp from the column"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDetachPartitionsWrongFolderName() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
+
+                String timestampDay = "2022-06-01";
+                String timestampWrongDay2 = "2022-06-02";
+
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
+                renameDetachedToAttachable(tableName, timestampDay);
+
+                String timestampWrongDay = "2021-06-01";
+
+                // Partition does not exist in copied _dtxn
+                Path src = Path.PATH.get().of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachableDirSuffix()).slash$();
+                Path dst = Path.PATH2.get().of(configuration.getDetachedRoot()).concat(tableName).concat(timestampWrongDay).put(configuration.getAttachableDirSuffix()).slash$();
+
+                FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                Assert.assertEquals(0, ff.rename(src, dst));
+                assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
+
+                // Existing partition but wrong folder name
+                Path dst2 = Path.PATH.get().of(configuration.getDetachedRoot()).concat(tableName).concat(timestampWrongDay2).put(configuration.getAttachableDirSuffix()).slash$();
+                Assert.assertEquals(0, ff.rename(dst, dst2));
+
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay2 + "'",
+                        "invalid timestamp column data in detached partition, data does not match partition directory name"
                 );
             }
         });

@@ -550,6 +550,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, src.getName(), "testing")) {
                     writer.removeColumn("s");
                     writer.removeColumn("str");
+                    writer.removeColumn("i");
                 }
 
                 CairoTestUtils.create(dst.timestamp("ts")
@@ -565,8 +566,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 engine.clear();
                 assertQuery(
                         "ts\ti\tl\ts\tstr\n" +
-                                "2022-08-02T11:59:59.625000Z\t3\t3\t\t\n" +
-                                "2022-08-02T23:59:59.500000Z\t4\t4\t\t\n",
+                                "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\n" +
+                                "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\n",
                         dst.getName(),
                         null,
                         "ts",

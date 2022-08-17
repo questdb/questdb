@@ -4845,7 +4845,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void readPartitionMinMax(FilesFacade ff, long prtitionTimestamp, Path path, CharSequence columnName, long partitionSize) {
+    private void readPartitionMinMax(FilesFacade ff, long partitionTimestamp, Path path, CharSequence columnName, long partitionSize) {
         dFile(path, columnName, COLUMN_NAME_TXN_NONE);
         final long fd = TableUtils.openRO(ff, path, LOG);
         try {
@@ -4853,11 +4853,13 @@ public class TableWriter implements Closeable {
             detachedMaxTimestamp = ff.readULong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
             if (detachedMinTimestamp < 0 || detachedMaxTimestamp < 0) {
                 throw CairoException.instance(ff.errno())
-                        .put("invalid timestamp column in detached partition [path=").put(path).put(']');
+                        .put("cannot read min, max timestamp from the column [path=").put(path)
+                        .put(", partitionSizeRows=")
+                        .put(partitionSize).put(']');
             }
-            if (partitionFloorMethod.floor(detachedMinTimestamp) != prtitionTimestamp || partitionFloorMethod.floor(detachedMaxTimestamp) != prtitionTimestamp) {
+            if (partitionFloorMethod.floor(detachedMinTimestamp) != partitionTimestamp || partitionFloorMethod.floor(detachedMaxTimestamp) != partitionTimestamp) {
                 throw CairoException.instance(0)
-                        .put("invalid timestamp column in detached partition [path=").put(path)
+                        .put("\"invalid timestamp column data in detached partition, data does not match partition directory name [path=").put(path)
                         .put(", minTimestamp=").put(Timestamps.toString(detachedMinTimestamp))
                         .put(", maxTimestamp=").put(Timestamps.toString(detachedMaxTimestamp)).put(']');
             }

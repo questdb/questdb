@@ -344,6 +344,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewColumns());
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
+
+        Assert.assertEquals(".attachable", configuration.getCairoConfiguration().getAttachableDirSuffix());
+        Assert.assertEquals(false, configuration.getCairoConfiguration().copyPartitionOnAttach());
     }
 
     @Test
@@ -865,6 +868,9 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewColumns());
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
+
+            Assert.assertEquals(".detached", configuration.getCairoConfiguration().getAttachableDirSuffix());
+            Assert.assertEquals(true, configuration.getCairoConfiguration().copyPartitionOnAttach());
         }
     }
 
