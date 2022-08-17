@@ -857,7 +857,7 @@ public class TableWriter implements Closeable {
             detachedPath.trimTo(detachedPathLen).concat(DETACHED_META_FILE_NAME).$();
 
             StatusCode statusCode = StatusCode.OK;
-            if (-1 == ff.copy(other, detachedPath)) {
+            if (-1 == copyOverwrite(detachedPath)) {
                 statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
                 LOG.error().$("cannot copy [errno=").$(ff.errno())
                         .$(", from=").$(other)
@@ -866,7 +866,7 @@ public class TableWriter implements Closeable {
             } else {
                 other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 detachedPath.parent().concat(DETACHED_COLUMN_VERSION_FILE_NAME).$();
-                if (-1 == ff.copy(other, detachedPath)) {
+                if (-1 == copyOverwrite(detachedPath)) {
                     statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
                     LOG.error().$("cannot copy [errno=").$(ff.errno())
                             .$(", from=").$(other)
@@ -875,7 +875,7 @@ public class TableWriter implements Closeable {
                 } else {
                     other.parent().concat(TXN_FILE_NAME).$();
                     detachedPath.parent().concat(DETACHED_TXN_FILE_NAME).$();
-                    if (-1 == ff.copy(other, detachedPath)) {
+                    if (-1 == copyOverwrite(detachedPath)) {
                         statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
                         LOG.error().$("cannot copy [errno=").$(ff.errno())
                                 .$(", from=").$(other)
@@ -924,6 +924,19 @@ public class TableWriter implements Closeable {
         }
         safeDeletePartitionDir(timestamp, partitionNameTxn);
         return StatusCode.OK;
+    }
+
+    private int copyOverwrite(Path file) {
+        int res = ff.copy(other, file);
+        if (Os.type == Os.WINDOWS && res == 0x50) {
+            // Windows throws an error that file already exists, other platforms do not
+            if (!ff.remove(file)) {
+                // If file is open, return here so that errno is 5 in the error message
+                return -1;
+            }
+            return ff.copy(other, file);
+        }
+        return res;
     }
 
     public void dropIndex(CharSequence columnName) {

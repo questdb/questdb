@@ -434,6 +434,7 @@ public class AbstractCairoTest {
         copyPartitionOnAttach = null;
         attachableDirSuffix = null;
         sink.clear();
+        ff = null;
     }
 
     protected static void configureForBackups() throws IOException {
@@ -442,11 +443,12 @@ public class AbstractCairoTest {
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        assertMemoryLeak(null, code);
+        assertMemoryLeak(AbstractCairoTest.ff, code);
     }
 
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
         final FilesFacade ff2 = ff;
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
             try {
@@ -456,7 +458,7 @@ public class AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
                 engine.clear();
-                AbstractCairoTest.ff = null;
+                AbstractCairoTest.ff = ffBefore;
             }
         });
     }

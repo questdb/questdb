@@ -689,48 +689,49 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDetachAttachPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "tabDetachAttach";
-            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(
-                        1,
-                        tab.timestamp("ts")
-                                .col("si", ColumnType.SYMBOL).indexed(true, 250)
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        2
-                );
+        assertMemoryLeak(
+                () -> {
+                    String tableName = testName.getMethodName();
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(
+                                1,
+                                tab.timestamp("ts")
+                                        .col("si", ColumnType.SYMBOL).indexed(true, 250)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                2
+                        );
 
-                String expected = "ts\tsi\ti\tl\ts\n" +
-                        "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
-                        "2022-06-01T09:35:59.800000Z\tVTJW\t2\t2\t\n" +
-                        "2022-06-01T14:23:59.700000Z\t\t3\t3\tSXUX\n" +
-                        "2022-06-01T19:11:59.600000Z\t\t4\t4\t\n" +
-                        "2022-06-01T23:59:59.500000Z\t\t5\t5\tGPGW\n" +
-                        "2022-06-02T04:47:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
-                        "2022-06-02T09:35:59.300000Z\tCPSW\t7\t7\t\n" +
-                        "2022-06-02T14:23:59.200000Z\t\t8\t8\t\n" +
-                        "2022-06-02T19:11:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
-                        "2022-06-02T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
+                        String expected = "ts\tsi\ti\tl\ts\n" +
+                                "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                                "2022-06-01T09:35:59.800000Z\tVTJW\t2\t2\t\n" +
+                                "2022-06-01T14:23:59.700000Z\t\t3\t3\tSXUX\n" +
+                                "2022-06-01T19:11:59.600000Z\t\t4\t4\t\n" +
+                                "2022-06-01T23:59:59.500000Z\t\t5\t5\tGPGW\n" +
+                                "2022-06-02T04:47:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
+                                "2022-06-02T09:35:59.300000Z\tCPSW\t7\t7\t\n" +
+                                "2022-06-02T14:23:59.200000Z\t\t8\t8\t\n" +
+                                "2022-06-02T19:11:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                                "2022-06-02T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
 
-                assertContent(expected, tableName);
+                        assertContent(expected, tableName);
 
-                engine.clear();
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                renameDetachedToAttachable(tableName, "2022-06-01");
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        engine.clear();
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        renameDetachedToAttachable(tableName, "2022-06-01");
+                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
-                engine.clear();
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                renameDetachedToAttachable(tableName, "2022-06-01");
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        engine.clear();
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        renameDetachedToAttachable(tableName, "2022-06-01");
+                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
-                assertContent(expected, tableName);
-            }
-        });
+                        assertContent(expected, tableName);
+                    }
+                });
     }
 
     @Test
