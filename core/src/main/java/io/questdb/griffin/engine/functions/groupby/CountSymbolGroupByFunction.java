@@ -118,11 +118,6 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void toTop() {
         setIndex = 0;
     }

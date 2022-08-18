@@ -112,11 +112,6 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Gro
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void toTop() {
         setIndex = 0;
     }

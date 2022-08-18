@@ -110,11 +110,6 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void toTop() {
         setIndex = 0;
     }

@@ -78,11 +78,6 @@ public class CountLongGroupByFunction extends LongFunction implements GroupByFun
         return false;
     }
 
-    @Override
-    public boolean isReadThreadSafe() {
-        return true;
-    }
-
     public void toSink(CharSink sink) {
         sink.put("Count(").put(valueIndex).put(')');
     }
