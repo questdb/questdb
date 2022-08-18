@@ -88,14 +88,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCannotCreateTable() throws Exception {
         assertFailure(
                 new FilesFacadeImpl() {
-                    int mkDirCount = 0;
 
                     @Override
                     public int mkdirs(Path path, int mode) {
-                        if (mkDirCount++ > 0) {
-                            return -1;
-                        }
-                        return super.mkdirs(path, mode);
+                        return -1;
                     }
                 },
                 "create table x (a int)",

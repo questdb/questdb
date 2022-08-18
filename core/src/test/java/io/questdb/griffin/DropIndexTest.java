@@ -389,6 +389,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     Misc.free(path2);
                     engine.releaseAllWriters();
                     endLatch.countDown();
+                    Path.clearThreadLocals();
                 }
             }).start();
 

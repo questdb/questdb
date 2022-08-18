@@ -159,7 +159,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         Misc.free(metaMem);
     }
 
-    public void deferredInit(CharSequence path, String tableName, int expectedVersion) {
+    public void deferredInit(Path path, String tableName, int expectedVersion) {
         this.path.of(path).$();
         deferredInit(tableName, expectedVersion);
     }

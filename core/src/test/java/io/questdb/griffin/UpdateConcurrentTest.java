@@ -34,6 +34,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -167,6 +168,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
                     }
+                    Path.clearThreadLocals();
                 });
                 threads.add(writer);
                 writer.start();
@@ -211,6 +213,8 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         LOG.error().$("reader error ").$(th).$();
                         exceptions.add(th);
                     }
+
+                    Path.clearThreadLocals();
                 });
                 threads.add(reader);
                 reader.start();

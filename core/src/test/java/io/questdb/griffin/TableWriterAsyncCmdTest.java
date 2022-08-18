@@ -223,7 +223,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     public void testAsyncAlterCommandsFailsToRemoveColumn() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
-                int attempt = 0;
+                int attempt = -1;
 
                 @Override
                 public int rename(LPSZ from, LPSZ to) {
@@ -251,7 +251,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 }
 
             } // Unblock table
-            try (OperationFuture operationFuture = compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null)) {
+            try (OperationFuture operationFuture = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null)) {
                 int status = operationFuture.getStatus();
                 Assert.assertEquals(QUERY_COMPLETE, status);
             }

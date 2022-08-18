@@ -29,6 +29,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Builder class that allows JNI layer access CharSequence without copying memory. It is typically used
@@ -48,14 +49,17 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private long wptr;
     private int capacity;
     private int len;
+    private static AtomicInteger uqCapacity = new AtomicInteger(0);
 
     public Path() {
-        this(255);
+        this(255 + uqCapacity.incrementAndGet());
+
     }
 
     public Path(int capacity) {
         this.capacity = capacity;
         this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+//        new Exception("cap " + (capacity + 1)).printStackTrace();
     }
 
     public static void clearThreadLocals() {
@@ -122,6 +126,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public void close() {
         if (ptr != 0) {
             Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_PATH);
+//            new Exception("closed cap " + capacity + 1).printStackTrace();
             ptr = 0;
         }
     }

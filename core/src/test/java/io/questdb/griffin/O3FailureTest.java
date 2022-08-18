@@ -56,13 +56,14 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0 ) {
+            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name, opts);
         }
     };
-
+    private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
+    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffOpenFailure = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, long opts) {
@@ -73,10 +74,18 @@ public class O3FailureTest extends AbstractO3Test {
             return super.openRW(name, opts);
         }
     };
-
     private static final FilesFacade ffFailToAllocateIndex = new FilesFacadeImpl() {
         long theFd;
         boolean failNextAlloc = false;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (!fixFailure.get() || (fd == theFd && failNextAlloc)) {
+                failNextAlloc = false;
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
 
         @Override
         public boolean close(long fd) {
@@ -104,30 +113,9 @@ public class O3FailureTest extends AbstractO3Test {
             }
             return fd;
         }
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            if (!fixFailure.get() || (fd == theFd && failNextAlloc)) {
-                failNextAlloc = false;
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
     };
-    private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
-    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffAllocateFailure = new FilesFacadeImpl() {
         private boolean failNextAlloc = false;
-
-        @Override
-        public long length(long fd) {
-            final long remaining = counter.decrementAndGet();
-            if (!fixFailure.get() || remaining == 0) {
-                failNextAlloc = true;
-                return 0;
-            }
-            return super.length(fd);
-        }
 
         @Override
         public boolean allocate(long fd, long size) {
@@ -138,11 +126,33 @@ public class O3FailureTest extends AbstractO3Test {
             }
             return super.allocate(fd, size);
         }
+
+        @Override
+        public long length(long fd) {
+            final long remaining = counter.decrementAndGet();
+            if (!fixFailure.get() || remaining == 0) {
+                failNextAlloc = true;
+                return 0;
+            }
+            return super.length(fd);
+        }
     };
     private static final FilesFacade ffIndexAllocateFailure = new FilesFacadeImpl() {
 
         long theFd = 0;
         boolean failNextAlloc = false;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (!fixFailure.get() || (fd == theFd && failNextAlloc)) {
+                // don't forget to set this to 0 so that next attempt doesn't fail
+                theFd = 0;
+                failNextAlloc = false;
+                fixFailure.set(false);
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
 
         @Override
         public long length(long fd) {
@@ -161,18 +171,6 @@ public class O3FailureTest extends AbstractO3Test {
                 theFd = fd;
             }
             return fd;
-        }
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            if (!fixFailure.get() || (fd == theFd && failNextAlloc)) {
-                // don't forget to set this to 0 so that next attempt doesn't fail
-                theFd = 0;
-                failNextAlloc = false;
-                fixFailure.set(false);
-                return false;
-            }
-            return super.allocate(fd, size);
         }
     };
     private static final FilesFacade ffMkDirFailure = new FilesFacadeImpl() {
@@ -227,54 +225,78 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testAllocateFailsAtO3OpenColumn() throws Exception {
-        counter.set(50);
+        // Failing to allocate concrete file is more stable than failing on a counter
+        String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
         executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, new FilesFacadeImpl() {
-            private boolean failNextAlloc = false;
-
-            @Override
-            public long length(long fd) {
-                final long remaining = counter.decrementAndGet();
-                if (remaining == 0) {
-                    failNextAlloc = true;
-                    return 0;
-                }
-                return super.length(fd);
-            }
+            private long theFd = 0;
 
             @Override
             public boolean allocate(long fd, long size) {
-                if (failNextAlloc) {
-                    failNextAlloc = false;
+                if (fd == theFd && size == 1472) {
+                    theFd = -1;
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public long length(long fd) {
+                long len = super.length(fd);
+                if (fd == theFd) {
+                    if (len == Files.PAGE_SIZE) {
+                        return 0;
+                    }
+                }
+                return len;
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                long fd = Files.openRW(name, opts);
+                if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
+                    theFd = fd;
+                    return fd;
+                }
+                return fd;
             }
         });
     }
 
     @Test
     public void testAllocateToResizeLastPartition() throws Exception {
-        counter.set(48);
+        // Failing to allocate concrete file is more stable than failing on a counter
+        String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, new FilesFacadeImpl() {
-            private boolean failNextAlloc = false;
-
-            @Override
-            public long length(long fd) {
-                final long remaining = counter.decrementAndGet();
-                if (remaining == 0) {
-                    failNextAlloc = true;
-                    return 0;
-                }
-                return super.length(fd);
-            }
+            private long theFd = 0;
 
             @Override
             public boolean allocate(long fd, long size) {
-                if (failNextAlloc) {
-                    failNextAlloc = false;
+                if (fd == theFd && size == 1472) {
+                    theFd = -1;
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public long length(long fd) {
+                long len = super.length(fd);
+                if (fd == theFd) {
+                    if (len == Files.PAGE_SIZE) {
+                        return 0;
+                    }
+                }
+                return len;
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                long fd = Files.openRW(name, opts);
+                if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
+                    theFd = fd;
+                    return fd;
+                }
+                return fd;
             }
         });
     }
@@ -562,14 +584,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
-        // different number of calls to "truncate" on Windows and *Nix
-        // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 91 : 90);
+        counter.set(0);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override
             public boolean truncate(long fd, long size) {
-                if (counter.decrementAndGet() == 0) {
+                // Fail first truncate to 0 size, it's more stable than measuring number of calls made to truncate
+                if (size == 0 && counter.getAndIncrement() == 0) {
                     return false;
                 }
                 return super.truncate(fd, size);
@@ -579,13 +600,14 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyValueContended() throws Exception {
+        counter.set(0);
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 91 : 90);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             @Override
             public boolean truncate(long fd, long size) {
-                if (counter.decrementAndGet() == 0) {
+                // Fail first truncate to 0 size, it's more stable than measuring number of calls made to truncate
+                if (size == 0 && counter.getAndIncrement() == 0) {
                     return false;
                 }
                 return super.truncate(fd, size);
@@ -615,6 +637,23 @@ public class O3FailureTest extends AbstractO3Test {
                     boolean armageddon = false;
 
                     @Override
+                    public boolean allocate(long fd, long size) {
+                        if (restoreDiskSpace.get()) {
+                            return super.allocate(fd, size);
+                        }
+
+                        if (armageddon) {
+                            return false;
+                        }
+                        if (fd == theFd) {
+                            theFd = 0;
+                            armageddon = true;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
                     public boolean close(long fd) {
                         if (fd == theFd) {
                             theFd = 0;
@@ -631,23 +670,6 @@ public class O3FailureTest extends AbstractO3Test {
                             }
                         }
                         return fd;
-                    }
-
-                    @Override
-                    public boolean allocate(long fd, long size) {
-                        if (restoreDiskSpace.get()) {
-                            return super.allocate(fd, size);
-                        }
-
-                        if (armageddon) {
-                            return false;
-                        }
-                        if (fd == theFd) {
-                            theFd = 0;
-                            armageddon = true;
-                            return false;
-                        }
-                        return super.allocate(fd, size);
                     }
                 });
     }
