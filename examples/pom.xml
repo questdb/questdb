@@ -41,81 +41,19 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <benchmarks.outputPath>target</benchmarks.outputPath>
-        <javac.target>11</javac.target>
     </properties>
 
     <build>
-        <!-- <directory>${outputPath}</directory> -->
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.8.1</version>
                 <configuration>
-                    <source>11</source>
-                    <target>${javac.target}</target>
+                    <source>8</source>
+                    <target>8</target>
                 </configuration>
             </plugin>
         </plugins>
     </build>
-
-    <profiles>
-        <profile>
-            <id>java8</id>
-            <properties>
-                <jdk.version>8</jdk.version>
-                <java.enforce.version>1.8.0_242</java.enforce.version>
-                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
-            </properties>
-            <activation>
-                <jdk>(,1.8]</jdk>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-compiler-plugin</artifactId>
-                        <version>3.8.1</version>
-                        <configuration>
-                            <fork>true</fork>
-                            <source>1.8</source>
-                            <target>1.8</target>
-                            <testExcludes>
-                                <exclude>**/module-info.java</exclude>
-                            </testExcludes>
-                            <excludes>
-                                <exclude>**/module-info.java</exclude>
-                            </excludes>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-            <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>16.0.2</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
-        </profile>
-        <profile>
-            <id>java11+</id>
-            <properties>
-                <questdb.artifactid>questdb</questdb.artifactid>
-            </properties>
-            <activation>
-                <jdk>(1.8,)</jdk>
-            </activation>
-        <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>17.0.0</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
-        </profile>
-    </profiles>
 </project>
