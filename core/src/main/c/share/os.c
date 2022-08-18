@@ -33,7 +33,8 @@
 
 #ifdef __APPLE__
 
-#include <mach/task_info.h>
+#include <mach/mach_init.h>
+#include <mach/task.h>
 
 #endif
 
