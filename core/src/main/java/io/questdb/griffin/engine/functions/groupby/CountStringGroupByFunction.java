@@ -60,9 +60,15 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
         } else {
             set = sets.getQuick(setIndex);
         }
+
         set.clear();
-        set.add(Chars.toString(arg.getStr(record)));
-        mapValue.putLong(valueIndex, 1L);
+        final CharSequence val = arg.getStr(record);
+        if (val != null) {
+            set.add(Chars.toString(val));
+            mapValue.putLong(valueIndex, 1L);
+        } else {
+            mapValue.putLong(valueIndex, 0L);
+        }
         mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
@@ -70,12 +76,14 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     public void computeNext(MapValue mapValue, Record record) {
         final CharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final CharSequence val = arg.getStr(record);
-        final int index = set.keyIndex(val);
-        if (index < 0) {
-            return;
+        if (val != null) {
+            final int index = set.keyIndex(val);
+            if (index < 0) {
+                return;
+            }
+            set.addAt(index, Chars.toString(val));
+            mapValue.addLong(valueIndex, 1);
         }
-        set.addAt(index, Chars.toString(val));
-        mapValue.addLong(valueIndex, 1);
     }
 
     @Override
