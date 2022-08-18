@@ -2,12 +2,42 @@
   lang: java
   path: examples/src/main/java/com/example/sender/BasicExample.java
   header: |-
-    [Java client library](https://questdb.io/docs/reference/clients/java_ilp)
+    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+
+    Maven
+    ```
+    <dependency>
+        <groupId>org.questdb</groupId>
+        <artifactId>questdb</artifactId>
+        <version>6.4.3</version>
+    </dependency>
+    ```
+
+    Gradle
+    ```
+    compile group: 'org.questdb', name: 'questdb', version: '6.4.3'
+    ```
 - name: ilp-auth-tls
   lang: java
   path: examples/src/main/java/com/example/sender/AuthTlsExample.java
   header: |-
-    [Java client library](https://questdb.io/docs/reference/clients/java_ilp)
+    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+
+    Maven
+    ```
+    <dependency>
+        <groupId>org.questdb</groupId>
+        <artifactId>questdb</artifactId>
+        <version>6.4.3</version>
+    </dependency>
+    ```
+
+    Gradle
+    ```
+    compile group: 'org.questdb', name: 'questdb', version: '6.4.3'
+    ```
   auth:
     kid: admin
     d: GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0
