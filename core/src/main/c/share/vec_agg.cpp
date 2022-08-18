@@ -168,13 +168,14 @@ int64_t MIN_LONG(int64_t *pl, int64_t count) {
     Vec8q vec;
     const int step = 8;
     Vec8q vecMin = L_MIN;
-    Vec8qb bVec;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
         vecMin = select(vecMin == L_MIN, vec, vecMin);
         vec = select(vec == L_MIN, vecMin, vec);
+        // at this point vec and vecMin elements are either both == L_MIN or != L_MIN,
+        // so we can safely apply the min function
         vecMin = min(vec, vecMin);
     }
 
@@ -257,13 +258,14 @@ int32_t MIN_INT(int32_t *pi, int64_t count) {
     Vec16i vec;
     const int step = 16;
     Vec16i vecMin = I_MIN;
-    Vec16ib bVec;
     int i;
     for (i = 0; i < count - 15; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
         vecMin = select(vecMin == I_MIN, vec, vecMin);
         vec = select(vec == I_MIN, vecMin, vec);
+        // at this point vec and vecMin elements are either both == I_MIN or != I_MIN,
+        // so we can safely apply the min function
         vecMin = min(vec, vecMin);
     }
 
