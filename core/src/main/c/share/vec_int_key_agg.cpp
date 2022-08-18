@@ -245,7 +245,11 @@ static jboolean kIntMinInt(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pI
             }
         } else if (val != I_MIN) {
             const jint old = *reinterpret_cast<jint *>(pVal);
-            *reinterpret_cast<jint *>(pVal) = MIN(val, old);
+            if (old != I_MIN) {
+                *reinterpret_cast<jint *>(pVal) = MIN(val, old);
+            } else {
+                *reinterpret_cast<jint *>(pVal) = val;
+            }
         }
     }
     return JNI_TRUE;
@@ -272,7 +276,11 @@ static jboolean kIntMinLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
             }
         } else if (val != L_MIN) {
             const jlong old = *reinterpret_cast<jlong *>(pVal);
-            *reinterpret_cast<jlong *>(pVal) = MIN(val, old);
+            if (old != L_MIN) {
+                *reinterpret_cast<jlong *>(pVal) = MIN(val, old);
+            } else {
+                *reinterpret_cast<jlong *>(pVal) = val;
+            }
         }
     }
     return JNI_TRUE;
@@ -1482,7 +1490,7 @@ Java_io_questdb_std_Rosti_keyedIntMinIntMerge(JNIEnv *env, jclass cl, jlong pRos
                     return JNI_FALSE;
                 }
                 *reinterpret_cast<int32_t *>(dest) = key;
-                *reinterpret_cast<jint *>(pVal) = val == I_MIN ? I_MAX : val;
+                *reinterpret_cast<jint *>(pVal) = val;
             } else {
                 if (val != I_MIN) {
                     const jint old = *reinterpret_cast<jint *>(pVal);
@@ -1499,23 +1507,9 @@ Java_io_questdb_std_Rosti_keyedIntMinIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
                                                jint valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
 
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto pVal = slots + (i << shift) + value_offset;
-            auto value = *reinterpret_cast<jint *>(pVal);
-            if (PREDICT_FALSE(value == I_MAX)) {
-                *reinterpret_cast<jint *>(pVal) = I_MIN;
-            }
-        }
-    }
-
-    if (valueAtNull < I_MAX) {
+    if (valueAtNull > I_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
         // maps must have identical structure to use "shift" from map B on map A
@@ -1527,10 +1521,12 @@ Java_io_questdb_std_Rosti_keyedIntMinIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jint *>(dest + value_offset) = MIN(
-                    valueAtNull,
-                    *reinterpret_cast<jint *>(dest + value_offset)
-            );
+            const jint old = *reinterpret_cast<jint *>(dest + value_offset);
+            if (old != I_MIN) {
+                *reinterpret_cast<jint *>(dest + value_offset) = MIN(valueAtNull, old);
+            } else {
+                *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
+            }
         }
     }
     return JNI_TRUE;
@@ -1700,7 +1696,7 @@ Java_io_questdb_std_Rosti_keyedIntMinLongMerge(JNIEnv *env, jclass cl, jlong pRo
                     return JNI_FALSE;
                 }
                 *reinterpret_cast<int32_t *>(dest) = key;
-                *reinterpret_cast<jlong *>(pVal) = val == L_MIN ? L_MAX : val;
+                *reinterpret_cast<jlong *>(pVal) = val;
             } else {
                 if (val != L_MIN) {
                     const jlong old = *reinterpret_cast<jlong *>(pVal);
@@ -1717,24 +1713,10 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
                                                 jlong valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
 
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto pVal = slots + (i << shift) + value_offset;
-            auto value = *reinterpret_cast<jlong *>(pVal);
-            if (PREDICT_FALSE(value == L_MAX)) {
-                *reinterpret_cast<jlong *>(pVal) = L_MIN;
-            }
-        }
-    }
-
     // populate null value
-    if (valueAtNull < L_MAX) {
+    if (valueAtNull > L_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
         // maps must have identical structure to use "shift" from map B on map A
@@ -1746,10 +1728,12 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jlong *>(dest + value_offset) = MIN(
-                    valueAtNull,
-                    *reinterpret_cast<jlong *>(dest + value_offset)
-            );
+            const jlong old = *reinterpret_cast<jlong *>(dest + value_offset);
+            if (old != L_MIN) {
+                *reinterpret_cast<jlong *>(dest + value_offset) = MIN(valueAtNull, old);
+            } else {
+                *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
+            }
         }
     }
     return JNI_TRUE;
