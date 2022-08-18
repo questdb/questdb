@@ -71,7 +71,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final IDGenerator tableIdGenerator;
     private final TableRegistry tableRegistry;
 
-
     private final TextImportExecutionContext textImportExecutionContext;
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.

@@ -38,7 +38,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -1141,16 +1140,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         txWriter.beginPartitionSizeUpdate();
-        if (processWalAppend(
-                walPath,
-                metadata.getTimestampIndex(),
-                inOrder,
-                rowLo,
-                rowHi,
-                o3TimestampMin,
-                o3TimestampMax,
-                mapDiffCursor
-        )) {
+        if (processWalAppend(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
             return;
         }
 

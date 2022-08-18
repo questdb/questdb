@@ -94,6 +94,8 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(101, 1);");
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(102, 3);");
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(103, 5);");
+
+            engine.releaseInactive();
         } catch (SqlException e) {
             Assert.fail(e.getMessage());
         }
@@ -101,7 +103,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinNoLeak() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     try {
                         compiler.compile(
@@ -128,7 +130,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinNoLeak() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     try {
                         compiler.compile(

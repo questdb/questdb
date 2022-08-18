@@ -61,6 +61,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             deferredInit(path, tableName, ColumnType.VERSION);
         } catch (Throwable th) {
             close();
+            throw th;
         }
     }
 

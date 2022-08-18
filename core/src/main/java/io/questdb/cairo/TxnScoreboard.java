@@ -80,6 +80,7 @@ public class TxnScoreboard implements Closeable, Mutable {
 
         if (fd != -1) {
             ff.close(fd);
+            LOG.debug().$("closed [fd=").$(fd).I$();
             fd = -1;
         }
     }
