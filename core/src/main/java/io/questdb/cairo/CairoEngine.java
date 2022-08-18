@@ -82,7 +82,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.configuration = configuration;
         this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
-        this.tableRegistry = new TableRegistry(this);
+        this.tableRegistry = new TableRegistry(this, configuration);
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
@@ -167,6 +167,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+
+    public TableRegistry getTableRegistry() {
+        return tableRegistry;
+    }
     // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
@@ -177,7 +181,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         int tableId = (int) tableIdGenerator.getNextId();
         if (struct.isWallEnabled()) {
-            tableRegistry.createTable(tableId, struct);
+            tableRegistry.registerTable(tableId, struct);
         }
 
         // only create the table after it has been registered
@@ -219,8 +223,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         String tableNameStr = Chars.toString(tableName);
         if (tableRegistry.hasSequencer(tableNameStr)) {
             // This is WAL table because sequencer exists
-            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
-            return metadataFactory.openSequencerMetadata(sequencer);
+            SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
+            tableRegistry.copyMetadataTo(tableName,sequencerMetadata);
+            return sequencerMetadata;
         }
 
         return metadataFactory.openTableReaderMetadata(tableName);
@@ -270,13 +275,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             @Nullable String lockReason
     ) {
         securityContext.checkWritePermission();
-        if (tableRegistry.hasSequencer(tableName)) {
-            // This is WAL table because sequencer exists
-            String tableNameStr = Chars.toString(tableName);
-            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
-            return sequencer.createWal();
+        final WalWriter walWriter = tableRegistry.getWalWriter(tableName);
+        if (walWriter != null) {
+            return walWriter;
         }
-
         return getWriter(securityContext, tableName, lockReason);
     }
 
@@ -365,10 +367,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         if (tableRegistry.hasSequencer(tableName)) {
             // This is WAL table because sequencer exists
-            String tableNameStr = Chars.toString(tableName);
-            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
-            return new WalReader(configuration, tableName, walName, sequencer, segmentId, walRowCount);
+            SequencerMetadata metadata = new SequencerMetadata(configuration.getFilesFacade());
+//            String tableNameStr = Chars.toString(tableName);
+            tableRegistry.copyMetadataTo(tableName, metadata);
+//            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
+            return new WalReader(configuration, tableName, walName, metadata, segmentId, walRowCount);
         }
+
         throw CairoException.instance(0).put("WAL reader is not supported for table ").put(tableName);
     }
 
@@ -449,16 +454,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     @Override
-    public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
+    public @Nullable WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
-        String tableNameStr = Chars.toString(tableName);
-        final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
-        return sequencer.createWal();
+        return tableRegistry.getWalWriter(tableName);
     }
 
-    public Sequencer getSequencer(CharSequence tableName) {
-        return tableRegistry.getSequencer(Chars.toString(tableName));
-    }
+//    public Sequencer getSequencer(CharSequence tableName) {
+//        return tableRegistry.getSequencer(Chars.toString(tableName));
+//    }
 
     public String lock(
             CairoSecurityContext securityContext,
@@ -505,6 +508,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public boolean releaseInactive() {
         boolean useful = writerPool.releaseInactive();
         useful |= readerPool.releaseInactive();
+        useful |= tableRegistry.releaseInactive();
         return useful;
     }
 

@@ -45,7 +45,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class WalWriter implements TableWriterFrontend {
+public class WalWriter implements TableWriterFrontend, Mutable {
     static final String WAL_NAME_BASE = "wal";
     static final int WAL_FORMAT_VERSION = 0;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
@@ -67,7 +67,7 @@ public class WalWriter implements TableWriterFrontend {
     private final int walId;
     private final SequencerMetadata metadata;
     private final WalWriterEvents events;
-    private final Sequencer sequencer;
+    private final TableRegistry tableRegistry; //todo: rename to something more appropriate
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
@@ -86,25 +86,28 @@ public class WalWriter implements TableWriterFrontend {
     };
     private long lastSegmentTxn = -1L;
     private SequencerStructureChangeCursor structureChangeCursor;
+    private final WalWriterPool pool;
 
-    public WalWriter(String tableName, int walId, Sequencer sequencer, CairoConfiguration configuration) {
+    public WalWriter(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
-        this.sequencer = sequencer;
+        this.tableRegistry = tableRegistry;
         this.configuration = configuration;
         this.millisecondClock = this.configuration.getMillisecondClock();
         this.mkDirMode = this.configuration.getMkDirMode();
         this.ff = this.configuration.getFilesFacade();
         this.tableName = tableName;
+        final int walId = tableRegistry.getNextWalId(tableName);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
         this.path = new Path().of(this.configuration.getRoot()).concat(tableName).concat(walName);
         this.rootLen = path.length();
+        this.pool = pool;
 
         try {
             lock();
 
             metadata = new SequencerMetadata(ff);
-            sequencer.copyMetadataTo(metadata);
+            tableRegistry.copyMetadataTo(tableName, metadata);
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -120,6 +123,16 @@ public class WalWriter implements TableWriterFrontend {
         } catch (Throwable e) {
             doClose(false);
             throw e;
+        }
+    }
+
+    @Override
+    public void clear() {
+        try {
+            closeCurrentSegment();
+//            releaseLock(false);
+        } catch (Throwable e) {
+            throw new CairoError(e);
         }
     }
 
@@ -158,7 +171,7 @@ public class WalWriter implements TableWriterFrontend {
     public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (operation.isMetadataChange()) {
             long structureVersion = getStructureVersion();
-            return sequencer.nextStructureTxn(structureVersion, operation);
+            return tableRegistry.nextStructureTxn(tableName, structureVersion, operation);
         } else {
             // This is likely to be updates and some weird alters.
             // TODO: We have to serialize the command to WAL-E and register the transaction in the sequencer.
@@ -173,12 +186,7 @@ public class WalWriter implements TableWriterFrontend {
 
     @Override
     public void close() {
-        try {
-            closeCurrentSegment();
-            doClose(true);
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
+        pool.push(this);
     }
 
     // Returns table transaction number.
@@ -380,7 +388,7 @@ public class WalWriter implements TableWriterFrontend {
 
     private void applyStructureChanges() {
         try {
-            structureChangeCursor = sequencer.getStructureChangeCursor(structureChangeCursor, metadata.getStructureVersion());
+            structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, metadata.getStructureVersion());
             while (structureChangeCursor.hasNext()) {
                 AlterOperation alterOperation = structureChangeCursor.next();
                 long metadataVersion = getStructureVersion();
@@ -413,7 +421,7 @@ public class WalWriter implements TableWriterFrontend {
 
                 long txn;
                 do {
-                    txn = sequencer.nextTxn(metadata.getStructureVersion(), walId, segmentId, lastSegmentTxn);
+                    txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
                     if (txn == Sequencer.NO_TXN) {
                         applyStructureChanges();
                     }
@@ -597,7 +605,7 @@ public class WalWriter implements TableWriterFrontend {
         return segmentPathLen;
     }
 
-    private void doClose(boolean truncate) {
+    public void doClose(boolean truncate) {
         Misc.free(metadata);
         Misc.free(events);
         freeSymbolMapWriters();

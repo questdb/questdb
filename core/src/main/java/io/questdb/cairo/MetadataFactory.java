@@ -30,4 +30,5 @@ public interface MetadataFactory {
     TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
 
     TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
+    SequencerMetadata getSequencerMetadata();
 }

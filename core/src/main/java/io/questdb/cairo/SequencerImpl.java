@@ -51,10 +51,13 @@ public class SequencerImpl implements Sequencer {
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
     private final FilesFacade ff;
     private final int mkDirMode;
+    private volatile long lastOpenTime;
+    private LifecycleManager lifecycleManager;
 
-    SequencerImpl(CairoEngine engine, String tableName) {
+    SequencerImpl(CairoEngine engine, String tableName, final LifecycleManager lifecycleManager) {
         this.engine = engine;
         this.tableName = tableName;
+        this.lifecycleManager = lifecycleManager;
 
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -69,16 +72,32 @@ public class SequencerImpl implements Sequencer {
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             catalog = new TxnCatalog(ff);
         } catch (Throwable th) {
-            close();
+            doClose();
             throw th;
         }
     }
 
+    public void setLifecycleManager(LifecycleManager lifecycleManager) {
+        this.lifecycleManager = lifecycleManager;
+    }
+
+    public long getLastOpenTime() {
+        return lastOpenTime;
+    }
+
     public void open() {
-        createSequencerDir(ff, mkDirMode);
-        walIdGenerator.open(path);
-        metadata.open(tableName, path, rootLen);
-        catalog.open(path);
+        schemaLock.writeLock().lock();
+        try {
+            walIdGenerator.open(path);
+            metadata.open(tableName, path, rootLen);
+            catalog.open(path);
+            lastOpenTime = engine.getConfiguration().getMicrosecondClock().getTicks();
+        } catch (Throwable th) {
+            doClose();
+            throw th;
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
     }
 
     @Override
@@ -94,6 +113,11 @@ public class SequencerImpl implements Sequencer {
     @Override
     public int getTableId() {
         return metadata.getTableId();
+    }
+
+    @Override
+    public int getNextWalId() {
+        return (int) walIdGenerator.getNextId();
     }
 
     @Override
@@ -157,17 +181,17 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public WalWriter createWal() {
-        return new WalWriter(tableName, (int) walIdGenerator.getNextId(), this, engine.getConfiguration());
-    }
-
-    @Override
     public SequencerCursor getCursor(long lastCommittedTxn) {
         return catalog.getCursor(lastCommittedTxn);
     }
 
     @Override
     public void close() {
+        if (lifecycleManager.close()) {
+            doClose();
+        }
+    }
+    private void doClose() {
         schemaLock.writeLock().lock();
         try {
             Misc.free(metadata);
@@ -178,7 +202,6 @@ public class SequencerImpl implements Sequencer {
             schemaLock.writeLock().unlock();
         }
     }
-
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("Cannot create sequencer directory: ").put(path);

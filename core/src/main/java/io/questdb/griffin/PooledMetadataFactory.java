@@ -68,6 +68,11 @@ public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
         return tableReaderMetadata;
     }
 
+    @Override
+    public SequencerMetadata getSequencerMetadata() {
+        return sequencerMetadataPool.pop();
+    }
+
     private String resolveString(CharSequenceObjHashMap<String> tableNamePool, CharSequence tableName) {
         String tableNameStr = tableNamePool.get(tableName);
         if (tableNameStr != null) {

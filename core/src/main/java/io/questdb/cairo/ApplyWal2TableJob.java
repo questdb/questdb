@@ -76,10 +76,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
 
     private static SequencerStructureChangeCursor applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine, @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor) {
-        Sequencer sequencer = engine.getSequencer(writer.getTableName());
+        TableRegistry tableRegistry = engine.getTableRegistry();
         long lastCommitted = writer.getTxn();
 
-        try (SequencerCursor sequencerCursor = sequencer.getCursor(lastCommitted)) {
+        try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
             Path tempPath = Path.PATH.get();
             tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName());
             int rootLen = tempPath.length();
@@ -106,7 +106,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                 .put(']');
                     }
-                    reusableStructureChangeCursor = sequencer.getStructureChangeCursor(reusableStructureChangeCursor, newStructureVersion - 1);
+                    reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
                     if (reusableStructureChangeCursor.hasNext()) {
                         try {
                             reusableStructureChangeCursor.next().apply(writer, true);

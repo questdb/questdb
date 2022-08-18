@@ -719,6 +719,27 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNThreadsRaceToLockSameTable() throws Exception {
+        assertWithPool(pool -> {
+            int N = 8;
+            final AtomicInteger errors = new AtomicInteger();
+            Thread[] threads = new Thread[N];
+            for (int i = 0; i < N; i++) {
+                threads[i] = new Thread(() -> {
+                    try (TableWriter w = pool.get("x", "testing")) {
+                    } catch (Throwable ignored) {
+                        errors.incrementAndGet();
+                    }
+                });
+                threads[i].start();
+            }
+            for (int i = 0; i < threads.length; i++) {
+               threads[i].join();
+            }
+        });
+    }
+
+    @Test
     public void testTwoThreadsRaceToAllocateAndLock() throws Exception {
         assertWithPool(pool -> {
             for (int k = 0; k < 1000; k++) {

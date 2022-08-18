@@ -56,7 +56,7 @@ public class WalReader implements Closeable {
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, Sequencer sequencer, long segmentId, long rowCount) {
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, SequencerMetadata metadata, long segmentId, long rowCount) {
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
         this.segmentId = segmentId;
@@ -68,8 +68,7 @@ public class WalReader implements Closeable {
         rootLen = path.length();
 
         try {
-            metadata = new SequencerMetadata(ff);
-            sequencer.copyMetadataTo(metadata);
+            this.metadata = metadata;
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$(tableName).I$();

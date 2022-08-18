@@ -53,13 +53,10 @@ public class TxnCatalog implements Closeable {
     public static final int RECORD_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES + RECORD_RESERVED;
     public static final int METADATA_WALID = -1;
     private long maxTxn;
+    private final Path path = new Path();
 
     TxnCatalog(FilesFacade ff) {
         this.ff = ff;
-    }
-
-    public void abortClose() {
-        txnMem.close(false);
     }
 
     public long addMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance) {
@@ -90,6 +87,7 @@ public class TxnCatalog implements Closeable {
         Misc.free(txnMem);
         Misc.free(txnMetaMem);
         Misc.free(txnMetaMemIndex);
+        Misc.free(path);
     }
 
     @NotNull
@@ -102,7 +100,7 @@ public class TxnCatalog implements Closeable {
         if (cursor == null) {
             cursor = new SequencerStructureChangeCursorImpl();
         }
-        cursor.of(fromStructureVersion, ff, serializer, txnMem.getFd(), txnMetaMemIndex.getFd(), txnMetaMem.getFd());
+        cursor.of(fromStructureVersion, ff, serializer, path);
         return cursor;
     }
 
@@ -119,10 +117,18 @@ public class TxnCatalog implements Closeable {
     }
 
     SequencerCursor getCursor(long txnLo) {
-        return new SequencerCursorImpl(ff, txnLo, txnMem.getFd());
+        int rootLen = path.length();
+        path.concat(CATALOG_FILE_NAME).$();
+        try {
+            return new SequencerCursorImpl(ff, txnLo, path); //todo: dup fd
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     void open(Path path) {
+        this.path.of(path);
+
         openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MEMORY_TAG);
         openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MEMORY_TAG);
         openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MEMORY_TAG);
@@ -149,6 +155,20 @@ public class TxnCatalog implements Closeable {
         }
     }
 
+    private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+        int rootLen = path.length();
+        path.concat(fileName).$();
+        try {
+            long fd = ff.openRO(path);
+            if (fd > -1) {
+                return fd;
+            }
+            throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private static class SequencerCursorImpl implements SequencerCursor {
         private static final long WAL_ID_OFFSET = 0;
         private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
@@ -160,9 +180,9 @@ public class TxnCatalog implements Closeable {
         private long address;
         private long txn;
 
-        public SequencerCursorImpl(FilesFacade ff, long txnLo, long fd) {
+        public SequencerCursorImpl(FilesFacade ff, long txnLo, final Path path) {
             this.ff = ff;
-            this.fd = fd;
+            this.fd = openFileRO(ff, path, CATALOG_FILE_NAME);
             this.txnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MEMORY_TAG);
@@ -173,6 +193,9 @@ public class TxnCatalog implements Closeable {
 
         @Override
         public void close() {
+            if (fd > -1) {
+               ff.close(fd);
+            }
             ff.munmap(address, getMappedLen(), MEMORY_TAG);
         }
 
@@ -261,24 +284,40 @@ public class TxnCatalog implements Closeable {
                 long fromStructureVersion,
                 FilesFacade ff,
                 MemorySerializer serializer,
-                long fdTxn,
-                long fdTxnMetaIndex,
-                long fdTxnMeta) {
+                final Path path) {
             reset();
+
+            final long fdTxn = openFileRO(ff, path, CATALOG_FILE_NAME);
+            final long fdTxnMeta = openFileRO(ff, path, CATALOG_FILE_NAME_META_VAR);
+            final long fdTxnMetaIndex = openFileRO(ff, path, CATALOG_FILE_NAME_META_INX);
+
             this.ff = ff;
             this.serializer = serializer;
-            txnMetaOffset = ff.readULong(fdTxnMetaIndex, fromStructureVersion * Long.BYTES);
-            if (txnMetaOffset > -1L) {
-                txnMetaOffsetHi = ff.readULong(fdTxn, TXN_META_SIZE_OFFSET);
-                if (txnMetaOffsetHi > txnMetaOffset) {
-                    txnMetaAddress = ff.mmap(fdTxnMeta, txnMetaOffsetHi, 0L, Files.MAP_RO, MEMORY_TAG);
-                    if (txnMetaAddress < 0) {
-                        txnMetaAddress = 0;
-                        reset();
-                    } else {
-                        txnMetaMem.of(txnMetaAddress, txnMetaOffsetHi);
-                        return;
+            try {
+
+                txnMetaOffset = ff.readULong(fdTxnMetaIndex, fromStructureVersion * Long.BYTES);
+                if (txnMetaOffset > -1L) {
+                    txnMetaOffsetHi = ff.readULong(fdTxn, TXN_META_SIZE_OFFSET);
+                    if (txnMetaOffsetHi > txnMetaOffset) {
+                        txnMetaAddress = ff.mmap(fdTxnMeta, txnMetaOffsetHi, 0L, Files.MAP_RO, MEMORY_TAG);
+                        if (txnMetaAddress < 0) {
+                            txnMetaAddress = 0;
+                            reset();
+                        } else {
+                            txnMetaMem.of(txnMetaAddress, txnMetaOffsetHi);
+                            return;
+                        }
                     }
+                }
+            } finally {
+                if (fdTxn > -1) {
+                    ff.close(fdTxn);
+                }
+                if (fdTxnMeta > -1) {
+                    ff.close(fdTxnMeta);
+                }
+                if (fdTxnMetaIndex > -1) {
+                    ff.close(fdTxnMetaIndex);
                 }
             }
             throw CairoException.instance(0).put("expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');

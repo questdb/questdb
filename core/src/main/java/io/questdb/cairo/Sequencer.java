@@ -44,13 +44,12 @@ public interface Sequencer extends Closeable {
 
     int getTableId();
 
+    int getNextWalId();
+
     long nextStructureTxn(long structureVersion, AlterOperation operation);
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
-
-    // always creates a new wal with an increasing unique id
-    WalWriter createWal();
 
     // return txn cursor to apply transaction from given point
     SequencerCursor getCursor(long lastCommittedTxn);
