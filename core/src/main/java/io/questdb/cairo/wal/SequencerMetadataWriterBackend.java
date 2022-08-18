@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriterBackend;
 import io.questdb.griffin.UpdateOperator;
 
 public interface SequencerMetadataWriterBackend extends TableWriterBackend {

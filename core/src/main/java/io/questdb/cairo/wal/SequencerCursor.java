@@ -22,15 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.Sequencer;
-import io.questdb.cairo.wal.SequencerMetadata;
+import java.io.Closeable;
 
-public interface MetadataFactory {
-    TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
+public interface SequencerCursor extends Closeable {
+    @Override
+    void close();
 
-    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
-    SequencerMetadata getSequencerMetadata();
+    boolean hasNext();
+
+    int getSegmentId();
+
+    long getSegmentTxn();
+
+    long getTxn();
+
+    int getWalId();
 }

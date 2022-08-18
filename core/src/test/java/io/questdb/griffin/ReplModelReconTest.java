@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.wal.TableWriterBackend;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;

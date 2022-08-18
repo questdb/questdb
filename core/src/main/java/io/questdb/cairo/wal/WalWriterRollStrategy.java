@@ -22,15 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.Sequencer;
-import io.questdb.cairo.wal.SequencerMetadata;
+public interface WalWriterRollStrategy {
+    default void setMaxSegmentSize(long maxSegmentSize) {
+    }
 
-public interface MetadataFactory {
-    TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
+    default void setMaxRowCount(long maxRowCount) {
+    }
 
-    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
-    SequencerMetadata getSequencerMetadata();
+    default void setRollInterval(long rollInterval) {
+    }
+
+    default boolean shouldRoll(long segmentSize, long rowCount, long segmentAge) {
+        return false;
+    }
+
+    default boolean isMaxSegmentSizeSet() {
+        return false;
+    }
+
+    default boolean isMaxRowCountSet() {
+        return false;
+    }
+
+    default boolean isRollIntervalSet() {
+        return false;
+    }
 }

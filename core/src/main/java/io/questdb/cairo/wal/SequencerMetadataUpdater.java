@@ -22,25 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.sql.RecordMetadata;
 
-import java.io.Closeable;
+public class SequencerMetadataUpdater implements SequencerMetadataWriterBackend {
+    private final SequencerMetadata metadata;
+    private final CharSequence tableName;
 
-public interface InsertMethod extends Closeable {
-    /**
-     * @return inserted row count
-     */
-    long execute();
-
-    void commit();
-
-    /**
-     * @return sets writer to null
-     */
-    TableWriterFrontend popWriter();
+    public SequencerMetadataUpdater(SequencerMetadata metadata, CharSequence tableName) {
+        this.metadata = metadata;
+        this.tableName = tableName;
+    }
 
     @Override
-    void close();
+    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+        metadata.addColumn(name, type);
+    }
+
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public void removeColumn(CharSequence columnName) {
+        metadata.removeColumn(columnName);
+    }
+
+    public void renameColumn(CharSequence columnName, CharSequence newName) {
+        metadata.renameColumn(columnName, newName);
+    }
 }

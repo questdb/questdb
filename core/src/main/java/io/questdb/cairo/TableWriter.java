@@ -36,6 +36,7 @@ import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.wal.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperator;
@@ -65,6 +66,8 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterFrontend, TableWriterBackend, Closeable {
@@ -1112,7 +1115,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     public void processWalCommit(Path walPath, long segmentTxn) {
-        var walCursor = walEventReader.of(walPath, WalWriter.WAL_FORMAT_VERSION, segmentTxn);
+        var walCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
         var dataInfo = walCursor.getDataInfo();
 
         processWalCommit(
@@ -4776,7 +4779,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
             if (
                     Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
-                            || Chars.startsWith(fileNameSink, WalWriter.WAL_NAME_BASE)
+                            || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
                             || Chars.startsWith(fileNameSink, Sequencer.SEQ_DIR)
             ) {
                 // Do not remove detached partitions, wals and sequencer directories

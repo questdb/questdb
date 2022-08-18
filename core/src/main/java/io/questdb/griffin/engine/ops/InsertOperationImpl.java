@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriterFrontend;
+import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;

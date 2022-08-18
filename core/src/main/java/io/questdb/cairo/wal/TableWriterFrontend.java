@@ -22,15 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.Sequencer;
-import io.questdb.cairo.wal.SequencerMetadata;
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.BaseRecordMetadata;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 
-public interface MetadataFactory {
-    TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
+import java.io.Closeable;
 
-    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
-    SequencerMetadata getSequencerMetadata();
+public interface TableWriterFrontend extends Closeable {
+    long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges)  throws SqlException, AlterTableContextException;
+
+    long applyUpdate(UpdateOperation operations)  throws SqlException;
+
+    @Override
+    void close();
+
+    long commit();
+
+    long commitWithLag(long commitLag);
+
+    BaseRecordMetadata getMetadata();
+
+    long getStructureVersion();
+
+    CharSequence getTableName();
+
+    TableWriter.Row newRow();
+
+    TableWriter.Row newRow(long timestamp);
+
+    void rollback();
 }

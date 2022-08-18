@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;

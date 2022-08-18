@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.TableWriterBackend;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

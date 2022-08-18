@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriterFrontend;
+import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;

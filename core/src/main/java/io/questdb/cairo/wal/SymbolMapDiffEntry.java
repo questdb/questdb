@@ -22,15 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.Sequencer;
-import io.questdb.cairo.wal.SequencerMetadata;
+public interface SymbolMapDiffEntry {
+    int getKey();
 
-public interface MetadataFactory {
-    TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
-
-    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
-    SequencerMetadata getSequencerMetadata();
+    CharSequence getSymbol();
 }

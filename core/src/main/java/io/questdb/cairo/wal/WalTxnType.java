@@ -22,15 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.Sequencer;
-import io.questdb.cairo.wal.SequencerMetadata;
-
-public interface MetadataFactory {
-    TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
-
-    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
-    SequencerMetadata getSequencerMetadata();
+public class WalTxnType {
+    public static final byte NONE = -1;
+    public static final byte DATA = 0;
+    public static final byte ADD_COLUMN = 1;
+    public static final byte REMOVE_COLUMN = 2;
+    public static final byte UPDATE = 3;
+    public static final byte DELETE = 4;
+    public static final byte ADD_INDEX = 5;
 }

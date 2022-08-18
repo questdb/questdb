@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;

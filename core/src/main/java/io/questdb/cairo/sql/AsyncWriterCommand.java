@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.TableWriterBackend;
 import io.questdb.griffin.SqlException;
 import io.questdb.tasks.TableWriterTask;
 

@@ -63,7 +63,6 @@ public final class TableUtils {
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
-    public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
@@ -77,18 +76,6 @@ public final class TableUtils {
     public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final long META_OFFSET_WAL_ENABLED = 40; // INT
-    public static final long WAL_META_OFFSET_VERSION = 0;
-    public static final long WAL_META_OFFSET_COLUMN_COUNT = 4;
-    public static final long WAL_META_OFFSET_TIMESTAMP_INDEX = 8;
-    public static final long WAL_META_OFFSET_COLUMNS = 12;
-    public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
-    public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
-    public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
-    public static final long SEQ_META_OFFSET_COLUMN_COUNT = SEQ_META_OFFSET_STRUCTURE_VERSION + Long.BYTES;
-    public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = SEQ_META_OFFSET_COLUMN_COUNT + Integer.BYTES;
-
-    public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
-    public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -621,7 +608,7 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    static void removeOrException(FilesFacade ff, LPSZ path) {
+    public static void removeOrException(FilesFacade ff, LPSZ path) {
         if (ff.exists(path) && !ff.remove(path)) {
             throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
         }
@@ -1024,96 +1011,7 @@ public final class TableUtils {
         }
     }
 
-    static void loadWalMetadata(
-            MemoryMR metaMem,
-            ObjList<TableColumnMetadata> columnMetadata,
-            LowerCaseCharSequenceIntHashMap nameIndex,
-            int expectedVersion
-    ) {
-        try {
-            final long memSize = checkMemSize(metaMem, WAL_META_OFFSET_COLUMNS);
-            validateMetaVersion(metaMem, WAL_META_OFFSET_VERSION, expectedVersion);
-            final int columnCount = getColumnCount(metaMem, WAL_META_OFFSET_COLUMN_COUNT);
-            final int timestampIndex = getTimestampIndex(metaMem, WAL_META_OFFSET_TIMESTAMP_INDEX, columnCount);
-
-            // load column types and names
-            long offset = WAL_META_OFFSET_COLUMNS;
-            for (int i = 0; i < columnCount; i++) {
-                final int type = getColumnType(metaMem, memSize, offset, i);
-                offset += Integer.BYTES;
-
-                final String name = getColumnName(metaMem, memSize, offset, i).toString();
-                offset += Vm.getStorageLength(name);
-
-                nameIndex.put(name, i);
-
-                if (ColumnType.isSymbol(type)) {
-                    columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
-                } else {
-                    columnMetadata.add(new TableColumnMetadata(name, -1L, type));
-                }
-            }
-
-            // validate designated timestamp column
-            if (timestampIndex != -1) {
-                final int timestampType = columnMetadata.getQuick(timestampIndex).getType();
-                if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
-                }
-            }
-        } catch (Throwable e) {
-            nameIndex.clear();
-            throw e;
-        }
-    }
-
-    static void loadSequencerMetadata(
-            MemoryMR metaMem,
-            ObjList<TableColumnMetadata> columnMetadata,
-            LowerCaseCharSequenceIntHashMap nameIndex
-    ) {
-        try {
-            final long memSize = checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS);
-            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WalWriter.WAL_FORMAT_VERSION);
-            final int columnCount = getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
-            final int timestampIndex = getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
-
-            // load column types and names
-            long offset = SEQ_META_OFFSET_COLUMNS;
-            for (int i = 0; i < columnCount; i++) {
-                final int type = getColumnType(metaMem, memSize, offset, i);
-                offset += Integer.BYTES;
-
-                final String name = getColumnName(metaMem, memSize, offset, i).toString();
-                offset += Vm.getStorageLength(name);
-
-                if (type > 0) {
-                    nameIndex.put(name, i);
-
-                    if (ColumnType.isSymbol(type)) {
-                        columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
-                    } else {
-                        columnMetadata.add(new TableColumnMetadata(name, -1L, type));
-                    }
-                }
-                // Negative type means deleted column
-            }
-
-            // validate designated timestamp column
-            if (timestampIndex != -1) {
-                final int timestampType = columnMetadata.getQuick(timestampIndex).getType();
-                if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
-                }
-            }
-        } catch (Throwable e) {
-            nameIndex.clear();
-            columnMetadata.clear();
-            throw e;
-        }
-    }
-
-    static long checkMemSize(MemoryMR metaMem, long minSize) {
+    public static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
             throw CairoException.instance(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
@@ -1121,7 +1019,7 @@ public final class TableUtils {
         return memSize;
     }
 
-    static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+    public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
             throw validationException(metaMem)
@@ -1131,7 +1029,7 @@ public final class TableUtils {
         }
     }
 
-    private static int getColumnCount(MemoryMR metaMem, long offset) {
+    public static int getColumnCount(MemoryMR metaMem, long offset) {
         final int columnCount = metaMem.getInt(offset);
         if (columnCount < 0) {
             throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
@@ -1139,7 +1037,7 @@ public final class TableUtils {
         return columnCount;
     }
 
-    private static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
+    public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
         final int timestampIndex = metaMem.getInt(offset);
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
             throw validationException(metaMem).put("Timestamp index is outside of range, timestampIndex=").put(timestampIndex);
@@ -1147,7 +1045,7 @@ public final class TableUtils {
         return timestampIndex;
     }
 
-    private static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+    public static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
         final int type = getInt(metaMem, memSize, offset);
         if (type >= 0 && ColumnType.sizeOf(type) == -1) {
             throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
@@ -1155,7 +1053,7 @@ public final class TableUtils {
         return type;
     }
 
-    private static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+    public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
         final int strLength = getInt(metaMem, memSize, offset);
         if (strLength == TableUtils.NULL_LEN) {
             throw validationException(metaMem).put("NULL column name at [").put(columnIndex).put(']');
@@ -1295,7 +1193,7 @@ public final class TableUtils {
         }
     }
 
-    static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
+    public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
         path.concat(fileName).$();
         try {
             metaMem.smallFile(ff, path, memoryTag);
@@ -1304,7 +1202,7 @@ public final class TableUtils {
         }
     }
 
-    private static CairoException validationException(MemoryMR mem) {
+    public static CairoException validationException(MemoryMR mem) {
         return CairoException.instance(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 

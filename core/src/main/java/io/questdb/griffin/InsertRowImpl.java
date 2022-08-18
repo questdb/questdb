@@ -28,7 +28,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TableWriterFrontend;
+import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.model.IntervalUtils;

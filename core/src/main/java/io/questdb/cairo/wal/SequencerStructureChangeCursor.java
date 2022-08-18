@@ -22,15 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.Sequencer;
-import io.questdb.cairo.wal.SequencerMetadata;
+import io.questdb.griffin.engine.ops.AlterOperation;
 
-public interface MetadataFactory {
-    TableRecordMetadata openSequencerMetadata(Sequencer sequencer);
+import java.io.Closeable;
 
-    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
-    SequencerMetadata getSequencerMetadata();
+public interface SequencerStructureChangeCursor extends Closeable {
+    boolean hasNext();
+
+    AlterOperation next();
+
+    void reset();
 }

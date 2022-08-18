@@ -25,7 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.WalWriter;
+import io.questdb.cairo.wal.WalWriter;
 
 @FunctionalInterface
 public interface WalWriterSource {

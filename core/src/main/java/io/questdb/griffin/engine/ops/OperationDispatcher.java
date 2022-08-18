@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableWriterFrontend;
+import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
