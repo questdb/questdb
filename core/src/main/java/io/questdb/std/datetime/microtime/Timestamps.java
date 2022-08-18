@@ -338,6 +338,23 @@ final public class Timestamps {
         return (int) ((micros - yearMicros) / DAY_MICROS) + 1;
     }
 
+    public static int getDayOfYear(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        long yearStart = yearMicros(year, leap);
+        return (int)((micros - yearStart) / DAY_MICROS) + 1;
+    }
+
+    public static int getWeekOfYear(long micros) {
+        return getDayOfYear(micros) / 7 + 1;
+    }
+
+    public static int getWeekOfMonth(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        return getDayOfMonth(micros, year, getMonthOfYear(micros, year, leap), leap) / 7 + 1;
+    }
+
     public static int getDayOfTheWeekOfEndOfYear(int year) {
         return (year + Math.abs(year / 4) + Math.abs(year / 100) + Math.abs(year / 400)) % 7;
     }
