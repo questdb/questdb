@@ -27,17 +27,14 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CountLongGroupByFunctionFactory implements FunctionFactory {
-
+public class CountDistinctLongGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "count(l)";
+        return "count_distinct(L)";
     }
 
     @Override
@@ -46,22 +43,7 @@ public class CountLongGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            int val = arg.getInt(null);
-            // NULL expression would lead to zero matched rows, so it makes
-            // no sense to support it until we support count(expression).
-            if (val == Numbers.INT_NaN) {
-                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-            }
-        }
-        return new CountLongGroupByFunction();
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CountDistinctLongGroupByFunction(args.getQuick(0));
     }
 }
