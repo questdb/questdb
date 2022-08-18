@@ -1,0 +1,16 @@
+- name: ilp
+  lang: java
+  path: core/src/examples/java/com/example/sender/BasicExample.java
+  header: |-
+    [Java client library](https://questdb.io/docs/reference/clients/java_ilp)
+- name: ilp-auth-tls
+  lang: java
+  path: core/src/examples/java/com/example/sender/AuthTlsExample.java
+  header: |-
+    [Java client library](https://questdb.io/docs/reference/clients/java_ilp)
+  auth:
+    kid: admin
+    d: GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0
+  addr:
+    host: clever-black-363-c1213c97.ilp.b04c.questdb.net
+    port: 32074
