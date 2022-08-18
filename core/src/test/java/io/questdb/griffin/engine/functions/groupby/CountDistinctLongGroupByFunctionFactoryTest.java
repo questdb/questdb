@@ -82,6 +82,42 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
     }
 
     @Test
+    public void testConstant() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t1\n" +
+                        "b\t1\n" +
+                        "c\t1\n",
+                "select a, count_distinct(42L) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testExpression() throws Exception {
+        final String expected = "a\tcount_distinct\n" +
+                "a\t4\n" +
+                "c\t4\n" +
+                "b\t4\n";
+        assertQuery(
+                expected,
+                "select a, count_distinct(s * 42) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+        // multiplication shouldn't affect the number of distinct values,
+        // so the result should stay the same
+        assertSql("select a, count_distinct(s) from x", expected);
+    }
+
+    @Test
     public void testSampleFillLinear() throws Exception {
         assertQuery(
                 "ts\tcount_distinct\n" +
