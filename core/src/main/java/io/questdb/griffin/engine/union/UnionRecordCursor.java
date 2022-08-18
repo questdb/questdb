@@ -39,6 +39,7 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     private final NextMethod nextB = this::nextB;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
+    private boolean isOpen;
 
     public UnionRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         if (castFunctionsA != null && castFunctionsB != null) {
@@ -48,6 +49,7 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
             this.record = new UnionRecord();
         }
         this.map = map;
+        this.isOpen = true;
         this.recordSink = recordSink;
     }
 
@@ -99,6 +101,8 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        this.isOpen = true;
+        this.map.inflate();
         super.of(cursorA, cursorB, circuitBreaker);
         this.record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
@@ -108,6 +112,15 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         record.setAb(false);
         nextMethod = nextB;
         return nextMethod.next();
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            isOpen = false;
+            map.close();
+            super.close();
+        }
     }
 
     interface NextMethod {

@@ -39,24 +39,30 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
     private final UnionCastRecord castRecord;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
+    private boolean isOpen;
 
     public ExceptCastRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.map = map;
+        this.isOpen = true;
         this.recordSink = recordSink;
         this.castRecord = new UnionCastRecord(castFunctionsA, castFunctionsB);
     }
 
     @Override
     public void close() {
-        super.close();
-        this.map.clear();
+        if (isOpen) {
+            isOpen = false;
+            map.close();
+            super.close();
+        }
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         super.of(cursorA, cursorB, circuitBreaker);
+        isOpen = true;
         this.castRecord.of(cursorA.getRecord(), cursorB.getRecord());
         this.castRecord.setAb(false);
-        map.clear();
+        map.inflate();
         hashCursorB();
         castRecord.setAb(true);
         toTop();

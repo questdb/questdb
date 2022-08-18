@@ -40,7 +40,6 @@ import org.jetbrains.annotations.NotNull;
 public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
-    private final Map dataMap;
     private final DistinctRecordCursor cursor;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
@@ -56,23 +55,21 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
         this.mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
-        this.dataMap = MapFactory.createMap(configuration, metadata);
         this.base = base;
-        this.cursor = new DistinctRecordCursor();
+        this.cursor = new DistinctRecordCursor(configuration, metadata);
     }
 
     @Override
     protected void _close() {
-        dataMap.close();
         base.close();
+        cursor.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, dataMap, mapSink, executionContext.getCircuitBreaker());
+            cursor.of(baseCursor, mapSink, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
@@ -92,18 +89,24 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class DistinctRecordCursor implements RecordCursor {
         private RecordCursor baseCursor;
-        private Map dataMap;
+        private final Map dataMap;
         private RecordSink recordSink;
         private Record record;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isOpen;
 
-        public DistinctRecordCursor() {
+        public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
+            this.dataMap = MapFactory.createMap(configuration, metadata);
+            this.isOpen = true;
         }
 
         @Override
         public void close() {
-            Misc.free(baseCursor);
-            dataMap.restoreInitialCapacity();
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(baseCursor);
+                Misc.free(dataMap);
+            }
         }
 
         @Override
@@ -150,9 +153,10 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             dataMap.clear();
         }
 
-        public void of(RecordCursor baseCursor, Map dataMap, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.isOpen = true;
+            this.dataMap.inflate();
             this.baseCursor = baseCursor;
-            this.dataMap = dataMap;
             this.recordSink = recordSink;
             this.record = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;

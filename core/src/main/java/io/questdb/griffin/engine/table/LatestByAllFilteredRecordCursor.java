@@ -53,17 +53,22 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
         this.map = map;
         this.recordSink = recordSink;
         this.filter = filter;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        filter.close();
-        super.close();
+        if (isOpen) {
+            isOpen = false;
+            filter.close();
+            map.close();
+            super.close();
+        }
     }
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        map.clear();
+        map.inflate();
         filter.init(this, executionContext);
 
         DataFrame frame;

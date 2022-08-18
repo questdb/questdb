@@ -116,6 +116,9 @@ public final class Os {
 
     public static native int getPid();
 
+    //returns physical memory used by this process (Resident Set Ssize/Working Set Size)
+    public static native long getRss();
+
     @SuppressWarnings("EmptyMethod")
     public static void init() {
     }

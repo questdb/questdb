@@ -39,22 +39,28 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     private final RecordSink recordSink;
     private Record recordA;
     private Record recordB;
+    private boolean isOpen;
 
     public ExceptRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        super.close();
-        this.map.clear();
+        if (isOpen) {
+            isOpen = false;
+            map.close();
+            super.close();
+        }
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        isOpen = true;
         super.of(cursorA, cursorB, circuitBreaker);
         this.recordB = cursorB.getRecord();
-        map.clear();
+        map.inflate();
         hashCursorB();
         recordA = cursorA.getRecord();
         toTop();

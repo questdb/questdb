@@ -39,7 +39,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final RecordCursorFactory base;
-    private final Map dataMap;
     private final DistinctTimeSeriesRecordCursor cursor;
     // this sink is used to copy recordKeyMap keys to dataMap
     public static final byte COMPUTE_NEXT = 0;
@@ -58,13 +57,13 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
         RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
-        this.dataMap = new FastMap(
+        Map dataMap = new FastMap(
                 configuration.getSqlMapPageSize(),
                 metadata,
                 configuration.getSqlDistinctTimestampKeyCapacity(),
                 configuration.getSqlDistinctTimestampLoadFactor(),
                 Integer.MAX_VALUE
-        ) ;
+        );
 
         this.base = base;
         this.cursor = new DistinctTimeSeriesRecordCursor(
@@ -76,8 +75,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        dataMap.close();
         base.close();
+        cursor.close();
     }
 
     @Override
@@ -106,17 +105,22 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         private long prevRowId;
         private byte state = 0;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isOpen;
 
         public DistinctTimeSeriesRecordCursor(int timestampIndex, Map dataMap, RecordSink recordSink) {
             this.timestampIndex = timestampIndex;
             this.dataMap = dataMap;
             this.recordSink = recordSink;
+            this.isOpen = true;
         }
 
         @Override
         public void close() {
-            Misc.free(baseCursor);
-            dataMap.restoreInitialCapacity();
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(baseCursor);
+                Misc.free(dataMap);
+            }
         }
 
         @Override
@@ -179,11 +183,12 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
+            this.isOpen = true;
             this.baseCursor = baseCursor;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.record = baseCursor.getRecord();
             this.recordB = baseCursor.getRecordB();
-            this.dataMap.clear();
+            this.dataMap.inflate();
 
             // first iteration to get initial timestamp value
             if (baseCursor.hasNext()) {

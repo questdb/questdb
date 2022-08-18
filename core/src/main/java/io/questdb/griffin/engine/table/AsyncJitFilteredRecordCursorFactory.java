@@ -270,10 +270,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            bindVarMemory.truncate();
-            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
-                Function function = bindVarFunctions.getQuick(i);
-                writeBindVarFunction(function, symbolTableSource, executionContext);
+            //don't trigger memory allocation if there are no variables 
+            if (bindVarFunctions.size() > 0) {
+                bindVarMemory.truncate();
+                for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+                    Function function = bindVarFunctions.getQuick(i);
+                    writeBindVarFunction(function, symbolTableSource, executionContext);
+                }
             }
         }
 

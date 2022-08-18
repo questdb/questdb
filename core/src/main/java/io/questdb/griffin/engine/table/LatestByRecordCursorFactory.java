@@ -47,8 +47,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int timestampIndex;
     private final LatestByRecordCursor cursor;
     private final RecordSink recordSink;
-    // contains <[latest_by columns...], [row index, timestamp column]> pairs
-    private final Map latestByMap;
     private final DirectLongList rowIndexes;
     private final long rowIndexesInitialCapacity;
 
@@ -66,8 +64,8 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
         mapValueTypes.add(RECORD_INDEX_VALUE_IDX, ColumnType.LONG);
         mapValueTypes.add(TIMESTAMP_VALUE_IDX, ColumnType.TIMESTAMP);
-        this.latestByMap = MapFactory.createMap(configuration, columnTypes, mapValueTypes);
-        this.cursor = new LatestByRecordCursor();
+        Map latestByMap = MapFactory.createMap(configuration, columnTypes, mapValueTypes);
+        this.cursor = new LatestByRecordCursor(latestByMap);
         this.timestampIndex = timestampIndex;
         this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
         this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
@@ -76,13 +74,13 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
-        latestByMap.close();
         rowIndexes.close();
+        cursor.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        latestByMap.clear();
+        cursor.latestByMap.inflate();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
@@ -91,7 +89,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             buildMap(circuitBreaker, baseCursor, baseRecord);
 
             // Copy the row indexes into the long list.
-            try (final RecordCursor mapCursor = latestByMap.getCursor()) {
+            try (final RecordCursor mapCursor = cursor.latestByMap.getCursor()) {
                 final MapRecord mapRecord = (MapRecord) mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -106,8 +104,8 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             // We'll have to iterate the base record once again, so reset it.
             baseCursor.toTop();
 
-            // Map is no longer needed, so shrink it.
-            latestByMap.restoreInitialCapacity();
+            // Map is no longer needed, so deallocate native memory
+            cursor.latestByMap.close();
 
             cursor.of(baseCursor, rowIndexes, rowIndexesInitialCapacity, circuitBreaker);
             return cursor;
@@ -122,7 +120,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
-            final MapKey key = latestByMap.withKey();
+            final MapKey key = cursor.latestByMap.withKey();
             recordSink.copy(baseRecord, key);
             final MapValue value = key.createValue();
 
@@ -154,6 +152,8 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class LatestByRecordCursor implements NoRandomAccessRecordCursor {
 
+        // contains <[latest_by columns...], [row index, timestamp column]> pairs
+        private final Map latestByMap;
         private RecordCursor baseCursor;
         private Record baseRecord;
         private long index = 0;
@@ -161,6 +161,12 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long rowIndexesPos = 0;
         private long rowIndexesCapacityThreshold;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isOpen;
+
+        public LatestByRecordCursor(Map latestByMap) {
+            this.latestByMap = latestByMap;
+            this.isOpen = true;
+        }
 
         public void of(RecordCursor baseCursor, DirectLongList rowIndexes, long rowIndexesCapacityThreshold, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
@@ -170,15 +176,20 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.index = 0;
             this.rowIndexesPos = 0;
             this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
+            this.isOpen = true;
         }
 
         @Override
         public void close() {
-            Misc.free(baseCursor);
-            rowIndexes.clear();
-            if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
-                // This call will shrink down the underlying array
-                rowIndexes.setCapacity(rowIndexesCapacityThreshold);
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(baseCursor);
+                rowIndexes.clear();
+                if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
+                    // This call will shrink down the underlying array
+                    rowIndexes.setCapacity(rowIndexesCapacityThreshold);
+                }
+                latestByMap.close();
             }
         }
 

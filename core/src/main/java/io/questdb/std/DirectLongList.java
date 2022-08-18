@@ -24,13 +24,14 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.Inflatable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class DirectLongList implements Mutable, Closeable {
+public class DirectLongList implements Mutable, Closeable, Inflatable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
     private final int memoryTag;
@@ -89,6 +90,10 @@ public class DirectLongList implements Mutable, Closeable {
         if (address != 0) {
             Unsafe.free(address, capacity, memoryTag);
             address = 0;
+            start = 0;
+            limit = 0;
+            pos = 0;
+            capacity = 0;
         }
     }
 
@@ -104,6 +109,13 @@ public class DirectLongList implements Mutable, Closeable {
     // capacity in LONGs
     public long getCapacity() {
         return capacity / Long.BYTES;
+    }
+
+    @Override
+    public void inflate() {
+        if (address == 0) {
+            resetCapacity();
+        }
     }
 
     // desired capacity in LONGs (not count of bytes)

@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final Map joinKeyMap;
     private final RecordChain slaveChain;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
@@ -61,7 +60,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
+        Map joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
         slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
@@ -70,11 +69,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        joinKeyMap.close();
         slaveChain.close();
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();
         slaveFactory.close();
+        cursor.close();
     }
 
     @Override
@@ -109,7 +108,8 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-        HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain, circuitBreaker);
+        cursor.joinKeyMap.inflate();
+        HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), cursor.joinKeyMap, slaveKeySink, slaveChain, circuitBreaker);
     }
 
     private class HashJoinRecordCursor extends AbstractJoinCursor {
@@ -118,12 +118,14 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Map joinKeyMap;
         private Record masterRecord;
         private boolean useSlaveCursor;
+        private boolean isOpen;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             super(columnSplit);
             this.recordA = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
+            this.isOpen = true;
         }
 
         @Override
@@ -165,6 +167,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+            this.isOpen = true;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
@@ -172,6 +175,15 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.slaveChain.setSymbolTableResolver(slaveCursor);
             recordA.of(masterRecord, slaveRecord);
             useSlaveCursor = false;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                super.close();
+            }
         }
     }
 }
