@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.TableReader;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class AlterTableWalEnabledTest extends AbstractGriffinTest {
@@ -49,6 +50,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testWalEnabledAddIndex() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "ALTER COLUMN s ADD INDEX";
@@ -57,6 +59,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testWalEnabledAndAlterLag() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "set param commitLag=100s";

@@ -87,6 +87,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     private long lastSegmentTxn = -1L;
     private SequencerStructureChangeCursor structureChangeCursor;
     private final WalWriterPool pool;
+    private static final int MEM_TAG  = MemoryTag.MMAP_TABLE_WAL_WRITER;
 
     public WalWriter(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -1004,9 +1005,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
                     // set column values to null
                     long segmentRowCount = rowCount - startRowCount;
-                    MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
-                    primaryColumn.jumpTo(segmentRowCount * ColumnType.sizeOf(type));
-                    // TODO: map the column and use TableUtils.setNull();
+
+                    setColumnNull(type, columnIndex, segmentRowCount);
                 } else {
                     // TODO: support the case
                     throw CairoException.instance(0).put("column '").put(name).put("' added, cannot commit because of concurrent table definition change ");
@@ -1042,4 +1042,56 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
     }
 
+    private void setColumnNull(int columnType, int columnIndex, long rowCount) {
+        switch (columnType) {
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+                setVarColumnVarFileNull(columnType, columnIndex, rowCount);
+                setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
+                break;
+            default:
+                setFixedSizeNull(columnType, columnIndex, rowCount);
+                break;
+        }
+    }
+
+    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount) {
+        MemoryMA varColumn = getPrimaryColumn(columnIndex);
+        long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
+        varColumn.jumpTo(varColSize);
+        long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
+        try {
+            Vect.memset(address, (byte) varColSize, -1);
+        } finally {
+            ff.munmap(address, varColSize, MEM_TAG);
+        }
+    }
+
+    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount) {
+        MemoryMA fixedSizeColumn = getSecondaryColumn(columnIndex);
+        long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
+        fixedSizeColumn.setSize(fixedSizeColSize);
+        long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
+        try {
+            if (columnType == ColumnType.STRING) {
+                Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
+            } else {
+                Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
+            }
+        } finally {
+            ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
+        }
+    }
+
+    private void setFixedSizeNull(int type, int columnIndex, long rowCount) {
+        MemoryMA fixedSizeColumn = getPrimaryColumn(columnIndex);
+        long columnFileSize = rowCount * ColumnType.sizeOf(type);
+        fixedSizeColumn.jumpTo(columnFileSize);
+        long address = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), columnFileSize, MEM_TAG);
+        try {
+            TableUtils.setNull(type, address, rowCount);
+        } finally {
+            ff.munmap(address, columnFileSize, MEM_TAG);
+        }
+    }
 }

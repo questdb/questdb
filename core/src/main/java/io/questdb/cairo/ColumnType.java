@@ -291,6 +291,16 @@ public final class ColumnType {
         return truncateGeoHashBits(value, fromBits, toBits);
     }
 
+    public static int variableColumnLengthBytes(int columnType) {
+        switch (columnType) {
+            case ColumnType.STRING:
+                return Integer.BYTES;
+            default:
+                assert columnType == ColumnType.STRING;
+                return Long.BYTES;
+        }
+    }
+
     private static int mkGeoHashType(int bits, short baseType) {
         return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
