@@ -496,6 +496,8 @@ io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountStringGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountDistinctLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory
 
 # 'isOrdered'
 io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory
