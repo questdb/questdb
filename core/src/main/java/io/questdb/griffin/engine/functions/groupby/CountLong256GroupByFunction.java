@@ -31,9 +31,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 
-public class CountLong256GroupByFunction extends LongFunction implements GroupByFunction {
+public class CountLong256GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final ObjList<Long256HashSet> sets = new ObjList<>();
     private int valueIndex;
@@ -41,6 +42,11 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
 
     public CountLong256GroupByFunction(Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 
     @Override
@@ -110,7 +116,13 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void toTop() {
+        UnaryFunction.super.toTop();
         setIndex = 0;
     }
 

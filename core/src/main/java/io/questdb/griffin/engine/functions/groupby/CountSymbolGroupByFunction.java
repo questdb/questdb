@@ -31,13 +31,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
-public class CountSymbolGroupByFunction extends LongFunction implements GroupByFunction {
+public class CountSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final ObjList<IntList> lists = new ObjList<>();
     private int valueIndex;
@@ -45,6 +46,11 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
 
     public CountSymbolGroupByFunction(Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 
     @Override
@@ -118,7 +124,13 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void toTop() {
+        UnaryFunction.super.toTop();
         setIndex = 0;
     }
 }

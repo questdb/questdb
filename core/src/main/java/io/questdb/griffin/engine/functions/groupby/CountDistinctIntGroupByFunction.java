@@ -31,11 +31,12 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CountDistinctIntGroupByFunction extends LongFunction implements GroupByFunction {
+public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final ObjList<IntHashSet> sets = new ObjList<>();
     private int valueIndex;
@@ -43,6 +44,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Gro
 
     public CountDistinctIntGroupByFunction(Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
     }
 
     @Override
@@ -112,7 +118,13 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Gro
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void toTop() {
+        UnaryFunction.super.toTop();
         setIndex = 0;
     }
 }
