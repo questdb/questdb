@@ -82,6 +82,22 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractGriffin
     }
 
     @Test
+    public void testNullConstant() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t0\n" +
+                        "b\t0\n" +
+                        "c\t0\n",
+                "select a, count_distinct(cast(null as LONG)) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testConstant() throws Exception {
         assertQuery(
                 "a\tcount_distinct\n" +
