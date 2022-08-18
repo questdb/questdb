@@ -27,66 +27,59 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.NotNull;
 
-public class MinIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
+public class CountLongGroupByFunction extends LongFunction implements GroupByFunction, Sinkable {
     private int valueIndex;
-
-    public MinIntGroupByFunction(@NotNull Function arg) {
-        super();
-        this.arg = arg;
-    }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, arg.getInt(record));
+        mapValue.putLong(valueIndex, 1L);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        int min = mapValue.getInt(valueIndex);
-        int next = arg.getInt(record);
-        if (next != Numbers.INT_NaN && (next < min || min == Numbers.INT_NaN)) {
-            mapValue.putInt(valueIndex, next);
-        }
+        mapValue.addLong(valueIndex, 1);
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
-    public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
+    }
+
+    @Override
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
     }
 
     @Override
-    public int getInt(Record rec) {
-        return rec.getInt(valueIndex);
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public boolean isConstant() {
+        return false;
     }
 
-    @Override
     public void toSink(CharSink sink) {
-        sink.put("MinInt(").put(arg).put(')');
+        sink.put("Count(").put(valueIndex).put(')');
     }
+
 }

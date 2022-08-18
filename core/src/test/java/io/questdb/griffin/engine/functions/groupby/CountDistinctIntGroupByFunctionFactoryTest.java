@@ -27,20 +27,20 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
-public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tcount_distinct\n" +
-                        "c\t5\n" +
+                        "a\t2\n" +
                         "f\t4\n" +
-                        "e\t1\n" +
-                        "d\t3\n" +
-                        "b\t4\n" +
-                        "a\t1\n",
+                        "c\t2\n" +
+                        "e\t4\n" +
+                        "d\t4\n" +
+                        "b\t1\n",
                 "select a, count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(16) s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
+                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
                 true,
@@ -54,7 +54,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "count_distinct\n" +
                         "6\n",
                 "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true,
@@ -69,15 +69,15 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertQuery(
                 expected,
                 "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                "create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
                 null,
                 false,
                 true,
                 true
         );
 
-        executeInsert("insert into x values(cast(null as LONG256), '2021-05-21')");
-        executeInsert("insert into x values(cast(null as LONG256), '1970-01-01')");
+        executeInsert("insert into x values(cast(null as INT), '2021-05-21')");
+        executeInsert("insert into x values(cast(null as INT), '1970-01-01')");
         assertSql("select count_distinct(s) from x", expected);
     }
 
@@ -88,7 +88,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                         "a\t0\n" +
                         "b\t0\n" +
                         "c\t0\n",
-                "select a, count_distinct(cast(null as LONG256)) from x",
+                "select a, count_distinct(cast(null as INT)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -104,7 +104,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                         "a\t1\n" +
                         "b\t1\n" +
                         "c\t1\n",
-                "select a, count_distinct(cast('0x42' AS LONG256)) from x",
+                "select a, count_distinct(42) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -116,19 +116,19 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     @Test
     public void testExpression() throws Exception {
         final String expected = "a\tcount_distinct\n" +
-                "c\t5\n" +
-                "a\t2\n" +
+                "a\t5\n" +
+                "c\t4\n" +
                 "b\t4\n";
         assertQuery(
                 expected,
-                "select a, count_distinct(s + s) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long256(8) s from long_sequence(20)))",
+                "select a, count_distinct(s * 42) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_int(1, 8, 0) s from long_sequence(20)))",
                 null,
                 true,
                 true,
                 true
         );
-        // self-addition shouldn't affect the number of distinct values,
+        // multiplication shouldn't affect the number of distinct values,
         // so the result should stay the same
         assertSql("select a, count_distinct(s) from x", expected);
     }
@@ -137,18 +137,18 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testSampleFillLinear() throws Exception {
         assertQuery(
                 "ts\tcount_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t6\n" +
-                        "1970-01-01T00:00:01.000000Z\t6\n" +
-                        "1970-01-01T00:00:02.000000Z\t6\n" +
-                        "1970-01-01T00:00:03.000000Z\t6\n" +
-                        "1970-01-01T00:00:04.000000Z\t6\n" +
-                        "1970-01-01T00:00:05.000000Z\t7\n" +
-                        "1970-01-01T00:00:06.000000Z\t6\n" +
+                        "1970-01-01T00:00:00.000000Z\t8\n" +
+                        "1970-01-01T00:00:01.000000Z\t9\n" +
+                        "1970-01-01T00:00:02.000000Z\t9\n" +
+                        "1970-01-01T00:00:03.000000Z\t9\n" +
+                        "1970-01-01T00:00:04.000000Z\t8\n" +
+                        "1970-01-01T00:00:05.000000Z\t9\n" +
+                        "1970-01-01T00:00:06.000000Z\t10\n" +
                         "1970-01-01T00:00:07.000000Z\t7\n" +
-                        "1970-01-01T00:00:08.000000Z\t5\n" +
+                        "1970-01-01T00:00:08.000000Z\t8\n" +
                         "1970-01-01T00:00:09.000000Z\t7\n",
                 "select ts, count_distinct(s) from x sample by 1s fill(linear)",
-                "create table x as (select * from (select rnd_long256(10) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "create table x as (select * from (select rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
                 true,
@@ -159,7 +159,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                "with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
                         "select ts, count_distinct(s) from x sample by 2s",
                 "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.050000Z\t8\n" +
@@ -171,18 +171,18 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testSampleFillValue() throws Exception {
         assertQuery(
                 "ts\tcount_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t7\n" +
-                        "1970-01-01T00:00:01.000000Z\t7\n" +
+                        "1970-01-01T00:00:00.000000Z\t8\n" +
+                        "1970-01-01T00:00:01.000000Z\t6\n" +
                         "1970-01-01T00:00:02.000000Z\t7\n" +
-                        "1970-01-01T00:00:03.000000Z\t5\n" +
+                        "1970-01-01T00:00:03.000000Z\t8\n" +
                         "1970-01-01T00:00:04.000000Z\t6\n" +
-                        "1970-01-01T00:00:05.000000Z\t6\n" +
+                        "1970-01-01T00:00:05.000000Z\t7\n" +
                         "1970-01-01T00:00:06.000000Z\t7\n" +
-                        "1970-01-01T00:00:07.000000Z\t5\n" +
+                        "1970-01-01T00:00:07.000000Z\t6\n" +
                         "1970-01-01T00:00:08.000000Z\t7\n" +
                         "1970-01-01T00:00:09.000000Z\t5\n",
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select rnd_long256(8) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
         );
@@ -192,20 +192,20 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     public void testSampleKeyed() throws Exception {
         assertQuery(
                 "a\tcount_distinct\tts\n" +
+                        "a\t5\t1970-01-01T00:00:00.000000Z\n" +
                         "f\t8\t1970-01-01T00:00:00.000000Z\n" +
-                        "e\t4\t1970-01-01T00:00:00.000000Z\n" +
-                        "c\t8\t1970-01-01T00:00:00.000000Z\n" +
-                        "a\t4\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\t5\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t6\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t8\t1970-01-01T00:00:05.000000Z\n" +
-                        "c\t4\t1970-01-01T00:00:05.000000Z\n" +
-                        "d\t8\t1970-01-01T00:00:05.000000Z\n" +
-                        "e\t6\t1970-01-01T00:00:05.000000Z\n" +
-                        "a\t4\t1970-01-01T00:00:05.000000Z\n" +
-                        "f\t6\t1970-01-01T00:00:05.000000Z\n",
+                        "c\t9\t1970-01-01T00:00:00.000000Z\n" +
+                        "e\t6\t1970-01-01T00:00:00.000000Z\n" +
+                        "d\t7\t1970-01-01T00:00:00.000000Z\n" +
+                        "b\t5\t1970-01-01T00:00:00.000000Z\n" +
+                        "b\t6\t1970-01-01T00:00:05.000000Z\n" +
+                        "c\t5\t1970-01-01T00:00:05.000000Z\n" +
+                        "f\t6\t1970-01-01T00:00:05.000000Z\n" +
+                        "e\t8\t1970-01-01T00:00:05.000000Z\n" +
+                        "d\t7\t1970-01-01T00:00:05.000000Z\n" +
+                        "a\t4\t1970-01-01T00:00:05.000000Z\n",
                 "select a, count_distinct(s), ts from x sample by 5s",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(12) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
         );

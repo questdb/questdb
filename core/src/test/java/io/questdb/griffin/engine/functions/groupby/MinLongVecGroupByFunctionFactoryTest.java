@@ -77,6 +77,23 @@ public class MinLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMaxLongOrNullThenMaxLong() throws Exception {
+        assertQuery(
+                "min\n" +
+                        "NaN\n",
+                "select min(f) from tab",
+                "create table tab as (select cast(null as long) f from long_sequence(33))",
+                null,
+                "insert into tab select 9223372036854775807L from long_sequence(1)",
+                "min\n" +
+                        "9223372036854775807\n",
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSimple() throws Exception {
         assertQuery(
                 "min\n" +

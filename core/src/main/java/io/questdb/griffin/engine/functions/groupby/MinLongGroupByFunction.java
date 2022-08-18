@@ -53,7 +53,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     public void computeNext(MapValue mapValue, Record record) {
         long min = mapValue.getLong(valueIndex);
         long next = arg.getLong(record);
-        if (next != Numbers.LONG_NaN && next < min || min == Numbers.LONG_NaN) {
+        if (next != Numbers.LONG_NaN && (next < min || min == Numbers.LONG_NaN)) {
             mapValue.putLong(valueIndex, next);
         }
     }

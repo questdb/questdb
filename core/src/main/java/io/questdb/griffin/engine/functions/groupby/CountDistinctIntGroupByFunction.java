@@ -30,54 +30,20 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.ObjList;
 
-public class MinIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
+public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final ObjList<IntHashSet> sets = new ObjList<>();
     private int valueIndex;
+    private int setIndex;
 
-    public MinIntGroupByFunction(@NotNull Function arg) {
-        super();
+    public CountDistinctIntGroupByFunction(Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, arg.getInt(record));
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        int min = mapValue.getInt(valueIndex);
-        int next = arg.getInt(record);
-        if (next != Numbers.INT_NaN && (next < min || min == Numbers.INT_NaN)) {
-            mapValue.putInt(valueIndex, next);
-        }
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return rec.getInt(valueIndex);
     }
 
     @Override
@@ -86,7 +52,79 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinInt(").put(arg).put(')');
+    public void computeFirst(MapValue mapValue, Record record) {
+        final IntHashSet set;
+        if (sets.size() <= setIndex) {
+            sets.extendAndSet(setIndex, set = new IntHashSet());
+        } else {
+            set = sets.getQuick(setIndex);
+        }
+
+        set.clear();
+        final int val = arg.getInt(record);
+        if (val != Numbers.INT_NaN) {
+            set.add(val);
+            mapValue.putLong(valueIndex, 1L);
+        } else {
+            mapValue.putLong(valueIndex, 0L);
+        }
+        mapValue.putInt(valueIndex + 1, setIndex++);
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final IntHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final int val = arg.getInt(record);
+        if (val != Numbers.INT_NaN) {
+            final int index = set.keyIndex(val);
+            if (index < 0) {
+                return;
+            }
+            set.addAt(index, val);
+            mapValue.addLong(valueIndex, 1);
+        }
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
+    }
+
+    @Override
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void toTop() {
+        UnaryFunction.super.toTop();
+        setIndex = 0;
     }
 }
