@@ -50,6 +50,7 @@ jobs:
             docker run --privileged --rm tonistiigi/binfmt --install arm64
             docker run --privileged --rm tonistiigi/binfmt
             docker buildx create --use
-            docker buildx build --build-arg tag_name="$(tag_name)" --platform linux/amd64 --push -t questdb/questdb:$(hub_tag_name) .
+            export branch_name=$(echo $(tag) | sed -e 's/^refs\/heads\///')
+            docker buildx build --build-arg tag_name=$branch_name --platform linux/amd64 --push -t questdb/questdb:$(hub_tag_name) .
           workingDirectory: core
         condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
