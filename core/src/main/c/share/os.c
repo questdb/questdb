@@ -48,12 +48,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getPid
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_getRss
         (JNIEnv *e, jclass cl) {
     struct mach_task_basic_info info;
-	mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+    mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
     kern_return_t status = task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount);
-	if ( status != KERN_SUCCESS){
-		return (jlong)0L;
+    if ( status != KERN_SUCCESS){
+        return (jlong)0L;
     }
-	return (jlong)info.resident_size;
+    return (jlong)info.resident_size;
 }
 
 #else
