@@ -59,6 +59,7 @@ public interface CompiledQuery {
     short CREATE_TABLE_AS_SELECT = 21;
     short SNAPSHOT_DB_PREPARE = 22;
     short SNAPSHOT_DB_COMPLETE = 23;
+    short TYPES_COUNT = SNAPSHOT_DB_COMPLETE;
 
     RecordCursorFactory getRecordCursorFactory();
 
