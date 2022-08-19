@@ -236,7 +236,9 @@ public class TableRegistry extends AbstractPool {
         while (iterator.hasNext()) {
             final WalWriterPool pool = iterator.next();
             pool.close();
-            iterator.remove();
+            if (deadline == Long.MAX_VALUE) {
+                iterator.remove();
+            }
         }
     }
     private boolean returnToPool(final Rc rc) {

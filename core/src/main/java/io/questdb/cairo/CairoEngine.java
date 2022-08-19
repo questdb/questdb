@@ -123,9 +123,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     @TestOnly
     public boolean clear() {
-        tableRegistry.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
+        boolean b3 = tableRegistry.releaseAll();
         return b1 & b2;
     }
 
@@ -276,9 +276,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             @Nullable String lockReason
     ) {
         securityContext.checkWritePermission();
-        final WalWriter walWriter = tableRegistry.getWalWriter(tableName);
-        if (walWriter != null) {
-            return walWriter;
+        if (tableRegistry.hasSequencer(tableName)) {
+            return tableRegistry.getWalWriter(tableName);
         }
         return getWriter(securityContext, tableName, lockReason);
     }
