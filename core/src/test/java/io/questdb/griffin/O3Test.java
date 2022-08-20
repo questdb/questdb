@@ -7434,7 +7434,7 @@ public class O3Test extends AbstractO3Test {
             long pageSize = configuration.getMiscAppendPageSize();
             Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
 
-            long start = IntervalUtils.parseFloorPartialDate("2021-10-09T10:00:00");
+            long start = IntervalUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
             String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
 
             // Add 2 batches

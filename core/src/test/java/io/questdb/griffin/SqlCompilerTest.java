@@ -443,28 +443,30 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastDateTimestamp() throws SqlException {
-        assertCastDate("a\n" +
-                        "1970-01-17T12:11:37.242379Z\n" +
+        assertCastDate(
+                "a\n" +
+                        "2015-03-14T01:40:42.379000Z\n" +
                         "\n" +
-                        "1970-01-17T17:41:21.058169Z\n" +
-                        "1970-01-17T14:33:54.113022Z\n" +
+                        "2015-10-29T01:10:58.169000Z\n" +
+                        "2015-06-20T21:01:53.022000Z\n" +
                         "\n" +
-                        "1970-01-17T15:55:39.868373Z\n" +
-                        "1970-01-17T17:05:57.889668Z\n" +
-                        "1970-01-17T16:04:40.260964Z\n" +
+                        "2015-08-16T15:44:28.373000Z\n" +
+                        "2015-10-04T11:24:49.668000Z\n" +
+                        "2015-08-22T21:51:00.964000Z\n" +
                         "\n" +
-                        "1970-01-17T16:53:03.809660Z\n" +
+                        "2015-09-25T12:23:29.660000Z\n" +
                         "\n" +
-                        "1970-01-17T14:41:38.544851Z\n" +
+                        "2015-06-26T06:02:24.851000Z\n" +
                         "\n" +
-                        "1970-01-17T17:59:41.628184Z\n" +
-                        "1970-01-17T16:39:21.500400Z\n" +
-                        "1970-01-17T12:42:45.287226Z\n" +
+                        "2015-11-10T18:53:48.184000Z\n" +
+                        "2015-09-15T23:58:20.400000Z\n" +
+                        "2015-04-04T16:34:47.226000Z\n" +
                         "\n" +
-                        "1970-01-17T14:36:39.533562Z\n" +
-                        "1970-01-17T11:28:56.755529Z\n" +
-                        "1970-01-17T12:16:06.352765Z\n",
-                ColumnType.TIMESTAMP);
+                        "2015-06-22T18:58:53.562000Z\n" +
+                        "2015-02-12T10:25:55.529000Z\n" +
+                        "2015-03-17T04:25:52.765000Z\n",
+                ColumnType.TIMESTAMP
+        );
     }
 
     @Test
@@ -3292,12 +3294,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertible2() throws Exception {
-        testInsertAsSelectError("create table x (a INT, b BYTE)",
+        testInsertAsSelectError(
+                "create table x (a INT, b BYTE)",
                 "insert into x " +
                         "select" +
                         " rnd_int()," +
                         " rnd_char()" +
-                        " from long_sequence(30)", 32, "inconvertible types");
+                        " from long_sequence(30)",
+                32,
+                "inconvertible value: T [CHAR -> BYTE]"
+        );
     }
 
     @Test
@@ -3312,22 +3318,30 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList2() throws Exception {
-        testInsertAsSelectError("create table x (a BYTE, b INT, n TIMESTAMP)",
+        testInsertAsSelectError(
+                "create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
                         " rnd_char()" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)",
+                17,
+                "inconvertible value: T [CHAR -> BYTE]"
+        );
     }
 
     @Test
     public void testInsertAsSelectInconvertibleList3() throws Exception {
-        testInsertAsSelectError("create table x (a BYTE, b INT, n TIMESTAMP)",
+        testInsertAsSelectError(
+                "create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
                         " rnd_char()" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)",
+                17,
+                "inconvertible value: T [CHAR -> BYTE]"
+        );
     }
 
     @Test
@@ -3342,12 +3356,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList5() throws Exception {
-        testInsertAsSelectError("create table x (a FLOAT, b INT, n TIMESTAMP)",
+        testInsertAsSelectError(
+                "create table x (a FLOAT, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
                         " rnd_str(5,5,0)" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)",
+                17,
+                "inconvertible value: JWCPS [STRING -> FLOAT]"
+        );
     }
 
     @Test
@@ -3635,8 +3653,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid timestamp:");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 2020-01-10T18:00:01.800Zz [STRING -> TIMESTAMP]");
             }
 
             assertSql(
@@ -4240,7 +4258,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             compiler.compile(sql, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
     }

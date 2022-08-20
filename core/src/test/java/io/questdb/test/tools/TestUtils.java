@@ -646,7 +646,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
 
         long increment = 0;
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -1685,7 +1686,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                         stringSink.put("some rubbish to be ignored");
                         row.putLong256(20, stringSink, 2, strLen);
 
-                        row.putTimestamp(21, "2022-06-10T09:13:46." + (i + 1));
+                        row.putTimestamp(21, SqlUtil.parseTimestamp("2022-06-10T09:13:46." + (i + 1)));
 
                         row.putStr(22, (char) (65 + i % 26));
                         row.putStr(23, "abcdefghijklmnopqrstuvwxyz", 0, i % 26 + 1);

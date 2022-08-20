@@ -247,9 +247,9 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
         assertInsertTimestamp(
-                "Invalid timestamp: 123456",
+                "inconvertible value: 123456 [STRING -> TIMESTAMP] tuple: 0",
                 "insert into tab select 1, '123456'",
-                "io.questdb.cairo.CairoException",
+                SqlException.class,
                 false
         );
     }
@@ -385,7 +385,7 @@ public class InsertTest extends AbstractGriffinTest {
         assertInsertTimestamp(
                 "inconvertible value: 2021-01-03T02:00:00-:30 [STRING -> TIMESTAMP]",
                 "insert into tab values (1, '2021-01-03T02:00:00-:30')",
-                "io.questdb.griffin.SqlException",
+                SqlException.class,
                 true
         );
     }
@@ -452,9 +452,9 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertInvalidDateStringTimestampColumn() throws Exception {
         assertInsertTimestamp(
-                "Invalid timestamp: 2021-23-03T00:00:00Z",
+                "inconvertible value: 2021-23-03T00:00:00Z [STRING -> TIMESTAMP] tuple: 0",
                 "insert into tab values (1, '2021-23-03T00:00:00Z')",
-                "io.questdb.cairo.CairoException",
+                SqlException.class,
                 true
         );
     }
@@ -953,7 +953,7 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
     
-    private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
+    private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert) throws Exception {
         if (commitInsert) {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
             try {
@@ -963,8 +963,10 @@ public class InsertTest extends AbstractGriffinTest {
                 }
                 assertSql("tab", expected);
             } catch (Throwable e) {
-                if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
+                if (exceptionType == null) {
+                    throw e;
+                }
+                Assert.assertSame(exceptionType, e.getClass());
                 TestUtils.assertContains(e.getMessage(), expected);
             }
         } else {
@@ -975,10 +977,10 @@ public class InsertTest extends AbstractGriffinTest {
                     Assert.fail("SqlException expected");
                 }
                 assertSql("tab", expected);
-            } catch (CairoException e) {
+            } catch (Throwable e) {
                 if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
-                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+                Assert.assertSame(exceptionType, e.getClass());
+                TestUtils.assertContains(e.getMessage(), expected);
             }
         }
 
@@ -994,7 +996,7 @@ public class InsertTest extends AbstractGriffinTest {
                 assertSql("tab", expected);
             } catch (Throwable e) {
                 if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
+                Assert.assertSame(exceptionType, e.getClass());
                 TestUtils.assertContains(e.getMessage(), expected);
             }
         } else {
@@ -1007,7 +1009,7 @@ public class InsertTest extends AbstractGriffinTest {
                 assertSql("tab", expected);
             } catch (Throwable e) {
                 if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
+                Assert.assertSame(exceptionType, e.getClass());
                 TestUtils.assertContains(e.getMessage(), expected);
             }
         }

@@ -36,9 +36,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "byte",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n"
         );
     }
 
@@ -47,11 +47,11 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharTab(
                 "byte",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n" +
-                        "87\n" +
-                        "67\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n" +
+                        "7\n" +
+                        "0\n"
         );
     }
 
@@ -60,9 +60,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "date",
                 "a\n" +
-                        "1970-01-01T00:00:00.086Z\n" +
-                        "1970-01-01T00:00:00.084Z\n" +
-                        "1970-01-01T00:00:00.074Z\n"
+                        "1970-01-01T00:00:00.005Z\n" +
+                        "1970-01-01T00:00:00.003Z\n" +
+                        "1970-01-01T00:00:00.000Z\n"
         );
     }
 
@@ -71,12 +71,28 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharTab(
                 "date",
                 "a\n" +
-                        "1970-01-01T00:00:00.086Z\n" +
-                        "1970-01-01T00:00:00.084Z\n" +
-                        "1970-01-01T00:00:00.074Z\n" +
-                        "1970-01-01T00:00:00.087Z\n" +
-                        "1970-01-01T00:00:00.067Z\n"
+                        "1970-01-01T00:00:00.005Z\n" +
+                        "1970-01-01T00:00:00.003Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.007Z\n" +
+                        "1970-01-01T00:00:00.000Z\n"
         );
+    }
+
+    @Test
+    public void testInsertNullDateIntoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x(ts timestamp)", sqlExecutionContext);
+            executeInsert("insert into x values (cast(null as date))");
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "x",
+                    sink,
+                    "ts\n" +
+                            "\n"
+            );
+        });
     }
 
     @Test
@@ -84,9 +100,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "double",
                 "a\n" +
-                        "86.0\n" +
-                        "84.0\n" +
-                        "74.0\n"
+                        "5.0\n" +
+                        "3.0\n" +
+                        "0.0\n"
         );
     }
 
@@ -95,9 +111,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "float",
                 "a\n" +
-                        "86.0000\n" +
-                        "84.0000\n" +
-                        "74.0000\n"
+                        "5.0000\n" +
+                        "3.0000\n" +
+                        "0.0000\n"
         );
     }
 
@@ -106,9 +122,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "int",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n"
         );
     }
 
@@ -117,11 +133,11 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharTab(
                 "int",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n" +
-                        "87\n" +
-                        "67\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n" +
+                        "7\n" +
+                        "0\n"
         );
     }
 
@@ -130,9 +146,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "long",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n"
         );
     }
 
@@ -141,11 +157,11 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharTab(
                 "long",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n" +
-                        "87\n" +
-                        "67\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n" +
+                        "7\n" +
+                        "0\n"
         );
     }
 
@@ -154,9 +170,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "short",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n"
         );
     }
 
@@ -165,11 +181,11 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharTab(
                 "short",
                 "a\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n" +
-                        "87\n" +
-                        "67\n"
+                        "5\n" +
+                        "3\n" +
+                        "0\n" +
+                        "7\n" +
+                        "0\n"
         );
     }
 
@@ -178,9 +194,9 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharFunc(
                 "timestamp",
                 "a\n" +
-                        "1970-01-01T00:00:00.000086Z\n" +
-                        "1970-01-01T00:00:00.000084Z\n" +
-                        "1970-01-01T00:00:00.000074Z\n"
+                        "1970-01-01T00:00:00.000005Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n"
         );
     }
 
@@ -189,11 +205,11 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertCharTab(
                 "timestamp",
                 "a\n" +
-                        "1970-01-01T00:00:00.000086Z\n" +
-                        "1970-01-01T00:00:00.000084Z\n" +
-                        "1970-01-01T00:00:00.000074Z\n" +
-                        "1970-01-01T00:00:00.000087Z\n" +
-                        "1970-01-01T00:00:00.000067Z\n"
+                        "1970-01-01T00:00:00.000005Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000007Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n"
         );
     }
 
@@ -546,7 +562,12 @@ public class InsertCastTest extends AbstractGriffinTest {
             // insert table
             compiler.compile("create table y(a " + toType + ");", sqlExecutionContext);
             // execute insert statement for each value of reference table
-            try (InsertOperation insert = compiler.compile("insert into y values (rnd_char())", sqlExecutionContext).getInsertOperation()) {
+            try (
+                    InsertOperation insert = compiler.compile(
+                            "insert into y values (cast(rnd_int(0, 10, 0) + 47 as char))",
+                            sqlExecutionContext
+                    ).getInsertOperation()
+            ) {
                 insert.execute(sqlExecutionContext);
                 insert.execute(sqlExecutionContext);
                 insert.execute(sqlExecutionContext);
@@ -589,7 +610,7 @@ public class InsertCastTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             // insert table
             compiler.compile("create table y(a " + toType + ");", sqlExecutionContext);
-            compiler.compile("create table x as (select rnd_char() a from long_sequence(5));", sqlExecutionContext);
+            compiler.compile("create table x as (select cast(rnd_int(0,10,0)+47 as char) a from long_sequence(5));", sqlExecutionContext);
             // execute insert statement for each value of reference table
             compiler.compile("insert into y select a from x", sqlExecutionContext).getInsertOperation();
             TestUtils.assertSql(

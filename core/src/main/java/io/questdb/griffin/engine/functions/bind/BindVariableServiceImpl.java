@@ -652,7 +652,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             }
         }
         // Parse as ISO with variable length.
-        return IntervalUtils.parseFloorPartialDate(value);
+        return IntervalUtils.parseFloorPartialTimestamp(value);
     }
 
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {

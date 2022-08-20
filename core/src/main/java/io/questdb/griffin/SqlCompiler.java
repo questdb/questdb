@@ -752,23 +752,6 @@ public class SqlCompiler implements Closeable {
         );
     }
 
-    private CompiledQuery alterTableColumnDropIndex(
-            int tableNamePosition,
-            String tableName,
-            int columnNamePosition,
-            CharSequence columnName,
-            TableReaderMetadata metadata
-    ) throws SqlException {
-        if (metadata.getColumnIndexQuiet(columnName) == -1) {
-            throw SqlException.invalidColumn(columnNamePosition, columnName);
-        }
-        return compiledQuery.ofAlter(
-                alterOperationBuilder
-                        .ofDropIndex(tableNamePosition, tableName, metadata.getId(), columnName)
-                        .build()
-        );
-    }
-
     private CompiledQuery alterTableColumnCacheFlag(
             int tableNamePosition,
             String tableName,
@@ -791,6 +774,23 @@ public class SqlCompiler implements Closeable {
         )
                 : compiledQuery.ofAlter(
                 alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+        );
+    }
+
+    private CompiledQuery alterTableColumnDropIndex(
+            int tableNamePosition,
+            String tableName,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableReaderMetadata metadata
+    ) throws SqlException {
+        if (metadata.getColumnIndexQuiet(columnName) == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+        return compiledQuery.ofAlter(
+                alterOperationBuilder
+                        .ofDropIndex(tableNamePosition, tableName, metadata.getId(), columnName)
+                        .build()
         );
     }
 
@@ -992,6 +992,37 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private void cancelTextImport(CopyModel model) throws SqlException {
+        assert model.isCancel();
+
+        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
+        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
+
+        long inProgressImportId = textImportExecutionContext.getActiveImportId();
+        // The cancellation is based on the best effort, so we don't worry about potential races with imports.
+        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
+            throw SqlException.$(0, "No active import to cancel.");
+        }
+        long importId;
+        try {
+            CharSequence idString = model.getTarget().token;
+            int start = 0;
+            int end = idString.length();
+            if (Chars.isQuoted(idString)) {
+                start = 1;
+                end--;
+            }
+            importId = Numbers.parseHexLong(idString, start, end);
+        } catch (NumericException e) {
+            throw SqlException.$(0, "Provided id has invalid format.");
+        }
+        if (inProgressImportId == importId) {
+            circuitBreaker.cancel();
+        } else {
+            throw SqlException.$(0, "Active import has different id.");
+        }
+    }
+
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -1058,6 +1089,23 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofSet();
     }
 
+    private CopyFactory compileTextImport(CopyModel model) throws SqlException {
+        assert !model.isCancel();
+
+        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final ExpressionNode fileNameNode = model.getFileName();
+        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
+        assert fileName != null;
+
+        return new CopyFactory(
+                messageBus,
+                engine.getTextImportExecutionContext(),
+                Chars.toString(tableName),
+                Chars.toString(fileName),
+                model
+        );
+    }
+
     @NotNull
     private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
@@ -1103,8 +1151,14 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private long copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier
-            copier, int cursorTimestampIndex) {
+    private long copyOrdered(
+            TableWriter writer,
+            RecordMetadata metadata,
+            RecordCursor cursor,
+            RecordToRowCopier
+                    copier,
+            int cursorTimestampIndex
+    ) throws SqlException {
         long rowCount;
 
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
@@ -1139,7 +1193,7 @@ public class SqlCompiler implements Closeable {
             int cursorTimestampIndex,
             long batchSize,
             long commitLag
-    ) {
+    ) throws SqlException {
         long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
             rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
@@ -1184,23 +1238,19 @@ public class SqlCompiler implements Closeable {
             int cursorTimestampIndex,
             long batchSize,
             long commitLag
-    ) {
+    ) throws SqlException {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             CharSequence str = record.getStr(cursorTimestampIndex);
-            try {
-                // It's allowed to insert ISO formatted string to timestamp column
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate(str));
-                copier.copy(record, row);
-                row.append();
-                if (++rowCount > deadline) {
-                    writer.commitWithLag(commitLag);
-                    deadline = rowCount + batchSize;
-                }
-            } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));
+            copier.copy(record, row);
+            row.append();
+            if (++rowCount > deadline) {
+                writer.commitWithLag(commitLag);
+                deadline = rowCount + batchSize;
             }
         }
 
@@ -1208,103 +1258,34 @@ public class SqlCompiler implements Closeable {
     }
 
     //returns number of copied rows
-    private long copyOrderedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier,
-                                         int cursorTimestampIndex) {
+    private long copyOrderedStrTimestamp(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex
+    ) throws SqlException {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             final CharSequence str = record.getStr(cursorTimestampIndex);
-            try {
-                // It's allowed to insert ISO formatted string to timestamp column
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate(str));
-                copier.copy(record, row);
-                row.append();
-                rowCount++;
-            } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
-            }
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));
+            copier.copy(record, row);
+            row.append();
+            rowCount++;
         }
 
         return rowCount;
     }
 
-    @Nullable
-    private RecordCursorFactory executeCopy0(CopyModel model) throws SqlException {
-        try {
-            if (model.isCancel()) {
-                cancelTextImport(model);
-                return null;
-            } else {
-                if (model.getTimestampColumnName() == null &&
-                        ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
-                    throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-                }
-                if (model.getTimestampFormat() == null) {
-                    model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-                }
-                if (model.getDelimiter() < 0) {
-                    model.setDelimiter((byte) ',');
-                }
-                return compileTextImport(model);
-            }
-        } catch (TextImportException | TextException e) {
-            LOG.error().$((Throwable) e).$();
-            throw SqlException.$(0, e.getMessage());
-        }
-    }
-
-    private void cancelTextImport(CopyModel model) throws SqlException {
-        assert model.isCancel();
-
-        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
-        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
-
-        long inProgressImportId = textImportExecutionContext.getActiveImportId();
-        // The cancellation is based on the best effort, so we don't worry about potential races with imports.
-        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
-            throw SqlException.$(0, "No active import to cancel.");
-        }
-        long importId;
-        try {
-            CharSequence idString = model.getTarget().token;
-            int start = 0;
-            int end = idString.length();
-            if (Chars.isQuoted(idString)) {
-                start = 1;
-                end--;
-            }
-            importId = Numbers.parseHexLong(idString, start, end);
-        } catch (NumericException e) {
-            throw SqlException.$(0, "Provided id has invalid format.");
-        }
-        if (inProgressImportId == importId) {
-            circuitBreaker.cancel();
-        } else {
-            throw SqlException.$(0, "Active import has different id.");
-        }
-    }
-
-    private CopyFactory compileTextImport(CopyModel model) throws SqlException {
-        assert !model.isCancel();
-
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
-        final ExpressionNode fileNameNode = model.getFileName();
-        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
-        assert fileName != null;
-
-        return new CopyFactory(
-                messageBus,
-                engine.getTextImportExecutionContext(),
-                Chars.toString(tableName),
-                Chars.toString(fileName),
-                model
-        );
-    }
-
     /**
      * Sets insertCount to number of copied rows.
      */
-    private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
+    private TableWriter copyTableData(
+            CharSequence tableName,
+            RecordCursor cursor,
+            RecordMetadata cursorMetadata
+    ) throws SqlException {
         TableWriter writer = new TableWriter(
                 configuration,
                 tableName,
@@ -1322,7 +1303,7 @@ public class SqlCompiler implements Closeable {
                     cursorMetadata,
                     writer,
                     writerMetadata,
-                    RecordToRowCopierUtils.assembleRecordToRowCopier(
+                    RecordToRowCopierUtils.generateCopier(
                             asm,
                             cursorMetadata,
                             writerMetadata,
@@ -1336,11 +1317,17 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    /**
+    /*
      * Returns number of copied rows.
      */
-    private long copyTableData(RecordCursor cursor, RecordMetadata metadata, TableWriter writer, RecordMetadata
-            writerMetadata, RecordToRowCopier recordToRowCopier) {
+    private long copyTableData(
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            TableWriter writer,
+            RecordMetadata
+                    writerMetadata,
+            RecordToRowCopier recordToRowCopier
+    ) throws SqlException {
         int timestampIndex = writerMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
             return copyUnordered(cursor, writer, recordToRowCopier);
@@ -1522,6 +1509,31 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofCopyLocal(copyFactory);
     }
 
+    @Nullable
+    private RecordCursorFactory executeCopy0(CopyModel model) throws SqlException {
+        try {
+            if (model.isCancel()) {
+                cancelTextImport(model);
+                return null;
+            } else {
+                if (model.getTimestampColumnName() == null &&
+                        ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+                    throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
+                }
+                if (model.getTimestampFormat() == null) {
+                    model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
+                }
+                if (model.getDelimiter() < 0) {
+                    model.setDelimiter((byte) ',');
+                }
+                return compileTextImport(model);
+            }
+        } catch (TextImportException | TextException e) {
+            LOG.error().$((Throwable) e).$();
+            throw SqlException.$(0, e.getMessage());
+        }
+    }
+
     private CompiledQuery executeWithRetries(
             ExecutableMethod method,
             ExecutionModel executionModel,
@@ -1610,7 +1622,7 @@ public class SqlCompiler implements Closeable {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, reader.getTableName(), structureVersion);
-            final int writerTimestampIndex = metadata.getTimestampIndex();
+            final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
             for (int tupleIndex = 0, n = model.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
@@ -1619,8 +1631,8 @@ public class SqlCompiler implements Closeable {
                 if (columnSetSize > 0) {
                     valueFunctions = new ObjList<>(columnSetSize);
                     for (int i = 0; i < columnSetSize; i++) {
-                        int index = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
-                        if (index > -1) {
+                        int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
+                        if (metadataColumnIndex > -1) {
                             final ExpressionNode node = model.getRowTupleValues(tupleIndex).getQuick(i);
                             Function function = functionParser.parseFunction(
                                     node,
@@ -1633,15 +1645,15 @@ public class SqlCompiler implements Closeable {
                                     tupleIndex,
                                     valueFunctions,
                                     metadata,
-                                    writerTimestampIndex,
+                                    metadataTimestampIndex,
                                     i,
-                                    index,
+                                    metadataColumnIndex,
                                     function,
                                     node.position,
                                     executionContext.getBindVariableService()
                             );
 
-                            if (writerTimestampIndex == index) {
+                            if (metadataTimestampIndex == metadataColumnIndex) {
                                 timestampFunction = function;
                             }
 
@@ -1670,7 +1682,7 @@ public class SqlCompiler implements Closeable {
                                 tupleIndex,
                                 valueFunctions,
                                 metadata,
-                                writerTimestampIndex,
+                                metadataTimestampIndex,
                                 i,
                                 i,
                                 function,
@@ -1678,20 +1690,20 @@ public class SqlCompiler implements Closeable {
                                 executionContext.getBindVariableService()
                         );
 
-                        if (writerTimestampIndex == i) {
+                        if (metadataTimestampIndex == i) {
                             timestampFunction = function;
                         }
                     }
                 }
 
                 // validate timestamp
-                if (writerTimestampIndex > -1 && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()))) {
+                if (metadataTimestampIndex > -1 && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()))) {
                     throw SqlException.$(0, "insert statement must populate timestamp");
                 }
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
-                RecordToRowCopier copier = RecordToRowCopierUtils.assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
-                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction));
+                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
+                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
             }
             return compiledQuery.ofInsert(insertOperation);
         } catch (SqlException e) {
@@ -1706,9 +1718,10 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
         long insertCount;
 
-        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
-             RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
-
+        try (
+                TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
+                RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)
+        ) {
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
             final BaseRecordMetadata writerMetadata = writer.getMetadata().copyDense();
@@ -1760,7 +1773,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(name.position, "select clause must provide timestamp column");
                 }
 
-                copier = RecordToRowCopierUtils.assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
+                copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
             } else {
                 // fail when target table requires chronological data and cursor cannot provide it
                 if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
@@ -1806,7 +1819,12 @@ public class SqlCompiler implements Closeable {
 
                 entityColumnFilter.of(writerMetadata.getColumnCount());
 
-                copier = RecordToRowCopierUtils.assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
+                copier = RecordToRowCopierUtils.generateCopier(
+                        asm,
+                        cursorMetadata,
+                        writerMetadata,
+                        entityColumnFilter
+                );
             }
 
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -2264,8 +2282,8 @@ public class SqlCompiler implements Closeable {
             int tupleIndex,
             ObjList<Function> valueFunctions,
             RecordMetadata metadata,
-            int writerTimestampIndex,
-            int bottomUpColumnIndex,
+            int metadataTimestampIndex,
+            int insertColumnIndex,
             int metadataColumnIndex,
             Function function,
             int functionPosition,
@@ -2278,7 +2296,7 @@ public class SqlCompiler implements Closeable {
         }
 
         if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
-            if (metadataColumnIndex == writerTimestampIndex) {
+            if (metadataColumnIndex == metadataTimestampIndex) {
                 return function;
             }
             // cast char and string to target column types
@@ -2320,6 +2338,8 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.DOUBLE:
                             if (function.isConstant()) {
                                 function = SqlUtil.parseStr(function.getStr(null), tupleIndex, ColumnType.tagOf(columnType));
+                            } else {
+                                System.out.println("oops");
                             }
                             break;
                         case ColumnType.GEOBYTE:
@@ -2341,7 +2361,7 @@ public class SqlCompiler implements Closeable {
         throw SqlException.inconvertibleTypes(
                 functionPosition,
                 function.getType(),
-                model.getRowTupleValues(tupleIndex).getQuick(bottomUpColumnIndex).token,
+                model.getRowTupleValues(tupleIndex).getQuick(insertColumnIndex).token,
                 metadata.getColumnType(metadataColumnIndex),
                 metadata.getColumnName(metadataColumnIndex)
         );
@@ -2426,6 +2446,11 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return metadata.getColumnHash(columnIndex);
+        }
+
+        @Override
         public CharSequence getColumnName(int columnIndex) {
             return model.getColumnName(columnIndex);
         }
@@ -2440,8 +2465,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return metadata.getColumnHash(columnIndex);
+        public long getCommitLag() {
+            return model.getCommitLag();
         }
 
         @Override
@@ -2450,13 +2475,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return model.isIndexed(columnIndex);
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return model.isSequential(columnIndex);
+        public int getMaxUncommittedRows() {
+            return model.getMaxUncommittedRows();
         }
 
         @Override
@@ -2494,18 +2514,18 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return model.getMaxUncommittedRows();
-        }
-
-        @Override
-        public long getCommitLag() {
-            return model.getCommitLag();
-        }
-
-        @Override
         public boolean isWallEnabled() {
             return model.isWallEnabled();
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return model.isIndexed(columnIndex);
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return model.isSequential(columnIndex);
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
@@ -2564,6 +2584,11 @@ public class SqlCompiler implements Closeable {
                             .$(", e=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .$(']').$();
+                } catch (SqlException e) {
+                    LOG.error()
+                            .$("could not backup [path=").$(fileNameSink)
+                            .$(", e=").$(e.getFlyweightMessage())
+                            .$(']').$();
                 }
             }
         };
@@ -2596,7 +2621,7 @@ public class SqlCompiler implements Closeable {
             }
         }
 
-        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
+        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) throws SqlException {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
@@ -2617,7 +2642,12 @@ public class SqlCompiler implements Closeable {
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
                         if (null == recordToRowCopier) {
                             entityColumnFilter.of(writerMetadata.getColumnCount());
-                            recordToRowCopier = RecordToRowCopierUtils.assembleRecordToRowCopier(asm, reader.getMetadata(), writerMetadata, entityColumnFilter);
+                            recordToRowCopier = RecordToRowCopierUtils.generateCopier(
+                                    asm,
+                                    reader.getMetadata(),
+                                    writerMetadata,
+                                    entityColumnFilter
+                            );
                             tableBackupRowCopiedCache.put(srcPath.toString(), recordToRowCopier);
                         }
 
@@ -2635,18 +2665,18 @@ public class SqlCompiler implements Closeable {
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
-            } catch (CairoException ex) {
+            } catch (CairoException | SqlException e) {
                 LOG.info()
                         .$("could not backup [table=").$(tableName)
-                        .$(", ex=").$(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
+                        .$(", ex=").$(e.getFlyweightMessage())
+                        .$(", errno=").$((e instanceof CairoException) ? ((CairoException) e).getErrno() : 0)
                         .$(']').$();
                 srcPath.of(cachedTmpBackupRoot).concat(tableName).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
                     LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
                 }
-                throw ex;
+                throw e;
             }
         }
 

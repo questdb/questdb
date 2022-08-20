@@ -400,7 +400,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private long convertToTimestamp(CharSequence str, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialDate(str);
+            return IntervalUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }

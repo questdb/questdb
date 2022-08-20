@@ -35,7 +35,12 @@ public class RecordToRowCopierUtils {
 
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
-    public static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
+    public static RecordToRowCopier generateCopier(
+            BytecodeAssembler asm,
+            ColumnTypes from,
+            RecordMetadata to,
+            ColumnFilter toColumnFilter
+    ) {
         int timestampIndex = to.getTimestampIndex();
         asm.init(RecordToRowCopier.class);
         asm.setupPool();
@@ -80,7 +85,10 @@ public class RecordToRowCopierUtils {
         int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
-        int wPutTimestampStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
+        int parseTimestamp = asm.poolMethod(SqlUtil.class, "parseTimestamp", "(Ljava/lang/CharSequence;)J");
+        int parseChar = asm.poolMethod(SqlUtil.class, "parseChar", "(CI)B");
+        int parseFloat = asm.poolMethod(SqlUtil.class, "parseFloat", "(Ljava/lang/CharSequence;)F");
+        int dateToTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
         int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
@@ -162,12 +170,28 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckIntBoundsCall(
+                                    asm,
+                                    checkLongBounds,
+                                    minLongShort,
+                                    maxLongShort,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckIntBoundsCall(
+                                    asm,
+                                    checkLongBounds,
+                                    minLongByte,
+                                    maxLongByte,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
@@ -188,7 +212,15 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetLong);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongInt, maxLongInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckLongBoundsCall(
+                                    asm,
+                                    checkLongBounds,
+                                    minLongInt,
+                                    maxLongInt,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.l2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
@@ -199,13 +231,29 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckLongBoundsCall(
+                                    asm,
+                                    checkLongBounds,
+                                    minLongShort,
+                                    maxLongShort,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.l2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckLongBoundsCall(
+                                    asm,
+                                    checkLongBounds,
+                                    minLongByte,
+                                    maxLongByte,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.l2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
@@ -234,6 +282,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.TIMESTAMP:
+                            asm.invokeStatic(dateToTimestamp);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
@@ -290,8 +339,11 @@ public class RecordToRowCopierUtils {
                         case ColumnType.DATE:
                             asm.invokeInterface(wPutDate, 3);
                             break;
-                        default:
+                        case ColumnType.TIMESTAMP:
                             asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        default:
+                            assert false;
                             break;
                     }
                     break;
@@ -349,7 +401,15 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.BYTE:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckIntBoundsCall(
+                                    asm,
+                                    checkLongBounds,
+                                    minLongByte,
+                                    maxLongByte,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
@@ -374,33 +434,81 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetFloat);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckFloatBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleInt,
+                                    maxDoubleInt,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.f2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckFloatBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleLong,
+                                    maxDoubleLong,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.f2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckFloatBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleLong,
+                                    maxDoubleLong,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.f2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckFloatBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleLong,
+                                    maxDoubleLong,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.f2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckFloatBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleShort,
+                                    maxDoubleShort,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.f2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckFloatBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleByte,
+                                    maxDoubleByte,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.f2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
@@ -418,39 +526,95 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetDouble);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckDoubleBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleInt,
+                                    maxDoubleInt,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.d2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckDoubleBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleLong,
+                                    maxDoubleLong,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.d2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckDoubleBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleLong,
+                                    maxDoubleLong,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.d2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckDoubleBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleLong,
+                                    maxDoubleLong,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.d2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckDoubleBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleShort,
+                                    maxDoubleShort,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.d2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckDoubleBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleByte,
+                                    maxDoubleByte,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.d2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleFloat, maxDoubleFloat, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
+                            addCheckDoubleBoundsCall(
+                                    asm,
+                                    checkDoubleBounds,
+                                    minDoubleFloat,
+                                    maxDoubleFloat,
+                                    fromColumnType,
+                                    toColumnTypeTag,
+                                    toColumnWriterIndex
+                            );
                             asm.d2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
@@ -462,13 +626,15 @@ public class RecordToRowCopierUtils {
                 case ColumnType.CHAR:
                     asm.invokeInterface(rGetChar);
                     switch (toColumnTypeTag) {
-                        // todo: add type checking
                         case ColumnType.BYTE:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
-                        // todo: add type checking
                         case ColumnType.SHORT:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
@@ -476,25 +642,37 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutChar, 2);
                             break;
                         case ColumnType.INT:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.i2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.i2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.i2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.i2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(parseChar);
                             asm.i2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
@@ -532,11 +710,16 @@ public class RecordToRowCopierUtils {
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr);
                     switch (toColumnTypeTag) {
+                        case ColumnType.FLOAT:
+                            asm.invokeStatic(parseFloat);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(wPutSym, 2);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeInterface(wPutTimestampStr, 2);
+                            asm.invokeStatic(parseTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.GEOBYTE:
                         case ColumnType.GEOSHORT:
@@ -544,8 +727,11 @@ public class RecordToRowCopierUtils {
                         case ColumnType.GEOLONG:
                             asm.invokeInterface(wPutGeoStr, 2);
                             break;
-                        default:
+                        case ColumnType.STRING:
                             asm.invokeInterface(wPutStr, 2);
+                            break;
+                        default:
+                            assert false;
                             break;
                     }
                     break;
@@ -693,9 +879,16 @@ public class RecordToRowCopierUtils {
         return asm.newInstance();
     }
 
-    //used by copier
+    // used by copier
     @SuppressWarnings("unused")
-    static void checkDoubleBounds(double value, double min, double max, int fromType, int toType, int toColumnIndex) throws SqlException {
+    static void checkDoubleBounds(
+            double value,
+            double min,
+            double max,
+            int fromType,
+            int toType,
+            int toColumnIndex
+    ) throws SqlException {
         if (toType == ColumnType.FLOAT && Double.isInfinite(value)) {
             // infinity in double should be able to be cast to float, since they have the same mathematical meaning
             return;
@@ -753,14 +946,29 @@ public class RecordToRowCopierUtils {
         invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
     }
 
-    private static void addCheckIntBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+    private static void addCheckIntBoundsCall(
+            BytecodeAssembler asm,
+            int checkLongBounds,
+            int min,
+            int max,
+            int fromColumnType,
+            int toColumnType,
+            int toColumnIndex
+    ) {
         asm.dup();
         asm.i2l();
-
         invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
     }
 
-    private static void invokeCheckMethod(BytecodeAssembler asm, int checkBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+    private static void invokeCheckMethod(
+            BytecodeAssembler asm,
+            int checkBounds,
+            int min,
+            int max,
+            int fromColumnType,
+            int toColumnType,
+            int toColumnIndex
+    ) {
         asm.ldc2_w(min);
         asm.ldc2_w(max);
         asm.iconst(fromColumnType);

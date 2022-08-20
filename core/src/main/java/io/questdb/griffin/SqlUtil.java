@@ -92,15 +92,52 @@ public class SqlUtil {
         return null;
     }
 
-    public static byte parseChar(char value, int columnNumber, int toType) throws SqlException {
+    public static byte parseChar(char value, int tupleIndex, int toType) throws SqlException {
         byte v = (byte) (value - '0');
         if (v > -1 && v < 10) {
             return v;
         }
-        throw SqlException.inconvertibleValue(columnNumber, value, ColumnType.CHAR, toType);
+        throw SqlException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
     }
 
-    public static Function parseStr(CharSequence value, int columnNumber, int toType) throws SqlException {
+    public static byte parseChar(char value, int toType) throws SqlException {
+        byte v = (byte) (value - '0');
+        if (v > -1 && v < 10) {
+            return v;
+        }
+        throw SqlException.inconvertibleValue(0, value, ColumnType.CHAR, toType);
+    }
+
+    public static float parseFloat(CharSequence value) throws SqlException {
+        try {
+            return Numbers.parseFloat(value);
+        } catch (NumericException e) {
+            throw SqlException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.FLOAT);
+        }
+    }
+
+    public static long dateToTimestamp(long millis) {
+        return millis != Numbers.LONG_NaN ? millis * 1000L : millis;
+    }
+
+    /**
+     * Parses partial representation of timestamp with time zone.
+     *
+     * @param value      the characters representing timestamp
+     * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
+     * @param columnType the target column type, which might be different from timestamp
+     * @return epoch offset
+     * @throws SqlException inconvertible type error.
+     */
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException e) {
+            throw SqlException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
+        }
+    }
+
+    public static Function parseStr(CharSequence value, int tupleIndex, int toType) throws SqlException {
         try {
             return LongConstant.newInstance(Numbers.parseLong(value));
         } catch (NumericException e) {
@@ -112,14 +149,14 @@ public class SqlUtil {
                 try {
                     return DateConstant.getInstance(DateFormatUtils.parseUTCDate(value));
                 } catch (NumericException exc) {
-                    try {
-                        return TimestampConstant.newInstance(IntervalUtils.parseFloorPartialDate(value));
-                    } catch (NumericException exc1) {
-                        throw SqlException.inconvertibleValue(columnNumber, value, ColumnType.STRING, toType);
-                    }
+                    return TimestampConstant.newInstance(parseFloorPartialTimestamp(value, tupleIndex, toType));
                 }
             }
         }
+    }
+
+    public static long parseTimestamp(CharSequence value) throws SqlException {
+        return parseFloorPartialTimestamp(value, 0, ColumnType.TIMESTAMP);
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
