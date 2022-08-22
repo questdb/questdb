@@ -443,8 +443,34 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             } catch (CairoException e) {
                 MatcherAssert.assertThat(e.getMessage(), StringContains.containsString("timeout, query aborted"));
             }
-
         }, 4, 1); // sharedWorkerCount < workerCount
+    }
+
+    @Test
+    public void testFaultToleranceSampleByFilterNPE() throws Exception {
+        withPool0((engine, compiler, sqlExecutionContext) -> {
+            compiler.compile("create table x as (" +
+                    "select timestamp_sequence(0, 100000) timestamp," +
+                    " rnd_symbol('ETH_BTC','BTC_ETH') symbol," +
+                    " rnd_float() price," +
+                    " x row_id" +
+                    " from long_sequence(20000)" +
+                    ") timestamp (timestamp) partition by hour", sqlExecutionContext);
+            final String sql = "select timestamp, count() as trades" +
+                    " from x" +
+                    " where symbol like '%_ETH' and (row_id != 100 or npe())" +
+                    " sample by 1h";
+            try {
+                try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {} // drain cursor until exception
+                        Assert.fail();
+                    }
+                }
+            } catch (Throwable e) {
+                MatcherAssert.assertThat(e.getMessage(), StringContains.containsString("timeout, query aborted"));
+            }
+        }, 4, 4);
     }
 
     private void resetTaskCapacities() {
