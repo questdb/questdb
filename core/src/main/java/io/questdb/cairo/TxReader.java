@@ -39,7 +39,7 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
-    private static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
+    protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected final LongList attachedPartitions = new LongList();
     private final IntList symbolCountSnapshot = new IntList();
     private final FilesFacade ff;

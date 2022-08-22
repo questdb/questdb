@@ -1849,7 +1849,7 @@ public class TableWriter implements Closeable {
         }
 
         txWriter.resetTimestamp();
-        columnVersionWriter.truncate();
+        columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
         txWriter.truncate(columnVersionWriter.getVersion());
         row = regularRow;
         try {

@@ -133,9 +133,16 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void truncate() {
+    public void truncate(boolean isPartitioned) {
         if (cachedList.size() > 0) {
-            cachedList.clear();
+            if (isPartitioned) {
+                cachedList.clear();
+            } else {
+                //reset column tops
+                for (int i = 3, n = cachedList.size(); i < n; i += 4) {
+                    cachedList.setQuick(i, 0);
+                }
+            }
             hasChanges = true;
             commit();
         }
