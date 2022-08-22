@@ -30,8 +30,8 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class LastStringGroupByFunction extends FirstStringGroupByFunction implements GroupByFunction, UnaryFunction {
@@ -40,7 +40,13 @@ public class LastStringGroupByFunction extends FirstStringGroupByFunction implem
     }
 
     @Override
+
     public void computeNext(MapValue mapValue, Record record) {
-        stringValues.set(mapValue.getInt(this.valueIndex), this.arg.getStr(record).toString());
+        CharSequence cs = this.arg.getStr(record);
+        DirectCharSink copy = new DirectCharSink(cs.length());
+        copy.put(cs);
+        int ix = mapValue.getInt(this.valueIndex);
+        stringValues.get(ix).close();
+        stringValues.set(ix, copy);
     }
 }

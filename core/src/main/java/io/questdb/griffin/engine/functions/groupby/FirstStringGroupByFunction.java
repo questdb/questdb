@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.*;
+import io.questdb.std.str.DirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
@@ -38,7 +39,7 @@ import java.util.List;
 public class FirstStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected int valueIndex;
-    protected List<CharSequence> stringValues;
+    protected List<DirectCharSink> stringValues;
 
     public FirstStringGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -47,6 +48,9 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
 
     @Override
     public void close() {
+        for(DirectCharSink ds : stringValues) {
+            ds.close();
+        }
         stringValues.clear();
     }
 
@@ -54,7 +58,10 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
     public void computeFirst(MapValue mapValue, Record record) {
         int index = stringValues.size();
         mapValue.putInt(this.valueIndex, index);
-        stringValues.add(this.arg.getStr(record).toString());
+        CharSequence cs = this.arg.getStr(record);
+        DirectCharSink copy = new DirectCharSink(cs.length());
+        copy.put(cs);
+        stringValues.add(copy);
     }
 
     @Override
