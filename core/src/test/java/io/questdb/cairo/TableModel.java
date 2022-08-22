@@ -34,7 +34,7 @@ import java.io.Closeable;
 public class TableModel implements TableStructure, Closeable {
     private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
-    private final String name;
+    private String name;
     private final int partitionBy;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
@@ -127,6 +127,10 @@ public class TableModel implements TableStructure, Closeable {
         return name;
     }
 
+    public void setName(String name) {
+        this.name = name;
+    }
+
     @Override
     public int getPartitionBy() {
         return partitionBy;
@@ -193,5 +197,10 @@ public class TableModel implements TableStructure, Closeable {
     @Override
     public long getCommitLag() {
         return configuration.getCommitLag();
+    }
+
+    @Override
+    public boolean isWallEnabled() {
+        return configuration.getWallEnabledDefault();
     }
 }

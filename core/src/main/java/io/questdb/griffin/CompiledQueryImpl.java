@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.QuietClosable;
+import org.jetbrains.annotations.Nullable;
 
 public class CompiledQueryImpl implements CompiledQuery {
     private RecordCursorFactory recordCursorFactory;
@@ -176,8 +176,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(BACKUP_TABLE);
     }
 
-    CompiledQuery ofCopyLocal() {
-        return of(COPY_LOCAL);
+    CompiledQuery ofCopyLocal(@Nullable RecordCursorFactory factory) {
+        this.type = COPY_LOCAL;
+        this.recordCursorFactory = factory;
+        this.affectedRowsCount = -1;
+        return this;
     }
 
     CompiledQuery ofCopyRemote(TextLoader textLoader) {

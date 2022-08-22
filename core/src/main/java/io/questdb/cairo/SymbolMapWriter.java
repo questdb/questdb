@@ -179,8 +179,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return put(symbol, valueCountCollector);
     }
 
+    @Override
     public int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector) {
-
         if (symbol == null) {
             if (!nullValue) {
                 nullValue = true;
@@ -219,7 +219,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
         offsetMem.putBool(HEADER_CACHE_ENABLED, isCached());
         nullValue = false;
-        updateNullFlag(nullValue);
+        updateNullFlag(false);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
         charMem.truncate();
         indexWriter.truncate();
@@ -280,5 +280,29 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public void updateNullFlag(boolean flag) {
         offsetMem.putBool(HEADER_NULL_FLAG, flag);
+    }
+
+    public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
+        boolean remapped = false;
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            if (dst.put(src.valueOf(srcId)) != srcId) {
+                remapped = true;
+            }
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+        return remapped;
+    }
+
+    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
+        map.jumpTo(0);
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            map.putInt(dst.put(src.valueOf(srcId)));
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+    }
+
+    @Override
+    public boolean getNullFlag() {
+        return offsetMem.getBool(HEADER_NULL_FLAG);
     }
 }

@@ -31,17 +31,17 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
-import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -55,9 +55,11 @@ import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
 
+    protected static final PlanSink planSink = new PlanSink();
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    private static final MicrosecondClock defaultMicrosecondClock = new X();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     public static long writerAsyncCommandBusyWaitTimeout = -1;
@@ -66,11 +68,13 @@ public class AbstractCairoTest {
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
     protected static long currentMicros = -1;
-    protected final static MicrosecondClock testMicrosClock =
-            () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
+    protected static String inputWorkRoot = null;
+    protected static int sqlCopyBufferSize = 1024 * 1024;
+    protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static FilesFacade ff;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
@@ -93,18 +97,21 @@ public class AbstractCairoTest {
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int columnVersionTaskPoolCapacity = -1;
     protected static RostiAllocFacade rostiAllocFacade = null;
+    protected static int parallelImportStatusLogKeepNDays = -1;
+    protected static Boolean ioURingEnabled = null;
 
     @Rule
     public TestName testName = new TestName();
-    public static long spinLockTimeoutUs = -1;
+    public static long spinLockTimeout = -1;
     protected static boolean hideTelemetryTable = false;
-    private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
+    protected static int defaultTableWriteMode = -1;
 
+    private static TelemetryConfiguration telemetryConfiguration;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -133,8 +140,11 @@ public class AbstractCairoTest {
 
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public int getBinaryEncodingMaxLength() {
-                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            public DateFormat getBackupDirTimestampFormat() {
+                if (backupDirTimestampFormat != null) {
+                    return backupDirTimestampFormat;
+                }
+                return super.getBackupDirTimestampFormat();
             }
 
             @Override
@@ -146,11 +156,31 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public DateFormat getBackupDirTimestampFormat() {
-                if (backupDirTimestampFormat != null) {
-                    return backupDirTimestampFormat;
+            public int getBinaryEncodingMaxLength() {
+                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            }
+
+            @Override
+            public double getColumnPurgeRetryDelayMultiplier() {
+                return columnPurgeRetryDelayMultiplier > 0 ? columnPurgeRetryDelayMultiplier : 2.0;
+            }
+
+            @Override
+            public long getColumnPurgeRetryDelay() {
+                return columnPurgeRetryDelay > 0 ? columnPurgeRetryDelay : 10;
+            }
+
+            @Override
+            public CharSequence getSnapshotInstanceId() {
+                if (snapshotInstanceId == null) {
+                    return super.getSnapshotInstanceId();
                 }
-                return super.getBackupDirTimestampFormat();
+                return snapshotInstanceId;
+            }
+
+            @Override
+            public boolean isSnapshotRecoveryEnabled() {
+                return snapshotRecoveryEnabled == null ? super.isSnapshotRecoveryEnabled() : snapshotRecoveryEnabled;
             }
 
             @Override
@@ -175,8 +205,13 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getInputRoot() {
+            public CharSequence getSqlCopyInputRoot() {
                 return inputRoot;
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputWorkRoot() {
+                return inputWorkRoot;
             }
 
             @Override
@@ -185,11 +220,11 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getSpinLockTimeoutUs() {
-                if (spinLockTimeoutUs > -1) {
-                    return spinLockTimeoutUs;
+            public long getSpinLockTimeout() {
+                if (spinLockTimeout > -1) {
+                    return spinLockTimeout;
                 }
-                return 5_000_000;
+                return 5_000;
             }
 
             @Override
@@ -204,28 +239,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getSampleByIndexSearchPageSize() {
-                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
-            }
-
-            @Override
-            public int getSqlJitMode() {
-                return jitMode;
-            }
-
-            @Override
-            public int getSqlPageFrameMaxRows() {
-                return pageFrameMaxRows < 0 ? super.getSqlPageFrameMaxRows() : pageFrameMaxRows;
-            }
-
-            @Override
-            public long getWriterAsyncCommandBusyWaitTimeout() {
-                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
-            }
-
-            @Override
-            public long getWriterAsyncCommandMaxTimeout() {
-                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
+            public MillisecondClock getMillisecondClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
             }
 
             @Override
@@ -233,6 +248,11 @@ public class AbstractCairoTest {
                 // Bump it to high number so that test don't fail with memory leak if LongList
                 // re-allocates
                 return 512;
+            }
+
+            @Override
+            public int getSampleByIndexSearchPageSize() {
+                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
             }
 
             @Override
@@ -246,21 +266,28 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getSnapshotInstanceId() {
-                if (snapshotInstanceId == null) {
-                    return super.getSnapshotInstanceId();
-                }
-                return snapshotInstanceId;
+            public int getSqlJitMode() {
+                return jitMode;
             }
 
             @Override
-            public boolean isSnapshotRecoveryEnabled() {
-                return snapshotRecoveryEnabled == null ? super.isSnapshotRecoveryEnabled() : snapshotRecoveryEnabled;
+            public int getSqlPageFrameMaxRows() {
+                return pageFrameMaxRows < 0 ? super.getSqlPageFrameMaxRows() : pageFrameMaxRows;
             }
 
             @Override
             public TelemetryConfiguration getTelemetryConfiguration() {
                 return telemetryConfiguration;
+            }
+
+            @Override
+            public long getWriterAsyncCommandBusyWaitTimeout() {
+                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
+            }
+
+            @Override
+            public long getWriterAsyncCommandMaxTimeout() {
+                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
             }
 
             @Override
@@ -271,16 +298,6 @@ public class AbstractCairoTest {
             @Override
             public long getWriterCommandQueueSlotSize() {
                 return writerCommandQueueSlotSize;
-            }
-
-            @Override
-            public double getColumnPurgeRetryDelayMultiplier() {
-                return columnPurgeRetryDelayMultiplier > 0 ? columnPurgeRetryDelayMultiplier : 2.0;
-            }
-
-            @Override
-            public long getColumnPurgeRetryDelay() {
-                return columnPurgeRetryDelay > 0 ? columnPurgeRetryDelay : 10;
             }
 
             @Override
@@ -314,8 +331,28 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public int getSqlCopyLogRetentionDays() {
+                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
+            }
+
+            @Override
             public RostiAllocFacade getRostiAllocFacade() {
-                return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
+                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
+            }
+
+            @Override
+            public boolean getWallEnabledDefault() {
+                return defaultTableWriteMode < 0 ? super.getWallEnabledDefault() : defaultTableWriteMode == 1;
+            }
+
+            @Override
+            public boolean isIOURingEnabled() {
+                return ioURingEnabled != null ? ioURingEnabled : super.isIOURingEnabled();
+            }
+
+            @Override
+            public int getSqlCopyBufferSize() {
+                return sqlCopyBufferSize;
             }
         };
         engine = new CairoEngine(configuration, metrics);
@@ -329,6 +366,7 @@ public class AbstractCairoTest {
         engine = Misc.free(engine);
         backupDir = null;
         backupDirTimestampFormat = null;
+        DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
     @Before
@@ -351,6 +389,7 @@ public class AbstractCairoTest {
         configOverrideMaxUncommittedRows = -1;
         configOverrideCommitLagMicros = -1;
         currentMicros = -1;
+        testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
@@ -359,7 +398,7 @@ public class AbstractCairoTest {
         jitMode = SqlJitMode.JIT_MODE_ENABLED;
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
-        spinLockTimeoutUs = -1;
+        spinLockTimeout = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         enableParallelFilter = null;
@@ -372,6 +411,12 @@ public class AbstractCairoTest {
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
+        sqlCopyBufferSize = 1024 * 1024;
+        ioURingFacade = IOURingFacadeImpl.INSTANCE;
+        ioURingEnabled = null;
+        parallelImportStatusLogKeepNDays = -1;
+        defaultTableWriteMode = -1;
+        sink.clear();
     }
 
     protected static void configureForBackups() throws IOException {
@@ -407,5 +452,12 @@ public class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
+    }
+
+    private static class X implements MicrosecondClock {
+        @Override
+        public long getTicks() {
+            return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+        }
     }
 }

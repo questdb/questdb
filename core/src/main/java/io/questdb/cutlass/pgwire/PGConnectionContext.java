@@ -48,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 /**
@@ -67,6 +67,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_UPDATE = "UPDATE";
+    // create as select tag
+    public static final String TAG_CTAS = "CTAS";
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
@@ -159,7 +161,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long recvBufferReadOffset = 0;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
-    private long statementTimeoutMs = -1L;
+    private long statementTimeout = -1L;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
     // these references are held by context only for a period of processing single request
@@ -170,6 +172,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
     private TypesAndUpdate typesAndUpdate = null;
+    private boolean typesAndSelectIsCached = true;
     private boolean typesAndUpdateIsCached = false;
     private long fd;
     private CharSequence queryText;
@@ -315,8 +318,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = true;
         clearCursorAndFactory();
         totalReceived = 0;
+        typesAndSelectIsCached = true;
         typesAndUpdateIsCached = false;
-        statementTimeoutMs = -1L;
+        statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
     }
 
@@ -631,7 +635,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NaN) {
             final long a = responseAsciiSink.skip();
-            PG_DATE_MILLI_TIME_Z_FORMAT.format(longValue, null, null, responseAsciiSink);
+            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, null, null, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         } else {
             responseAsciiSink.setNullValue();
@@ -1046,16 +1050,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void clearCursorAndFactory() {
         resumeProcessor = null;
         currentCursor = Misc.free(currentCursor);
-        // do not free factory, it will be cached
+        // do not free factory, we may cache it
         currentFactory = null;
         // we resumed the cursor send the typeAndSelect will be null
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
-            typesAndSelectCache.put(queryText, typesAndSelect);
-            // clear selectAndTypes so that context doesn't accidentally
-            // free the factory when context finishes abnormally
-            this.typesAndSelect = null;
+            if (typesAndSelectIsCached) {
+                typesAndSelectCache.put(queryText, typesAndSelect);
+                // clear selectAndTypes so that context doesn't accidentally
+                // free the factory when context finishes abnormally
+                this.typesAndSelect = null;
+            } else {
+                this.typesAndSelect = Misc.free(this.typesAndSelect);
+            }
         }
 
         if (typesAndUpdate != null) {
@@ -1166,6 +1174,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (index > -1) {
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
+            // COPY 'id' CANCEL; queries shouldn't be compiled multiple times, but it's fine to compile
+            // COPY 'x' FROM ...; queries multiple times since the import is executed lazily
+            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_COPY && typesAndSelect == null));
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
             this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -1352,20 +1363,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             op.withContext(sqlExecutionContext);
             pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
         } else {
-            if (statementTimeoutMs > 0) {
-                circuitBreaker.setMaxTime(statementTimeoutMs);
+            if (statementTimeout > 0) {
+                circuitBreaker.setTimeout(statementTimeout);
             }
 
             // execute against writer from the engine, or async
             try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
-                if (statementTimeoutMs > 0) {
-                    if (fut.await(statementTimeoutMs * 1000L) != QUERY_COMPLETE) {
+                if (statementTimeout > 0) {
+                    if (fut.await(statementTimeout) != QUERY_COMPLETE) {
                         // Timeout
                         if (op.isWriterClosePending()) {
                             // Writer has not tried to execute the command
                             freeUpdateCommand(op);
                         }
-                        throw SqlException.$(0, "UPDATE query timeout ").put(statementTimeoutMs).put(" ms");
+                        throw SqlException.$(0, "UPDATE query timeout ").put(statementTimeout).put(" ms");
                     }
                 } else {
                     // Default timeouts, can be different for select and update part
@@ -1394,7 +1405,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void freeUpdateCommand(UpdateOperation op) {
         // Create a copy of sqlExecutionContext here
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount());
+        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(
+                engine,
+                sqlExecutionContext.getWorkerCount(),
+                sqlExecutionContext.getSharedWorkerCount()
+        );
         newSqlExecutionContext.with(
                 sqlExecutionContext.getCairoSecurityContext(),
                 bindVariableService,
@@ -1895,12 +1910,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 final CharSequence statementName = getStatementName(lo, hi);
                 if (statementName != null) {
                     final int index = namedStatementMap.keyIndex(statementName);
+                    // do not freak out if client is closing statement we don't have
+                    // we could have reported error to client before statement was created
                     if (index < 0) {
                         namedStatementWrapperPool.push(namedStatementMap.valueAt(index));
                         namedStatementMap.removeAt(index);
-                    } else {
-                        LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
-                        throw BadProtocolException.INSTANCE;
                     }
                 }
                 break;
@@ -1931,7 +1945,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         switch (cq.getType()) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                queryTag = TAG_SELECT;
+                queryTag = TAG_CTAS;
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.SELECT:
@@ -1961,7 +1975,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.COPY_LOCAL:
-                // uncached
+                final RecordCursorFactory factory = cq.getRecordCursorFactory();
+                // factory is null in the COPY 'id' CANCEL; case
+                if (factory != null) {
+                    // this query is non-cacheable
+                    typesAndSelectIsCached = false;
+                    typesAndSelect = typesAndSelectPool.pop();
+                    typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                }
                 queryTag = TAG_COPY;
                 break;
             case CompiledQuery.SET:
@@ -2127,9 +2148,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeoutMs = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
-                                if (this.statementTimeoutMs > 0) {
-                                    circuitBreaker.setMaxTime(statementTimeoutMs);
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                                if (this.statementTimeout > 0) {
+                                    circuitBreaker.setTimeout(statementTimeout);
                                 }
                             } catch (NumericException ex) {
                                 parsed = false;
@@ -2165,6 +2186,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
+        // make sure there are no left-over sync actions
+        // we are starting a new iteration of the parse
+        syncActions.clear();
+
         // 'Parse'
         //message length
         long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
@@ -2231,12 +2256,19 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         if (Chars.utf8Decode(lo, limit - 1, e)) {
             queryText = characterStore.toImmutable();
-            compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+            try {
+                compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                // we need to continue parsing receive buffer even if we errored out
+                // this is because PG client might expect separate responses to everything it sent
+            } catch (SqlException ex) {
+                prepareError(ex.getPosition(), ex.getFlyweightMessage(), 0);
+            } catch (CairoException ex) {
+                prepareError(0, ex.getFlyweightMessage(), ex.getErrno());
+            }
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
             throw BadProtocolException.INSTANCE;
         }
-
         sendReadyForNewQuery();
     }
 
@@ -2484,9 +2516,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (compileQuery(compiler) && typesAndSelect != null) {
+        if (!wrapper.alreadyExecuted && compileQuery(compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
+        // We'll have to compile/execute the statement next time.
+        wrapper.alreadyExecuted = false;
     }
 
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
@@ -2536,6 +2570,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         public final IntList bindVariableTypes = new IntList();
         public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
+        // Used for statements that are executed as a part of compilation (PREPARE), such as DDLs.
+        public boolean alreadyExecuted = false;
 
         @Override
         public void clear() {

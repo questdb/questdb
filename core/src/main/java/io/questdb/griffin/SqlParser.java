@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -63,7 +64,7 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
-    private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewritePgCast0Ref = this::rewritePgCast0;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private boolean subQueryMode = false;
 
@@ -425,32 +426,89 @@ public final class SqlParser {
     }
 
     private ExecutionModel parseCopy(GenericLexer lexer) throws SqlException {
-        if (configuration.getInputRoot() == null) {
+        if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
             throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
         }
-        ExpressionNode tableName = expectExpr(lexer);
-        CharSequence tok = tok(lexer, "'from' or 'to'");
+        ExpressionNode target = expectExpr(lexer);
+        CharSequence tok = tok(lexer, "'from' or 'to' or 'cancel'");
+
+        if (isCancelKeyword(tok)) {
+            CopyModel model = copyModelPool.next();
+            model.setCancel(true);
+            model.setTarget(target);
+            return model;
+        }
 
         if (isFromKeyword(tok)) {
             final ExpressionNode fileName = expectExpr(lexer);
             if (fileName.token.length() < 3 && Chars.startsWith(fileName.token, '\'')) {
                 throw SqlException.$(fileName.position, "file name expected");
             }
+
             CopyModel model = copyModelPool.next();
-            model.setTableName(tableName);
+            model.setTarget(target);
             model.setFileName(fileName);
 
             tok = optTok(lexer);
             if (tok != null && isWithKeyword(tok)) {
                 tok = tok(lexer, "copy option");
-                while (tok != null) {
+                while (tok != null && !isSemicolon(tok)) {
                     if (isHeaderKeyword(tok)) {
                         model.setHeader(isTrueKeyword(tok(lexer, "'true' or 'false'")));
+                        tok = optTok(lexer);
+                    } else if (isPartitionKeyword(tok)) {
+                        expectTok(lexer, "by");
+                        tok = tok(lexer, "year month day hour");
+                        int partitionBy = PartitionBy.fromString(tok);
+                        if (partitionBy == -1) {
+                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                        }
+                        model.setPartitionBy(partitionBy);
+                        tok = optTok(lexer);
+                    } else if (isTimestampKeyword(tok)) {
+                        tok = tok(lexer, "timestamp column name expected");
+                        CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                            throw SqlException.$(lexer.getPosition(), "timestamp column name contains invalid characters");
+                        }
+                        model.setTimestampColumnName(columnName);
+                        tok = optTok(lexer);
+                    } else if (isFormatKeyword(tok)) {
+                        tok = tok(lexer, "timestamp format expected");
+                        CharSequence format = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        model.setTimestampFormat(format);
+                        tok = optTok(lexer);
+                    } else if (isOnKeyword(tok)) {
+                        expectTok(lexer, "error");
+                        tok = tok(lexer, "skip_column skip_row abort");
+                        if (Chars.equalsIgnoreCase(tok, "skip_column")) {
+                            model.setAtomicity(Atomicity.SKIP_COL);
+                        } else if (Chars.equalsIgnoreCase(tok, "skip_row")) {
+                            model.setAtomicity(Atomicity.SKIP_ROW);
+                        } else if (Chars.equalsIgnoreCase(tok, "abort")) {
+                            model.setAtomicity(Atomicity.SKIP_ALL);
+                        } else {
+                            throw SqlException.$(lexer.getPosition(), "invalid 'on error' copy option found");
+                        }
+                        tok = optTok(lexer);
+                    } else if (isDelimiterKeyword(tok)) {
+                        tok = tok(lexer, "timestamp character expected");
+                        CharSequence delimiter = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        if (delimiter == null || delimiter.length() != 1) {
+                            throw SqlException.$(lexer.getPosition(), "delimiter is empty or contains more than 1 character");
+                        }
+                        char delimiterChar = delimiter.charAt(0);
+                        if (delimiterChar > 127) {
+                            throw SqlException.$(lexer.getPosition(), "delimiter is not an ascii character");
+                        }
+                        model.setDelimiter((byte) delimiterChar);
                         tok = optTok(lexer);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "unexpected option");
                     }
                 }
+            } else if (tok != null && !SqlKeywords.isSemicolon(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
             }
             return model;
         }
@@ -512,9 +570,13 @@ public final class SqlParser {
             model.setTimestamp(timestamp);
             tok = optTok(lexer);
         }
-
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long commitLag = configuration.getCommitLag();
+
+        final int walNotSet = -1;
+        final int walDisabled = 0;
+        final int walEnabled = 1;
+        int walSetting = walNotSet;
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
@@ -522,10 +584,32 @@ public final class SqlParser {
                 throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
             }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
-                throw SqlException.$(partitionBy.position, "'NONE', 'DAY', 'MONTH' or 'YEAR' expected");
+                throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
             }
             model.setPartitionBy(partitionBy);
             tok = optTok(lexer);
+
+            if (tok != null) {
+                if (isWalKeyword(tok)) {
+                    if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
+                    }
+                    walSetting = walEnabled;
+                    tok = optTok(lexer);
+                } else if (isBypassKeyword(tok)) {
+                    tok = optTok(lexer);
+                    if (tok != null && isWalKeyword(tok)) {
+                        walSetting = walDisabled;
+                        tok = optTok(lexer);
+                    } else {
+                        throw SqlException.position(
+                                        tok == null ? lexer.getPosition() : lexer.lastTokenPosition()
+                                ).put(" invalid syntax, should be BYPASS WAL but was BYPASS ")
+                                .put(tok != null ? tok : "");
+                    }
+                }
+            }
+
             if (tok != null && isWithKeyword(tok)) {
                 ExpressionNode expr;
                 while ((expr = expr(lexer, (QueryModel) null)) != null) {
@@ -554,6 +638,12 @@ public final class SqlParser {
 
         model.setMaxUncommittedRows(maxUncommittedRows);
         model.setCommitLag(commitLag);
+        final boolean isWalEnabled =
+                PartitionBy.isPartitioned(model.getPartitionBy()) && (
+                        (walSetting == walNotSet && configuration.getWallEnabledDefault()) || walSetting == walEnabled
+                );
+
+        model.setWalEnabled(isWalEnabled);
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -782,6 +872,15 @@ public final class SqlParser {
                 return model;
             }
 
+            if (prevModel.getNestedModel() != null) {
+                if (prevModel.getNestedModel().getOrderByPosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getOrderByPosition(), "unexpected token 'order'");
+                }
+                if (prevModel.getNestedModel().getLimitPosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getLimitPosition(), "unexpected token 'limit'");
+                }
+            }
+
             if (isUnionKeyword(tok)) {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
@@ -853,8 +952,11 @@ public final class SqlParser {
             }
         } else {
             lexer.unparseLast();
-            model.addBottomUpColumn(SqlUtil.nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
-            model.setArtificialStar(true);
+            SqlUtil.addSelectStar(
+                    model,
+                    queryColumnPool,
+                    expressionNodePool
+            );
         }
 
         QueryModel nestedModel = queryModelPool.next();
@@ -1186,14 +1288,15 @@ public final class SqlParser {
         // expect [order by]
 
         if (tok != null && isOrderKeyword(tok)) {
+            model.setOrderByPosition(lexer.lastTokenPosition());
             expectBy(lexer);
             do {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
 
                 ExpressionNode n = expr(lexer, model);
-                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT)) {
-                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
                 tok = optTok(lexer);
@@ -1221,6 +1324,7 @@ public final class SqlParser {
 
         // expect [limit]
         if (tok != null && isLimitKeyword(tok)) {
+            model.setLimitPosition(lexer.lastTokenPosition());
             ExpressionNode lo = expr(lexer, model);
             ExpressionNode hi = null;
 
@@ -1560,11 +1664,11 @@ public final class SqlParser {
 
                         if (isDescKeyword(tok)) {
                             ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
-                            tok = tok(lexer, "',' or ')'");
+                            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                         } else {
                             ((AnalyticColumn) col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
                             if (isAscKeyword(tok)) {
-                                tok = tok(lexer, "',' or ')'");
+                                tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                             }
                         }
                     } while (Chars.equals(tok, ','));
@@ -1595,6 +1699,11 @@ public final class SqlParser {
             }
 
             col.setAlias(alias);
+
+            // correlated sub-queries do not have expr.token values (they are null)
+            if (expr.type == ExpressionNode.QUERY) {
+                expr.token = alias;
+            }
             model.addBottomUpColumn(colPosition, col, false);
 
             if (tok == null || Chars.equals(tok, ';')) {
@@ -1883,26 +1992,37 @@ public final class SqlParser {
     }
 
     private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
-        return rewriteConcat(rewriteCase(rewriteCount(rewriteTypeQualifier(parent))));
+        return rewritePgCast(
+                rewriteConcat(
+                        rewriteCase(
+                                rewriteCount(
+                                        parent
+                                )
+                        )
+                )
+        );
     }
 
-    private ExpressionNode rewriteTypeQualifier(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteTypeQualifier0Ref);
+    private ExpressionNode rewritePgCast(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewritePgCast0Ref);
         return parent;
     }
 
-    /**
-     * Rewrites 'abc'::blah - type qualifier
-     *
-     * @param node expression node, provided by tree walking algo
-     */
-    private void rewriteTypeQualifier0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && isColonColonKeyword(node.token)) {
-            if (node.paramCount == 2) {
-                ExpressionNode that = node.rhs;
-                if (that.type == ExpressionNode.LITERAL) {
-                    that.type = ExpressionNode.MEMBER_ACCESS;
-                }
+    private void rewritePgCast0(ExpressionNode node) {
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isColonColonKeyword(node.token)) {
+            node.token = "cast";
+            node.type = ExpressionNode.FUNCTION;
+            node.rhs.type = ExpressionNode.CONSTANT;
+            // In PG x::float casts x to "double precision" type
+            if (SqlKeywords.isFloatKeyword(node.rhs.token) || SqlKeywords.isFloat8Keyword(node.rhs.token)) {
+                node.rhs.token = "double";
+            } else if (SqlKeywords.isFloat4Keyword(node.rhs.token)) {
+                node.rhs.token = "float";
+            } else if (SqlKeywords.isDateKeyword(node.rhs.token)) {
+                node.token = "to_pg_date";
+                node.rhs = node.lhs;
+                node.lhs = null;
+                node.paramCount = 1;
             }
         }
     }

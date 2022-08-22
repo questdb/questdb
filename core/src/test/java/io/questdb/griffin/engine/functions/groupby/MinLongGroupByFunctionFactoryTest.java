@@ -137,6 +137,22 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testMaxLongOrNull() throws Exception {
+        assertQuery(
+                "a\tmin\n" +
+                        "1\tNaN\n",
+                "select a, min(f) from tab",
+                "create table tab as (select cast(1 as int) a, cast(null as long) f from long_sequence(33))",
+                null,
+                "insert into tab select 1, 9223372036854775807L from long_sequence(1)",
+                "a\tmin\n" +
+                        "1\t9223372036854775807\n",
+                true,
+                true,
+                true
+        );
+    }
 
     @Test
     public void testSampleFill() throws Exception {

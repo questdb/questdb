@@ -26,12 +26,22 @@ package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
+
+    public static void addSelectStar(
+            QueryModel model,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) throws SqlException {
+        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
+        model.setArtificialStar(true);
+    }
 
     /**
      * Fetches next non-whitespace token that's not part of single or multiline comment.

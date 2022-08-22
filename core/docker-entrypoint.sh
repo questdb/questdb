@@ -9,9 +9,10 @@ RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
 
 find_and_own_dir() {
     if [ "$IGNORE_FIND_AND_OWN_DIR" = "false" ]; then
-        find "$1" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' +
+        find "$1" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
     fi
 }
+
 
 # Temporary only
 # Most of the users will have the data mounted under /root/.questdb as default
@@ -23,7 +24,7 @@ fi
 
 if [ $# -eq 0 ]; then
     echo "No arguments found, start with default arguments"
-    set -- /app/bin/java -Dout=conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
+    set -- /app/bin/java -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
 else
     if [ "${1:0:1}" = '-' ]; then
         echo "Found config arguments $@"

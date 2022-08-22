@@ -62,6 +62,6 @@ public class CountLongGroupByFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
             }
         }
-        return new CountGroupByFunction();
+        return new CountLongGroupByFunction();
     }
 }

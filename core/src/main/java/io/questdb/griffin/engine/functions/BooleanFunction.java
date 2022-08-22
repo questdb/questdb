@@ -45,38 +45,38 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
-    public final byte getByte(Record rec) {
-        return (byte) (getBool(rec) ? 0 : 1);
+    public byte getByte(Record rec) {
+        return (byte) (getBool(rec) ? 1 : 0);
     }
 
     @Override
-    public final char getChar(Record rec) {
+    public char getChar(Record rec) {
         return getBool(rec) ? 'T' : 'F';
     }
 
     @Override
-    public final long getDate(Record rec) {
-        return getBool(rec) ? 0 : 1;
+    public long getDate(Record rec) {
+        return getBool(rec) ? 1 : 0;
     }
 
     @Override
-    public final double getDouble(Record rec) {
-        return getBool(rec) ? 0 : 1;
+    public double getDouble(Record rec) {
+        return getBool(rec) ? 1 : 0;
     }
 
     @Override
-    public final float getFloat(Record rec) {
-        return getBool(rec) ? 0 : 1;
+    public float getFloat(Record rec) {
+        return getBool(rec) ? 1 : 0;
     }
 
     @Override
-    public final int getInt(Record rec) {
-        return getBool(rec) ? 0 : 1;
+    public int getInt(Record rec) {
+        return getBool(rec) ? 1 : 0;
     }
 
     @Override
-    public final long getLong(Record rec) {
-        return getBool(rec) ? 0 : 1;
+    public long getLong(Record rec) {
+        return getBool(rec) ? 1 : 0;
     }
 
     @Override
@@ -100,8 +100,8 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
-    public final short getShort(Record rec) {
-        return (short) (getBool(rec) ? 0 : 1);
+    public short getShort(Record rec) {
+        return (short) (getBool(rec) ? 1 : 0);
     }
 
     @Override
@@ -121,7 +121,7 @@ public abstract class BooleanFunction implements ScalarFunction {
 
     @Override
     public final int getStrLen(Record rec) {
-        return getBool(rec) ? "true".length() : "false".length();
+        return getStr0(rec).length();
     }
 
     @Override
@@ -136,7 +136,7 @@ public abstract class BooleanFunction implements ScalarFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        return getBool(rec) ? 0 : 1;
+        return getBool(rec) ? 1 : 0;
     }
 
     @Override
@@ -164,7 +164,7 @@ public abstract class BooleanFunction implements ScalarFunction {
         return ColumnType.BOOLEAN;
     }
 
-    private String getStr0(Record rec) {
+    protected String getStr0(Record rec) {
         return getBool(rec) ? "true" : "false";
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -33,6 +34,7 @@ import io.questdb.std.Misc;
 public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final IntervalFwdDataFrameCursor cursor;
     private final RuntimeIntrinsicIntervalModel intervals;
+    private IntervalBwdDataFrameCursor bwdCursor;
 
     public IntervalFwdDataFrameCursorFactory(
             CairoEngine engine,
@@ -53,7 +55,11 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
             cursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
             return cursor;
         }
-        throw new UnsupportedOperationException();
+
+        if (bwdCursor == null) {
+            bwdCursor = new IntervalBwdDataFrameCursor(intervals, cursor.getTimestampIndex());
+        }
+        return bwdCursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
     }
 
     @Override
@@ -64,5 +70,12 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     @Override
     public void close() {
         Misc.free(intervals);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("IntervalFwdDataFrame");
+        super.toPlan(sink);
+        sink.attr("intervals").val(intervals);
     }
 }

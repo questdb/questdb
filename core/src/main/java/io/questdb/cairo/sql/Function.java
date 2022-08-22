@@ -30,11 +30,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public interface Function extends Closeable, StatefulAtom {
+public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     static void init(
             ObjList<? extends Function> args,
@@ -99,6 +100,10 @@ public interface Function extends Closeable, StatefulAtom {
     Long256 getLong256A(Record rec);
 
     Long256 getLong256B(Record rec);
+
+    long getLong128Hi(Record rec);
+
+    long getLong128Lo(Record rec);
 
     default RecordMetadata getMetadata() {
         return null;
@@ -170,5 +175,9 @@ public interface Function extends Closeable, StatefulAtom {
     }
 
     default void toTop() {
+    }
+
+    default void toSink(CharSink sink) {
+        sink.put(getClass().getName());
     }
 }

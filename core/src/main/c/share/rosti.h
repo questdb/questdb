@@ -314,6 +314,15 @@ inline void clear(rosti_t *map) {
     memset(map->slots_, 0, map->capacity_ << map->slot_size_shift_);
 }
 
+//returns amount of memory allocated to this rosti instance
+inline int64_t memorySize(rosti_t *map) {
+    return (int64_t)(sizeof(rosti_t) +
+           sizeof(int32_t) * 1 + //inexact because we don't have count of columns
+           map->slot_size_ +
+           2 * sizeof(Group) * (map->capacity_ + 1) +
+           map->slot_size_ * (map->capacity_ + 1));
+}
+
 inline bool IsEmpty(ctrl_t c) { return c == kEmpty; }
 
 inline bool IsFull(ctrl_t c) { return c >= 0; }
@@ -363,6 +372,7 @@ bool resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
     const uint64_t old_capacity = map->capacity_;
     map->capacity_ = new_capacity;
     if (initialize_slots(&map)) {
+        cpy(map->slot_initial_values_, old_init, map->slot_size_);
 
         uint64_t total_probe_length = 0;
         for (uint64_t i = 0; i != old_capacity; ++i) {
@@ -381,6 +391,8 @@ bool resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
         }
 
         return true;
+    } else {
+        map->capacity_ = old_capacity;
     }
 
     return false;
@@ -455,5 +467,29 @@ inline void cpySlot(void *to, void *from, uint64_t size) {
 inline std::pair<uint64_t, bool> find(rosti_t *map, const int32_t key) {
     return find_or_prepare_insert<int32_t>(map, key, hashInt, eqInt, hashIntMem, cpySlot);
 }
+
+
+inline bool reset(rosti_t *map, int newSize) {
+    if ( map->capacity_ > newSize ){
+        auto *old_init = map->slot_initial_values_;
+        const uint64_t old_capacity = map->capacity_;
+        map->capacity_ = newSize;
+        map->size_ = 0;
+        if (initialize_slots(&map)) {
+            cpySlot(map->slot_initial_values_, old_init, map->slot_size_);
+            if (old_init) {
+                free(old_init);
+            }
+            return true;
+        } else {
+            map->capacity_ = old_capacity;
+        }
+        return false;
+    } else {
+        clear(map);
+        return true;
+    }
+}
+
 
 #endif //ROSTI_H

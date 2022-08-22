@@ -214,4 +214,19 @@ public class CharsTest {
             list.getQuick(i).close();
         }
     }
+
+    @Test
+    public void testIsBlank() {
+        Assert.assertTrue(Chars.isBlank(null));
+        Assert.assertTrue(Chars.isBlank(""));
+        Assert.assertTrue(Chars.isBlank(" "));
+        Assert.assertTrue(Chars.isBlank("      "));
+        Assert.assertTrue(Chars.isBlank("\r\f\n\t"));
+
+        Assert.assertFalse(Chars.isBlank("a"));
+        Assert.assertFalse(Chars.isBlank("0"));
+        Assert.assertFalse(Chars.isBlank("\\"));
+        Assert.assertFalse(Chars.isBlank("\\r"));
+        Assert.assertFalse(Chars.isBlank("ac/dc"));
+    }
 }

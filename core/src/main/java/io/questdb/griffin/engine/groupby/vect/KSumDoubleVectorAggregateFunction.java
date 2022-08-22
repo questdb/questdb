@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
@@ -108,8 +109,8 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -159,5 +160,10 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("KSumDoubleVector(").put(columnIndex).put(')');
     }
 }

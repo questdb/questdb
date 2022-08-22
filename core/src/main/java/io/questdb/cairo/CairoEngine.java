@@ -32,9 +32,11 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.pool.WalWriterSource;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -54,7 +56,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 
-public class CairoEngine implements Closeable, WriterSource {
+public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final WriterPool writerPool;
@@ -68,7 +70,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SCSequence telemetrySubSeq;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final IDGenerator tableIdGenerator;
+    private final TableRegistry tableRegistry;
 
+
+    private final TextImportExecutionContext textImportExecutionContext;
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
@@ -77,7 +82,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         this.configuration = configuration;
+        this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
+        this.tableRegistry = new TableRegistry(this);
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
@@ -117,6 +124,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public boolean clear() {
+        tableRegistry.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         return b1 & b2;
@@ -128,6 +136,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(readerPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
+        tableRegistry.close();
     }
 
     public void createTable(
@@ -160,6 +169,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
@@ -167,6 +177,9 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct
     ) {
         securityContext.checkWritePermission();
+        tableRegistry.registerTable(struct);
+
+        // only create the table after it has been registered
         TableUtils.createTable(
                 configuration,
                 mem,
@@ -265,6 +278,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
+    // For testing only
+    public WalReader getWalReader(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            CharSequence walName,
+            int segmentId,
+            long walRowCount
+    ) {
+        return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
+    }
+
     public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
         checkTableName(tableName);
         try {
@@ -340,6 +364,13 @@ public class CairoEngine implements Closeable, WriterSource {
         securityContext.checkWritePermission();
         checkTableName(tableName);
         return writerPool.getWriterOrPublishCommand(tableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
+    }
+
+    @Override
+    public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
+        securityContext.checkWritePermission();
+        final Sequencer sequencer = tableRegistry.getSequencer(tableName);
+        return sequencer.createWal();
     }
 
     public CharSequence lock(
@@ -467,6 +498,10 @@ public class CairoEngine implements Closeable, WriterSource {
         writerPool.unlock(tableName);
     }
 
+    public TextImportExecutionContext getTextImportExecutionContext() {
+        return textImportExecutionContext;
+    }
+
     private void checkTableName(CharSequence tableName) {
         if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
             throw CairoException.instance(0)
@@ -492,7 +527,7 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.instance(0).put("Rename target exists");
         }
 
-        if (!ff.rename(path, otherPath)) {
+        if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
             int error = ff.errno();
             LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
             throw CairoException.instance(error).put("Rename failed");

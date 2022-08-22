@@ -130,7 +130,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         noDesignatedTimestampNorIdxMetadata = noDesignatedTimestampNorIdxReader.getMetadata();
 
         bindVariableService = new BindVariableServiceImpl(configuration);
-        compiler = new SqlCompiler(new CairoEngine(configuration));
+        compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine, 1)
                 .with(
@@ -1911,7 +1911,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
-    private static final void swap(String[] arr, int i, int j) {
+    private static void swap(String[] arr, int i, int j) {
         String tmp = arr[i];
         arr[i] = arr[j];
         arr[j] = tmp;

@@ -29,7 +29,7 @@ public class LongSort {
      * If the length of an array to be sorted is less than this
      * constant, Quicksort is used in preference to merge sort.
      */
-    private static final int QUICKSORT_THRESHOLD = 286;
+    public static final int QUICKSORT_THRESHOLD = 286;
 
     /**
      * The maximum length of run in merge sort.
@@ -39,7 +39,7 @@ public class LongSort {
     /**
      * The maximum number of runs in merge sort.
      */
-    private static final int MAX_RUN_COUNT = 67;
+    public static final int MAX_RUN_COUNT = 67;
 
     /**
      * If the length of an array to be sorted is less than this
@@ -134,7 +134,7 @@ public class LongSort {
             for (int k = (last = 0) + 2; k <= count; k += 2) {
                 int hi = run[k], mi = run[k - 1];
                 for (int i = run[k - 2], p = i, q = mi; i < hi; ++i) {
-                    if (q >= hi || p < mi && vec.getQuick(p) <= vec.getQuick(q)) {
+                    if (q >= hi || p < mi && a.getQuick(p) <= a.getQuick(q)) {
                         b.setQuick(i, a.getQuick(p++));
                     } else {
                         b.setQuick(i, a.getQuick(q++));

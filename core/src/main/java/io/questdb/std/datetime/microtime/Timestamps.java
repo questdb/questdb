@@ -24,10 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.CharSink;
@@ -53,6 +50,7 @@ final public class Timestamps {
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
     public static final long O3_MIN_TS = 0L;
+    public static final long STARTUP_TIMESTAMP;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
     private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
@@ -340,6 +338,23 @@ final public class Timestamps {
         return (int) ((micros - yearMicros) / DAY_MICROS) + 1;
     }
 
+    public static int getDayOfYear(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        long yearStart = yearMicros(year, leap);
+        return (int)((micros - yearStart) / DAY_MICROS) + 1;
+    }
+
+    public static int getWeekOfYear(long micros) {
+        return getDayOfYear(micros) / 7 + 1;
+    }
+
+    public static int getWeekOfMonth(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        return getDayOfMonth(micros, year, getMonthOfYear(micros, year, leap), leap) / 7 + 1;
+    }
+
     public static int getDayOfTheWeekOfEndOfYear(int year) {
         return (year + Math.abs(year / 4) + Math.abs(year / 100) + Math.abs(year / 400)) % 7;
     }
@@ -412,6 +427,23 @@ final public class Timestamps {
 
     public static long getHoursBetween(long a, long b) {
         return Math.abs(a - b) / HOUR_MICROS;
+    }
+
+    // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,
+    // so in early January or late December the ISO year may be different from the Gregorian year.
+    // See the getWeek() method for more information.
+    public static int getIsoYear(long micros) {
+        int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
+        int y = getYear(micros);
+        if (w < 1) {
+            return y - 1;
+        }
+
+        if (w > getWeeks(y)) {
+            return y + 1;
+        }
+
+        return y;
     }
 
     public static long getMicrosOfMinute(long micros) {
@@ -569,23 +601,6 @@ final public class Timestamps {
         }
 
         return w;
-    }
-
-    // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,
-    // so in early January or late December the ISO year may be different from the Gregorian year.
-    // See the getWeek() method for more information.
-    public static int getIsoYear(long micros) {
-        int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
-        int y = getYear(micros);
-        if (w < 1) {
-            return y - 1;
-        }
-
-        if (w > getWeeks(y)) {
-            return y + 1;
-        }
-
-        return y;
     }
 
     public static int getWeeks(int y) {
@@ -926,6 +941,7 @@ final public class Timestamps {
     }
 
     static {
+        STARTUP_TIMESTAMP = Os.currentTimeMicros();
         long minSum = 0;
         long maxSum = 0;
         for (int i = 0; i < 11; i++) {

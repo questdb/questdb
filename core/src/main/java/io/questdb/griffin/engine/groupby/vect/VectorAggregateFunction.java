@@ -41,7 +41,8 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     void initRosti(long pRosti);
 
-    void merge(long pRostiA, long pRostiB);
+    //returns true if merge was fine and false if it failed on memory allocation 
+    boolean merge(long pRostiA, long pRostiB);
 
     void pushValueTypes(ArrayColumnTypes types);
 

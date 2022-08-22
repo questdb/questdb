@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ConversionException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -236,6 +237,18 @@ public class MemoryCARWImplTest {
             assertEquals(5, mem.getByte(offset1 + 2));
         }
     }
+
+    @Test
+    public void testStableResize() {
+        int pageSize = 16 * 1024 * 1024;
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(0, mem.size());
+
+            mem.resize(pageSize);
+            Assert.assertEquals(pageSize, mem.size());
+        }
+    }
+
 
     @Test
     public void testByteRnd() {
@@ -458,7 +471,7 @@ public class MemoryCARWImplTest {
             try {
                 mem.putLong256(padded);
                 Assert.fail();
-            } catch (CairoException ex) {
+            } catch (ConversionException ex) {
                 Assert.assertTrue(ex.getMessage().contains("invalid long256"));
                 Assert.assertTrue(ex.getMessage().contains(padded));
             }

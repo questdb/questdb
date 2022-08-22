@@ -33,13 +33,11 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -52,7 +50,9 @@ public class SecurityTest extends AbstractGriffinTest {
     private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
 
     @BeforeClass
-    public static void setUpReadOnlyExecutionContext() {
+    public static void setUpStatic() {
+        inputRoot = TestUtils.getCsvRoot();
+        AbstractGriffinTest.setUpStatic();
         CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
             @Override
             public int getSqlJoinMetadataMaxResizes() {
@@ -93,6 +93,7 @@ public class SecurityTest extends AbstractGriffinTest {
             public long getSqlSortLightValuePageSize() {
                 return 1024;
             }
+
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
@@ -113,7 +114,7 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public boolean checkIfTripped(long executionStartTimeUs, long fd) {
+            public boolean checkIfTripped(long millis, long fd) {
                 return false;
             }
 
@@ -147,6 +148,13 @@ public class SecurityTest extends AbstractGriffinTest {
                         dummyCircuitBreaker
                 );
         memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine);
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractGriffinTest.tearDownStatic();
+        Misc.free(memoryRestrictedCompiler);
+        Misc.free(memoryRestrictedEngine);
     }
 
     @Test
@@ -311,6 +319,18 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
+        });
+    }
+
+    @Test
+    public void testCopyDeniedOnNoWriteAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.toString(), "permission denied");
+            }
         });
     }
 

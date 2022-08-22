@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -40,9 +41,17 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class MinIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
-    public static final LongBinaryOperator MIN = Math::min;
+    public static final LongBinaryOperator MIN = (long l1, long l2) -> {
+        if (l1 == Numbers.INT_NaN) {
+            return l2;
+        }
+        if (l2 == Numbers.INT_NaN) {
+            return l1;
+        }
+        return Math.min(l1, l2);
+    };
     private final LongAccumulator accumulator = new LongAccumulator(
-            MIN, Integer.MAX_VALUE
+            MIN, Numbers.INT_NaN
     );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -91,12 +100,12 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Integer.MAX_VALUE);
+        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NaN);
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMinIntMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntMinIntMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -117,12 +126,16 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public int getInt(Record rec) {
-        final int value = accumulator.intValue();
-        return value == Integer.MAX_VALUE ? Numbers.INT_NaN : value;
+        return accumulator.intValue();
     }
 
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MinIntVector(").put(columnIndex).put(')');
     }
 }
