@@ -605,7 +605,18 @@ public class TableWriter implements Closeable {
             // TODO: potentially we can merge with existing data
             return AttachPartitionStatusCode.PARTITION_ALREADY_ATTACHED;
         }
-        Path detachedPath = Path.PATH.get().of(configuration.getDetachedRoot()).concat(tableName);
+
+        if (inTransaction()) {
+            LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
+                    .$(", partition=").$ts(timestamp).I$();
+            commit();
+
+            // Check that partition we're about to attach hasn't appeared after commit
+            if (txWriter.attachedPartitionsContains(timestamp)) {
+                LOG.info().$("partition is already attached [path=").$(path).I$();
+                return AttachPartitionStatusCode.PARTITION_ALREADY_ATTACHED;
+            }
+        }
 
         // final name of partition folder after attach
         setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
@@ -617,16 +628,11 @@ public class TableWriter implements Closeable {
             return AttachPartitionStatusCode.PARTITION_CANNOT_ATTACH_FOLDER_EXISTS;
         }
 
+        Path detachedPath = Path.PATH.get().of(configuration.getDetachedRoot()).concat(tableName);
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachableDirSuffix()).slash$();
         int detachedRootLen = detachedPath.length();
         boolean validateDataFiles = partitionSize < 0;
-
-        if (inTransaction()) {
-            LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
-                    .$(", partition=").$ts(timestamp).I$();
-            commit();
-        }
 
         boolean checkPassed = false;
         try {

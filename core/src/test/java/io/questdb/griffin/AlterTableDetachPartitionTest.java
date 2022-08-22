@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -252,6 +253,99 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                                 "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
                                 "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionCommits() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
+
+                String timestampDay = "2022-06-02";
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+
+                renameDetachedToAttachable(tableName, timestampDay);
+
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    // structural change
+                    writer.addColumn("new_column", ColumnType.INT);
+
+                    TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate("2022-06-03T12:00:00.000000Z"));
+                    row.putLong(0, 33L);
+                    row.putInt(1, 33);
+                    row.append();
+
+                    Assert.assertEquals(AttachPartitionStatusCode.OK, writer.attachPartition(IntervalUtils.parseFloorPartialDate(timestampDay)));
+                }
+
+                // detach the partition
+                assertContent(
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
+                                "2\t2\t2022-06-02T14:23:59.600000Z\tNaN\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
+                                "33\t33\t2022-06-03T12:00:00.000000Z\tNaN\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionCommitsToSamePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
+
+                String timestampDay = "2022-06-02";
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+
+                renameDetachedToAttachable(tableName, timestampDay);
+
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    // structural change
+                    writer.addColumn("new_column", ColumnType.INT);
+
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putLong(0, 33L);
+                    row.putInt(1, 33);
+                    row.append();
+
+                    Assert.assertEquals(AttachPartitionStatusCode.PARTITION_ALREADY_ATTACHED, writer.attachPartition(IntervalUtils.parseFloorPartialDate(timestampDay)));
+                }
+
+                // detach the partition
+                assertContent(
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
+                                "33\t33\t2022-06-02T22:00:00.000000Z\tNaN\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
+                        tableName
                 );
             }
         });
