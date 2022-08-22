@@ -91,7 +91,7 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
         // treat them as such. in fact this was already the case when we exposed them via Prometheus.
         // if you just intentionally add/change a tag then just change the test and carry on
         int columnCount = metadata.getColumnCount();
-        assertEquals(34, columnCount);
+        assertEquals(42, columnCount);
         for (int i = 0; i < columnCount; i++) {
             assertEquals(ColumnType.LONG, metadata.getColumnType(i));
         }
@@ -129,5 +129,13 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
         assertEquals("NATIVE_CB3", metadata.getColumnName(31));
         assertEquals("NATIVE_CB4", metadata.getColumnName(32));
         assertEquals("NATIVE_CB5", metadata.getColumnName(33));
+        assertEquals("MMAP_IMPORT", metadata.getColumnName(34));
+        assertEquals("NATIVE_IMPORT", metadata.getColumnName(35));
+        assertEquals("NATIVE_ROSTI", metadata.getColumnName(36));
+        assertEquals("MMAP_TABLE_WAL_READER", metadata.getColumnName(37));
+        assertEquals("MMAP_TABLE_WAL_WRITER", metadata.getColumnName(38));
+        assertEquals("MMAP_SEQUENCER", metadata.getColumnName(39));
+        assertEquals("MMAP_PARALLEL_IMPORT", metadata.getColumnName(40));
+        assertEquals("NATIVE_PARALLEL_IMPORT", metadata.getColumnName(41));
     }
 }

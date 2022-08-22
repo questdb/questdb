@@ -44,8 +44,8 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
     private static final int PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX = 4;
     private static final int TOTAL_NUMBER_OF_METRIC = PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX + 1;
     private static final long METRICS_DISABLED_VALUE = -1;
-    private final SingleRowRecordCursor cursor = new SingleRowRecordCursor();
-    private final Object[] collectedMetrics = new Object[TOTAL_NUMBER_OF_METRIC];
+    private final SingleLongRowRecordCursor cursor = new SingleLongRowRecordCursor();
+    private final long[] collectedMetrics = new long[TOTAL_NUMBER_OF_METRIC];
 
     public TableWriterMetricsRecordCursorFactory() {
         super(METADATA);

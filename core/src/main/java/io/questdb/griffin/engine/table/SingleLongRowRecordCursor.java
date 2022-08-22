@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 
-final class SingleRowRecordCursor implements RecordCursor {
+final class SingleLongRowRecordCursor implements RecordCursor {
     private final TableWriterMetricsRecord record = new TableWriterMetricsRecord();
     private boolean recordEmitted;
-    private Object[] data;
+    private long[] data;
 
-    public void of(Object[] data) {
+    public void of(long[] data) {
         this.data = data;
         recordEmitted = false;
     }
@@ -79,14 +79,7 @@ final class SingleRowRecordCursor implements RecordCursor {
             if (col < 0 || col >= data.length) {
                 throw CairoException.instance(0).put("unsupported column number. [column=").put(col).put("]");
             }
-            Object o = data[col];
-            if (o == null) {
-                throw CairoException.instance(0).put("long column cannot be null. [column=").put(col).put("]");
-            }
-            if (!(o instanceof Long)) {
-                throw CairoException.instance(0).put("unsupported column type. [column=").put(col).put(", expected-type=").put("Long, actual-type=").put(o.getClass().getSimpleName()).put("]");
-            }
-            return (long) o;
+            return data[col];
         }
     }
 }

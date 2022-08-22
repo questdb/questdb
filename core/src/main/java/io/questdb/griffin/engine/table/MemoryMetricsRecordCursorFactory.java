@@ -38,8 +38,8 @@ import io.questdb.std.Unsafe;
 public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
     private static final int METRIC_COUNT = MemoryTag.SIZE + 1; // 1 per each tag + 1 extra for total memory
-    private final SingleRowRecordCursor cursor = new SingleRowRecordCursor();
-    private final Object[] memoryMetrics = new Object[METRIC_COUNT];
+    private final SingleLongRowRecordCursor cursor = new SingleLongRowRecordCursor();
+    private final long[] memoryMetrics = new long[METRIC_COUNT];
 
     public MemoryMetricsRecordCursorFactory() {
         super(METADATA);
@@ -57,7 +57,7 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
         return cursor;
     }
 
-    private static void collectMetrics(Object[] collector) {
+    private static void collectMetrics(long[] collector) {
         assert collector.length == METRIC_COUNT;
 
         collector[0] = Unsafe.getMemUsed();
