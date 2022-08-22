@@ -326,6 +326,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         fixedRowCount = 0;
         txPartitionCount = 1;
         attachedPartitions.clear();
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0, -1L, columnVersion);
+        }
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset();
