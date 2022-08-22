@@ -42,7 +42,7 @@ import io.questdb.std.Rows;
  * Used to handle the LIMIT -N clause with the descending timestamp order case. To do so, this cursor
  * accumulates the row ids in a buffer and only then starts the iteration. That's necessary to preserve
  * the timestamp-based order in the result set. The buffer is filled in from bottom to top.
- *
+ * <p>
  * Here is an illustration of the described problem:
  * <pre>
  * row iteration order    frames                      frame iteration order
@@ -63,6 +63,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private DirectLongList rows;
     private long rowIndex;
     private long rowCount;
+    private int frameIndex;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
     // Artificial limit on remaining rows to be returned from this cursor.
@@ -108,6 +109,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
+        // check for the first hasNext call
+        if (frameIndex == -1 && frameLimit > -1) {
+            fetchAllFrames();
+        }
         if (rowIndex < rows.getCapacity()) {
             long rowId = rows.get(rowIndex);
             record.setRowIndex(Rows.toLocalRowID(rowId));
@@ -144,7 +149,6 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     private void fetchAllFrames() {
-        int frameIndex = -1;
         do {
             long cursor = frameSequence.next();
             if (cursor > -1) {
@@ -181,6 +185,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) throws SqlException {
         this.frameSequence = frameSequence;
+        this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;
         this.rowLimit = rowLimit;
         this.rows = negativeLimitRows;
@@ -189,11 +194,6 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-        }
-        // when frameCount is 0 our collect sequence is not subscribed
-        // we should not be attempting to fetch queue using it
-        if (frameLimit > -1) {
-            fetchAllFrames();
         }
     }
 }
