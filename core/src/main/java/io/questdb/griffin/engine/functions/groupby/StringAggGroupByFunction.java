@@ -36,21 +36,11 @@ import java.util.ArrayList;
 
 public class StringAggGroupByFunction extends FirstStringGroupByFunction implements GroupByFunction, UnaryFunction {
     private static final int INITIAL_SINK_CAPACITY = 8 * 1024;
-    protected int valueIndex;
     private final char delimiter;
-
-    @Override
-    public void close() {
-        for(CharSequence s : stringValues) {
-            ((DirectCharSink)s).close();
-        }
-        stringValues.clear();
-    }
 
     public StringAggGroupByFunction(@NotNull Function arg, char delimiter) {
         super(arg);
         this.delimiter = delimiter;
-        this.stringValues = new ArrayList<>(32);
     }
 
     @Override
@@ -76,7 +66,7 @@ public class StringAggGroupByFunction extends FirstStringGroupByFunction impleme
         CharSequence str = this.arg.getStr(record);
         if(str != null) {
             int index = mapValue.getInt(this.valueIndex);
-            DirectCharSink cs = (DirectCharSink) stringValues.get(index);
+            DirectCharSink cs = stringValues.get(index);
             if(cs.length() > 0) {
                 cs.put(delimiter);
             }

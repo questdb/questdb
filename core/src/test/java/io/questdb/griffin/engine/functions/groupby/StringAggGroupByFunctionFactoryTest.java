@@ -61,6 +61,36 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupKeyedStr() throws Exception {
+        // s	a	b
+        //a	bbb	gg
+        //f	aaa	ff
+        //c	ccc	ee
+        //e	abc	def
+        //e	ccc	gg
+        assertQuery(
+                "s\tstring_agg\tstring_agg1\n" +
+                        "a\tbbb\tgg\n" +
+                        "f\taaa\tff\n" +
+                        "c\tccc\tee\n" +
+                        "e\tabc,ccc\tdef:gg\n",
+                "select s, string_agg(a, ','), string_agg(b, ':') from x",
+                "create table x as (" +
+                        "   select " +
+                        "       rnd_symbol('a','b','c','d','e','f') s," +
+                        "       rnd_str('abc', 'aaa', 'bbb', 'ccc') a, " +
+                        "       rnd_str('def', 'gg', 'ee', 'ff') b, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupNotKeyed() throws Exception {
         assertQuery(
                 "string_agg\n" +
