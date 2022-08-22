@@ -788,6 +788,15 @@ public class TableWriter implements Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        if (inTransaction()) {
+            LOG.info()
+                    .$("committing open transaction before applying detach partition command [table=")
+                    .$(tableName)
+                    .$(", partition=").$ts(timestamp)
+                    .I$();
+            commit();
+        }
+
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex == -1) {
             assert !txWriter.attachedPartitionsContains(timestamp);
@@ -799,15 +808,6 @@ public class TableWriter implements Closeable {
             return AttachPartitionStatusCode.PARTITION_IS_ACTIVE;
         }
         long minTimestamp = txWriter.getMinTimestamp();
-
-        if (inTransaction()) {
-            LOG.info()
-                    .$("committing open transaction before applying detach partition command [table=")
-                    .$(tableName)
-                    .$(", partition=").$ts(timestamp)
-                    .I$();
-            commit();
-        }
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         Path detachedPath = Path.PATH.get();
