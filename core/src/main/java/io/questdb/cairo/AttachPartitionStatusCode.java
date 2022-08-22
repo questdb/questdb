@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-public enum StatusCode {
+public enum AttachPartitionStatusCode {
     OK,
     TABLE_NOT_PARTITIONED,
     PARTITION_IS_ACTIVE,

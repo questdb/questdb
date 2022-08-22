@@ -74,6 +74,35 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         hasChanges = false;
     }
 
+    public void copyPartition(long partitionTimestamp, ColumnVersionReader source) {
+        LongList src = source.cachedList;
+        LongList dest = this.cachedList;
+
+        int srcIndex = src.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (srcIndex < 0) { // source does not have partition information
+            return;
+        }
+
+        int index = dest.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (index > -1L) {
+            // Wipe out all the information about this partition to replace with the new one.
+            removePartition(partitionTimestamp);
+            index = dest.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        }
+
+        if (index < 0) { // the cache does not contain this partition
+            index = -index - 1;
+            int srcEnd = src.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
+            dest.insertFromSource(index, src, srcIndex, srcEnd + BLOCK_SIZE);
+        } else {
+            throw CairoException.instance(0)
+                    .put("invalid Column Version state ")
+                    .put(Timestamps.toString(partitionTimestamp))
+                    .put(" column version state, cannot update partition information");
+        }
+        hasChanges = true;
+    }
+
     public long getOffsetA() {
         return mem.getLong(OFFSET_OFFSET_A_64);
     }
@@ -94,7 +123,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void detachPartitionColumns(long partitionTimestamp) {
+    public void removePartition(long partitionTimestamp) {
         int from = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
         if (from > -1) {
             int to = cachedList.binarySearchBlock(from, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
@@ -110,35 +139,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             hasChanges = true;
             commit();
         }
-    }
-
-    public void upsertPartition(long partitionTimestamp, ColumnVersionReader source) {
-        LongList src = source.cachedList;
-        LongList dest = this.cachedList;
-
-        int srcIndex = src.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
-        if (srcIndex < 0) { // source does not have partition information
-            return;
-        }
-
-        int index = dest.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
-        if (index > -1L) {
-            // Wipe out all the information about this partition to replace with the new one.
-            detachPartitionColumns(partitionTimestamp);
-            index = dest.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
-        }
-
-        if (index < 0) { // the cache does not contain this partition
-            index = -index - 1;
-            int srcEnd = src.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
-            dest.insertFromSource(index, src, srcIndex, srcEnd + BLOCK_SIZE);
-        } else {
-            throw CairoException.instance(0)
-                    .put("invalid partition ")
-                    .put(Timestamps.toString(partitionTimestamp))
-                    .put(" column version state, cannot update partition information");
-        }
-        hasChanges = true;
     }
 
     /**

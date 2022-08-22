@@ -941,10 +941,11 @@ public final class TableUtils {
      * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
-     * @param tablePath    Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param tableRootLen trim to this length to go back to the root path of the table
-     * @param partitionBy  Partitioning scheme
-     * @param timestamp    A timestamp in the partition
+     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param tableRootLen     Trim to this length to go back to the root path of the table
+     * @param partitionBy      Partitioning scheme
+     * @param timestamp        A timestamp in the partition
+     * @param partitionNameTxn Partition txn suffix
      */
     public static void setPathForPartition(
             Path tablePath,

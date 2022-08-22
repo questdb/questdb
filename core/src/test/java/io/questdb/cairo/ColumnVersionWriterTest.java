@@ -472,7 +472,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 );
 
                 w.commit();
-                w.detachPartitionColumns(0);
+                w.removePartition(0);
                 w.commit();
 
                 String expected = "" +
@@ -508,7 +508,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 CVStringTable.setupColumnVersionWriter(w1, srcExpected);
                 CVStringTable.setupColumnVersionWriter(w2, dstExpected);
                 for (long p : partitionTimestamp) {
-                    w2.upsertPartition(p, w1);
+                    w2.copyPartition(p, w1);
                 }
                 TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedList()));
                 w2.commit();

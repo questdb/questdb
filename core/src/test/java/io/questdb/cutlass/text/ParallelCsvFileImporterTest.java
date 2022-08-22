@@ -1369,7 +1369,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        assertImportFailsWith("tab18", brokenFf, "Cannot copy partition file");
+        assertImportFailsWith("tab18", brokenFf, "could not copy partition fil");
     }
 
     @Test
@@ -1389,7 +1389,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tab41", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot create partition directory");
+        testImportThrowsException(ff, "tab41", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create partition directory");
     }
 
     private void assertImportFailsWith(String tableName, FilesFacade brokenFf, String expectedError) throws Exception {
@@ -1437,7 +1437,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Cannot copy partition file"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("could not copy partition file"));
             }
 
             assertQuery("cnt\n0\n", "select count(*) cnt from tab20", null, false, false, true);
@@ -2089,7 +2089,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tab40", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot copy partition file");
+        testImportThrowsException(ff, "tab40", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not copy partition file");
     }
 
     @Test
@@ -2124,7 +2124,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tab42", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot copy partition file");
+        testImportThrowsException(ff, "tab42", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not copy partition file");
     }
 
     @Test

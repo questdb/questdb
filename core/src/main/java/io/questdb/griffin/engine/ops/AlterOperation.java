@@ -270,13 +270,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
-                StatusCode statusCode = tableWriter.attachPartition(partitionTimestamp);
-                if (statusCode != StatusCode.OK) {
+                AttachPartitionStatusCode attachPartitionStatusCode = tableWriter.attachPartition(partitionTimestamp);
+                if (attachPartitionStatusCode != AttachPartitionStatusCode.OK) {
                     throw putPartitionName(
                             SqlException.$(tableNamePosition, "failed to attach partition '"),
                             tableWriter.getPartitionBy(),
                             partitionTimestamp
-                    ).put("': ").put(statusCode.name());
+                    ).put("': ").put(attachPartitionStatusCode.name());
                 }
             } catch (CairoException e) {
                 LOG.error().$("failed to attach partition [table=").$(tableName)
@@ -293,10 +293,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
-                StatusCode statusCode = tableWriter.detachPartition(partitionTimestamp);
-                if (StatusCode.OK != statusCode) {
+                AttachPartitionStatusCode attachPartitionStatusCode = tableWriter.detachPartition(partitionTimestamp);
+                if (AttachPartitionStatusCode.OK != attachPartitionStatusCode) {
                     throw putPartitionName(
-                            SqlException.$(tableNamePosition, "could not detach [statusCode=").put(statusCode.name())
+                            SqlException.$(tableNamePosition, "could not detach [statusCode=").put(attachPartitionStatusCode.name())
                                     .put(", table=").put(tableName)
                                     .put(", partition='"),
                             tableWriter.getPartitionBy(),

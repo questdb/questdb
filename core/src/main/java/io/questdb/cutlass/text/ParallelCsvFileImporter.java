@@ -127,6 +127,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte status = TextImportTask.STATUS_STARTED;
     private byte phase = TextImportTask.PHASE_SETUP;
     private CharSequence errorMessage;
+    private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
+    private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
+    private final Consumer<TextImportTask> collectStubRef = this::collectStub;
     //incremented in phase 2
     private long linesIndexed;
     //row stats are incremented in phase 3
@@ -134,11 +137,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private long rowsImported;
     private long errors;
     private long phaseErrors;
-    private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
-    private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
     private final Consumer<TextImportTask> collectIndexStatsRef = this::collectIndexStats;
-    private final Consumer<TextImportTask> collectStubRef = this::collectStub;
     private long startMs;//start time of current phase (in millis)
     private boolean createdWorkDir;
     private ExecutionCircuitBreaker circuitBreaker;
@@ -632,7 +632,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return path.equals(normalize(configuration.getConfRoot())) ||
                 path.equals(normalize(configuration.getRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
-                path.equals(normalize(configuration.getSnapshotRoot()));
+                path.equals(normalize(configuration.getSnapshotRoot())) ||
+                path.equals(normalize(configuration.getDetachedRoot())) ||
+                path.equals(normalize(configuration.getBackupRoot()));
     }
 
     private void logTypeError(int i, int type) {
@@ -660,7 +662,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 if (!ff.exists(dstPath.slash$())) {
                     if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
-                        throw TextException.$("Cannot create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                        throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                     }
                 }
 
@@ -680,7 +682,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
 
                         if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
-                            throw TextException.$("Cannot create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                            throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
                         ff.iterateDir(srcPath, (long name, int type) -> {
@@ -688,13 +690,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
                                 dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachableDirSuffix()).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
-                                    throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                    throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                                 }
                             }
                         });
                         srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
-                        throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
+                        throw CairoException.instance(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
                     }
                 }
             }
@@ -1379,7 +1381,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         if (ff.exists(workDirPath)) {
             if (isOneOfMainDirectories(importRoot)) {
-                throw TextException.$("cannot remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
+                throw TextException.$("could not remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
             }
 
             LOG.info().$("removing import directory [path='").$(workDirPath).$("']").$();
@@ -1515,6 +1517,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return configuration.getRandom().nextLong();
+        }
+
+        @Override
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
         }
@@ -1525,8 +1532,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
+        public long getCommitLag() {
+            return configuration.getCommitLag();
         }
 
         @Override
@@ -1535,13 +1542,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
         }
 
         @Override
@@ -1575,13 +1577,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return configuration.getMaxUncommittedRows();
+        public boolean isIndexed(int columnIndex) {
+            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
         }
 
         @Override
-        public long getCommitLag() {
-            return configuration.getCommitLag();
+        public boolean isSequential(int columnIndex) {
+            return false;
         }
 
         public int getSymbolColumnIndex(CharSequence symbolColumnName) {

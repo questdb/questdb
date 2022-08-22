@@ -539,8 +539,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         engine.clear();
                         long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
                         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
-                            StatusCode statusCode = writer.detachPartition(timestamp);
-                            Assert.assertEquals(StatusCode.PARTITION_CANNOT_COPY_META, statusCode);
+                            AttachPartitionStatusCode attachPartitionStatusCode = writer.detachPartition(timestamp);
+                            Assert.assertEquals(AttachPartitionStatusCode.PARTITION_CANNOT_COPY_META, attachPartitionStatusCode);
                         }
                         assertContent("ts\ti\tl\n" +
                                 "2022-06-01T09:35:59.900000Z\t1\t1\n" +
@@ -1944,8 +1944,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 engine.clear(); // to recreate the writer with the new ff
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
-                    StatusCode statusCode = writer.detachPartition(timestamp);
-                    Assert.assertEquals(StatusCode.PARTITION_CANNOT_COPY_META, statusCode);
+                    AttachPartitionStatusCode attachPartitionStatusCode = writer.detachPartition(timestamp);
+                    Assert.assertEquals(AttachPartitionStatusCode.PARTITION_CANNOT_COPY_META, attachPartitionStatusCode);
                 }
 
                 assertContent(expected, tableName);

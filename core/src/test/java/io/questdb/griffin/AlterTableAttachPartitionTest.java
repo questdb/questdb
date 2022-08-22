@@ -1058,7 +1058,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getTableName(), "testing")) {
                         writer.removePartition(timestamp);
                         copyPartitionToAttachable(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
-                        Assert.assertEquals(StatusCode.OK, writer.attachPartition(timestamp));
+                        Assert.assertEquals(AttachPartitionStatusCode.OK, writer.attachPartition(timestamp));
                     }
 
                     // Go active
