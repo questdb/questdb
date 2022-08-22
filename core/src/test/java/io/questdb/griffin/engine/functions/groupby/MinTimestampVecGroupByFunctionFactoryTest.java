@@ -89,4 +89,38 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractGriffinTe
                 true
         );
     }
+
+    @Test
+    public void testMaxTimestampOrNullThenMaxLong() throws Exception {
+        assertQuery(
+                "min\n" +
+                        "\n",
+                "select min(f) from tab",
+                "create table tab as (select cast(null as timestamp) f from long_sequence(33))",
+                null,
+                "insert into tab select 9223372036854775807L from long_sequence(1)",
+                "min\n" +
+                        "294247-01-10T04:00:54.775807Z\n",
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedMaxTimestampOrNullThenMaxLong() throws Exception {
+        assertQuery(
+                "i\tmin\n" +
+                        "1\t\n",
+                "select i, min(f) from tab",
+                "create table tab as (select cast(1 as int) i, cast(null as timestamp) f from long_sequence(33))",
+                null,
+                "insert into tab select 1, 9223372036854775807L from long_sequence(1)",
+                "i\tmin\n" +
+                        "1\t294247-01-10T04:00:54.775807Z\n",
+                true,
+                true,
+                true
+        );
+    }
 }
