@@ -68,7 +68,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getConnectionPoolInitialCapacity() {
-        return 64;
+        return 4;
     }
 
     @Override
@@ -98,12 +98,12 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getSelectCacheBlockCount() {
-        return 16;
+        return 8;
     }
 
     @Override
     public int getSelectCacheRowCount() {
-        return 16;
+        return 8;
     }
 
     @Override
@@ -113,17 +113,17 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getInsertCacheBlockCount() {
-        return 8;
+        return 4;
     }
 
     @Override
     public int getInsertCacheRowCount() {
-        return 8;
+        return 4;
     }
 
     @Override
     public int getInsertPoolCapacity() {
-        return 32;
+        return 16;
     }
 
     @Override
@@ -133,12 +133,12 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getUpdateCacheBlockCount() {
-        return 8;
+        return 4;
     }
 
     @Override
     public int getUpdateCacheRowCount() {
-        return 8;
+        return 4;
     }
 
     @Override

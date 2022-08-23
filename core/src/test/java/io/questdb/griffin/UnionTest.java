@@ -26,9 +26,156 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import org.junit.Ignore;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class UnionTest extends AbstractGriffinTest {
+
+    //test accept limit and order by in last component ?
+    @Test
+    public void testSetOperationsRejectsOrderByAndLimitInAllButLastDirectQuery() throws Exception {
+        String template = "select x from t #CLAUSE0# " +
+                "#SET# " +
+                "select 3 from t #CLAUSE1# " +
+                "#SET# " +
+                "select 2 from t ";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext);
+        });
+
+        for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
+            for (int i = 0; i <= 1; i++) {
+
+                String orderQuery = template.replace("#SET#", setOperation)
+                        .replace("#CLAUSE" + i + "#", "order by x desc")
+                        .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
+
+                assertFailure(orderQuery,
+                        null,
+                        (i == 0 ? 16 : 43),
+                        "unexpected token 'order'"
+                );
+
+                String limitQuery = template.replace("#SET#", setOperation)
+                        .replace("#CLAUSE" + i + "#", "limit 1        ")
+                        .replace("#CLAUSE" + (i + 1) % 2 + "#", "");
+
+                assertFailure(limitQuery,
+                        null,
+                        (i == 0 ? 16 : 43),
+                        "unexpected token 'limit'"
+                );
+            }
+        }
+    }
+
+    @Test
+    public void testMultiSetOperationWithOrderByIsLeftAssociative() throws Exception {
+        assertQuery("x\n1\n",
+                "select 2 x " +
+                        "union all " +
+                        "select 1  " +
+                        "intersect " +
+                        "select 1 from long_sequence(1) order by 1", null, null);
+    }
+
+    @Test
+    public void testMultiSetOperationIsLeftAssociative() throws Exception {
+        assertQuery("x\n1\n",
+                "select 2 x " +
+                        "union all " +
+                        "select 1  " +
+                        "intersect " +
+                        "select 1 from long_sequence(1)", null, null, false, true, false);
+    }
+
+    @Test
+    public void testMultiSetOperationWithLimitIsLeftAssociative() throws Exception {
+        assertQuery("x\n3\n",
+                "select 1 x " +
+                        "except " +
+                        "select 1  " +
+                        "union all " +
+                        "select 3 from long_sequence(1) limit 1", null, null, false, true, true);
+    }
+
+    @Test
+    public void testNestedSetOperationWithOrderExpressionByAndLimit() throws Exception {
+        assertQuery("x\n0\n2\n",
+                "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by abs(x) desc limit 2) " +
+                        "intersect " +
+                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "union all " +
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+    }
+
+    @Test
+    @Ignore
+    //TODO: fix; fails on Cannot invoke "io.questdb.griffin.model.QueryColumn.getAst()" because "queryColumn" is null
+    public void testNestedSetOperationWithOrderExpressionByAndLimit2() throws Exception {
+        assertQuery("x\n0\n2\n",
+                "select * from " +
+                        "(select 1 x union all select 2 union all select 3 from long_sequence(1) order by x*2 desc limit 2) " +
+                        "intersect " +
+                        "select * from (select x from long_sequence(4) order by x*2 limit 2  ) " +
+                        "union all " +
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+    }
+
+    @Test
+    public void testNestedSetOperationWithOrderByAndLimit() throws Exception {
+        assertQuery("x\n0\n2\n",
+                "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
+                        "intersect " +
+                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "union all " +
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+    }
+
+    @Test
+    public void testWithClauseWithSetOperationAndOrderByAndLimit() throws Exception {
+        assertQuery("x\n0\n2\n",
+                "with q as  (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
+                        "select * from q " +
+                        "intersect " +
+                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "union all " +
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+    }
+
+    @Test
+    public void testSetOperationsAllowsOrderByAndLimitInAllSubqueries() throws Exception {
+        String template = "select * from (select x from t #CLAUSE0# ) " +
+                "#SET# " +
+                "select * from (select 3 from t #CLAUSE1# ) " +
+                "#SET# " +
+                "select * from (select 2 from t #CLAUSE2# ) ";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext);
+        });
+
+        for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
+            for (int i = 0; i <= 2; i++) {
+
+                String orderQuery = template.replace("#SET#", setOperation)
+                        .replace("#CLAUSE" + i + "#", "order by x desc")
+                        .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
+                        .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
+                System.out.println(orderQuery);
+                compiler.compile(orderQuery, sqlExecutionContext);
+
+                String limitQuery = template.replace("#SET#", setOperation)
+                        .replace("#CLAUSE" + i + "#", "limit 1        ")
+                        .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
+                        .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
+                compiler.compile(limitQuery, sqlExecutionContext);
+            }
+        }
+    }
 
     @Test
     public void testExcept() throws Exception {
@@ -351,16 +498,16 @@ public class UnionTest extends AbstractGriffinTest {
                     "PLANE\n";
 
             final String expected2 = "t\n" +
+                    "BICYCLE\n" +
                     "CAR\n" +
                     "PLANE\n" +
-                    "VAN\n" +
                     "PLANE\n" +
                     "PLANE\n" +
-                    "BICYCLE\n" +
                     "SCOOTER\n" +
                     "SCOOTER\n" +
                     "SCOOTER\n" +
-                    "SCOOTER\n";
+                    "SCOOTER\n" +
+                    "VAN\n";
 
             compiler.compile(
                     "CREATE TABLE x as " +
@@ -384,8 +531,8 @@ public class UnionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );//produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            try (RecordCursorFactory factory = compiler.compile("select distinct t from x order by t union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, true);
+            try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y order by t", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, factory, true, true, true);
             }
         });
     }
@@ -459,7 +606,7 @@ public class UnionTest extends AbstractGriffinTest {
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             try (RecordCursorFactory factory = compiler.compile("select t from (" +
-                    "select distinct t from x order by 1 " +
+                    "select * from (select distinct t from x order by 1) " +
                     "union all " +
                     "y " +
                     "union all " +
@@ -514,20 +661,20 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tBICYCLE\n");
 
             assertSql("select typeof(t), t from (select t from x union all y order by t)", "typeof\tt\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
                     "STRING\tCAR\n" +
                     "STRING\tCAR\n" +
-                    "STRING\tVAN\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
                     "STRING\tPLANE\n" +
-                    "STRING\tSCOOTER\n");
+                    "STRING\tSCOOTER\n" +
+                    "STRING\tVAN\n");
 
             assertSql("select typeof(t), t from (select t from x union all y) order by t", "typeof\tt\n" +
                     "STRING\tBICYCLE\n" +

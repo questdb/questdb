@@ -234,6 +234,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    hardLink
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    mkdir
  * Signature: (JI)I
  */
@@ -283,9 +291,14 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
 /*
  * Class:     com_questdb_std_Files
  * Method:    rename
- * Signature: (JJ)Z
+ * Signature: (JJ)I
  */
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
+
+#define FILES_RENAME_ERR_OK 0
+#define FILES_RENAME_ERR_EXDEV 1
+#define FILES_RENAME_ERR_OTHER 2
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *, jclass, jlong, jlong);
 
 #ifdef __cplusplus

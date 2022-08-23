@@ -56,7 +56,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, "1970-01-02" + Files.SEPARATOR + "sym.v") && counter.decrementAndGet() == 0) {
+            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0 ) {
                 return -1;
             }
             return super.openRW(name, opts);
@@ -66,7 +66,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenFailure = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, long opts) {
-            if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "ts.d") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && Chars.contains(name, "1970-01-06") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -227,7 +227,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testAllocateFailsAtO3OpenColumn() throws Exception {
-        counter.set(46);
+        counter.set(50);
         executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, new FilesFacadeImpl() {
             private boolean failNextAlloc = false;
 
@@ -254,7 +254,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testAllocateToResizeLastPartition() throws Exception {
-        counter.set(40);
+        counter.set(48);
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, new FilesFacadeImpl() {
             private boolean failNextAlloc = false;
 
@@ -556,7 +556,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(144);
+        counter.set(152);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -564,7 +564,7 @@ public class O3FailureTest extends AbstractO3Test {
     public void testFailOnTruncateKeyIndexContended() throws Exception {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 87 : 86);
+        counter.set(Os.type == Os.WINDOWS ? 91 : 90);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override
@@ -581,7 +581,7 @@ public class O3FailureTest extends AbstractO3Test {
     public void testFailOnTruncateKeyValueContended() throws Exception {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 87 : 86);
+        counter.set(Os.type == Os.WINDOWS ? 91 : 90);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             @Override
             public boolean truncate(long fd, long size) {
@@ -910,7 +910,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(165 + 45);
+        counter.set(176 + 45);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 

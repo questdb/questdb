@@ -143,4 +143,9 @@ final class NullLogRecord implements LogRecord {
     public LogRecord $hex(long value) {
         return this;
     }
+
+    @Override
+    public LogRecord $hexPadded(long value) {
+        return this;
+    }
 }

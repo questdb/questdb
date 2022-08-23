@@ -70,20 +70,20 @@ public class SendAndReceiveRequestBuilder {
 
     public long connectAndSendRequest(String request) {
         final long fd = nf.socketTcp(true);
-        long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
         try {
-            TestUtils.assertConnect(fd, sockAddr);
+            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
             if (clientLingerSeconds > -1) {
                 Assert.assertEquals(0, nf.configureLinger(fd, clientLingerSeconds));
             }
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
-                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                nf.configureNonBlocking(fd);
             }
 
             executeWithSocket(request, "", fd);
         } finally {
-            nf.freeSockAddr(sockAddr);
+            nf.freeAddrInfo(sockAddrInfo);
         }
         return fd;
     }
@@ -112,10 +112,10 @@ public class SendAndReceiveRequestBuilder {
     ) throws InterruptedException {
         final long fd = nf.socketTcp(true);
         try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            long sockAddrInfo = nf.sockaddr("127.0.0.1", 9001);
             try {
                 Assert.assertTrue(fd > -1);
-                TestUtils.assertConnect(nf, fd, sockAddr);
+                TestUtils.assertConnect(nf, fd, sockAddrInfo);
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
                 if (!expectDisconnect) {
                     nf.configureNonBlocking(fd);
@@ -123,7 +123,7 @@ public class SendAndReceiveRequestBuilder {
 
                 executeWithSocket(request, response, fd);
             } finally {
-                nf.freeSockAddr(sockAddr);
+                nf.freeSockAddr(sockAddrInfo);
             }
         } finally {
             nf.close(fd);
@@ -411,5 +411,9 @@ public class SendAndReceiveRequestBuilder {
                 String request,
                 String response
         ) throws InterruptedException;
+    }
+
+    public static String responseWithCode(String code) {
+        return ResponseHeaders.replace("200 OK", code);
     }
 }

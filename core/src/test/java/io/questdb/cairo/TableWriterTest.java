@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -60,100 +61,6 @@ public class TableWriterTest extends AbstractCairoTest {
     public static final String PRODUCT = "product";
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
-
-    @Test
-    public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
-        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-        assertMemoryLeak(() -> {
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            AtomicInteger columnsAdded = new AtomicInteger();
-            AtomicInteger insertCount = new AtomicInteger();
-            int totalColAddCount = 1000;
-            writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
-            int tableId = 11;
-
-            String tableName = "testAddColumnConcurrentWithDataUpdates";
-            try (Path path = new Path()) {
-                try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                ) {
-                    model.timestamp();
-                    TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            tableId
-                    );
-                }
-            }
-
-            // Write data in a loop getting writer in and out of pool
-            Thread writeDataThread = new Thread(() -> {
-                    TestUtils.await(barrier);
-                    int i = 0;
-                    while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
-                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                            TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
-                            row.append();
-                            writer.commit();
-                            insertCount.incrementAndGet();
-                        } catch (EntryUnavailableException ex) {
-                            // continue
-                        } catch (Throwable e) {
-                            exceptions.add(e);
-                            LOG.error().$(e).$();
-                            throw e;
-                        }
-                    }
-            });
-
-            Thread addColumnsThread = new Thread(() -> {
-                try {
-                    TestUtils.await(barrier);
-                    AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
-                    for (int i = 0; i < totalColAddCount; i++) {
-                        alterOperationBuilder.clear();
-                        String columnName = "col" + i;
-                        alterOperationBuilder
-                                .ofAddColumn(0, tableName, tableId)
-                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
-                        AlterOperation alterOperation = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
-                            if (writer != null) {
-                                writer.publishAsyncWriterCommand(alterOperation);
-                            }
-                        }
-                        columnsAdded.incrementAndGet();
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                    throw e;
-                }
-            });
-            writeDataThread.start();
-            addColumnsThread.start();
-
-            writeDataThread.join();
-            addColumnsThread.join();
-
-            if (exceptions.size() != 0) {
-                for (Throwable ex : exceptions) {
-                    ex.printStackTrace();
-                }
-                Assert.fail();
-            }
-            Assert.assertTrue(insertCount.get() > 0);
-
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
-            }
-
-            LOG.infoW().$("total reload count ").$(insertCount.get()).$();
-        });
-    }
 
     @Test
     public void tesFrequentCommit() throws Exception {
@@ -229,8 +136,10 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         };
         testAddColumnRecoverableFault(ff);
@@ -271,6 +180,100 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
             Assert.assertEquals(2 * count, writer.size());
         }
+    }
+
+    @Test
+    public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            AtomicInteger columnsAdded = new AtomicInteger();
+            AtomicInteger insertCount = new AtomicInteger();
+            int totalColAddCount = 1000;
+            writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
+            int tableId = 11;
+
+            String tableName = "testAddColumnConcurrentWithDataUpdates";
+            try (Path path = new Path()) {
+                try (
+                        MemoryMARW mem = Vm.getCMARWInstance();
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                ) {
+                    model.timestamp();
+                    TableUtils.createTable(
+                            configuration,
+                            mem,
+                            path,
+                            model,
+                            tableId
+                    );
+                }
+            }
+
+            // Write data in a loop getting writer in and out of pool
+            Thread writeDataThread = new Thread(() -> {
+                TestUtils.await(barrier);
+                int i = 0;
+                while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                        TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
+                        row.append();
+                        writer.commit();
+                        insertCount.incrementAndGet();
+                    } catch (EntryUnavailableException ex) {
+                        // continue
+                    } catch (Throwable e) {
+                        exceptions.add(e);
+                        LOG.error().$(e).$();
+                        throw e;
+                    }
+                }
+            });
+
+            Thread addColumnsThread = new Thread(() -> {
+                try {
+                    TestUtils.await(barrier);
+                    AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
+                    for (int i = 0; i < totalColAddCount; i++) {
+                        alterOperationBuilder.clear();
+                        String columnName = "col" + i;
+                        alterOperationBuilder
+                                .ofAddColumn(0, tableName, tableId)
+                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
+                        AlterOperation alterOperation = alterOperationBuilder.build();
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
+                            if (writer != null) {
+                                writer.publishAsyncWriterCommand(alterOperation);
+                            }
+                        }
+                        columnsAdded.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                    throw e;
+                }
+            });
+            writeDataThread.start();
+            addColumnsThread.start();
+
+            writeDataThread.join();
+            addColumnsThread.join();
+
+            if (exceptions.size() != 0) {
+                for (Throwable ex : exceptions) {
+                    ex.printStackTrace();
+                }
+                Assert.fail();
+            }
+            Assert.assertTrue(insertCount.get() > 0);
+
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
+            }
+
+            LOG.infoW().$("total reload count ").$(insertCount.get()).$();
+        });
     }
 
     @Test
@@ -348,8 +351,10 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         });
     }
@@ -384,8 +389,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return (!Chars.contains(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return (!Chars.contains(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
+                        && (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         });
     }
@@ -508,8 +516,10 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return !Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME)
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -1934,6 +1944,63 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3PartitionTruncate() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+        final String tableName = "testO3PartitionTruncate";
+
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("productId", ColumnType.LONG256)
+                .timestamp()
+        ) {
+            CairoTestUtils.create(model);
+
+            try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
+                // Add 46 rows in partition 2020-07-13T00
+                long ts = IntervalUtils.parseFloorPartialDate("2020-07-13");
+                long increment = Timestamps.SECOND_MICROS;
+                int rows = 46;
+                for (int i = 0; i < rows; i++) {
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.putLong256(0, i, i, i, i);
+                    row.append();
+                    ts += increment;
+                }
+                writer.commit();
+
+                // Add 1 row in order in partition 2020-07-13T00
+                TableWriter.Row row = writer.newRow(ts + 2 * increment);
+                row.putLong256(0, 1, 1, 1, 1);
+                row.append();
+
+                // Add 1 row ooo in partition 2020-07-13T00
+                row = writer.newRow(ts + 1);
+                row.putLong256(0, 1, 1, 1, 1);
+                row.append();
+
+                // Add 1 row out of order in partition 2020-07-13T01
+                row = writer.newRow(ts + Timestamps.HOUR_MICROS);
+                row.putLong256(0, 2, 2, 2, 2);
+                row.append();
+
+                // Write rows to go beyond page in partition 2020-07-13T00
+                int rowCount = (int) (Files.PAGE_SIZE / 32);
+                for (int i = 0; i < rowCount; i++) {
+                    TableWriter.Row row2 = writer.newRow(ts);
+                    row2.putLong256(0, i, i, i, i);
+                    row2.append();
+                    ts += increment;
+                }
+
+                writer.commit();
+            }
+
+            try (TableReader rdr = new TableReader(configuration, tableName)) {
+                TestUtils.printCursor(rdr.getCursor(), rdr.getMetadata(), true, sink, TestUtils.printer);
+            }
+        }
+    }
+
+    @Test
     public void testO3WithCancelRow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
@@ -2226,9 +2293,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 2;
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -2380,10 +2447,10 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean rename(LPSZ name, LPSZ to) {
+            public int rename(LPSZ name, LPSZ to) {
                 if (Chars.endsWith(name, "supplier.d")) {
                     count++;
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(name, to);
             }
@@ -2463,9 +2530,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 2;
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -2559,7 +2626,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rmdir(Path from) {
-                if (Chars.endsWith(from, "2013-03-12")) {
+                if (Chars.endsWith(from, "2013-03-12.0")) {
                     removeAttempted = true;
                     return 1;
                 }
@@ -2610,7 +2677,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rmdir(Path path) {
-                if (Chars.endsWith(path, "2013-03-12")) {
+                if (Chars.endsWith(path, "2013-03-12.0")) {
                     removeAttempted = true;
                     return 1;
                 }
@@ -4243,10 +4310,10 @@ public class TableWriterTest extends AbstractCairoTest {
         boolean hit = false;
 
         @Override
-        public boolean rename(LPSZ from, LPSZ to) {
+        public int rename(LPSZ from, LPSZ to) {
             if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
                 hit = true;
-                return false;
+                return Files.FILES_RENAME_ERR_OTHER;
             }
             return super.rename(from, to);
         }
@@ -4261,10 +4328,10 @@ public class TableWriterTest extends AbstractCairoTest {
         boolean hit = false;
 
         @Override
-        public boolean rename(LPSZ from, LPSZ to) {
+        public int rename(LPSZ from, LPSZ to) {
             if (Chars.contains(to, TableUtils.META_PREV_FILE_NAME)) {
                 hit = true;
-                return false;
+                return Files.FILES_RENAME_ERR_OTHER;
             }
             return super.rename(from, to);
         }

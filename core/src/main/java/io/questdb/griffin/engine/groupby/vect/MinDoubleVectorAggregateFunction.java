@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
@@ -70,13 +71,13 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
             // no values? no problem :)
             // create list of distinct key values so that we can show NULL against them
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
         }
     }
 
@@ -96,8 +97,8 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMinDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntMinDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -128,5 +129,10 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MinDoubleVector(").put(columnIndex).put(')');
     }
 }

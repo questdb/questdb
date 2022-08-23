@@ -30,6 +30,9 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.ops.AbstractOperation;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
@@ -46,6 +49,7 @@ import org.junit.BeforeClass;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
@@ -54,6 +58,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
     protected static Metrics metrics = Metrics.enabled();
+
+    protected final SCSequence eventSubSequence = new SCSequence();
 
     public static boolean assertCursor(
             CharSequence expected,
@@ -761,9 +767,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
-            sink.clear();
-            factory.toSink(sink);
-            TestUtils.assertEquals(expectedPlan, sink);
+            planSink.reset();
+            factory.toPlan(planSink);
+            TestUtils.assertEquals(expectedPlan, planSink.getText());
         }
         try {
             assertTimestamp(expectedTimestamp, factory);
@@ -1135,7 +1141,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
                 try {
                     compile(query, sqlExecutionContext);
-                    Assert.fail();
+                    Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
@@ -1395,5 +1401,37 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             String startDate,
             int partitionCount) throws NumericException, SqlException {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    protected <T extends AbstractOperation> void executeOperation(
+            String query,
+            int opType,
+            Function<CompiledQuery, T> op
+    ) throws SqlException {
+        CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+        Assert.assertEquals(opType, cq.getType());
+        OperationDispatcher<T> dispatcher = cq.getDispatcher();
+        try (
+                T operation = op.apply(cq);
+                OperationFuture fut = dispatcher.execute(operation, sqlExecutionContext, eventSubSequence)
+        ) {
+            fut.await();
+        }
+    }
+
+    protected PlanSink getPlan(CharSequence query) throws SqlException {
+        RecordCursorFactory factory = null;
+        try {
+            planSink.reset();
+            factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+            factory.toPlan(planSink);
+            return planSink;
+        } finally {
+            Misc.free(factory);
+        }
+    }
+
+    protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
+        TestUtils.assertEquals(expectedPlan, getPlan(query).getText());
     }
 }

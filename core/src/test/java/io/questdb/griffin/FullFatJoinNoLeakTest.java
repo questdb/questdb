@@ -58,7 +58,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                     return method.invoke(ourConfig, args);
                 }
         );
-        // we are about to create a new engine, let's close the old engine otherwise it'll leak memory
+        // free engine from the superclass
         Misc.free(engine);
         engine = new CairoEngine(configuration, metrics);
         compiler = new SqlCompiler(engine, null, null);

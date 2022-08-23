@@ -29,8 +29,17 @@ import io.questdb.network.NetworkFacadeImpl;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
+
+import java.util.concurrent.TimeUnit;
 
 public class HealthCheckTest {
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     private static final String healthCheckRequest = "GET /status HTTP/1.1\r\n" +
             "Host: localhost:9003\r\n" +

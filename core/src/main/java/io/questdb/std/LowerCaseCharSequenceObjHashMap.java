@@ -24,12 +24,9 @@
 
 package io.questdb.std;
 
-
 import java.util.Arrays;
 
-
-public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSequenceHashSet {
-    private final ObjList<CharSequence> list;
+public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSequenceHashMap {
     private T[] values;
 
     public LowerCaseCharSequenceObjHashMap() {
@@ -44,37 +41,18 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     public LowerCaseCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         values = (T[]) new Object[keys.length];
-        this.list = new ObjList<>(capacity);
         clear();
     }
 
-    public final void clear() {
+    public void clear() {
         super.clear();
-        list.clear();
         Arrays.fill(values, null);
-    }
-
-    public ObjList<CharSequence> keys() {
-        return list;
     }
 
     @Override
     protected void erase(int index) {
         keys[index] = noEntryKey;
         values[index] = null;
-    }
-
-    @Override
-    public void removeAt(int index) {
-        if (index < 0) {
-            CharSequence key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
     }
 
     public T get(CharSequence key) {
@@ -99,7 +77,6 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
         }
 
         putAt0(index, key, value);
-        list.add(key);
         return true;
     }
 
@@ -119,15 +96,13 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     }
 
     private void putAt0(int index, CharSequence key, T value) {
-        keys[index] = key;
         values[index] = value;
-        if (--free == 0) {
-            rehash();
-        }
+        putAt0(index, key);
     }
 
     @SuppressWarnings("unchecked")
-    private void rehash() {
+    @Override
+    protected void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;

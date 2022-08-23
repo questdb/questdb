@@ -30,7 +30,7 @@
         {
           "device_name": "/dev/xvdb",
           "volume_size": 100,
-          "delete_on_termination": true
+          "delete_on_termination": false
         }
       ],
 

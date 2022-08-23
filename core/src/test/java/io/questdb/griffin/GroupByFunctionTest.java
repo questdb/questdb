@@ -3087,4 +3087,29 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testSumOverCrossJoinSubQuery() throws Exception {
+        assertQuery("sum\n" +
+                        "-0.5260093253070417\n",
+                "SELECT sum(lth*pcp) " +
+                        "from ( " +
+                        "  select (x.lth - avg_x.lth) as lth, (x.pcp - avg_x.pcp) as pcp " +
+                        "  from x cross join (select avg(lth) as lth, avg(pcp) as pcp from x) avg_x " +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) lth," +
+                        " rnd_double(42) pcp," +
+                        " timestamp_sequence(0, 10000000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by day",
+                null,
+                false,
+                true,
+                true
+        );
+    }
 }

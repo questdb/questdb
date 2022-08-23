@@ -59,7 +59,7 @@ public class CastByteToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getByte(rec) == 1;
+            return arg.getByte(rec) != 0;
         }
     }
 }

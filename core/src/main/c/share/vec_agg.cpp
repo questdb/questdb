@@ -167,29 +167,35 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
 int64_t MIN_LONG(int64_t *pl, int64_t count) {
     Vec8q vec;
     const int step = 8;
-    Vec8q vecMin = L_MAX;
-    Vec8qb bVec;
+    Vec8q vecMin = L_MIN;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == L_MIN;
-        vecMin = select(bVec, vecMin, min(vecMin, vec));
+        vecMin = select(vecMin == L_MIN, vec, vecMin);
+        vec = select(vec == L_MIN, vecMin, vec);
+        // at this point vec and vecMin elements are either both == L_MIN or != L_MIN,
+        // so we can safely apply the min function
+        vecMin = min(vec, vecMin);
     }
 
-    int64_t min = horizontal_min(vecMin);
+    int64_t min = L_MIN;
+    int j;
+    for (j = 0; j < step; j++) {
+        int64_t n = vecMin[j];
+        if (n != L_MIN && (n < min || min == L_MIN)) {
+            min = n;
+        }
+    }
+
     for (; i < count; i++) {
-        int64_t x = *(pl + i);
-        if (x != L_MIN && x < min) {
+        const int64_t x = *(pl + i);
+        if (x != L_MIN && (x < min || min == L_MIN)) {
             min = x;
         }
     }
 
-    if (min < L_MAX) {
-        return min;
-    }
-
-    return L_MIN;
+    return min;
 }
 
 int64_t MAX_LONG(int64_t *pl, int64_t count) {
@@ -205,7 +211,7 @@ int64_t MAX_LONG(int64_t *pl, int64_t count) {
 
     int64_t max = horizontal_max(vecMax);
     for (; i < count; i++) {
-        int64_t x = *(pl + i);
+        const int64_t x = *(pl + i);
         if (x > max) {
             max = x;
         }
@@ -251,29 +257,35 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
 int32_t MIN_INT(int32_t *pi, int64_t count) {
     Vec16i vec;
     const int step = 16;
-    Vec16i vecMin = I_MAX;
-    Vec16ib bVec;
+    Vec16i vecMin = I_MIN;
     int i;
     for (i = 0; i < count - 15; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
-        bVec = vec == I_MIN;
-        vecMin = select(bVec, vecMin, min(vecMin, vec));
+        vecMin = select(vecMin == I_MIN, vec, vecMin);
+        vec = select(vec == I_MIN, vecMin, vec);
+        // at this point vec and vecMin elements are either both == I_MIN or != I_MIN,
+        // so we can safely apply the min function
+        vecMin = min(vec, vecMin);
     }
 
-    int32_t min = horizontal_min(vecMin);
+    int32_t min = I_MIN;
+    int j;
+    for (j = 0; j < step; j++) {
+        int32_t n = vecMin[j];
+        if (n != I_MIN && (n < min || min == I_MIN)) {
+            min = n;
+        }
+    }
+
     for (; i < count; i++) {
-        int32_t x = *(pi + i);
-        if (x != I_MIN && x < min) {
+        const int32_t x = *(pi + i);
+        if (x != I_MIN && (x < min || min == I_MIN)) {
             min = x;
         }
     }
 
-    if (min < I_MAX) {
-        return min;
-    }
-
-    return I_MIN;
+    return min;
 }
 
 int32_t MAX_INT(int32_t *pi, int64_t count) {
@@ -289,7 +301,7 @@ int32_t MAX_INT(int32_t *pi, int64_t count) {
 
     int32_t max = horizontal_max(vecMax);
     for (; i < count; i++) {
-        int32_t x = *(pi + i);
+        const int32_t x = *(pi + i);
         if (x > max) {
             max = x;
         }

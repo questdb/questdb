@@ -63,7 +63,6 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         -1,
                         null);
         bindVariableService.clear();
-        LogFactory.configureSync();
     }
 
     @AfterClass
@@ -118,8 +117,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 "from long_sequence(5000)";
 
         checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str2"));
+                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0, -1L),
+                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
     }
 
     @Test
@@ -160,8 +159,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 ")";
 
         checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str1"));
+                tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L),
+                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
     }
 
     @Test
@@ -178,8 +177,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
         checkRecoverVarIndex(
                 createTableSql,
                 (tablePath) -> {
-                    removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0);
-                    removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L);
+                    removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0, -1L);
                 },
                 RecoverVarIndex::rebuildAll
         );
@@ -199,8 +198,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
         checkRecoverVarIndex(
                 createTableSql,
                 (tablePath) -> {
-                    removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0);
-                    removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0);
+                    removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L);
+                    removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0, -1L);
                 },
                 RecoverVarIndex::rebuildAll
         );
@@ -218,8 +217,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 ") timestamp(ts) PARTITION BY DAY";
 
         checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str1"));
+                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
+                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
     }
 
     @Test
@@ -234,8 +233,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 ") timestamp(ts) PARTITION BY DAY";
 
         checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0),
-                rebuildIndex -> rebuildIndex.rebuildPartitionColumn("1970-01-01", "str1"));
+                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
+                rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1"));
     }
 
     @Test
@@ -259,8 +258,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 "from long_sequence(5000)";
 
         checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str2"));
+                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
+                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
     }
 
     @Test
@@ -281,7 +280,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
                         rebuildIndex -> {
                             try {
-                                rebuildIndex.rebuildColumn("str1");
+                                rebuildIndex.reindexColumn("str1");
                             } finally {
                                 tempWriter.close();
                             }
@@ -320,7 +319,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 checkRecoverVarIndex(createTableSql,
                         tablePath -> {
                         },
-                        rebuildIndex -> rebuildIndex.rebuildColumn("str2"));
+                        rebuildIndex -> rebuildIndex.reindexColumn("str2"));
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
@@ -343,7 +342,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             checkRecoverVarIndex(createTableSql,
                     tablePath -> {
                     },
-                    rebuildIndex -> rebuildIndex.rebuildColumn("x"));
+                    rebuildIndex -> rebuildIndex.reindexColumn("x"));
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "Wrong column type");
@@ -383,11 +382,12 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
         return recordCount;
     }
 
-    private void removeFileAtPartition(String fileName, int partitionBy, String tablePath, long partitionTs) {
+    private void removeFileAtPartition(String fileName, int partitionBy, String tablePath, long partitionTs, long partitionNameTxn) {
         try (Path path = new Path()) {
             path.concat(tablePath);
             path.put(Files.SEPARATOR);
             PartitionBy.setSinkForPartition(path, partitionBy, partitionTs, false);
+            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
             path.concat(fileName);
             LOG.info().$("removing ").utf8(path).$();
             Assert.assertTrue(Files.remove(path.$()));

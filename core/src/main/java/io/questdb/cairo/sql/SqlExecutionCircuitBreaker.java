@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-public interface SqlExecutionCircuitBreaker {
+public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
         public void statefulThrowExceptionIfTripped() {
@@ -40,7 +40,7 @@ public interface SqlExecutionCircuitBreaker {
         }
 
         @Override
-        public boolean checkIfTripped(long executionStartTimeUs, long fd) {
+        public boolean checkIfTripped(long millis, long fd) {
             return false;
         }
 
@@ -67,9 +67,7 @@ public interface SqlExecutionCircuitBreaker {
      */
     void statefulThrowExceptionIfTripped();
 
-    boolean checkIfTripped();
-
-    boolean checkIfTripped(long executionStartTimeUs, long fd);
+    boolean checkIfTripped(long millis, long fd);
 
     void resetTimer();
 

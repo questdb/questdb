@@ -70,6 +70,7 @@ public final class Unsafe {
 
             LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
+
             //#if jdk.version!=8
             OVERRIDE = AccessibleObject_override_fieldOffset();
             implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
@@ -221,11 +222,17 @@ public final class Unsafe {
     }
 
     public static long malloc(long size, int memoryTag) {
-        long ptr = getUnsafe().allocateMemory(size);
-        assert recordAllocationStacktrace(ptr);
-        recordMemAlloc(size, memoryTag);
-        MALLOC_COUNT.incrementAndGet();
-        return ptr;
+        try {
+            long ptr = getUnsafe().allocateMemory(size);
+            assert recordAllocationStacktrace(ptr);
+            recordMemAlloc(size, memoryTag);
+            MALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.println("Unsafe.malloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+                    + ", size=" + size + ", memoryTag=" + memoryTag);
+            throw oom;
+        }
     }
 
     private static boolean recordAllocationStacktrace(long ptr) {
@@ -243,18 +250,24 @@ public final class Unsafe {
     }
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
-        assert recordDeallocatedStacktrace(address);
-        long ptr = getUnsafe().reallocateMemory(address, newSize);
-        assert recordAllocationStacktrace(ptr);
-        recordMemAlloc(-oldSize + newSize, memoryTag);
-        REALLOC_COUNT.incrementAndGet();
-        return ptr;
+        try {
+            assert recordDeallocatedStacktrace(address);
+            long ptr = getUnsafe().reallocateMemory(address, newSize);
+            assert recordAllocationStacktrace(ptr);
+            recordMemAlloc(-oldSize + newSize, memoryTag);
+            REALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.println("Unsafe.realloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+                    + ", old_size=" + oldSize + ", new_size=" + newSize + ", memoryTag=" + memoryTag);
+            throw oom;
+        }
     }
 
     public static void recordMemAlloc(long size, int memoryTag) {
         long mem = MEM_USED.addAndGet(size);
         assert mem >= 0;
-        assert  memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
+        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
     }
 

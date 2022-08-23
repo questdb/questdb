@@ -24,19 +24,20 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
+import io.questdb.Metrics;
+import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Os;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
-@Ignore
 public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
@@ -1094,6 +1095,82 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testRostiReallocation() throws Exception {
+        rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public long alloc(ColumnTypes types, long ignore) {
+                // force resize
+                return super.alloc(types, 64);
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            String ddl = "create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1500))";
+            String sql = "select distinct count, count1 from (select x1, count(*), count(*) from tab group by x1)";
+            assertQuery(
+                    "count\tcount1\n1\t1\n",
+                    sql,
+                    ddl,
+                    null, true, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testRostiWithManyAggregateFunctions() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runGroupByIntWithAgg);
+    }
+
+    private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile("create table tab as ( select cast(x as int) i, x as l, cast(x as date) dat, cast(x as timestamp) ts, cast(x as double) d, rnd_long256() l256  from long_sequence(1000));", sqlExecutionContext);
+
+        CompiledQuery query = compiler.compile("select count(*) cnt from " +
+                "(select i, count(*), min(i), avg(i), max(i), sum(i), " +
+                "min(l), avg(l), max(l), sum(l), " +
+                "min(dat), avg(dat), max(dat), sum(dat), " +
+                "min(ts), avg(ts), max(ts), sum(ts), " +
+                "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
+                "sum(l256) from tab group by i )", sqlExecutionContext);
+
+        try {
+            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+    }
+
+    @Test
+    public void testRostiWithManyWorkers() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWithIdleWorkers() throws Exception {
+        executeWithPool(4, 16, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWithIdleWorkers2() throws Exception {
+        executeWithPool(4, 1, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWithNoWorkers() throws Exception {
+        executeWithPool(0, 0, KeyedAggregationTest::runGroupByTest);
+    }
+
+    private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
+        CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
+
+        try {
+            assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+    }
+
     private void testAggregations(String[] aggregateFunctions, TypeVal[] aggregateColTypes) throws SqlException {
         StringBuilder sql = new StringBuilder();
         sql.append("select ");
@@ -1148,5 +1225,90 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         public final String emtpyValue;
         public final String colName;
         public final String funcArg;
+    }
+
+    protected void executeWithPool(
+            int workerCount,
+            int queueSize,
+            CustomisableRunnable runnable
+    ) throws Exception {
+        // we need to create entire engine
+        assertMemoryLeak(() -> {
+            if (workerCount > 0) {
+                //run less workers so that this thread may safely use workerCount-1 id 
+                int[] affinity = new int[workerCount - 1];
+                for (int i = 0; i < workerCount - 1; i++) {
+                    affinity[i] = -1;
+                }
+
+                WorkerPool pool = new WorkerPool(
+                        new WorkerPoolAwareConfiguration() {
+                            @Override
+                            public int[] getWorkerAffinity() {
+                                return affinity;
+                            }
+
+                            @Override
+                            public int getWorkerCount() {
+                                return workerCount - 1;
+                            }
+
+                            @Override
+                            public boolean haltOnError() {
+                                return false;
+                            }
+
+                            @Override
+                            public boolean isEnabled() {
+                                return true;
+                            }
+                        },
+                        Metrics.disabled()
+                );
+
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public int getVectorAggregateQueueCapacity() {
+                        return queueSize;
+                    }
+                };
+
+                execute(pool, runnable, configuration1);
+            } else {
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root);
+                execute(null, runnable, configuration1);
+            }
+        });
+    }
+
+    protected static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
+
+        try (final CairoEngine engine = new CairoEngine(configuration);
+             final SqlCompiler compiler = new SqlCompiler(engine)) {
+            //workerCount - 1 
+            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
+                try {
+                    if (pool != null) {
+                        pool.assignCleaner(Path.CLEANER);
+                        GroupByJob job = new GroupByJob(engine.getMessageBus());
+                        pool.assign(job);
+                        pool.start(LOG);
+                    }
+
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+                } finally {
+                    if (pool != null) {
+                        pool.halt();
+                    }
+                }
+            }
+        }
     }
 }

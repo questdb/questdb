@@ -96,9 +96,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCannotCreateTable() throws Exception {
         assertFailure(
                 new FilesFacadeImpl() {
+                    int mkDirCount = 0;
+
                     @Override
-                    public int mkdirs(Path path1, int mode) {
-                        return -1;
+                    public int mkdirs(Path path, int mode) {
+                        if (mkDirCount++ > 0) {
+                            return -1;
+                        }
+                        return super.mkdirs(path, mode);
                     }
                 },
                 "create table x (a int)",
@@ -2153,7 +2158,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
-                if (mapCount++ > 2) {
+                if (mapCount++ > 6) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -3377,7 +3382,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ > 12) {
+                if (inError.get() && pageCount++ > 14) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -3475,7 +3480,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ == 13) {
+                if (inError.get() && pageCount++ == 15) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);

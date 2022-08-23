@@ -25,18 +25,19 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.Net;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -47,8 +48,22 @@ import org.junit.Assert;
 import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
 
-class AbstractLineTcpReceiverTest extends AbstractCairoTest {
+import static io.questdb.test.tools.TestUtils.assertEventually;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
+
+public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
+    public static final String AUTH_KEY_ID1 = "testUser1";
+    public static final String AUTH_TOKEN_KEY1 = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
+    public static final PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY1);
+    public static final String AUTH_KEY_ID2 = "testUser2";
+    public static final String AUTH_TOKEN_KEY2 = "AIZc78-On-91DLplVNtyLOmKddY0AL9mnT5onl19Vv_g";
+    public static final PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY2);
+    public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
+    public static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
+
     protected static final int WAIT_NO_WAIT = 0x0;
     protected static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
@@ -77,6 +92,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long commitIntervalDefault = 2000;
     protected boolean disconnectOnError = false;
     protected boolean symbolAsFieldSupported;
+    protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public boolean getDisconnectOnError() {
@@ -142,6 +158,11 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
         }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return nf;
+        }
     };
 
     @After
@@ -161,16 +182,21 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             return socket;
         }
 
-        int ipv4address = Net.parseIPv4("127.0.0.1");
-        long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        long fd = Net.socketTcp(true);
-        socket = new Socket(sockaddr, fd);
+        socket = newSocket();
+
+        tlSocket.set(socket);
+        return socket;
+    }
+
+    protected Socket newSocket() {
+        final int ipv4address = Net.parseIPv4("127.0.0.1");
+        final long sockaddr = Net.sockaddr(ipv4address, bindPort);
+        final long fd = Net.socketTcp(true);
+        final Socket socket = new Socket(sockaddr, fd);
 
         if (TestUtils.connect(fd, sockaddr) != 0) {
             throw new RuntimeException("could not connect, errno=" + Os.errno());
         }
-
-        tlSocket.set(socket);
         return socket;
     }
 
@@ -261,9 +287,19 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             while (sent != lineDataBytes.length) {
                 int rc = Net.send(socket.fd, bufaddr + sent, lineDataBytes.length - sent);
                 if (rc < 0) {
+                    LOG.error().$("Data sending failed [rc=").$(rc)
+                            .$(", sent=").$(sent)
+                            .$(", bufferSize=").$(lineDataBytes.length)
+                            .I$();
                     throw new RuntimeException("Data sending failed [rc=" + rc + "]");
                 }
                 sent += rc;
+                if (sent != lineDataBytes.length) {
+                    LOG.info().$("Data sending is in progress [rc=").$(rc)
+                            .$(", sent=").$(sent)
+                            .$(", bufferSize=").$(lineDataBytes.length)
+                            .I$();
+                }
             }
         } finally {
             Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
@@ -298,6 +334,30 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             tlSocket.set(null);
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
+        }
+    }
+
+    public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
+        TestUtils.assertEventually(() -> {
+            assertTableExists(engine, tableName);
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                long size = reader.getCursor().size();
+                assertEquals(expectedSize, size);
+            } catch (EntryLockedException e) {
+                // if table is busy we want to fail this round and have the assertEventually() to retry later
+                fail("table +" + tableName + " is locked");
+            }
+        });
+    }
+
+    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
+        assertEventually(() -> assertTableExists(engine, tableName));
+    }
+
+    public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
+        try (Path path = new Path()) {
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName));
         }
     }
 }

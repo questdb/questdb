@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -294,7 +295,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 }
 
                 runPurgeJob(purgeJob);
-                String[] partitions = new String[]{"1970-02-01"};
+                String[] partitions = new String[]{"1970-02-01.2"};
                 String[] files = {"x.d"};
                 assertFilesExist(partitions, "testPurge", files, ".2", true);
 
@@ -392,7 +393,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     private void executeUpdate(String query) throws SqlException {
         final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (QuietClosable op = cq.getOperation()) {
+        try (AbstractOperation op = cq.getOperation()) {
             try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, null)) {
                 fut.await();
             }

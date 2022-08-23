@@ -55,7 +55,58 @@ public class AddIndexTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testAddIndexToColumnWithTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table trades as (\n" +
+                            "    select \n" +
+                            "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                            "        rnd_double() price, \n" +
+                            "        timestamp_sequence(172800000000, 1) ts \n" +
+                            "    from long_sequence(1000)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+            compile("alter table trades add column sym2 symbol", sqlExecutionContext);
+            compile("alter table trades alter column sym2 add index", sqlExecutionContext);
 
+            assertSql("trades where sym2 = 'ABB'", "sym\tprice\tts\tsym2\n");
+        });
+    }
+
+    @Test
+    public void testAddIndexToColumnWithTop2() throws Exception {
+        assertMemoryLeak(() -> {
+            int rowCount = (int) configuration.getDataAppendPageSize() / Integer.BYTES + 1;
+            compiler.compile(
+                    "create table trades as (\n" +
+                            "    select \n" +
+                            "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                            "        rnd_double() price, \n" +
+                            "        timestamp_sequence(172800000000, 1) ts \n" +
+                            "    from long_sequence(" + rowCount + ")\n" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compile("alter table trades add column sym2 symbol", sqlExecutionContext);
+            compiler.compile(
+                    "insert into trades \n" +
+                            "    select \n" +
+                            "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                            "        rnd_double() price, \n" +
+                            "        timestamp_sequence(172800000000 + " + rowCount + ", 1) ts, \n" +
+                            "        rnd_symbol('ABB', 'HBC', 'DXR') sym2 \n" +
+                            "    from long_sequence(" + rowCount + ")\n",
+                    sqlExecutionContext
+            );
+
+            compile("alter table trades alter column sym2 add index", sqlExecutionContext);
+            assertSql("select count(*) from trades where sym2 = 'ABB'", "count\n" +
+                    "1398605\n");
+        });
+    }
 
     @Test
     public void testBeforeAndAfterIndex() throws Exception {
@@ -92,7 +143,6 @@ public class AddIndexTest extends AbstractGriffinTest {
                 "alter table trades alter column sym add index",
                 expected,
                 true
-
         );
     }
 

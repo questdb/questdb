@@ -27,7 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
 
@@ -35,14 +35,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private final int bufferSize;
-    private final MicrosecondClock microsecondClock;
+    private final MillisecondClock clock;
     private final long defaultMaxTime;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
-    private long maxTime;
+    private long timeout;
     private long buffer;
     private int testCount;
     private long fd = -1;
-    private long powerUpTimestampUs;
+    private long powerUpTime;
     private final int memoryTag;
 
     public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
@@ -52,14 +52,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.bufferSize = configuration.getBufferSize();
         this.memoryTag = memoryTag;
         this.buffer = Unsafe.malloc(bufferSize, this.memoryTag);
-        this.microsecondClock = configuration.getClock();
-        long maxTime = configuration.getMaxTime();
-        if (maxTime > 0) {
-            this.maxTime = maxTime;
+        this.clock = configuration.getClock();
+        long timeout = configuration.getTimeout();
+        if (timeout > 0) {
+            this.timeout = timeout;
         } else {
-            this.maxTime = Long.MAX_VALUE;
+            this.timeout = Long.MAX_VALUE;
         }
-        this.defaultMaxTime = this.maxTime;
+        this.defaultMaxTime = this.timeout;
     }
 
     @Override
@@ -80,11 +80,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     public void resetMaxTimeToDefault() {
-        this.maxTime = defaultMaxTime;
+        this.timeout = defaultMaxTime;
     }
 
-    public void setMaxTime(long maxTime) {
-        this.maxTime = maxTime;
+    public void setTimeout(long timeout) {
+        this.timeout = timeout;
     }
 
     @Override
@@ -102,12 +102,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public boolean checkIfTripped() {
-        return checkIfTripped(powerUpTimestampUs, fd);
+        return checkIfTripped(powerUpTime, fd);
     }
 
     @Override
-    public boolean checkIfTripped(long executionStartTimeUs, long fd) {
-        if (microsecondClock.getTicks() - maxTime > executionStartTimeUs) {
+    public boolean checkIfTripped(long millis, long fd) {
+        if (clock.getTicks() - timeout > millis) {
             return true;
         }
         return testConnection(fd);
@@ -120,7 +120,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void resetTimer() {
-        powerUpTimestampUs = microsecondClock.getTicks();
+        powerUpTime = clock.getTicks();
     }
 
     public NetworkSqlExecutionCircuitBreaker of(long fd) {
@@ -160,7 +160,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private void testTimeout() {
-        if (microsecondClock.getTicks() - maxTime > powerUpTimestampUs) {
+        if (clock.getTicks() - timeout > powerUpTime) {
             throw CairoException.instance(0).put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }

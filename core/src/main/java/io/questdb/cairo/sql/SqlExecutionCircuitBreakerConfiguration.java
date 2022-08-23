@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface SqlExecutionCircuitBreakerConfiguration {
     int getBufferSize();
@@ -36,8 +37,8 @@ public interface SqlExecutionCircuitBreakerConfiguration {
 
     boolean isEnabled();
 
-    MicrosecondClock getClock();
+    MillisecondClock getClock();
 
     // maximum SQL execution time in micros
-    long getMaxTime();
+    long getTimeout();
 }

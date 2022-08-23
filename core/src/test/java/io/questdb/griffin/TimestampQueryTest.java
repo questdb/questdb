@@ -27,6 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,7 +46,6 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 public class TimestampQueryTest extends AbstractGriffinTest {
-
 
     @Test
     public void testCast2AsValidColumnNameTouchFunction() throws Exception {
@@ -1407,13 +1409,18 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter) throws SqlException {
-        String queryPlan = "{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":{\"name\":\"IntervalFwdDataFrameCursorFactory\", \"table\":\"xts\"}}";
+        String queryPlan =
+                "DataFrameRecordCursorFactory\n" +
+                        "    IntervalFwdDataFrame\n" +
+                        "      tableName=xts\n";
+        Assert.assertTrue(Chars.startsWith(getPlan(query).getText(), queryPlan));
+
         long expectedCount = dates.stream().filter(arr -> filter.test((long) arr[0])).count();
         String expected = "ts\n"
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", null, null, true, true, true, false, queryPlan);
+        printSqlResult(expected, query, "ts", null, null, true, true, true, false, null);
         return (int) expectedCount;
     }
 }

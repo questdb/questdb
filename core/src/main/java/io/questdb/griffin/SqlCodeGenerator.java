@@ -123,6 +123,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final LongList prefixes = new LongList();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+    private final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
+    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -152,6 +154,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @Override
     public void clear() {
         whereClauseParser.clear();
+        intListPool.clear();
     }
 
     @Override
@@ -2283,8 +2286,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // set of column indexes in the base metadata that has already been added to the main
         // metadata instance
-        // todo: reuse this set
-        IntHashSet columnSet = new IntHashSet();
+        intHashSet.clear();
+        final IntList columnIndexes = new IntList();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
             if (!(qc instanceof AnalyticColumn)) {
@@ -2295,11 +2298,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 chainTypes.add(i, m.getType());
                 listColumnFilterA.extendAndSet(i, i + 1);
                 listColumnFilterB.extendAndSet(i, columnIndex);
-                columnSet.add(columnIndex);
+                intHashSet.add(columnIndex);
+                columnIndexes.extendAndSet(i, columnIndex);
             }
         }
 
-        // pass #2 - add remaining base metadata column that are not in columnSet already
+        // pass #2 - add remaining base metadata column that are not in intHashSet already
         // we need to pay attention to stepping over analytic column slots
         // Chain metadata is assembled in such way that all columns the factory
         // needs to provide are at the beginning of the metadata so the record the factory cursor
@@ -2308,12 +2312,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         int addAt = columnCount;
         for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-            if (columnSet.excludes(i)) {
+            if (intHashSet.excludes(i)) {
                 final TableColumnMetadata m = BaseRecordMetadata.copyOf(baseMetadata, i);
                 chainMetadata.add(addAt, m);
                 chainTypes.add(addAt, m.getType());
                 listColumnFilterA.extendAndSet(addAt, addAt + 1);
                 listColumnFilterB.extendAndSet(addAt, i);
+                columnIndexes.extendAndSet(addAt, i);
                 addAt++;
             }
         }
@@ -2322,16 +2327,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // not main metadata to avoid partitionBy functions accidentally looking up
         // analytic columns recursively
 
-        // todo: these ar transient list, we can cache and reuse
-        final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
-
+        deferredAnalyticMetadata.clear();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
             if (qc instanceof AnalyticColumn) {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 final ExpressionNode ast = qc.getAst();
                 if (ast.paramCount > 1) {
-                    throw SqlException.$(ast.position, "Too many arguments");
+                    throw SqlException.$(ast.position, "too many arguments");
                 }
 
                 ObjList<Function> partitionBy = null;
@@ -2379,9 +2382,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         base.recordCursorSupportsRandomAccess()
                 );
 
-                final Function f = functionParser.parseFunction(ac.getAst(), baseMetadata, executionContext);
-                // todo: throw an error when non-analytic function is called in analytic context
-                assert f instanceof AnalyticFunction;
+                final Function f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                if (!(f instanceof AnalyticFunction)) {
+                    throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                }
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
                 // analyze order by clause on the current model and optimise out
@@ -2464,7 +2468,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 chainTypes,
                 analyticComparators,
                 functionGroups,
-                naturalOrderFunctions
+                naturalOrderFunctions,
+                columnIndexes
         );
     }
 
@@ -2616,7 +2621,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 distinctColumnMetadata,
                                 arrayColumnTypes,
                                 tempVaf,
-                                executionContext.getWorkerCount(),
+                                executionContext.getSharedWorkerCount(),
                                 tempSymbolSkewIndexes
 
                         );
@@ -2738,12 +2743,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            // inspect model for possibility of vector aggregate intrinsics
+            // Inspect model for possibility of vector aggregate intrinsics.
             if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
-                // create metadata from everything we've gathered
+                // Create metadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
-                // start with keys
+                // Start with keys.
                 for (int i = 0, n = tempKeyIndex.size(); i < n; i++) {
                     final int indexInThis = tempKeyIndex.getQuick(i);
                     final int indexInBase = tempKeyIndexesInBase.getQuick(i);
@@ -2775,12 +2780,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                // add aggregates
+                // Add the aggregate functions.
                 for (int i = 0, n = tempVecConstructors.size(); i < n; i++) {
                     VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
                     int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
                     int indexInThis = tempAggIndex.getQuick(i);
-                    VectorAggregateFunction vaf = constructor.create(tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
+                    VectorAggregateFunction vaf = constructor.create(tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getSharedWorkerCount());
                     tempVaf.add(vaf);
                     meta.add(indexInThis,
                             new TableColumnMetadata(
@@ -2818,16 +2823,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory,
                             meta,
                             arrayColumnTypes,
-                            executionContext.getWorkerCount(),
+                            executionContext.getSharedWorkerCount(),
                             tempVaf,
                             tempKeyIndexesInBase.getQuick(0),
                             tempKeyIndex.getQuick(0),
                             tempSymbolSkewIndexes
                     );
                 }
-            }
 
-            Misc.freeObjList(tempVaf);
+                // Free the vector aggregate functions since we didn't use them.
+                Misc.freeObjList(tempVaf);
+            }
 
             if (specialCaseKeys) {
                 // uh-oh, we had special case keys, but could not find implementation for the functions
@@ -2838,7 +2844,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factory = generateSubQuery(model, executionContext);
                 // and reset metadata
                 metadata = factory.getMetadata();
-
             }
 
             final int timestampIndex = getTimestampIndex(model, factory);
@@ -3034,8 +3039,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function timestampFunction = FunctionParser.createColumn(
                         0,
                         timestampColumn,
-                        metadata,
-                        executionContext
+                        metadata
                 );
                 functions.add(timestampFunction);
 
@@ -3759,7 +3763,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
-        return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equals(ast.token, name) && ast.rhs.type == LITERAL;
+        return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
     private void lookupColumnIndexes(
@@ -3852,7 +3856,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         if (!filterFunction.isReadThreadSafe()) {
             ObjList<Function> perWorkerFilters = new ObjList<>();
-            for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
+            for (int i = 0, c = executionContext.getSharedWorkerCount(); i < c; i++) {
                 final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
                 perWorkerFilters.extendAndSet(i, perWorkerFilter);
             }
@@ -3927,8 +3931,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
-        // todo: pool
-        final IntList indices = new IntList();
+        final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             ExpressionNode tok = orderBy.getQuick(i);
             int index = m.getColumnIndexQuiet(tok.token);
@@ -4046,6 +4049,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         joinsRequiringTimestamp[JOIN_ASOF] = true;
         joinsRequiringTimestamp[JOIN_SPLICE] = true;
         joinsRequiringTimestamp[JOIN_LT] = true;
+        joinsRequiringTimestamp[JOIN_ONE] = false;
     }
 
     static {

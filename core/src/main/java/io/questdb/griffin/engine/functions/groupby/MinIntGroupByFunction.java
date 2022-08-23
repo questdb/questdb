@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
@@ -53,7 +54,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void computeNext(MapValue mapValue, Record record) {
         int min = mapValue.getInt(valueIndex);
         int next = arg.getInt(record);
-        if (next != Numbers.INT_NaN && next < min || min == Numbers.INT_NaN) {
+        if (next != Numbers.INT_NaN && (next < min || min == Numbers.INT_NaN)) {
             mapValue.putInt(valueIndex, next);
         }
     }
@@ -82,5 +83,10 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MinInt(").put(arg).put(')');
     }
 }

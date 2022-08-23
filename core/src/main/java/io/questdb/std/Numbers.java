@@ -603,7 +603,7 @@ public final class Numbers {
 
     /**
      * Clinger's fast path:
-     * https://www.researchgate.net/publication/2295884_How_to_Read_Floating_Point_Numbers_Accurately
+     * <a href="https://www.researchgate.net/publication/2295884_How_to_Read_Floating_Point_Numbers_Accurately">source</a>
      */
     public static double parseDouble(CharSequence sequence) throws NumericException {
         int lim = sequence.length();
@@ -693,11 +693,8 @@ public final class Numbers {
             exp = -308;
         }
 
-        if (exp > -1) {
-            return (negative ? -val : val) * pow10d[exp];
-        } else {
-            return (negative ? -val : val) / pow10d[-exp];
-        }
+        double v = exp > -1 ? val * pow10d[exp] : val / pow10d[-exp];
+        return negative ? -v : v;
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
@@ -788,11 +785,8 @@ public final class Numbers {
             exp = -38;
         }
 
-        if (exp > 0) {
-            return (negative ? -val : val) * pow10f[exp];
-        } else {
-            return (negative ? -val : val) / pow10f[-exp];
-        }
+        float v = exp > 0 ? val * pow10f[exp] : val / pow10f[-exp];
+        return negative ? -v : v;
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {
@@ -815,6 +809,10 @@ public final class Numbers {
         return val;
     }
 
+    public static long parseHexLong(CharSequence sequence) throws NumericException {
+        return parseHexLong(sequence, 0, sequence.length());
+    }
+
     public static long parseHexLong(CharSequence sequence, int lo, int hi) throws NumericException {
         if (hi == 0) {
             throw NumericException.INSTANCE;
@@ -825,7 +823,6 @@ public final class Numbers {
         for (int i = lo; i < hi; i++) {
             int c = sequence.charAt(i);
             long n = val << 4;
-
             r = n + hexToDecimal(c);
             val = r;
         }

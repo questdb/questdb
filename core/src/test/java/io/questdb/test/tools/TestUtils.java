@@ -25,15 +25,18 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -50,7 +53,10 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -85,8 +91,15 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
-        long rc = nf.connect(fd, ilpSockAddr);
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+        long rc = connectAddrInfo(fd, sockAddrInfo);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
+        }
+    }
+
+    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
+        long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
         }
@@ -445,6 +458,13 @@ public final class TestUtils {
         Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
+
+        int addrInfoCount = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
+
+        int sockAddrCount = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
+
         runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
@@ -463,6 +483,18 @@ public final class TestUtils {
                 }
             }
             Assert.assertEquals(mem, memAfter);
+        }
+
+        int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue(addrInfoCountAfter > -1);
+        if (addrInfoCount != addrInfoCountAfter) {
+            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
+        }
+
+        int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue(sockAddrCountAfter > -1);
+        if (sockAddrCount != sockAddrCountAfter) {
+            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
         }
     }
 
@@ -555,6 +587,11 @@ public final class TestUtils {
     public static long connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
+    }
+
+    public static long connectAddrInfo(long fd, long sockAddrInfo) {
+        Assert.assertTrue(fd > -1);
+        return Net.connectAddrInfo(fd, sockAddrInfo);
     }
 
     public static void copyDirectory(Path src, Path dst, int dirMode) {
@@ -743,6 +780,14 @@ public final class TestUtils {
         return new Rnd(s0, s1);
     }
 
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        return new Rnd(s0, s1);
+    }
+
     public static int getJavaVersion() {
         String version = System.getProperty("java.version");
         if (version.startsWith("1.")) {
@@ -866,6 +911,14 @@ public final class TestUtils {
             case ColumnType.LONG256:
                 r.getLong256(i, sink);
                 break;
+            case ColumnType.LONG128:
+                long long128Hi = r.getLong128Hi(i);
+                long long128Lo = r.getLong128Lo(i);
+                if (!Long128Util.isNull(long128Hi, long128Lo)) {
+                    UUID guid = new UUID(long128Hi, long128Lo);
+                    sink.put(guid.toString());
+                }
+                break;
             default:
                 break;
         }
@@ -988,5 +1041,57 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
+    }
+
+    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
+        }
+    }
+
+    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
+        WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return new int[1];
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return true;
+            }
+        };
+        WorkerPool pool = new WorkerPool(config, Metrics.disabled());
+        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
+        try {
+            pool.assign(processingJob);
+            pool.freeOnHalt(processingJob);
+            pool.start(null);
+            task.run();
+        } finally {
+            pool.halt();
+        }
+    }
+
+    public static String getCsvRoot() {
+        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
+        try {
+            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
+            return new File(rootSource.toURI()).getParent();
+        } catch (URISyntaxException e) {
+            throw new AssertionError("missing test-import.csv", e);
+        }
     }
 }

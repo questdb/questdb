@@ -46,9 +46,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
-    private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final TypeManager typeManager;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private CharSequence tableName;
     private TableWriter writer;
@@ -70,15 +68,9 @@ public class CairoTextWriter implements Closeable, Mutable {
     private int warnings;
     private final IntList remapIndex = new IntList();
 
-    public CairoTextWriter(
-            CairoEngine engine,
-            Path path,
-            TypeManager typeManager
-    ) {
+    public CairoTextWriter(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
-        this.path = path;
-        this.typeManager = typeManager;
     }
 
     @Override
@@ -91,6 +83,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         warnings = TextLoadWarning.NONE;
         designatedTimestampColumnName = null;
         designatedTimestampIndex = NO_INDEX;
+        timestampIndex = NO_INDEX;
         importedTimestampColumnName = null;
         remapIndex.clear();
     }
@@ -151,13 +144,20 @@ public class CairoTextWriter implements Closeable, Mutable {
         return writer == null ? 0 : writer.size() - _size;
     }
 
-    public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
+    public void of(
+            CharSequence name,
+            boolean overwrite,
+            boolean durable,
+            int atomicity,
+            int partitionBy,
+            CharSequence timestampColumn
+    ) {
         this.tableName = name;
         this.overwrite = overwrite;
         this.durable = durable;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
-        this.importedTimestampColumnName = timestampIndexCol;
+        this.importedTimestampColumnName = timestampColumn;
     }
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
@@ -182,7 +182,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (i == timestampIndex || dbcs.length() == 0) {
                     continue;
                 }
-                if (onField(line, dbcs, w, i)) return;
+                if (onField(line, dbcs, w, i)) {
+                    return;
+                }
             }
             w.append();
             checkMaxAndCommitLag();
@@ -200,7 +202,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     private void createTable(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            CairoSecurityContext cairoSecurityContext
+            CairoSecurityContext cairoSecurityContext,
+            Path path
     ) throws TextException {
         engine.createTable(
                 cairoSecurityContext,
@@ -249,7 +252,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     private TableWriter openWriterAndOverrideImportTypes(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            CairoSecurityContext cairoSecurityContext
+            CairoSecurityContext cairoSecurityContext,
+            TypeManager typeManager
     ) {
 
         TableWriter writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
@@ -312,7 +316,10 @@ public class CairoTextWriter implements Closeable, Mutable {
     void prepareTable(
             CairoSecurityContext cairoSecurityContext,
             ObjList<CharSequence> names,
-            ObjList<TypeAdapter> detectedTypes
+            ObjList<TypeAdapter> detectedTypes,
+            Path path,
+            TypeManager typeManager,
+            TimestampAdapter timestampAdapter
     ) throws TextException {
         assert writer == null;
 
@@ -323,7 +330,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         boolean canUpdateMetadata = true;
         switch (engine.getStatus(cairoSecurityContext, path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
-                createTable(names, detectedTypes, cairoSecurityContext);
+                createTable(names, detectedTypes, cairoSecurityContext, path);
                 writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                 designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
@@ -332,11 +339,11 @@ public class CairoTextWriter implements Closeable, Mutable {
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
                     engine.remove(cairoSecurityContext, path, tableName);
-                    createTable(names, detectedTypes, cairoSecurityContext);
+                    createTable(names, detectedTypes, cairoSecurityContext, path);
                     writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 } else {
                     canUpdateMetadata = false;
-                    writer = openWriterAndOverrideImportTypes(names, detectedTypes, cairoSecurityContext);
+                    writer = openWriterAndOverrideImportTypes(names, detectedTypes, cairoSecurityContext, typeManager);
                     designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     if (importedTimestampColumnName != null &&
@@ -369,10 +376,13 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
-        if (timestampIndex != NO_INDEX && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-            timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-        } else {
-            timestampAdapter = null;
+
+        if (timestampIndex != NO_INDEX) {
+            if (timestampAdapter != null) {
+                this.timestampAdapter = timestampAdapter;
+            } else if (ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
+                this.timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
+            }
         }
     }
 
@@ -448,6 +458,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public long getCommitLag() {
             return configuration.getCommitLag();
+        }
+
+        @Override
+        public boolean isWallEnabled() {
+            return configuration.getWallEnabledDefault();
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

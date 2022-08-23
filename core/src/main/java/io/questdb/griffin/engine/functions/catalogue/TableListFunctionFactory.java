@@ -50,6 +50,7 @@ public class TableListFunctionFactory implements FunctionFactory {
     private static final int commitLagColumn;
     private static final int designatedTimestampColumn;
     private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
+    private static final int writeModeColumn;
 
     @Override
     public String getSignature() {
@@ -102,12 +103,6 @@ public class TableListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void _close() {
-            path = Misc.free(path);
-            metaReader = Misc.free(metaReader);
-        }
-
-        @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.toTop();
             return cursor;
@@ -118,6 +113,12 @@ public class TableListFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        protected void _close() {
+            path = Misc.free(path);
+            metaReader = Misc.free(metaReader);
+        }
+
         private class TableListRecordCursor implements RecordCursor {
             private final StringSink sink = new StringSink();
             private final TableListRecord record = new TableListRecord();
@@ -126,6 +127,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 findPtr = ff.findClose(findPtr);
+                metaReader.clear();//release FD of last table on the list
             }
 
             @Override
@@ -216,6 +218,14 @@ public class TableListFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
+                public boolean getBool(int col) {
+                    if (col == writeModeColumn) {
+                        return metaReader.isWalEnabled();
+                    }
+                    return false;
+                }
+
+                @Override
                 public CharSequence getStrB(int col) {
                     return getStr(col);
                 }
@@ -234,7 +244,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                     int pathLen = path.length();
                     try {
                         path.chop$().concat(tableName).concat(META_FILE_NAME).$();
-                        metaReader.of(path.$(), ColumnType.VERSION);
+                        metaReader.deferredInit(path.$(), ColumnType.VERSION);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = metaReader.getId();
@@ -274,6 +284,8 @@ public class TableListFunctionFactory implements FunctionFactory {
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("commitLag", 6, ColumnType.LONG));
         commitLagColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("walEnabled", 7, ColumnType.BOOLEAN));
+        writeModeColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }

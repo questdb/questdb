@@ -30,6 +30,8 @@ import io.questdb.std.str.Path;
 public interface FilesFacade {
     long MAP_FAILED = -1;
 
+    boolean allocate(long fd, long size);
+
     long append(long fd, long buf, int len);
 
     boolean close(long fd);
@@ -42,6 +44,8 @@ public interface FilesFacade {
 
     boolean exists(long fd);
 
+    void fadvise(long fd, long offset, long len, int advise);
+
     long findClose(long findPtr);
 
     long findFirst(LPSZ path);
@@ -52,19 +56,17 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
-    long getLastModified(LPSZ path);
-
-    int msync(long addr, long len, boolean async);
-
     int fsync(long fd);
 
-    int sync();
+    long getLastModified(LPSZ path);
 
     long getMapPageSize();
 
     long getOpenFileCount();
 
     long getPageSize();
+
+    int hardLink(LPSZ src, LPSZ hardLink);
 
     boolean isRestrictedFileSystem();
 
@@ -86,15 +88,17 @@ public interface FilesFacade {
 
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
+    int msync(long addr, long len, boolean async);
+
     void munmap(long address, long size, int memoryTag);
 
     long openAppend(LPSZ name);
 
+    long openCleanRW(LPSZ name, long size);
+
     long openRO(LPSZ name);
 
     long openRW(LPSZ name, long opts);
-
-    long openCleanRW(LPSZ name, long size);
 
     long read(long fd, long buf, long size, long offset);
 
@@ -102,15 +106,15 @@ public interface FilesFacade {
 
     boolean remove(LPSZ name);
 
-    boolean rename(LPSZ from, LPSZ to);
+    int rename(LPSZ from, LPSZ to);
 
     int rmdir(Path name);
+
+    int sync();
 
     boolean touch(LPSZ path);
 
     boolean truncate(long fd, long size);
-
-    boolean allocate(long fd, long size);
 
     void walk(Path src, FindVisitor func);
 

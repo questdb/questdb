@@ -63,7 +63,7 @@ public class RightFunctionFactory implements FunctionFactory {
     }
 
     private static int getPos(int len, int count) {
-        return count > 0 ? Math.min(len, Math.max(0, len - count)) : Math.min(len, -count);
+        return count > -1 ? Math.min(len, Math.max(0, len - count)) : Math.min(len, -count);
     }
 
     private static class RightStrFunction extends StrFunction implements BinaryFunction {

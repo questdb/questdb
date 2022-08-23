@@ -47,10 +47,6 @@ public class TableData {
         return tableName;
     }
 
-    public void notReady() {
-        readyLatch.setCount(1);
-    }
-
     public void ready() {
         readyLatch.countDown();
     }

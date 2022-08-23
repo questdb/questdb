@@ -28,8 +28,7 @@
   </a>
 </p>
 
-简体中文 | [English](https://github.com/questdb/questdb) |
-[العربية](README.ar-dz.md)
+[English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md)
 
 # QuestDB
 
@@ -37,10 +36,7 @@ QuestDB 是一个高性能、开源的 SQL 数据库，适用于金融服务、�
 、DevOps 和可观测性应用等场景。它兼容 PostgreSQL 的 wire 协议，也兼容 InfluxDB
 Line 协议以提供不受数据库模式影响的高吞吐数据获取能力，并提供用于查询、批量导入
 和导出的 REST API。QuestDB 使用了 ANSI SQL ，其包含时间导向的原生扩展语言功能。
-这些扩展能更简单的连接（JOIN）多个来源的关联数据以及时间序列数据。QuestDB 通过列
-导向的存储模型、大规模并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整
-个代码库是用 Java 和 C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收
-的影响。
+这些扩展能更简单的连接（JOIN）多个来源的关联数据以及时间序列数据。QuestDB 通过列导向的存储模型、大规模并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和 C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -58,7 +54,7 @@ Line 协议以提供不受数据库模式影响的高吞吐数据获取能力，
 和几个样本数据集：
 
 - 一个 16 亿行的数据集，包括近 10 年的纽约市出租车行程轨迹。
-- 一个即時的加密货币（比特币、乙太币）交易数据集。
+- 一个即時的加密货币（比特币、以太坊）交易数据集。
 - 一个包括 25 万艘船的时序地理数据集。
 
 ## 安裝 QuestDB
@@ -86,12 +82,10 @@ questdb stop  // To stop questdb
 
 你可以使用以下接口与 QuestDB 进行交互。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/) 监听在端口 `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) 监听在端口 `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 监听在端口
-  `8812`， 支持 wire 协议，
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) 监听在端口 `9009`,
-  支持 line 协议的高吞吐量数据获取
+- [web 控制台](https://questdb.io/docs/develop/web-console/): QuestDB将会启动一个web控制台，默认运行在 `9000` 端口
+- [REST API](https://questdb.io/docs/reference/api/rest/) : QuestDB也支持使用REST API 来进行交互，默认需要使用 `9000` 端口进行访问
+- [PostgreSQL wire Protocol](https://questdb.io/docs/reference/api/postgres/): QuestDB也支持PostgreSQL wire protocol协议，默认运行在 `8812` 端口
+- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/): QuestDB 实现了[InfluxDB Line Protocol](https://docs.influxdata.com/influxdb/v1.8/write_protocols/line_protocol_tutorial/) 协议来支持高性能，高吞吐量单向数据插入。默认运行在 `9009` 端口
 
 ## QuestDB 与其他开源 TSDB 的对比情况
 
@@ -291,6 +285,20 @@ questdb stop  // To stop questdb
   <tr>
     <td align="center"><a href="https://github.com/HeZean"><img src="https://avatars.githubusercontent.com/u/49837965?v=4" width="100px;" alt=""/><br /><sub><b>HeZean</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=HeZean" title="Code">💻</a> <a href="https://github.com/questdb/questdb/issues?q=author%3AHeZean" title="Bug reports">🐛</a></td>
     <td align="center"><a href="https://github.com/iridess"><img src="https://avatars.githubusercontent.com/u/104518201?v=4" width="100px;" alt=""/><br /><sub><b>iridess</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=iridess" title="Code">💻</a> <a href="https://github.com/questdb/questdb/commits?author=iridess" title="Documentation">📖</a></td>
+    <td align="center"><a href="https://www.linkedin.com/in/selmanfaruky%C4%B1lmaz/"><img src="https://avatars.githubusercontent.com/u/96119894?v=4" width="100px;" alt=""/><br /><sub><b>selmanfarukyilmaz</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Aselmanfarukyilmaz" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="http://www.donet5.com"><img src="https://avatars.githubusercontent.com/u/12455385?v=4" width="100px;" alt=""/><br /><sub><b>donet5</b></sub></a><br /><a href="#ideas-donet5" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/questdb/questdb/issues?q=author%3Adonet5" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/Zahlii"><img src="https://avatars.githubusercontent.com/u/218582?v=4" width="100px;" alt=""/><br /><sub><b>Zahlii</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3AZahlii" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/salsasepp"><img src="https://avatars.githubusercontent.com/u/4884807?v=4" width="100px;" alt=""/><br /><sub><b>salsasepp</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Asalsasepp" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/EmmettM"><img src="https://avatars.githubusercontent.com/u/4196372?v=4" width="100px;" alt=""/><br /><sub><b>EmmettM</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3AEmmettM" title="Bug reports">🐛</a> <a href="https://github.com/questdb/questdb/commits?author=EmmettM" title="Tests">⚠️</a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://allfactors.com"><img src="https://avatars.githubusercontent.com/u/571328?v=4" width="100px;" alt=""/><br /><sub><b>robd003</b></sub></a><br /><a href="#ideas-robd003" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://github.com/AllenEdison"><img src="https://avatars.githubusercontent.com/u/46532217?v=4" width="100px;" alt=""/><br /><sub><b>AllenEdison</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3AAllenEdison" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/CSharpDummy"><img src="https://avatars.githubusercontent.com/u/7610502?v=4" width="100px;" alt=""/><br /><sub><b>CSharpDummy</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ACSharpDummy" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/shimondoodkin"><img src="https://avatars.githubusercontent.com/u/314464?v=4" width="100px;" alt=""/><br /><sub><b>shimondoodkin</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Ashimondoodkin" title="Bug reports">🐛</a> <a href="#ideas-shimondoodkin" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://www.zsmart.tech/"><img src="https://avatars.githubusercontent.com/u/40519768?v=4" width="100px;" alt=""/><br /><sub><b>huuhait</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Ahuuhait" title="Bug reports">🐛</a> <a href="#ideas-huuhait" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://clickhouse.com/"><img src="https://avatars.githubusercontent.com/u/18581488?v=4" width="100px;" alt=""/><br /><sub><b>alexey-milovidov</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Aalexey-milovidov" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="http://blog.suconghou.cn"><img src="https://avatars.githubusercontent.com/u/4580719?v=4" width="100px;" alt=""/><br /><sub><b>suconghou</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Asuconghou" title="Bug reports">🐛</a></td>
   </tr>
 </table>
 

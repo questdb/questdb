@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
@@ -90,11 +91,11 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
         }
     }
 
@@ -116,8 +117,8 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntNSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntNSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -169,5 +170,10 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         this.transientSum = sum;
         this.transientCount = count;
         this.transientC = c;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("NSumDoubleVector(").put(columnIndex).put(')');
     }
 }

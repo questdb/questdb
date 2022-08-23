@@ -28,11 +28,11 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.QuietClosable;
 
 public interface CompiledQuery {
     //these values should be covered in both JsonQueryProcessor and PGConnectionContext
@@ -59,6 +59,7 @@ public interface CompiledQuery {
     short CREATE_TABLE_AS_SELECT = 21;
     short SNAPSHOT_DB_PREPARE = 22;
     short SNAPSHOT_DB_COMPLETE = 23;
+    short TYPES_COUNT = SNAPSHOT_DB_COMPLETE;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -83,9 +84,9 @@ public interface CompiledQuery {
      */
     OperationFuture execute(SCSequence eventSubSeq) throws SqlException;
 
-    <T extends QuietClosable> OperationDispatcher<T> getDispatcher();
+    <T extends AbstractOperation> OperationDispatcher<T> getDispatcher();
 
-    <T extends QuietClosable> T getOperation();
+    <T extends AbstractOperation> T getOperation();
 
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.

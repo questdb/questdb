@@ -24,8 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
@@ -39,7 +40,7 @@ import io.questdb.std.Rows;
 class AsyncFilteredRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
-
+    private static final String exceptionMessage = "timeout, query aborted";
     private final Function filter;
     private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
@@ -56,6 +57,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long rowsRemaining;
     // the OG rows remaining, used to reset the counter when re-running cursor from top();
     private long ogRowsRemaining;
+    private boolean allFramesActive;
 
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
@@ -101,6 +103,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
+        // check for the first hasNext call
+        if (frameIndex == -1 && frameLimit > -1) {
+            fetchNextFrame();
+        }
+
         // we have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
             record.setRowIndex(rows.get(rowIndex()));
@@ -116,11 +123,15 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         // do we have more frames?
         if (frameIndex < frameLimit) {
             fetchNextFrame();
-            if (frameRowCount > 0) {
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 record.setRowIndex(rows.get(rowIndex()));
                 frameRowIndex++;
                 return checkLimit();
             }
+        }
+
+        if (!allFramesActive) {
+            throw CairoException.instance(0).put(exceptionMessage).setInterruption(true);
         }
         return false;
     }
@@ -155,8 +166,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         rowsRemaining = ogRowsRemaining;
         if (frameLimit > -1) {
             frameIndex = -1;
-            fetchNextFrame();
         }
+        allFramesActive = true;
     }
 
     @Override
@@ -173,32 +184,38 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void fetchNextFrame() {
-        do {
-            this.cursor = frameSequence.next();
-            if (cursor > -1) {
-                PageFrameReduceTask task = frameSequence.getTask(cursor);
-                LOG.debug()
-                        .$("collected [shard=").$(frameSequence.getShard())
-                        .$(", frameIndex=").$(task.getFrameIndex())
-                        .$(", frameCount=").$(frameSequence.getFrameCount())
-                        .$(", active=").$(frameSequence.isActive())
-                        .$(", cursor=").$(cursor)
-                        .I$();
-
-                this.rows = task.getRows();
-                this.frameRowCount = rows.size();
-                this.frameIndex = task.getFrameIndex();
-                if (this.frameRowCount > 0 && frameSequence.isActive()) {
+        try {
+            do {
+                this.cursor = frameSequence.next();
+                if (cursor > -1) {
+                    PageFrameReduceTask task = frameSequence.getTask(cursor);
+                    LOG.debug()
+                            .$("collected [shard=").$(frameSequence.getShard())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", active=").$(frameSequence.isActive())
+                            .$(", cursor=").$(cursor)
+                            .I$();
+                    this.allFramesActive &= frameSequence.isActive();
+                    this.rows = task.getRows();
+                    this.frameRowCount = rows.size();
+                    this.frameIndex = task.getFrameIndex();
                     this.frameRowIndex = 0;
-                    record.setFrameIndex(task.getFrameIndex());
-                    break;
+                    if (this.frameRowCount > 0 && frameSequence.isActive()) {
+                        record.setFrameIndex(task.getFrameIndex());
+                        break;
+                    } else {
+                        this.frameRowCount = 0; // force reset frame size if frameSequence was canceled or failed
+                        collectCursor(false);
+                    }
                 } else {
-                    collectCursor(false);
+                    Os.pause();
                 }
-            } else {
-                Os.pause();
-            }
-        } while (this.frameIndex < frameLimit);
+            } while (this.frameIndex < frameLimit);
+        } catch (Throwable e) {
+            LOG.critical().$("unexpected error [ex=").$(e).I$();
+            throw CairoException.instance(0).put(exceptionMessage).setInterruption(true);
+        }
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
@@ -207,14 +224,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameLimit = frameSequence.getFrameCount() - 1;
         this.ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
+        this.allFramesActive = true;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-        }
-        // when frameCount is 0 our collect sequence is not subscribed
-        // we should not be attempting to fetch queue using it
-        if (frameLimit > -1) {
-            fetchNextFrame();
         }
     }
 

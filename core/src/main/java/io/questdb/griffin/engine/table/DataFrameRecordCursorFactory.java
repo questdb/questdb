@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -121,6 +122,15 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         sink.put('}');
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DataFrameRecordCursorFactory");
+        if (filter != null) {
+            sink.attr("filter").val(filter);
+        }
+        sink.child(dataFrameCursorFactory);
+    }
+
     public boolean hasDescendingOrder() {
         return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
     }
@@ -133,7 +143,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizes,
-                    executionContext.getWorkerCount(),
+                    executionContext.getSharedWorkerCount(),
                     pageFrameMinRows,
                     pageFrameMaxRows
             );
@@ -149,7 +159,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizes,
-                    executionContext.getWorkerCount(),
+                    executionContext.getSharedWorkerCount(),
                     pageFrameMinRows,
                     pageFrameMaxRows
             );

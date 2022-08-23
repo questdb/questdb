@@ -31,13 +31,20 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.sql.*;
 import java.util.Properties;
 import java.util.TimeZone;
+
+import static io.questdb.std.Numbers.hexDigits;
 
 public class BasePGTest extends AbstractGriffinTest {
 
@@ -61,7 +68,7 @@ public class BasePGTest extends AbstractGriffinTest {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
-            public long getMaxTime() {
+            public long getTimeout() {
                 return maxQueryTime;
             }
         };
@@ -196,6 +203,151 @@ public class BasePGTest extends AbstractGriffinTest {
                 };
             }
         };
+    }
+
+    protected void assertResultSet(String expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        // dump metadata
+        ResultSetMetaData metaData = rs.getMetaData();
+        final int columnCount = metaData.getColumnCount();
+        for (int i = 0; i < columnCount; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+
+            sink.put(metaData.getColumnName(i + 1));
+            sink.put('[').put(JDBCType.valueOf(metaData.getColumnType(i + 1)).name()).put(']');
+        }
+        sink.put('\n');
+
+        while (rs.next()) {
+            for (int i = 1; i <= columnCount; i++) {
+                if (i > 1) {
+                    sink.put(',');
+                }
+                switch (JDBCType.valueOf(metaData.getColumnType(i))) {
+                    case VARCHAR:
+                    case NUMERIC:
+                        String stringValue = rs.getString(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(stringValue);
+                        }
+                        break;
+                    case INTEGER:
+                        int intValue = rs.getInt(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(intValue);
+                        }
+                        break;
+                    case DOUBLE:
+                        double doubleValue = rs.getDouble(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(doubleValue);
+                        }
+                        break;
+                    case TIMESTAMP:
+                        Timestamp timestamp = rs.getTimestamp(i);
+                        if (timestamp == null) {
+                            sink.put("null");
+                        } else {
+                            sink.put(timestamp.toString());
+                        }
+                        break;
+                    case REAL:
+                        float floatValue = rs.getFloat(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(floatValue, 3);
+                        }
+                        break;
+                    case SMALLINT:
+                        sink.put(rs.getShort(i));
+                        break;
+                    case BIGINT:
+                        long longValue = rs.getLong(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(longValue);
+                        }
+                        break;
+                    case CHAR:
+                        String strValue = rs.getString(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(strValue.charAt(0));
+                        }
+                        break;
+                    case BIT:
+                        sink.put(rs.getBoolean(i));
+                        break;
+                    case TIME:
+                    case DATE:
+                        timestamp = rs.getTimestamp(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(timestamp.toString());
+                        }
+                        break;
+                    case BINARY:
+                        InputStream stream = rs.getBinaryStream(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            toSink(stream, sink);
+                        }
+                        break;
+                    default:
+                        assert false;
+                }
+            }
+            sink.put('\n');
+        }
+
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    private static void toSink(InputStream is, CharSink sink) throws IOException {
+        // limit what we print
+        byte[] bb = new byte[1];
+        int i = 0;
+        while (is.read(bb) > 0) {
+            byte b = bb[0];
+            if (i > 0) {
+                if ((i % 16) == 0) {
+                    sink.put('\n');
+                    Numbers.appendHexPadded(sink, i);
+                }
+            } else {
+                Numbers.appendHexPadded(sink, i);
+            }
+            sink.put(' ');
+
+            final int v;
+            if (b < 0) {
+                v = 256 + b;
+            } else {
+                v = b;
+            }
+
+            if (v < 0x10) {
+                sink.put('0');
+                sink.put(hexDigits[b]);
+            } else {
+                sink.put(hexDigits[v / 0x10]);
+                sink.put(hexDigits[v % 0x10]);
+            }
+
+            i++;
+        }
     }
 
 }

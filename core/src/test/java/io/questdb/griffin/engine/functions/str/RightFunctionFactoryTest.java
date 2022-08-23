@@ -28,6 +28,25 @@ import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
 public class RightFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testWhenCountIsZeroThenReturnsEmptyStringOrNull() throws Exception {
+        assertQuery(
+                "k\tright\n" +
+                        "BT\t\n" +
+                        "\t\n" +
+                        "PGW\t\n" +
+                        "PE\t\n" +
+                        "TJ\t\n",
+                "select k, right(k,0) from x",
+                "create table x as (select rnd_str(10,2,3,3) k from long_sequence(5))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
     @Test
     public void testSimple() throws Exception {
         assertQuery(

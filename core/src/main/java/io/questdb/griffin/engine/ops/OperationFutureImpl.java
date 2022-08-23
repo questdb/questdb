@@ -43,11 +43,13 @@ import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakSelfReturningObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.tasks.TableWriterTask;
 
-import static io.questdb.tasks.TableWriterTask.*;
-import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.OK;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.READER_OUT_OF_DATE;
+import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
+import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
 class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImpl> implements OperationFuture {
     private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
@@ -60,17 +62,19 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int tableNamePositionInSql;
     private boolean closing;
+    private final long busyWaitTimeout;
 
     OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
         super(pool);
         this.engine = engine;
+        this.busyWaitTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
     }
 
     @Override
     public void await() throws SqlException {
-        await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+        await(busyWaitTimeout);
         if (status == QUERY_STARTED) {
-            await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+            await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - busyWaitTimeout);
         }
         if (status != QUERY_COMPLETE) {
             throw SqlTimeoutException.timeout("Timeout expired on waiting for the async command execution result [instance=").put(correlationId).put(']');
@@ -79,6 +83,10 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
 
     @Override
     public int await(long timeout) throws SqlException {
+        return await0(timeout > 0 ? timeout : busyWaitTimeout);
+    }
+
+    private int await0(long timeout) throws SqlException {
         if (status == QUERY_COMPLETE) {
             return status;
         }
@@ -122,7 +130,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
      * Initializes instance of OperationFuture with the parameters to wait for the new command
      * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
      */
-    public void of(
+    public OperationFutureImpl of(
             AsyncWriterCommand asyncWriterCommand,
             SqlExecutionContext executionContext,
             SCSequence eventSubSeq,
@@ -137,7 +145,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         this.eventSubSeq = eventSubSeq;
 
         try {
-            // Publish new command and get published command correlation id
+            // Publish new command and get published command correlation id.
             final CharSequence cmdName = asyncWriterCommand.getCommandName();
             tableName = asyncWriterCommand.getTableName();
             correlationId = engine.getCommandCorrelationId();
@@ -162,24 +170,27 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                             .$(",tableName=").$(tableName)
                             .$(",instance=").$(correlationId)
                             .I$();
-                    asyncWriterCommand.startAsync();
+                    // No need to call asyncWriterCommand.startAsync() method here since
+                    // it's done when publishing to the writer queue.
                     affectedRowsCount = 0;
                     status = QUERY_NO_RESPONSE;
                 }
             }
 
             queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableName(), correlationId);
+            return this;
         } catch (Throwable ex) {
             close();
             throw ex;
         }
     }
 
-    private int awaitWriterEvent(long writerAsyncCommandBusyWaitTimeout) throws SqlException {
+    private int awaitWriterEvent(long timeout) throws SqlException {
         assert eventSubSeq != null : "No sequence to wait on";
         assert correlationId > -1 : "No command id to wait for";
+        assert timeout > 0;
 
-        final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
+        final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
         final long start = clock.getTicks();
         final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
 
@@ -187,8 +198,8 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         while (true) {
             long seq = eventSubSeq.next();
             if (seq < 0) {
-                // Queue is empty, check if the execution blocked for too long
-                if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
+                // Queue is empty, check if the execution blocked for too long.
+                if (clock.getTicks() - start > timeout) {
                     queryFutureUpdateListener.reportBusyWaitExpired(tableName, correlationId);
                     return status;
                 }
@@ -200,7 +211,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                 TableWriterTask event = tableWriterEventQueue.get(seq);
                 int type = event.getType();
                 if (event.getInstance() != correlationId || (type != TSK_BEGIN && type != TSK_COMPLETE)) {
-                    LOG.debug()
+                    LOG.info()
                             .$("writer command response received and ignored [instance=").$(event.getInstance())
                             .$(", type=").$(type)
                             .$(", expectedInstance=").$(correlationId)

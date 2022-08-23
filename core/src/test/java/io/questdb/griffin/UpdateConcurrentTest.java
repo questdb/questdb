@@ -30,6 +30,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
@@ -108,9 +109,9 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
-        writerAsyncCommandMaxTimeout = 30_000_000L;
-        spinLockTimeoutUs = 20_000_000L;
+        writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
+        writerAsyncCommandMaxTimeout = 30_000L;
+        spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
@@ -158,9 +159,9 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
 
                             try (
-                                    QuietClosable op = cc.getOperation();
+                                    AbstractOperation op = cc.getOperation();
                                     OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence.get())) {
-                                fut.await(10 * Timestamps.SECOND_MICROS);
+                                fut.await(10 * Timestamps.SECOND_MILLIS);
                             }
                             current.incrementAndGet();
                         }

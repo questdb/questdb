@@ -153,7 +153,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public int getQueryCacheRowCount() {
-        return 16;
+        return 4;
     }
 
     @Override

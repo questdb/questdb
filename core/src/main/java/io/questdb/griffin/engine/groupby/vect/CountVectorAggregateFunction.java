@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -49,8 +50,8 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
-        countFunc.count(pRosti, keyAddress, valueAddressSize >>> columnSizeShr, valueOffset);
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+        return countFunc.count(pRosti, keyAddress, valueAddressSize >>> columnSizeShr, valueOffset);
     }
 
     @Override
@@ -69,8 +70,8 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntCountMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntCountMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -100,6 +101,11 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
 
     @FunctionalInterface
     private interface CountFunc {
-        void count(long pRosti, long pKeys, long count, int valueOffset);
+        boolean count(long pRosti, long pKeys, long count, int valueOffset);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("CountVectorAgg(").put(valueOffset).put(')');
     }
 }

@@ -67,16 +67,16 @@ public class LineData {
         add(tagName, tagValue, true);
     }
 
-    public synchronized String generateRandomUpdate(CharSequence tableName, List<ColumnNameType> metadata, Rnd rnd) {
+    public synchronized String generateRandomUpdate(CharSequence tableName, List<ColumnNameType> columns, Rnd rnd) {
         int columnType = -1;
-        CharSequence name;
         int fieldIndex = -1;
 
         OUT:
-        for (int i = 0; i < metadata.size(); i++) {
-            name = metadata.get(i).columnName;
+        for (int i = 0; i < columns.size(); i++) {
+            final ColumnNameType column = columns.get(i);
+            final CharSequence name = column.columnName;
             if (!updated.contains(name)) {
-                columnType = metadata.get(i).columnType;
+                columnType = column.columnType;
 
                 for (int j = 0; j < names.size(); j++) {
                     if (Chars.equals(name, names.getQuick(j))) {
@@ -88,8 +88,8 @@ public class LineData {
             }
         }
         if (fieldIndex == -1) {
-            // Nothing to update anymore on this like. Update field to the value of the self.
-            return String.format("update \"%s\" set %s=%s where 1 != 1", tableName, metadata.get(0), metadata.get(0));
+            // Nothing to update anymore on this line. Update field to the value of the self.
+            return String.format("update \"%s\" set %s=%s where 1 != 1", tableName, columns.get(0).columnName, columns.get(0).columnName);
         }
 
         double value = 5000.0 + rnd.nextInt(1000);

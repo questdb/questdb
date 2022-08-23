@@ -1260,7 +1260,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3) throws IOException, SqlException {
         if (freeTableId) {
-            engine.freeTableId();
+            engine.getTableIdGenerator().close();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
@@ -1519,7 +1519,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         from.of(configuration.getRoot()).concat(copyTableWithMissingPartitions).concat("1970-01-04");
         to.trimTo(0).put(from).put(".4");
 
-        if (!ff.rename(from.put(Files.SEPARATOR).$(), to.put(Files.SEPARATOR).$())) {
+        if (ff.rename(from.put(Files.SEPARATOR).$(), to.put(Files.SEPARATOR).$()) != Files.FILES_RENAME_OK) {
             throw CairoException.instance(ff.errno()).put("cannot rename to ").put(to);
         }
     }

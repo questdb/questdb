@@ -1250,7 +1250,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 240_000_000, // 4 minutes, precision is micro
                 3,
                 true,
-                setOf("2021-01-01.2", "2021-01-01", "2021-01-01.4", "2021-01-02")
+                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1")
         );
     }
 
@@ -1260,7 +1260,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 60_000_000, // 1 minute, precision is micro
                 2,
                 false,
-                setOf("2021-01-01.2", "2021-01-01", "2021-01-01.5", "2021-01-02")
+                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.5", "2021-01-02.1")
         );
     }
 
@@ -3093,7 +3093,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, PartitionBy.NONE, null);
+        textLoader.configureDestination("test", overwrite, false, atomicity, PartitionBy.NONE, null, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3101,13 +3101,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, "ts");
+        textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, "ts", null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults(TextLoader textLoader, boolean durable) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, durable, Atomicity.SKIP_COL, PartitionBy.DAY, "ts");
+        textLoader.configureDestination("test", false, durable, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
@@ -3176,9 +3176,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             @Override
             public int rmdir(Path name) {
-                rmdirCallCount.getAndIncrement();
-                if (!expectedPartitionNames.contains(extractLast(name))) {
-                    Assert.fail();
+                final String dirName = extractLast(name);
+                if (!dirName.equals("seq")) {
+                    rmdirCallCount.getAndIncrement();
+                    if (!expectedPartitionNames.contains(dirName)) {
+                        Assert.fail();
+                    }
                 }
                 return Files.rmdir(name);
             }
