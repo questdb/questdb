@@ -54,7 +54,7 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSql() throws Exception {
-        printSqlResult(MemoryMetricsRecordCursorFactoryTest::expectedTableContent, "select * from sys.memory_metrics()", null, null, null, false, true, true, false, null);
+        printSqlResult(MemoryMetricsRecordCursorFactoryTest::expectedTableContent, "select * from memory_metrics()", null, null, null, false, true, true, false, null);
     }
 
     private static String expectedTableContent() {

@@ -37,7 +37,7 @@ import io.questdb.std.ObjList;
 public final class MemoryMetricsFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "sys.memory_metrics()";
+        return "memory_metrics()";
     }
 
     @Override

@@ -74,7 +74,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
 
     @Test
     public void testSql() throws Exception{
-        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from sys.table_writer_metrics()", null, null, null, false, true, true, false, null);
+        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from table_writer_metrics()", null, null, null, false, true, true, false, null);
     }
 
     @Test
@@ -89,7 +89,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
                                  -1,
                                  null)) {
                 MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);
-                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from sys.table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
+                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
             }
         });
     }
