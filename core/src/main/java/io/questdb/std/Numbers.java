@@ -25,11 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -577,20 +573,6 @@ public final class Numbers {
 
     public static boolean isFinite(double d) {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
-    }
-
-    public static double longToDouble(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Double.NaN;
-    }
-
-    public static float longToFloat(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Float.NaN;
     }
 
     public static int msb(int value) {

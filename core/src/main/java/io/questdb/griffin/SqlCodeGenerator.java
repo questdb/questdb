@@ -1456,10 +1456,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // We require timestamp with any order.
-        final int timestampIndex = getTimestampIndex(model, factory);
-        if (timestampIndex == -1) {
+        final int timestampIndex;
+        try {
+            timestampIndex = getTimestampIndex(model, factory);
+            if (timestampIndex == -1) {
+                throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
+            }
+        } catch (Throwable e) {
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
+            throw e;
         }
 
         final RecordMetadata metadata = factory.getMetadata();
@@ -2561,10 +2566,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // We require timestamp with asc order.
-        final int timestampIndex = getTimestampIndex(model, factory);
-        if (executionContext.isTimestampRequired() && (timestampIndex == -1 || factory.hasDescendingOrder())) {
+        final int timestampIndex;
+        try {
+            timestampIndex = getTimestampIndex(model, factory);
+            if (executionContext.isTimestampRequired() && (timestampIndex == -1 || factory.hasDescendingOrder())) {
+                throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
+            }
+        } catch (Throwable e) {
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
+            throw e;
         }
 
         final IntList columnCrossIndex = new IntList(selectColumnCount);
@@ -3793,12 +3803,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
-        try {
-            return getTimestampIndex(model, factory.getMetadata());
-        } catch (Throwable e) {
-            Misc.free(factory);
-            throw e;
-        }
+        return getTimestampIndex(model, factory.getMetadata());
     }
 
     private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {

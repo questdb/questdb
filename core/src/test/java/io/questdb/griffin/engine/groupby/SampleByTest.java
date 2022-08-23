@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -530,7 +529,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                            factory.getCursor(new SqlExecutionContextStub(engine));
+                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -3806,7 +3805,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
                             // with mmap count = 5 we should get failure in cursor
-                            factory.getCursor(new SqlExecutionContextStub(engine));
+                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
                         }
                         Assert.fail();
                     } catch (CairoException e) {
