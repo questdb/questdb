@@ -90,9 +90,4 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void toSink(CharSink sink) {
         sink.put("MaxDouble(").put(arg).put(')');
     }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
 }

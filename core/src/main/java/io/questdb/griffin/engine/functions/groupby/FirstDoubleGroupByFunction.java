@@ -80,9 +80,4 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
         }
         return rec.getDouble(this.valueIndex);
     }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
 }

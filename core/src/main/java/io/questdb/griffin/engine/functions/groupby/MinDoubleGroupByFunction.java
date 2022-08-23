@@ -90,9 +90,4 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void toSink(CharSink sink) {
         sink.put("MinDouble(").put(arg).put(')');
     }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
 }

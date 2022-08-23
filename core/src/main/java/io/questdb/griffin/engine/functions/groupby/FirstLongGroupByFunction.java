@@ -81,9 +81,4 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     public void setLong(MapValue mapValue, long value) {
         mapValue.putTimestamp(this.valueIndex, value);
     }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
 }

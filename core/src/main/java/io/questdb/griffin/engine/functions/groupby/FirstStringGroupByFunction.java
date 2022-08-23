@@ -82,7 +82,7 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
     @Override
     public CharSequence getStr(Record record) {
         if(record == null) {
-            return null;
+            return this.arg.getStr(null);
         }
         int ix = record.getInt(this.valueIndex);
         if(ix == -1) {

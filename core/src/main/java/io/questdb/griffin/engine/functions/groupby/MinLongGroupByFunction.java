@@ -91,9 +91,4 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     public void toSink(CharSink sink) {
         sink.put("MinLong(").put(arg).put(')');
     }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
 }

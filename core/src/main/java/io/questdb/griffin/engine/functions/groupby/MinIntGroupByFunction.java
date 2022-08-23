@@ -92,9 +92,4 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void toSink(CharSink sink) {
         sink.put("MinInt(").put(arg).put(')');
     }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
 }

@@ -88,11 +88,6 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put("SumFloat(").put(arg).put(')');
     }

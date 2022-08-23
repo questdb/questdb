@@ -90,12 +90,10 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public double getDouble(Record rec) {
+        if(rec == null) {
+            return this.arg.getDouble(null);
+        }
         return rec.getDouble(valueIndex) / rec.getLong(valueIndex + 1);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 
     @Override

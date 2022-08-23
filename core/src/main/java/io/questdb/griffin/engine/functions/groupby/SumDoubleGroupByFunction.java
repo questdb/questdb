@@ -91,16 +91,14 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public double getDouble(Record rec) {
+        if(rec == null) {
+            return this.arg.getDouble(null);
+        }
         long valueCount = rec.getLong(valueIndex + 1);
         if (valueCount > 0) {
             return rec.getDouble(valueIndex);
         }
         return Double.NaN;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 
     @Override
