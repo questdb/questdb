@@ -35,8 +35,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     protected final int pageFrameMinRows;
@@ -92,7 +91,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
         if (framingSupported) {
-            if (order == ORDER_ASC || order == ORDER_ANY) {
+            if (order == ORDER_ASC || (order == ORDER_ANY && dataFrameCursorFactory.getOrder() != ORDER_DESC)) {
                 return initFwdPageFrameCursor(executionContext, dataFrameCursor);
             }
             return initBwdPageFrameCursor(executionContext, dataFrameCursor);

@@ -218,6 +218,65 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testAsyncFilterMaintainsDescendingBaseCursorDirection() throws Exception {
+        assertQuery("sensor_time\ttemperature_out\n" +
+                        "2022-08-01T00:00:00.000000Z\t0\n" +
+                        "2022-07-31T23:59:00.000000Z\t1\n" +
+                        "2022-07-31T23:58:00.000000Z\t2\n" +
+                        "2022-07-31T23:57:00.000000Z\t3\n" +
+                        "2022-07-31T23:56:00.000000Z\t4\n",
+                "select sensor_time, temperature_out\n" +
+                        "from weather_data \n" +
+                        "where sensor_time <= systimestamp() \n" +
+                        "order by sensor_time  desc \n" +
+                        "limit 5; ",
+                "create table weather_data as \n" +
+                        "(select  dateadd( 'm' , cast(x-1000 as int), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ) sensor_time, " +
+                        "1000-x temperature_out \n" +
+                        "from long_sequence(1000)) timestamp(sensor_time) partition by day;",
+                "sensor_time###DESC", true, true, true);
+    }
+
+    @Test
+    public void testAsyncFilterMaintainsAscendingBaseCursorDirection() throws Exception {
+        assertQuery("sensor_time\ttemperature_out\n" +
+                        "2022-07-31T07:21:00.000000Z\t999\n" +
+                        "2022-07-31T07:22:00.000000Z\t998\n" +
+                        "2022-07-31T07:23:00.000000Z\t997\n" +
+                        "2022-07-31T07:24:00.000000Z\t996\n" +
+                        "2022-07-31T07:25:00.000000Z\t995\n",
+                "select sensor_time, temperature_out\n" +
+                        "from weather_data \n" +
+                        "where sensor_time <= systimestamp() \n" +
+                        "order by sensor_time  asc \n" +
+                        "limit 5; ",
+                "create table weather_data as \n" +
+                        "(select  dateadd( 'm' , cast(x-1000 as int), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ) sensor_time, " +
+                        "1000-x temperature_out \n" +
+                        "from long_sequence(1000)) timestamp(sensor_time) partition by day;",
+                "sensor_time", true, true, true);
+    }
+
+    @Test
+    public void testAsyncFilterUsesAscendingDirectionAsDefault() throws Exception {
+        assertQuery("sensor_time\ttemperature_out\n" +
+                        "2022-07-31T07:21:00.000000Z\t999\n" +
+                        "2022-07-31T07:22:00.000000Z\t998\n" +
+                        "2022-07-31T07:23:00.000000Z\t997\n" +
+                        "2022-07-31T07:24:00.000000Z\t996\n" +
+                        "2022-07-31T07:25:00.000000Z\t995\n",
+                "select sensor_time, temperature_out\n" +
+                        "from weather_data \n" +
+                        "where sensor_time <= systimestamp() \n" +
+                        "limit 5; ",
+                "create table weather_data as \n" +
+                        "(select  dateadd( 'm' , cast(x-1000 as int), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ) sensor_time, " +
+                        "1000-x temperature_out \n" +
+                        "from long_sequence(1000)) timestamp(sensor_time) partition by day;",
+                "sensor_time", true, true, false);
+    }
+
     private static void assertQuery(
             CharSequence expected,
             RecordCursorFactory factory,
