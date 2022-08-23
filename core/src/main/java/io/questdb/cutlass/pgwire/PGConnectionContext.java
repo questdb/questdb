@@ -889,6 +889,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             // oopsie, buffer is too small for single record
             LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
             responseAsciiSink.reset();
+            freeFactory();
             throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
         }
     }
@@ -1619,6 +1620,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 LOG.error().$("not enough space in buffer for row description [buffer=").$(sendBufferSize).I$();
                 responseAsciiSink.reset();
+                freeFactory();
                 throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row description");
             }
         } else {
