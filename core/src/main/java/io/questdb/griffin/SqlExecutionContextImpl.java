@@ -135,7 +135,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public CairoEngine getCairoEngine() {
+    public @NotNull CairoEngine getCairoEngine() {
         return cairoEngine;
     }
 

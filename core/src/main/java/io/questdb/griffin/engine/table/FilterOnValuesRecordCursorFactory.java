@@ -85,6 +85,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
 
     @Override
     protected void _close() {
+        super._close();
         Misc.free(filter);
     }
 

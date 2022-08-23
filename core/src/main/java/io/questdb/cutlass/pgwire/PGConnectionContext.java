@@ -2448,7 +2448,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
             responseAsciiSink.putLen(addr);
         } else {
-            final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
+            final SqlException e = SqlException.$(0, "table does not exist [table=").put(textLoader.getTableName()).put(']');
             prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
             prepareReadyForQuery();
         }

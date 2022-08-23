@@ -24,21 +24,27 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 
 public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DistinctSymbolRecordCursor cursor;
-    private final CairoEngine engine;
     private final String tableName;
     private final long tableVersion;
     private final int tableId;
+    private final Path path = new Path();
 
     public DistinctSymbolRecordCursorFactory(
-            final CairoEngine engine,
             final GenericRecordMetadata metadata,
             final String tableName,
             final int columnIndex,
@@ -46,7 +52,6 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
             final long tableVersion
     ) {
         super(metadata);
-        this.engine = engine;
         this.tableName = tableName;
         this.tableVersion = tableVersion;
         this.tableId = tableId;
@@ -55,12 +60,13 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
-        cursor.close();
+        Misc.free(cursor);
+        Misc.free(path);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        TableReader reader = SqlUtil.getReader(executionContext, path, tableName, tableId, tableVersion);
         cursor.of(reader);
         return cursor;
     }

@@ -43,6 +43,16 @@ public class SqlUtil {
             Path path,
             CharSequence tableName
     ) throws SqlException {
+        return getReader(executionContext, path, tableName, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
+    }
+
+    public static TableReader getReader(
+            SqlExecutionContext executionContext,
+            Path path,
+            CharSequence tableName,
+            int tableId,
+            long version
+    ) throws SqlException {
         final CairoEngine engine = executionContext.getCairoEngine();
         int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName);
 
@@ -53,7 +63,7 @@ public class SqlUtil {
             throw SqlException.$(0, "table directory is of unknown format");
         }
 
-        return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+        return engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableId, version);
     }
 
     public static void addSelectStar(

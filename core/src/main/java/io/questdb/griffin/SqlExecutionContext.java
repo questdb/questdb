@@ -73,7 +73,7 @@ public interface SqlExecutionContext extends Closeable {
 
     void setRandom(Rnd rnd);
 
-    CairoEngine getCairoEngine();
+    @NotNull CairoEngine getCairoEngine();
 
     long getRequestFd();
 

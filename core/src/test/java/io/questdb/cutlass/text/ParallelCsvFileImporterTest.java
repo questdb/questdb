@@ -1213,7 +1213,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportWithZeroWorkersFails() throws Exception {
         executeWithPool(0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            SqlExecutionContextStub context = new SqlExecutionContextStub() {
+            SqlExecutionContextStub context = new SqlExecutionContextStub(engine) {
                 @Override
                 public int getWorkerCount() {
                     return 0;

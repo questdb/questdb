@@ -2150,10 +2150,7 @@ public class SqlCompiler implements Closeable {
             if (hasIfExists) {
                 return compiledQuery.ofDrop();
             }
-            throw SqlException
-                    .$(tableNamePosition, "table '")
-                    .put(tableName)
-                    .put("' does not exist");
+            throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
         return compiledQuery.ofDrop();
@@ -2771,7 +2768,7 @@ public class SqlCompiler implements Closeable {
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
+            throw SqlException.$(position, "table does not exist [table=").put(tableName).put(']');
         }
     }
 
