@@ -125,11 +125,11 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
 
     private static String toExpectedTableContent(MetricsSnapshot metricsSnapshot) {
         StringBuilder sb = new StringBuilder("name\tvalue\n")
-                .append("total-commits").append('\t').append(metricsSnapshot.commitCount).append('\n')
+                .append("total_commits").append('\t').append(metricsSnapshot.commitCount).append('\n')
                 .append("o3commits").append('\t').append(metricsSnapshot.o3CommitCount).append('\n')
                 .append("rollbacks").append('\t').append(metricsSnapshot.rollbackCount).append('\n')
-                .append("committed-rows").append('\t').append(metricsSnapshot.committedRows).append('\n')
-                .append("physically-written-rows").append('\t').append(metricsSnapshot.physicallyWrittenRows).append('\n');
+                .append("committed_rows").append('\t').append(metricsSnapshot.committedRows).append('\n')
+                .append("physically_written_rows").append('\t').append(metricsSnapshot.physicallyWrittenRows).append('\n');
         return sb.toString();
     }
 

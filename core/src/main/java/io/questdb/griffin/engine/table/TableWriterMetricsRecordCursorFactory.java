@@ -84,10 +84,10 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
         metadata.add(1, new TableColumnMetadata("value", 1, ColumnType.LONG));
         METADATA = metadata;
 
-        KEYS[TOTAL_COMMITS_COLUMN_INDEX] = "total-commits";
+        KEYS[TOTAL_COMMITS_COLUMN_INDEX] = "total_commits";
         KEYS[O3_COMMITS_COLUMN_INDEX] = "o3commits";
         KEYS[ROLLBACKS_COLUMN_INDEX] = "rollbacks";
-        KEYS[COMMITTED_ROWS_COLUMN_INDEX] = "committed-rows";
-        KEYS[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = "physically-written-rows";
+        KEYS[COMMITTED_ROWS_COLUMN_INDEX] = "committed_rows";
+        KEYS[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = "physically_written_rows";
     }
 }

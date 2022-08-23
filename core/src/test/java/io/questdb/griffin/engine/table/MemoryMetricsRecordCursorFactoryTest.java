@@ -58,7 +58,7 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     private static String expectedTableContent() {
-        StringBuilder sb = new StringBuilder("memory-tag").append('\t').append("bytes").append('\n');
+        StringBuilder sb = new StringBuilder("memory_tag").append('\t').append("bytes").append('\n');
         sb.append("TOTAL_USED").append('\t').append(Unsafe.getMemUsed()).append('\n');
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             sb.append(MemoryTag.nameOf(i)).append('\t').append(Unsafe.getMemUsedByTag(i)).append('\n');
@@ -84,7 +84,7 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
         int columnCount = metadata.getColumnCount();
         assertEquals(2, columnCount);
         assertEquals(ColumnType.STRING, metadata.getColumnType(0));
-        assertEquals("memory-tag", metadata.getColumnName(0));
+        assertEquals("memory_tag", metadata.getColumnName(0));
 
         assertEquals(ColumnType.LONG, metadata.getColumnType(1));
         assertEquals("bytes", metadata.getColumnName(1));
