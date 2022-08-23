@@ -84,7 +84,7 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
         @Override
         public CharSequence getStr(int col) {
             if (col != 0) {
-                throw CairoException.instance(0).put("unsupported string column number. [column=").put(col).put("]");
+                throw CairoException.instance(0).put("unsupported string column number [column=").put(col).put("]");
             }
             return keys[pos];
         }
@@ -97,7 +97,7 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
         @Override
         public int getStrLen(int col) {
             if (col != 0) {
-                throw CairoException.instance(0).put("unsupported string column number. [column=").put(col).put("]");
+                throw CairoException.instance(0).put("unsupported string column number [column=").put(col).put("]");
             }
             return getStr(col).length();
         }
@@ -105,7 +105,7 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
         @Override
         public long getLong(int col) {
             if (col != 1) {
-                throw CairoException.instance(0).put("unsupported long column number. [column=").put(col).put("]");
+                throw CairoException.instance(0).put("unsupported long column number [column=").put(col).put("]");
             }
             return values[pos];
         }
