@@ -371,7 +371,7 @@ public class TableBackupTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(18, e.getPosition());
-                TestUtils.assertEquals("'tb2' is not  a valid table", e.getFlyweightMessage());
+                TestUtils.assertEquals("table does not exist [table=tb2]", e.getFlyweightMessage());
             }
         });
     }

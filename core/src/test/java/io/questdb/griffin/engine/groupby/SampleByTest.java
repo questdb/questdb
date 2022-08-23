@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -529,7 +530,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                            factory.getCursor(sqlExecutionContext);
+                            factory.getCursor(new SqlExecutionContextStub(engine));
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -2885,70 +2886,71 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            RecordCursorFactory factory = compiler.compile(
+            try (RecordCursorFactory factory = compiler.compile(
                     "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
                     sqlExecutionContext
-            ).getRecordCursorFactory();
+            ).getRecordCursorFactory()) {
 
-            String expectedMoscow = "k\tcount\n" +
-                    "1970-01-02T22:45:00.000000Z\t3\n" +
-                    "1970-01-03T00:15:00.000000Z\t18\n" +
-                    "1970-01-03T01:45:00.000000Z\t18\n" +
-                    "1970-01-03T03:15:00.000000Z\t18\n" +
-                    "1970-01-03T04:45:00.000000Z\t18\n" +
-                    "1970-01-03T06:15:00.000000Z\t18\n" +
-                    "1970-01-03T07:45:00.000000Z\t7\n";
+                String expectedMoscow = "k\tcount\n" +
+                        "1970-01-02T22:45:00.000000Z\t3\n" +
+                        "1970-01-03T00:15:00.000000Z\t18\n" +
+                        "1970-01-03T01:45:00.000000Z\t18\n" +
+                        "1970-01-03T03:15:00.000000Z\t18\n" +
+                        "1970-01-03T04:45:00.000000Z\t18\n" +
+                        "1970-01-03T06:15:00.000000Z\t18\n" +
+                        "1970-01-03T07:45:00.000000Z\t7\n";
 
-            String expectedPrague = "k\tcount\n" +
-                    "1970-01-02T23:10:00.000000Z\t8\n" +
-                    "1970-01-03T00:40:00.000000Z\t18\n" +
-                    "1970-01-03T02:10:00.000000Z\t18\n" +
-                    "1970-01-03T03:40:00.000000Z\t18\n" +
-                    "1970-01-03T05:10:00.000000Z\t18\n" +
-                    "1970-01-03T06:40:00.000000Z\t18\n" +
-                    "1970-01-03T08:10:00.000000Z\t2\n";
+                String expectedPrague = "k\tcount\n" +
+                        "1970-01-02T23:10:00.000000Z\t8\n" +
+                        "1970-01-03T00:40:00.000000Z\t18\n" +
+                        "1970-01-03T02:10:00.000000Z\t18\n" +
+                        "1970-01-03T03:40:00.000000Z\t18\n" +
+                        "1970-01-03T05:10:00.000000Z\t18\n" +
+                        "1970-01-03T06:40:00.000000Z\t18\n" +
+                        "1970-01-03T08:10:00.000000Z\t2\n";
 
-            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
-            sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                assertCursor(
-                        expectedMoscow,
-                        cursor,
-                        factory.getMetadata(),
-                        true
-                );
-            }
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(
+                            expectedMoscow,
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
+                }
 
-            // invalid timezone
-            sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
-            sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-            try {
-                factory.getCursor(sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(67, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
-            }
+                // invalid timezone
+                sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(67, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
+                }
 
-            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-            sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
-            try {
-                factory.getCursor(sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(82, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
-            }
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(82, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
+                }
 
-            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-            sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                assertCursor(
-                        expectedPrague,
-                        cursor,
-                        factory.getMetadata(),
-                        true
-                );
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(
+                            expectedPrague,
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
+                }
             }
         });
     }
@@ -3804,7 +3806,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
                             // with mmap count = 5 we should get failure in cursor
-                            factory.getCursor(sqlExecutionContext);
+                            factory.getCursor(new SqlExecutionContextStub(engine));
                         }
                         Assert.fail();
                     } catch (CairoException e) {

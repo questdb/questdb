@@ -1973,25 +1973,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata metadata = factory.getMetadata();
             final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
             final TimestampSampler timestampSampler;
-            if (sampleByUnits == null) {
-                timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
-            } else {
-                Function sampleByPeriod = functionParser.parseFunction(
-                        sampleByNode,
-                        EmptyRecordMetadata.INSTANCE,
-                        executionContext
-                );
-                if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
-                    sampleByPeriod.close();
-                    throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
-                }
-                long period = sampleByPeriod.getLong(null);
-                sampleByPeriod.close();
-                timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
-            }
-
             final int fillCount = sampleByFill.size();
             try {
+                if (sampleByUnits == null) {
+                    timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
+                } else {
+                    Function sampleByPeriod = functionParser.parseFunction(
+                            sampleByNode,
+                            EmptyRecordMetadata.INSTANCE,
+                            executionContext
+                    );
+                    if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
+                        Misc.free(sampleByPeriod);
+                        throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
+                    }
+                    long period = sampleByPeriod.getLong(null);
+                    sampleByPeriod.close();
+                    timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
+                }
+
                 keyTypes.clear();
                 valueTypes.clear();
                 listColumnFilterA.clear();
@@ -2255,7 +2255,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetFuncPos
                 );
             } catch (Throwable e) {
-                factory.close();
+                Misc.free(factory);
                 throw e;
             }
         } finally {
@@ -2360,6 +2360,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 final ExpressionNode ast = qc.getAst();
                 if (ast.paramCount > 1) {
+                    Misc.free(base);
                     throw SqlException.$(ast.position, "too many arguments");
                 }
 
@@ -2410,6 +2411,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final Function f = functionParser.parseFunction(ast, baseMetadata, executionContext);
                 if (!(f instanceof AnalyticFunction)) {
+                    Misc.free(base);
                     throw SqlException.$(ast.position, "non-analytic function called in analytic context");
                 }
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
@@ -3112,6 +3114,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final RecordCursorFactory factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+        ObjList<Function> castFunctionsA = null;
+        ObjList<Function> castFunctionsB = null;
         try {
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
@@ -3122,14 +3126,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case SET_OPERATION_UNION: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
 
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata,
                             SET_UNION_CONSTRUCTOR
                     );
@@ -3137,26 +3145,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case SET_OPERATION_UNION_ALL: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
+
                     return generateUnionAllFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata
                     );
                 }
                 case SET_OPERATION_EXCEPT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
+
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata,
                             SET_EXCEPT_CONSTRUCTOR
                     );
@@ -3164,13 +3182,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case SET_OPERATION_INTERSECT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
+
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata,
                             SET_INTERSECT_CONSTRUCTOR
                     );
@@ -3180,7 +3203,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return null;
             }
         } catch (Throwable e) {
+            Misc.free(factoryA);
             Misc.free(factoryB);
+            Misc.freeObjList(castFunctionsA);
+            Misc.freeObjList(castFunctionsB);
             throw e;
         }
     }
@@ -3767,7 +3793,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
-        return getTimestampIndex(model, factory.getMetadata());
+        try {
+            return getTimestampIndex(model, factory.getMetadata());
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
     }
 
     private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {
