@@ -85,10 +85,10 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     };
     private long lastSegmentTxn = -1L;
     private SequencerStructureChangeCursor structureChangeCursor;
-    private final WalWriterPool pool;
     private static final int MEM_TAG  = MemoryTag.MMAP_TABLE_WAL_WRITER;
+    private boolean open;
 
-    public WalWriter(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
+    public WalWriter(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.tableRegistry = tableRegistry;
         this.configuration = configuration;
@@ -101,7 +101,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         this.walId = walId;
         this.path = new Path().of(this.configuration.getRoot()).concat(tableName).concat(walName);
         this.rootLen = path.length();
-        this.pool = pool;
+        this.open = true;
 
         try {
             lock();
@@ -186,7 +186,9 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
     @Override
     public void close() {
-        pool.push(this);
+        if (isOpen()) {
+            doClose(true);
+        }
     }
 
     // Returns table transaction number.
@@ -605,7 +607,12 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return segmentPathLen;
     }
 
+    public boolean isOpen() {
+        return this.open;
+    }
+
     public void doClose(boolean truncate) {
+        open = false;
         Misc.free(metadata);
         Misc.free(events);
         freeSymbolMapWriters();

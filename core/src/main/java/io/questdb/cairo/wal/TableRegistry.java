@@ -38,18 +38,15 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayDeque;
 import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
 
 public class TableRegistry extends AbstractPool {
     private static final Log LOG = LogFactory.getLog(TableRegistry.class);
-    private final ConcurrentHashMap<Rc> tableRegistry = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<SequencerImpl> seqRegistry = new ConcurrentHashMap<>();
-
+    private final ConcurrentHashMap<Entry> seqRegistry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
 
@@ -59,53 +56,28 @@ public class TableRegistry extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), "TableRegistry", PoolListener.EV_POOL_OPEN);
     }
 
-    public boolean copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
-        Sequencer sequencer = openSequencer(tableName);
-        if (sequencer != null) {
-            sequencer.copyMetadataTo(metadata);
-            return true;
+    public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            if (sequencer != null) {
+                sequencer.copyMetadataTo(metadata);
+            }
         }
-        return false;
     }
 
     public @Nullable SequencerCursor getCursor(final CharSequence tableName, long lastCommittedTxn) {
-        Sequencer sequencer = openSequencer(tableName);
-        if (sequencer != null) {
-            return sequencer.getCursor(lastCommittedTxn);
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            if (sequencer != null) {
+                return sequencer.getCursor(lastCommittedTxn);
+            }
         }
         return null;
     }
-//
-//    public Sequencer getNewSequencer(int tableId, final TableStructure tableModel) {
-//        throwIfClosed();
-//        final Rc rc = tableRegistry.computeIfAbsent(tableModel.getTableName(), (final CharSequence tableName) -> {
-//            final Rc newRc = new TableRegistry.Rc();
-//            newRc.sequencer = new SequencerImpl(this.engine, tableName.toString(), newRc);
-//            newRc.sequencer.create(tableId, tableModel);
-//            return newRc;
-//        });
-//        rc.refCount.incrementAndGet();
-//        return rc.sequencer;
-//    }
-//
-//    public Sequencer getSequencer(final CharSequence tableName) {
-//        throwIfClosed();
-//        final Rc rc = tableRegistry.computeIfPresent(tableName, (final CharSequence name, final Rc current) -> {
-//            current.sequencer.open();
-//            return current;
-//        });
-//
-//        if (rc != null) {
-//            rc.refCount.incrementAndGet();
-//            return rc.sequencer;
-//        }
-//        return null;
-//    }
 
     public @Nullable SequencerStructureChangeCursor getStructureChangeCursor(final CharSequence tableName, @Nullable SequencerStructureChangeCursor reusableCursor, long fromSchemaVersion) {
-        Sequencer sequencer = openSequencer(tableName);
-        if (sequencer != null) {
-            return sequencer.getStructureChangeCursor(reusableCursor, fromSchemaVersion);
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            if (sequencer != null) {
+                return sequencer.getStructureChangeCursor(reusableCursor, fromSchemaVersion);
+            }
         }
         return null;
     }
@@ -119,37 +91,41 @@ public class TableRegistry extends AbstractPool {
     }
 
     public long nextStructureTxn(final CharSequence tableName, long structureVersion, AlterOperation operation) {
-        Sequencer sequencer = openSequencer(tableName);
-        if (sequencer != null) {
-            return sequencer.nextStructureTxn(structureVersion, operation);
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            if (sequencer != null) {
+                return sequencer.nextStructureTxn(structureVersion, operation);
+            }
         }
         return Sequencer.NO_TXN; //todo: throw exception ?
     }
-
-    //--------------------
 
     public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, long segmentId, long segmentTxn) {
-        Sequencer sequencer = openSequencer(tableName);
-        if (sequencer != null) {
-            return sequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            if (sequencer != null) {
+                return sequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
+            }
         }
         return Sequencer.NO_TXN; //todo: throw exception ?
     }
 
-    public int registerTable(int tableId, final TableStructure tableStructure) {
-        return createSequencer(tableId, tableStructure).getTableId();
+    public void registerTable(int tableId, final TableStructure tableStructure) {
+        try (SequencerImpl ignore = createSequencer(tableId, tableStructure)) {
+        }
     }
+
     public int getNextWalId(final CharSequence tableName) {
-        Sequencer sequencer = openSequencer(tableName);
-        if (sequencer != null) {
-            return sequencer.getNextWalId(); //todo: fix this
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            if (sequencer != null) {
+                return sequencer.getNextWalId(); //todo: fix this
+            }
         }
         return -1;
     }
 
     public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
-        return getWalPool(tableName).pop();
+        return getWalPool(tableName).get();
     }
+
     // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
     private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
@@ -157,19 +133,10 @@ public class TableRegistry extends AbstractPool {
         return ff.exists(path.$());
     }
 
-    public void clear() {
-        // create proper clear() and close() methods
-        final Set<Map.Entry<CharSequence, Rc>> entries = tableRegistry.entrySet();
-        for (Map.Entry<CharSequence, Rc> entry : entries) {
-            entry.getValue().close();
-        }
-        tableRegistry.clear();
-    }
-
-    private @NotNull Sequencer createSequencer(int tableId, final TableStructure tableStructure) {
+    private @NotNull SequencerImpl createSequencer(int tableId, final TableStructure tableStructure) {
         final String tableName = Chars.toString(tableStructure.getTableName());
         return seqRegistry.compute(tableName, (key, val) -> {
-            SequencerImpl sequencer = new SequencerImpl(this.engine, tableName, new Rc());
+            Entry sequencer = new Entry(this, this.engine, tableName);
             sequencer.create(tableId, tableStructure);
             sequencer.open();
             if (val != null) {
@@ -183,8 +150,8 @@ public class TableRegistry extends AbstractPool {
         final String tableNameStr = Chars.toString(tableName);
         return seqRegistry.computeIfAbsent(tableNameStr, (key) -> {
             if (isWalTable(tableName, getConfiguration().getRoot(), getConfiguration().getFilesFacade())) {
-//                SequencerImpl sequencer = val == null ? new SequencerImpl(this.engine, tableNameStr, new Rc()): val;
-                SequencerImpl sequencer = new SequencerImpl(this.engine, tableName.toString(), new Rc());
+                Entry sequencer = new Entry(this, this.engine, tableName.toString());
+                sequencer.reset();
                 sequencer.open();
                 return sequencer;
             }
@@ -194,59 +161,49 @@ public class TableRegistry extends AbstractPool {
 
     private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
         final String tableNameStr = Chars.toString(tableName);
-        //todo: configure maxSize
-        return walRegistry.computeIfAbsent(tableNameStr, (key) -> new WalWriterPool(10, tableNameStr, this, engine.getConfiguration()));
+        return walRegistry.computeIfAbsent(tableNameStr, (key) -> new WalWriterPool(tableNameStr, this, engine.getConfiguration()));
     }
 
     @Override
     protected boolean releaseAll(long deadline) {
+        boolean r0 = releaseWals(deadline);
+        boolean r1 = releaseEntries(deadline);
+        return  r0 || r1;
+    }
+
+    private boolean releaseEntries(long deadline) {
+        Iterator<Entry> iterator = seqRegistry.values().iterator();
         boolean removed = false;
-        Iterator<Rc> iterator = tableRegistry.values().iterator();
         while (iterator.hasNext()) {
-            final Rc rc = iterator.next();
-            if ((deadline > rc.lastReleaseTime && rc.refCount.get() == 0)) {
-                rc.sequencer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
-                rc.sequencer.close();
-                iterator.remove();
+            final Entry sequencer = iterator.next();
+            if (deadline >= sequencer.releaseTime) {
+                sequencer.pool = null;
+                sequencer. close();
                 removed = true;
-            } else if (deadline == Long.MAX_VALUE) {
                 iterator.remove();
-                removed = true;
             }
         }
-        releaseWals(deadline);
-        releaseEntries(deadline);
         return removed;
     }
 
-    private void releaseEntries(long deadline) {
-        Iterator<SequencerImpl> iterator = seqRegistry.values().iterator();
-        while (iterator.hasNext()) {
-            final SequencerImpl sequencer = iterator.next();
-            if (deadline > sequencer.getLastOpenTime()) {
-                sequencer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);//todo: remove it
-                sequencer.close();
-                iterator.remove();
-            }
-        }
-    }
-
-    private void releaseWals(long deadline) {
+    private boolean releaseWals(long deadline) {
         Iterator<WalWriterPool> iterator = walRegistry.values().iterator();
+        boolean removed = false;
         while (iterator.hasNext()) {
             final WalWriterPool pool = iterator.next();
-            pool.close();
-            if (deadline == Long.MAX_VALUE) {
+            removed = pool.releaseAll(deadline);
+            if (deadline == Long.MAX_VALUE && pool.size() == 0) {
                 iterator.remove();
             }
         }
+        return removed;
     }
-    private boolean returnToPool(final Rc rc) {
+
+    private boolean returnToPool(final Entry entry) {
         if (isClosed()) {
-            return rc.refCount.get() != 0;
+            return false;
         }
-        rc.lastReleaseTime = getConfiguration().getMicrosecondClock().getTicks();
-        rc.refCount.decrementAndGet();
+        entry.releaseTime = getConfiguration().getMicrosecondClock().getTicks();
         return true;
     }
 
@@ -257,14 +214,122 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    private class Rc implements LifecycleManager {
-        private final AtomicLong refCount = new AtomicLong();
-        private volatile long lastReleaseTime;
-        private SequencerImpl sequencer;
+    private static class Entry extends SequencerImpl {
+        private TableRegistry pool;
+        private volatile long releaseTime = Long.MAX_VALUE;
+
+        Entry(TableRegistry pool, CairoEngine engine, String tableName) {
+            super(engine, tableName);
+            this.pool = pool;
+        }
+
+        public void reset() {
+            this.releaseTime = Long.MAX_VALUE;
+        }
 
         @Override
-        public boolean close() {
-            return !TableRegistry.this.returnToPool(this);
+        public void close() {
+            if (isOpen()) {
+                if (pool != null) {
+                    if (pool.returnToPool(this)) {
+                        return;
+                    }
+                }
+                super.close();
+            }
         }
     }
+
+    public static class WalWriterPool {
+        private final ReentrantLock lock = new ReentrantLock();
+        private final ArrayDeque<Entry> cache = new ArrayDeque<>();
+        private final String tableName;
+        private final TableRegistry tableRegistry;
+        private final CairoConfiguration configuration;
+
+        public WalWriterPool(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
+            this.tableName = tableName;
+            this.tableRegistry = tableRegistry;
+            this.configuration = configuration;
+        }
+
+        public Entry get() {
+            lock.lock();
+            try {
+                final Entry obj = cache.poll();
+                if (obj == null) {
+                    return new Entry(tableName, tableRegistry, configuration, this);
+                } else {
+                    obj.reset();
+                    return obj;
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        public boolean returnToPool(Entry obj) {
+            assert obj != null;
+            lock.lock();
+            try {
+                obj.clear();
+                obj.reset();
+                cache.push(obj);
+                obj.releaseTime = configuration.getMicrosecondClock().getTicks();
+                return true;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        public int size() {
+           return cache.size();
+        }
+
+       protected boolean releaseAll(long deadline) {
+           Iterator<Entry> iterator = cache.iterator();
+           boolean removed = false;
+           lock.lock();
+           try {
+               while (iterator.hasNext()) {
+                   final Entry e = iterator.next();
+                   if (deadline >= e.releaseTime) {
+                       removed = true;
+                       e.doClose(true);
+                       iterator.remove();
+                   }
+               }
+           } finally {
+              lock.unlock();
+           }
+           return removed;
+        }
+
+        private static class Entry extends WalWriter {
+            private final WalWriterPool pool;
+            private volatile long releaseTime = Long.MAX_VALUE;
+
+            public Entry(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
+                super(tableName, tableRegistry, configuration);
+                this.pool = pool;
+            }
+
+            public void reset() {
+                this.releaseTime = Long.MAX_VALUE;
+            }
+
+            @Override
+            public void close() {
+                if (isOpen()) {
+                    if (pool != null) {
+                        if (pool.returnToPool(this)) {
+                            return;
+                        }
+                    }
+                    super.close();
+                }
+            }
+        }
+    }
+
 }

@@ -52,13 +52,11 @@ public class SequencerImpl implements Sequencer {
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
     private final FilesFacade ff;
     private final int mkDirMode;
-    private volatile long lastOpenTime;
-    private LifecycleManager lifecycleManager;
+    private volatile boolean open = false;
 
-    SequencerImpl(CairoEngine engine, String tableName, final LifecycleManager lifecycleManager) {
+    SequencerImpl(CairoEngine engine, String tableName) {
         this.engine = engine;
         this.tableName = tableName;
-        this.lifecycleManager = lifecycleManager;
 
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -78,27 +76,23 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    public void setLifecycleManager(LifecycleManager lifecycleManager) {
-        this.lifecycleManager = lifecycleManager;
-    }
-
-    public long getLastOpenTime() {
-        return lastOpenTime;
-    }
-
     public void open() {
         schemaLock.writeLock().lock();
         try {
             walIdGenerator.open(path);
             metadata.open(tableName, path, rootLen);
             catalog.open(path);
-            lastOpenTime = engine.getConfiguration().getMicrosecondClock().getTicks();
+            open = true;
         } catch (Throwable th) {
             doClose();
             throw th;
         } finally {
             schemaLock.writeLock().unlock();
         }
+    }
+
+    public boolean isOpen() {
+        return this.open;
     }
 
     @Override
@@ -188,19 +182,21 @@ public class SequencerImpl implements Sequencer {
 
     @Override
     public void close() {
-        if (lifecycleManager.close()) {
-            doClose();
-        }
+        doClose();
     }
+
     private void doClose() {
-        schemaLock.writeLock().lock();
-        try {
-            Misc.free(metadata);
-            Misc.free(catalog);
-            Misc.free(walIdGenerator);
-            Misc.free(path);
-        } finally {
-            schemaLock.writeLock().unlock();
+        if (open) {
+            schemaLock.writeLock().lock();
+            try {
+                open = false;
+                Misc.free(metadata);
+                Misc.free(catalog);
+                Misc.free(walIdGenerator);
+                Misc.free(path);
+            } finally {
+                schemaLock.writeLock().unlock();
+            }
         }
     }
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
