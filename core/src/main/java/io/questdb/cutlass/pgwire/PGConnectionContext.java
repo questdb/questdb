@@ -433,7 +433,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
-            reportError(-1, e.getFlyweightMessage(), e.getErrno());
+            if (e.isInterruption()) {
+                reportQueryCancelled(e.getFlyweightMessage());
+            } else {
+                reportError(-1, e.getFlyweightMessage(), e.getErrno());
+            }
         } catch (AuthenticationException e) {
             prepareError(-1, e.getMessage(), 0);
             sendAndReset();
@@ -1630,7 +1634,32 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareDescribePortalResponse();
     }
 
+    private void prepareQueryCanceled(CharSequence message) {
+        prepareErrorResponse(-1, message);
+        LOG.info()
+                .$("query cancelled [msg=`").$(message).$('`')
+                .I$();
+    }
+
     private void prepareError(int position, CharSequence message, long errno) {
+        prepareErrorResponse(position, message);
+        // Positive error code means that the problem originates from OS, hence it's a critical one.
+        if (errno > 0) {
+            LOG.critical()
+                    .$("error [pos=").$(position)
+                    .$(", msg=`").$(message).$('`')
+                    .$(", errno=`").$(errno)
+                    .I$();
+        } else {
+            LOG.error()
+                    .$("error [pos=").$(position)
+                    .$(", msg=`").$(message).$('`')
+                    .$(", errno=`").$(errno)
+                    .I$();
+        }
+    }
+
+    private void prepareErrorResponse(int position, CharSequence message) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
         responseAsciiSink.put('C');
@@ -1644,11 +1673,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
         responseAsciiSink.put((char) 0);
         responseAsciiSink.putLen(addr);
-        LOG.error()
-                .$("error [pos=").$(position)
-                .$(", msg=`").$(message).$('`')
-                .$(", errno=`").$(errno)
-                .I$();
     }
 
     //clears whole state except for characterStore because top-level batch text is using it
@@ -2263,7 +2287,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } catch (SqlException ex) {
                 prepareError(ex.getPosition(), ex.getFlyweightMessage(), 0);
             } catch (CairoException ex) {
-                prepareError(0, ex.getFlyweightMessage(), ex.getErrno());
+                if (ex.isInterruption()) {
+                    prepareQueryCanceled(ex.getFlyweightMessage());
+                } else {
+                    prepareError(-1, ex.getFlyweightMessage(), ex.getErrno());
+                }
             }
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -2352,6 +2380,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void reportError(int position, CharSequence flyweightMessage, long errno)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareError(position, flyweightMessage, errno);
+        sendReadyForNewQuery();
+        clearRecvBuffer();
+    }
+
+    private void reportQueryCancelled(CharSequence flyweightMessage)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareQueryCanceled(flyweightMessage);
         sendReadyForNewQuery();
         clearRecvBuffer();
     }
