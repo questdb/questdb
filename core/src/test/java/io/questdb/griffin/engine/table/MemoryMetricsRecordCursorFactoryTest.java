@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.MemoryTag;
@@ -55,14 +54,16 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSql() throws Exception {
-        assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile("select * from sys.memory_metrics()", sqlExecutionContext).getRecordCursorFactory();
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                RecordMetadata metadata = factory.getMetadata();
-                assertMetadata(metadata);
-                assertCursor(cursor);
-            }
-        });
+        printSqlResult(MemoryMetricsRecordCursorFactoryTest::expectedTableContent, "select * from sys.memory_metrics()", null, null, null, false, true, true, false, null);
+    }
+
+    private static String expectedTableContent() {
+        StringBuilder sb = new StringBuilder("memory-tag").append('\t').append("bytes").append('\n');
+        sb.append("TOTAL_USED").append('\t').append(Unsafe.getMemUsed()).append('\n');
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            sb.append(MemoryTag.nameOf(i)).append('\t').append(Unsafe.getMemUsedByTag(i)).append('\n');
+        }
+        return sb.toString();
     }
 
     private static void assertCursor(RecordCursor cursor) {

@@ -74,7 +74,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
 
     @Test
     public void testSql() throws Exception{
-        assertSql("select * from sys.table_writer_metrics()", toExpectedTableContent(snapshotMetrics()));
+        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from sys.table_writer_metrics()", null, null, null, false, true, true, false, null);
     }
 
     @Test

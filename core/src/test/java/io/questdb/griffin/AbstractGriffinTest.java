@@ -50,6 +50,7 @@ import org.junit.BeforeClass;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
@@ -764,6 +765,21 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean sizeCanBeVariable,
             CharSequence expectedPlan
     ) throws SqlException {
+        printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, expectedPlan);
+    }
+
+    protected static void printSqlResult(
+            Supplier<? extends CharSequence> expectedSupplier,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            CharSequence ddl2,
+            CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean expectSize,
+            boolean sizeCanBeVariable,
+            CharSequence expectedPlan
+    ) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
@@ -773,6 +789,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
         try {
             assertTimestamp(expectedTimestamp, factory);
+            CharSequence expected = expectedSupplier.get();
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
             // make sure we get the same outcome when we get factory to create new cursor
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
