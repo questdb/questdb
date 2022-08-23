@@ -817,7 +817,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "SELECT l from testX;");
             }
             catch (PSQLException e){
-                assertEquals("ERROR: table does not exist [name=testX]\n  Position: 108", e.getMessage());
+                assertEquals("ERROR: table does not exist [table=testX]\n  Position: 108", e.getMessage());
             }
         });
     }

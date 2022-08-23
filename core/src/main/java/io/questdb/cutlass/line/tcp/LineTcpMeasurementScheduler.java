@@ -35,7 +35,6 @@ import io.questdb.network.IODispatcher;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;

@@ -2752,7 +2752,7 @@ public class SqlCompiler implements Closeable {
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
         int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
         if (status != TableUtils.TABLE_EXISTS) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
+            throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
         }
         return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableName));
     }
@@ -3417,7 +3417,7 @@ public class SqlCompiler implements Closeable {
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     int status = engine.getStatus(executionContext.getCairoSecurityContext(), srcPath, tableName, 0, tableName.length());
                     if (status != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not  a valid table");
+                        throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
                     }
                     tableNames.add(tableName);
 

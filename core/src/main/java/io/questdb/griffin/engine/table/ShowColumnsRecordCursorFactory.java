@@ -27,7 +27,11 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
@@ -40,6 +44,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_DESIGNATED_COL = 6;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final CharSequence tableName;
+    private final Path path = new Path();
 
     public ShowColumnsRecordCursorFactory(CharSequence tableName) {
         super(METADATA);
@@ -47,13 +52,19 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         return cursor.of(executionContext);
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(path);
     }
 
     private class ShowColumnsCursor implements RecordCursor {
@@ -104,8 +115,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             return -1;
         }
 
-        private ShowColumnsCursor of(SqlExecutionContext executionContext) {
-            reader = executionContext.getCairoEngine().getReader(executionContext.getCairoSecurityContext(), tableName);
+        private ShowColumnsCursor of(SqlExecutionContext executionContext) throws SqlException {
+            reader = SqlUtil.getReader(executionContext, path, tableName);
             toTop();
             return this;
         }

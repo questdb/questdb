@@ -24,15 +24,37 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
+
+    public static TableReader getReader(
+            SqlExecutionContext executionContext,
+            Path path,
+            CharSequence tableName
+    ) throws SqlException {
+        final CairoEngine engine = executionContext.getCairoEngine();
+        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName);
+
+        if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
+            throw SqlException.$(0, "table does not exist [table=").put(tableName).put(']');
+        }
+        if (status == TableUtils.TABLE_RESERVED) {
+            throw SqlException.$(0, "table directory is of unknown format");
+        }
+
+        return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+    }
 
     public static void addSelectStar(
             QueryModel model,
