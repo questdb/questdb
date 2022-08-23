@@ -573,9 +573,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             } else {
                 // Positive error code means that the problem originates from OS, hence it's a critical one.
                 if (ce.getErrno() > 0) {
-                    state.critical().$("error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
+                    state.critical().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
                 } else {
-                    state.error().$("error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
+                    state.error().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
                 }
             }
         } else if (e instanceof HttpException) {
