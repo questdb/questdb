@@ -43,10 +43,9 @@ public class LastStringGroupByFunction extends FirstStringGroupByFunction implem
 
     public void computeNext(MapValue mapValue, Record record) {
         CharSequence cs = this.arg.getStr(record);
-        DirectCharSink copy = new DirectCharSink(cs.length());
-        copy.put(cs);
         int ix = mapValue.getInt(this.valueIndex);
-        stringValues.get(ix).close();
-        stringValues.set(ix, copy);
+        DirectCharSink sink = stringValues.get(ix);
+        sink.clear();
+        sink.put(cs);
     }
 }
