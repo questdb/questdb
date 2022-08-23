@@ -49,7 +49,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
 
     @Test
     public void testSanity() throws Exception {
-        // we want to make sure metrics are enabled by default
+        // we want to make sure metrics in tests are enabled by default
         assertTrue(metrics.isEnabled());
         assertTrue(engine.getMetrics().isEnabled());
 
@@ -74,7 +74,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
 
     @Test
     public void testSql() throws Exception{
-        assertSql("select * from table_writer_metrics()", toExpectedTableContent(snapshotMetrics()));
+        assertSql("select * from sys.table_writer_metrics()", toExpectedTableContent(snapshotMetrics()));
     }
 
     @Test
@@ -89,7 +89,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
                                  -1,
                                  null)) {
                 MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);
-                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
+                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from sys.table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
             }
         });
     }
@@ -124,12 +124,12 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     }
 
     private static String toExpectedTableContent(MetricsSnapshot metricsSnapshot) {
-        StringBuilder sb = new StringBuilder("total-commits\to3commits\trollbacks\tcommitted-rows\tphysically-written-rows\n")
-                .append(metricsSnapshot.commitCount).append('\t')
-                .append(metricsSnapshot.o3CommitCount).append('\t')
-                .append(metricsSnapshot.rollbackCount).append('\t')
-                .append(metricsSnapshot.committedRows).append('\t')
-                .append(metricsSnapshot.physicallyWrittenRows).append('\n');
+        StringBuilder sb = new StringBuilder("name\tvalue\n")
+                .append("total-commits").append('\t').append(metricsSnapshot.commitCount).append('\n')
+                .append("o3commits").append('\t').append(metricsSnapshot.o3CommitCount).append('\n')
+                .append("rollbacks").append('\t').append(metricsSnapshot.rollbackCount).append('\n')
+                .append("committed-rows").append('\t').append(metricsSnapshot.committedRows).append('\n')
+                .append("physically-written-rows").append('\t').append(metricsSnapshot.physicallyWrittenRows).append('\n');
         return sb.toString();
     }
 

@@ -28,14 +28,17 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 
-final class SingleLongRowRecordCursor implements RecordCursor {
+final class StringLongTuplesRecordCursor implements RecordCursor {
     private final TableWriterMetricsRecord record = new TableWriterMetricsRecord();
-    private boolean recordEmitted;
-    private long[] data;
+    private String[] keys;
+    private long[] values;
+    private int pos;
 
-    public void of(long[] data) {
-        this.data = data;
-        recordEmitted = false;
+    public void of(String[] keys, long[] values) {
+        assert keys.length == values.length;
+        this.keys = keys;
+        this.values = values;
+        toTop();
     }
 
     @Override
@@ -50,7 +53,11 @@ final class SingleLongRowRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        return !recordEmitted && (recordEmitted = true);
+        if (keys.length > pos + 1) {
+            pos++;
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -65,21 +72,42 @@ final class SingleLongRowRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        recordEmitted = false;
+        pos = -1;
     }
 
     @Override
     public long size() {
-        return 1;
+        return keys.length;
     }
 
     private class TableWriterMetricsRecord implements Record {
         @Override
-        public long getLong(int col) {
-            if (col < 0 || col >= data.length) {
-                throw CairoException.instance(0).put("unsupported column number. [column=").put(col).put("]");
+        public CharSequence getStr(int col) {
+            if (col != 0) {
+                throw CairoException.instance(0).put("unsupported string column number. [column=").put(col).put("]");
             }
-            return data[col];
+            return keys[pos];
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return getStr(col);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            if (col != 0) {
+                throw CairoException.instance(0).put("unsupported string column number. [column=").put(col).put("]");
+            }
+            return getStr(col).length();
+        }
+
+        @Override
+        public long getLong(int col) {
+            if (col != 1) {
+                throw CairoException.instance(0).put("unsupported long column number. [column=").put(col).put("]");
+            }
+            return values[pos];
         }
     }
 }

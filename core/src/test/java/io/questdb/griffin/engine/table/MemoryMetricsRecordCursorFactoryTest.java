@@ -39,17 +39,7 @@ import static org.junit.Assert.*;
 public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testCursorHasOneRow() throws Exception {
-        try (MemoryMetricsRecordCursorFactory factory = new MemoryMetricsRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-
-            assertTrue(cursor.hasNext());
-            assertFalse(cursor.hasNext());
-        }
-    }
-
-    @Test
-    public void testMetadata() throws Exception {
+    public void testMetadata() {
         try (MemoryMetricsRecordCursorFactory factory = new MemoryMetricsRecordCursorFactory()) {
             assertMetadata(factory.getMetadata());
         }
@@ -66,7 +56,7 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSql() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile("select * from memory_metrics()", sqlExecutionContext).getRecordCursorFactory();
+            try (RecordCursorFactory factory = compiler.compile("select * from sys.memory_metrics()", sqlExecutionContext).getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 assertMetadata(metadata);
@@ -78,64 +68,24 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
     private static void assertCursor(RecordCursor cursor) {
         cursor.hasNext();
         Record record = cursor.getRecord();
-        assertEquals(Unsafe.getMemUsed(), record.getLong(0));
+
+        assertEquals("TOTAL_USED", record.getStr(0));
+        assertEquals(Unsafe.getMemUsed(), record.getLong(1));
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-            assertEquals(Unsafe.getMemUsedByTag(i), record.getLong(i + 1));
+            assertTrue(cursor.hasNext());
+            assertEquals(MemoryTag.nameOf(i), record.getStr(0));
+            assertEquals(Unsafe.getMemUsedByTag(i), record.getLong(1));
         }
+        assertFalse(cursor.hasNext());
     }
 
     private static void assertMetadata(RecordMetadata metadata) {
-        // chances are these tests fails during an innocent change. for example when you add a new memory tag.
-        // this is intentional, it's meant to prevent accidentally removing or renaming a tag
-        // why? by exposing memory utilization tags via SQL the tag names have effectively become an API and we should
-        // treat them as such. in fact this was already the case when we exposed them via Prometheus.
-        // if you just intentionally add/change a tag then just change the test and carry on
         int columnCount = metadata.getColumnCount();
-        assertEquals(42, columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            assertEquals(ColumnType.LONG, metadata.getColumnType(i));
-        }
-        assertEquals("TOTAL_USED", metadata.getColumnName(0));
-        assertEquals("MMAP_DEFAULT", metadata.getColumnName(1));
-        assertEquals("NATIVE_DEFAULT", metadata.getColumnName(2));
-        assertEquals("MMAP_O3", metadata.getColumnName(3));
-        assertEquals("NATIVE_O3", metadata.getColumnName(4));
-        assertEquals("NATIVE_RECORD_CHAIN", metadata.getColumnName(5));
-        assertEquals("MMAP_TABLE_WRITER", metadata.getColumnName(6));
-        assertEquals("NATIVE_TREE_CHAIN", metadata.getColumnName(7));
-        assertEquals("MMAP_TABLE_READER", metadata.getColumnName(8));
-        assertEquals("NATIVE_COMPACT_MAP", metadata.getColumnName(9));
-        assertEquals("NATIVE_FAST_MAP", metadata.getColumnName(10));
-        assertEquals("NATIVE_FAST_MAP_LONG_LIST", metadata.getColumnName(11));
-        assertEquals("NATIVE_HTTP_CONN", metadata.getColumnName(12));
-        assertEquals("NATIVE_PGW_CONN", metadata.getColumnName(13));
-        assertEquals("MMAP_INDEX_READER", metadata.getColumnName(14));
-        assertEquals("MMAP_INDEX_WRITER", metadata.getColumnName(15));
-        assertEquals("MMAP_INDEX_SLIDER", metadata.getColumnName(16));
-        assertEquals("MMAP_BLOCK_WRITER", metadata.getColumnName(17));
-        assertEquals("NATIVE_REPL", metadata.getColumnName(18));
-        assertEquals("NATIVE_SAMPLE_BY_LONG_LIST", metadata.getColumnName(19));
-        assertEquals("NATIVE_LATEST_BY_LONG_LIST", metadata.getColumnName(20));
-        assertEquals("NATIVE_JIT_LONG_LIST", metadata.getColumnName(21));
-        assertEquals("NATIVE_LONG_LIST", metadata.getColumnName(22));
-        assertEquals("NATIVE_JIT", metadata.getColumnName(23));
-        assertEquals("NATIVE_OFFLOAD", metadata.getColumnName(24));
-        assertEquals("NATIVE_PATH", metadata.getColumnName(25));
-        assertEquals("NATIVE_TABLE_READER", metadata.getColumnName(26));
-        assertEquals("NATIVE_TABLE_WRITER", metadata.getColumnName(27));
-        assertEquals("MMAP_UPDATE", metadata.getColumnName(28));
-        assertEquals("NATIVE_CB1", metadata.getColumnName(29));
-        assertEquals("NATIVE_CB2", metadata.getColumnName(30));
-        assertEquals("NATIVE_CB3", metadata.getColumnName(31));
-        assertEquals("NATIVE_CB4", metadata.getColumnName(32));
-        assertEquals("NATIVE_CB5", metadata.getColumnName(33));
-        assertEquals("MMAP_IMPORT", metadata.getColumnName(34));
-        assertEquals("NATIVE_IMPORT", metadata.getColumnName(35));
-        assertEquals("NATIVE_ROSTI", metadata.getColumnName(36));
-        assertEquals("MMAP_TABLE_WAL_READER", metadata.getColumnName(37));
-        assertEquals("MMAP_TABLE_WAL_WRITER", metadata.getColumnName(38));
-        assertEquals("MMAP_SEQUENCER", metadata.getColumnName(39));
-        assertEquals("MMAP_PARALLEL_IMPORT", metadata.getColumnName(40));
-        assertEquals("NATIVE_PARALLEL_IMPORT", metadata.getColumnName(41));
+        assertEquals(2, columnCount);
+        assertEquals(ColumnType.STRING, metadata.getColumnType(0));
+        assertEquals("memory-tag", metadata.getColumnName(0));
+
+        assertEquals(ColumnType.LONG, metadata.getColumnType(1));
+        assertEquals("bytes", metadata.getColumnName(1));
     }
 }

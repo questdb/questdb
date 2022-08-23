@@ -44,8 +44,9 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
     private static final int PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX = 4;
     private static final int TOTAL_NUMBER_OF_METRIC = PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX + 1;
     private static final long METRICS_DISABLED_VALUE = -1;
-    private final SingleLongRowRecordCursor cursor = new SingleLongRowRecordCursor();
-    private final long[] collectedMetrics = new long[TOTAL_NUMBER_OF_METRIC];
+    private static final String[] KEYS = new String[TOTAL_NUMBER_OF_METRIC];
+    private final StringLongTuplesRecordCursor cursor = new StringLongTuplesRecordCursor();
+    private final long[] values = new long[TOTAL_NUMBER_OF_METRIC];
 
     public TableWriterMetricsRecordCursorFactory() {
         super(METADATA);
@@ -61,29 +62,32 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
         Metrics metrics = executionContext.getCairoEngine().getMetrics();
         if (metrics.isEnabled()) {
             TableWriterMetrics tableWriterMetrics = metrics.tableWriter();
-            collectedMetrics[TOTAL_COMMITS_COLUMN_INDEX] = tableWriterMetrics.getCommitCount();
-            collectedMetrics[O3_COMMITS_COLUMN_INDEX] = tableWriterMetrics.getO3CommitCount();
-            collectedMetrics[ROLLBACKS_COLUMN_INDEX] = tableWriterMetrics.getRollbackCount();
-            collectedMetrics[COMMITTED_ROWS_COLUMN_INDEX] = tableWriterMetrics.getCommittedRows();
-            collectedMetrics[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = tableWriterMetrics.getPhysicallyWrittenRows();
+            values[TOTAL_COMMITS_COLUMN_INDEX] = tableWriterMetrics.getCommitCount();
+            values[O3_COMMITS_COLUMN_INDEX] = tableWriterMetrics.getO3CommitCount();
+            values[ROLLBACKS_COLUMN_INDEX] = tableWriterMetrics.getRollbackCount();
+            values[COMMITTED_ROWS_COLUMN_INDEX] = tableWriterMetrics.getCommittedRows();
+            values[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = tableWriterMetrics.getPhysicallyWrittenRows();
         } else {
-            collectedMetrics[TOTAL_COMMITS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
-            collectedMetrics[O3_COMMITS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
-            collectedMetrics[ROLLBACKS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
-            collectedMetrics[COMMITTED_ROWS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
-            collectedMetrics[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
+            values[TOTAL_COMMITS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
+            values[O3_COMMITS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
+            values[ROLLBACKS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
+            values[COMMITTED_ROWS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
+            values[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = METRICS_DISABLED_VALUE;
         }
-        cursor.of(collectedMetrics);
+        cursor.of(KEYS, values);
         return cursor;
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(TOTAL_COMMITS_COLUMN_INDEX, new TableColumnMetadata("total-commits", 1, ColumnType.LONG));
-        metadata.add(O3_COMMITS_COLUMN_INDEX, new TableColumnMetadata("o3commits", 2, ColumnType.LONG));
-        metadata.add(ROLLBACKS_COLUMN_INDEX, new TableColumnMetadata("rollbacks", 3, ColumnType.LONG));
-        metadata.add(COMMITTED_ROWS_COLUMN_INDEX, new TableColumnMetadata("committed-rows", 4, ColumnType.LONG));
-        metadata.add(PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX, new TableColumnMetadata("physically-written-rows", 5, ColumnType.LONG));
+        metadata.add(0, new TableColumnMetadata("name", 0, ColumnType.STRING));
+        metadata.add(1, new TableColumnMetadata("value", 1, ColumnType.LONG));
         METADATA = metadata;
+
+        KEYS[TOTAL_COMMITS_COLUMN_INDEX] = "total-commits";
+        KEYS[O3_COMMITS_COLUMN_INDEX] = "o3commits";
+        KEYS[ROLLBACKS_COLUMN_INDEX] = "rollbacks";
+        KEYS[COMMITTED_ROWS_COLUMN_INDEX] = "committed-rows";
+        KEYS[PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX] = "physically-written-rows";
     }
 }

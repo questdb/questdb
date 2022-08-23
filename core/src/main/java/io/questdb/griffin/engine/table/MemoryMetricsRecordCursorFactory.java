@@ -38,8 +38,9 @@ import io.questdb.std.Unsafe;
 public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
     private static final int METRIC_COUNT = MemoryTag.SIZE + 1; // 1 per each tag + 1 extra for total memory
-    private final SingleLongRowRecordCursor cursor = new SingleLongRowRecordCursor();
-    private final long[] memoryMetrics = new long[METRIC_COUNT];
+    private static final String[] KEYS = new String[METRIC_COUNT];
+    private final StringLongTuplesRecordCursor cursor = new StringLongTuplesRecordCursor();
+    private final long[] values = new long[METRIC_COUNT];
 
     public MemoryMetricsRecordCursorFactory() {
         super(METADATA);
@@ -52,8 +53,8 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        collectMetrics(memoryMetrics);
-        cursor.of(memoryMetrics);
+        collectMetrics(values);
+        cursor.of(KEYS, values);
         return cursor;
     }
 
@@ -68,11 +69,13 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("TOTAL_USED", 0, ColumnType.LONG));
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            String name = MemoryTag.nameOf(i);
-            metadata.add(i + 1, new TableColumnMetadata(name, i + 1, ColumnType.LONG));
-        }
+        metadata.add(0, new TableColumnMetadata("memory-tag", 0, ColumnType.STRING));
+        metadata.add(1, new TableColumnMetadata("bytes", 1, ColumnType.LONG));
         METADATA = metadata;
+
+        KEYS[0] = "TOTAL_USED";
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            KEYS[i + 1] = MemoryTag.nameOf(i);
+        }
     }
 }
