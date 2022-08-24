@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.Record;
@@ -34,12 +35,14 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.hamcrest.MatcherAssert;
 import org.junit.*;
 
 import java.io.File;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
@@ -601,7 +604,101 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConcurrentWals() throws Exception {
+    public void tesWalWritersUnknownTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "NotExist";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts") // not a WAL table
+            ) {
+                createTable(model);
+            }
+            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.fail();
+            } catch (CairoError e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" + tableName + "`]"));
+            }
+        });
+    }
+
+    @Test
+    public void tesWalWritersOpenPoolClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+            }
+
+            engine.getTableRegistry().close();
+
+            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.fail();
+            } catch (PoolClosedException ignored) {
+            }
+            engine.getTableRegistry().reopen();
+        });
+    }
+
+    @Test
+    public void tesWalWritersReturnToClosedPool() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+                engine.getTableRegistry().close();
+            }
+
+            engine.getTableRegistry().reopen();
+        });
+    }
+
+    @Test
+    public void tesWalWritersReturnToClosedPool2() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+            } // return it to pool
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+                engine.getTableRegistry().close();
+            } // close it as the pool is closed too
+
+            engine.getTableRegistry().reopen();
+        });
+    }
+
+    @Test
+    public void testConcurrentWalWriters() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)

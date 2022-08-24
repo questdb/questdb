@@ -454,14 +454,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     @Override
-    public @Nullable WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
+    public @NotNull WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
         return tableRegistry.getWalWriter(tableName);
     }
-
-//    public Sequencer getSequencer(CharSequence tableName) {
-//        return tableRegistry.getSequencer(Chars.toString(tableName));
-//    }
 
     public String lock(
             CairoSecurityContext securityContext,

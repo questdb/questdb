@@ -254,7 +254,7 @@ public class TableRegistry extends AbstractPool {
         private final String tableName;
         private final TableRegistry tableRegistry;
         private final CairoConfiguration configuration;
-
+        private volatile boolean closed;
         public WalWriterPool(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
             this.tableName = tableName;
             this.tableRegistry = tableRegistry;
@@ -280,32 +280,45 @@ public class TableRegistry extends AbstractPool {
             assert obj != null;
             lock.lock();
             try {
-                obj.clear();
-                obj.reset();
-                cache.push(obj);
-                obj.releaseTime = configuration.getMicrosecondClock().getTicks();
-                return true;
+                if (closed) {
+                    return false;
+                } else {
+                    obj.clear();
+                    obj.reset();
+                    cache.push(obj);
+                    obj.releaseTime = configuration.getMicrosecondClock().getTicks();
+                    return true;
+                }
             } finally {
                 lock.unlock();
             }
         }
 
         public int size() {
-           return cache.size();
+            lock.lock();
+            try {
+                return cache.size();
+            } finally {
+                lock.unlock();
+            }
         }
 
        protected boolean releaseAll(long deadline) {
-           Iterator<Entry> iterator = cache.iterator();
            boolean removed = false;
            lock.lock();
+           Iterator<Entry> iterator = cache.iterator();
            try {
                while (iterator.hasNext()) {
                    final Entry e = iterator.next();
                    if (deadline >= e.releaseTime) {
                        removed = true;
                        e.doClose(true);
+                       e.pool = null;
                        iterator.remove();
                    }
+               }
+               if (deadline == Long.MAX_VALUE) {
+                   this.closed = true;
                }
            } finally {
               lock.unlock();
@@ -314,7 +327,7 @@ public class TableRegistry extends AbstractPool {
         }
 
         private static class Entry extends WalWriter {
-            private final WalWriterPool pool;
+            private WalWriterPool pool;
             private volatile long releaseTime = Long.MAX_VALUE;
 
             public Entry(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
