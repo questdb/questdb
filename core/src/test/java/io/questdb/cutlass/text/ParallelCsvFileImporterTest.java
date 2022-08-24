@@ -2061,7 +2061,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenTargetTableNameIsInvalid() throws Exception {
-        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "[0] invalid table name [table=../t]");
+        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "invalid table name [table=../t]");
     }
 
     @Test
@@ -2219,7 +2219,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertEquals("[0] partition strategy for parallel import cannot be NONE", e.getMessage());
+                MatcherAssert.assertThat(e.getMessage(), containsString("partition strategy for parallel import cannot be NONE"));
             }
         });
     }
