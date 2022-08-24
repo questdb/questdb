@@ -86,4 +86,9 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     public void toSink(CharSink sink) {
         sink.put("MinTimestamp(").put(arg).put(')');
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

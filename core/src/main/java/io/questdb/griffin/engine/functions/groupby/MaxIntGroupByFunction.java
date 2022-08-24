@@ -92,4 +92,9 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void toSink(CharSink sink) {
         sink.put("MaxInt(").put(arg).put(')');
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

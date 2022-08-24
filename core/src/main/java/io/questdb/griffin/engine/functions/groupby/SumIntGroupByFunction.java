@@ -74,9 +74,6 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
 
     @Override
     public long getLong(Record rec) {
-        if(rec == null) {
-            return this.arg.getLong(null);
-        }
         return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
     }
 
@@ -95,6 +92,11 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 
     @Override

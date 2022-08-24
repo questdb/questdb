@@ -91,4 +91,9 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     public void toSink(CharSink sink) {
         sink.put("MaxLong").put(arg).put(')');
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

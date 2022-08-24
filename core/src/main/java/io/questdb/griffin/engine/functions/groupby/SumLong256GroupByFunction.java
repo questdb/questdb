@@ -104,4 +104,9 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     public Long256 getLong256B(Record rec) {
         return getLong256A(rec);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

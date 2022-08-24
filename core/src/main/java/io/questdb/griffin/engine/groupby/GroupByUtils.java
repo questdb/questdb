@@ -35,8 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.*;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
-import io.questdb.griffin.engine.functions.groupby.ConstantGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
@@ -78,19 +76,11 @@ public class GroupByUtils {
                 // configure map value columns for group-by functions
                 // some functions may need more than one column in values,
                 // so we have them do all the work
-                GroupByFunction func;
-
-                if(function instanceof GroupByFunction) {
-                    func = (GroupByFunction) function;
-                    func.pushValueTypes(valueTypes);
-                } else if(function instanceof ConstantFunction) {
-                    func = new ConstantGroupByFunction((ConstantFunction)function);
-                } else {
-                    throw new AssertionError("Invalid function used in group by context.");
-                }
+                assert function instanceof GroupByFunction;
+                GroupByFunction func = (GroupByFunction) function;
+                func.pushValueTypes(valueTypes);
                 groupByFunctions.add(func);
                 groupByFunctionPositions.add(columnAst.position);
-
             }
         }
     }

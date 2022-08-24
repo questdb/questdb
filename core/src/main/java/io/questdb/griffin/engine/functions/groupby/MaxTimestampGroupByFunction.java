@@ -86,4 +86,9 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     public void toSink(CharSink sink) {
         sink.put("MaxTimestamp(").put(arg).put(')');
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

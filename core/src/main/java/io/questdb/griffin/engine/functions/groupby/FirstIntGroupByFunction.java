@@ -60,9 +60,6 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
 
     @Override
     public int getInt(Record rec) {
-        if(rec == null) {
-            return this.arg.getInt(null);
-        }
         return rec.getInt(valueIndex);
     }
 
@@ -80,5 +77,10 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     @Override
     public void setInt(MapValue mapValue, int value) {
         mapValue.putInt(valueIndex, value);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 }

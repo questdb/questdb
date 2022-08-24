@@ -75,4 +75,9 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
         }
         return rec.getBool(this.valueIndex);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }
