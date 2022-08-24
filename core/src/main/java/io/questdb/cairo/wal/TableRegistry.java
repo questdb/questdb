@@ -58,28 +58,24 @@ public class TableRegistry extends AbstractPool {
 
     public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
         try (Sequencer sequencer = openSequencer(tableName)) {
-            if (sequencer != null) {
-                sequencer.copyMetadataTo(metadata);
-            }
+            sequencer.copyMetadataTo(metadata);
         }
     }
 
-    public @Nullable SequencerCursor getCursor(final CharSequence tableName, long lastCommittedTxn) {
+    public @NotNull SequencerCursor getCursor(final CharSequence tableName, long lastCommittedTxn) {
         try (Sequencer sequencer = openSequencer(tableName)) {
-            if (sequencer != null) {
-                return sequencer.getCursor(lastCommittedTxn);
-            }
+            return sequencer.getCursor(lastCommittedTxn);
         }
-        return null;
     }
 
-    public @Nullable SequencerStructureChangeCursor getStructureChangeCursor(final CharSequence tableName, @Nullable SequencerStructureChangeCursor reusableCursor, long fromSchemaVersion) {
+    public @NotNull SequencerStructureChangeCursor getStructureChangeCursor(
+            final CharSequence tableName,
+            @Nullable SequencerStructureChangeCursor reusableCursor,
+            long fromSchemaVersion
+    ) {
         try (Sequencer sequencer = openSequencer(tableName)) {
-            if (sequencer != null) {
-                return sequencer.getStructureChangeCursor(reusableCursor, fromSchemaVersion);
-            }
+            return sequencer.getStructureChangeCursor(reusableCursor, fromSchemaVersion);
         }
-        return null;
     }
 
     public boolean hasSequencer(final CharSequence tableName) {
@@ -92,20 +88,14 @@ public class TableRegistry extends AbstractPool {
 
     public long nextStructureTxn(final CharSequence tableName, long structureVersion, AlterOperation operation) {
         try (Sequencer sequencer = openSequencer(tableName)) {
-            if (sequencer != null) {
-                return sequencer.nextStructureTxn(structureVersion, operation);
-            }
+            return sequencer.nextStructureTxn(structureVersion, operation);
         }
-        return Sequencer.NO_TXN; //todo: throw exception ?
     }
 
     public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, long segmentId, long segmentTxn) {
         try (Sequencer sequencer = openSequencer(tableName)) {
-            if (sequencer != null) {
-                return sequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
-            }
+            return sequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
         }
-        return Sequencer.NO_TXN; //todo: throw exception ?
     }
 
     public void registerTable(int tableId, final TableStructure tableStructure) {
@@ -115,11 +105,8 @@ public class TableRegistry extends AbstractPool {
 
     public int getNextWalId(final CharSequence tableName) {
         try (Sequencer sequencer = openSequencer(tableName)) {
-            if (sequencer != null) {
-                return sequencer.getNextWalId(); //todo: fix this
-            }
+            return sequencer.getNextWalId();
         }
-        return -1;
     }
 
     public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
@@ -134,6 +121,7 @@ public class TableRegistry extends AbstractPool {
     }
 
     private @NotNull SequencerImpl createSequencer(int tableId, final TableStructure tableStructure) {
+        throwIfClosed();
         final String tableName = Chars.toString(tableStructure.getTableName());
         return seqRegistry.compute(tableName, (key, val) -> {
             Entry sequencer = new Entry(this, this.engine, tableName);
@@ -146,27 +134,47 @@ public class TableRegistry extends AbstractPool {
         });
     }
 
-    private @Nullable SequencerImpl openSequencer(final CharSequence tableName) {
+    private @NotNull SequencerImpl openSequencer(final CharSequence tableName) {
+        throwIfClosed();
         final String tableNameStr = Chars.toString(tableName);
-        return seqRegistry.computeIfAbsent(tableNameStr, (key) -> {
-            if (isWalTable(tableName, getConfiguration().getRoot(), getConfiguration().getFilesFacade())) {
-                Entry sequencer = new Entry(this, this.engine, tableName.toString());
+
+        Entry entry = seqRegistry.get(tableNameStr);
+        if (entry != null) {
+            return entry;
+        }
+
+        entry = seqRegistry.computeIfAbsent(tableNameStr, (key) -> {
+            if (isWalTable(tableNameStr, getConfiguration().getRoot(), getConfiguration().getFilesFacade())) {
+                Entry sequencer = new Entry(this, this.engine, tableNameStr);
                 sequencer.reset();
                 sequencer.open();
                 return sequencer;
             }
             return null;
         });
+
+        if (entry == null) throw new CairoError("Unknown table [name=`" + tableNameStr + "`]");
+        return entry;
     }
 
     private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
+        throwIfClosed();
         final String tableNameStr = Chars.toString(tableName);
-        return walRegistry.computeIfAbsent(tableNameStr, (key) -> new WalWriterPool(tableNameStr, this, engine.getConfiguration()));
+
+        WalWriterPool pool = walRegistry.get(tableNameStr);
+        if (pool != null) {
+            return pool;
+        }
+
+        pool = walRegistry.computeIfAbsent(tableNameStr, (key)
+                -> new WalWriterPool(tableNameStr, this, engine.getConfiguration()));
+
+        return pool;
     }
 
     @Override
     protected boolean releaseAll(long deadline) {
-        boolean r0 = releaseWals(deadline);
+        boolean r0 = releaseWalWriters(deadline);
         boolean r1 = releaseEntries(deadline);
         return  r0 || r1;
     }
@@ -186,7 +194,7 @@ public class TableRegistry extends AbstractPool {
         return removed;
     }
 
-    private boolean releaseWals(long deadline) {
+    private boolean releaseWalWriters(long deadline) {
         Iterator<WalWriterPool> iterator = walRegistry.values().iterator();
         boolean removed = false;
         while (iterator.hasNext()) {
