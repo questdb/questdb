@@ -1859,7 +1859,7 @@ public class SqlCompiler implements Closeable {
                     deadline = rowCount + batchSize;
                 }
             } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+                throw CairoException.instance(-1).put("Invalid timestamp: ").put(str);
             }
         }
 
@@ -1880,7 +1880,7 @@ public class SqlCompiler implements Closeable {
                 row.append();
                 rowCount++;
             } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+                throw CairoException.instance(-1).put("Invalid timestamp: ").put(str);
             }
         }
 
@@ -3239,7 +3239,7 @@ public class SqlCompiler implements Closeable {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
-                    throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                    throw CairoException.instance(-1).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
                 }
                 srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
                 cachedTmpBackupRoot = Chars.toString(srcPath);
@@ -3301,7 +3301,7 @@ public class SqlCompiler implements Closeable {
             srcPath.of(backupRoot).concat(tableName).slash$();
 
             if (ff.exists(srcPath)) {
-                throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
+                throw CairoException.instance(-1).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
             }
 
             if (ff.mkdirs(srcPath, mkDirMode) != 0) {
@@ -3371,7 +3371,7 @@ public class SqlCompiler implements Closeable {
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
             executionContext.getCairoSecurityContext().checkWritePermission();
             if (null == configuration.getBackupRoot()) {
-                throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                throw CairoException.instance(-1).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
             final CharSequence tok = SqlUtil.fetchNext(lexer);
             if (null != tok) {

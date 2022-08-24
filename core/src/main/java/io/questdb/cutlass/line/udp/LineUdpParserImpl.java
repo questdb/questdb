@@ -294,12 +294,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         break;
                     case TABLE_DOES_NOT_EXIST:
                         if (!autoCreateNewTables) {
-                            throw CairoException.instance(0)
+                            throw CairoException.instance(-1)
                                     .put("table does not exist, creating new tables is disabled [table=").put(token)
                                     .put(']');
                         }
                         if (!autoCreateNewColumns) {
-                            throw CairoException.instance(0)
+                            throw CairoException.instance(-1)
                                     .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(token)
                                     .put(']');
                         }
@@ -455,7 +455,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 columnValues.add(value.getCacheAddress());
                 geoHashBitsSizeByColIdx.add(0);
             } else if (!autoCreateNewColumns) {
-                throw CairoException.instance(0)
+                throw CairoException.instance(-1)
                         .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableName())
                         .put(", columnName=").put(colNameAsChars)
                         .put(']');
@@ -565,7 +565,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             if (TableUtils.isValidColumnName(colName, configuration.getMaxFileNameLength())) {
                 return colName;
             }
-            throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
+            throw CairoException.instance(-1).put("column name contains invalid characters [colName=").put(colName).put(']');
         }
 
         @Override

@@ -457,7 +457,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
         if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
-            throw CairoException.instance(0)
+            throw CairoException.instance(-1)
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
@@ -1195,10 +1195,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             TypeManager typeManager
     ) throws TextException {
         if (types.size() == 0) {
-            throw CairoException.instance(0).put("cannot determine text structure");
+            throw CairoException.instance(-1).put("cannot determine text structure");
         }
         if (partitionBy == PartitionBy.NONE) {
-            throw CairoException.instance(0).put("partition strategy for parallel import cannot be NONE");
+            throw CairoException.instance(-1).put("partition strategy for parallel import cannot be NONE");
         }
 
         if (partitionBy < 0) {

@@ -145,7 +145,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
         circuitBreaker.resetTimer();
         return circuitBreaker;
     }

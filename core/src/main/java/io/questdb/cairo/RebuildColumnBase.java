@@ -292,7 +292,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         partitionSize
                 );
             } else {
-                throw CairoException.instance(0).put(unsupportedColumnMessage);
+                throw CairoException.instance(-1).put(unsupportedColumnMessage);
             }
         }
     }

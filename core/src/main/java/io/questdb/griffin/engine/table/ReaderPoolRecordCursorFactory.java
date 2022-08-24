@@ -193,9 +193,12 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public long getLong(int col) {
                 switch (col) {
-                    case OWNER_COLUMN_INDEX: return owner;
-                    case TXN_COLUMN_INDEX: return txn;
-                    default: throw CairoException.instance(0).put("unsupported column number. [column=").put(col).put("]");
+                    case OWNER_COLUMN_INDEX:
+                        return owner;
+                    case TXN_COLUMN_INDEX:
+                        return txn;
+                    default:
+                        throw CairoException.instance(-1).put("unsupported column number. [column=").put(col).put("]");
                 }
             }
         }

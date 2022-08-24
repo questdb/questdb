@@ -270,12 +270,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 int status = engine.getStatus(securityContext, path, tableNameUtf16, 0, tableNameUtf16.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     if (!autoCreateNewTables) {
-                        throw CairoException.instance(0)
+                        throw CairoException.instance(-1)
                                 .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
                                 .put(']');
                     }
                     if (!autoCreateNewColumns) {
-                        throw CairoException.instance(0)
+                        throw CairoException.instance(-1)
                                 .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
                                 .put(']');
                     }
@@ -283,7 +283,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
                     for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
                         if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
-                            throw CairoException.instance(0).put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+                            throw CairoException.instance(-1).put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();

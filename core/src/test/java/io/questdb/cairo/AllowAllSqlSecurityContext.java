@@ -92,8 +92,8 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
-            public SqlExecutionCircuitBreaker getCircuitBreaker() {
-                return null;
+            public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             }
 
             @Override

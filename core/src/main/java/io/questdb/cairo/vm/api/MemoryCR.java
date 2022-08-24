@@ -109,7 +109,14 @@ public interface MemoryCR extends MemoryC, MemoryR {
             if (len + 4 + offset <= size()) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
-            throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size()).put(']');
+            throw CairoException.instance(0)
+                    .put("String is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", len=")
+                    .put(len)
+                    .put(", size=")
+                    .put(size())
+                    .put(']');
         }
         return null;
     }

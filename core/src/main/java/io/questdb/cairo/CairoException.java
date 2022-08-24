@@ -39,7 +39,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
-    protected int errno;
+    protected int errno; // code -1 is used for non-critical errors
     private boolean cacheable;
     private boolean interruption; // used when a query times out
 

@@ -155,7 +155,7 @@ public class FastMap implements Map {
                         break;
                     default:
                         close();
-                        throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                        throw CairoException.instance(-1).put("value type is not supported: ").put(ColumnType.nameOf(columnType));
                 }
             }
             this.value = new FastMapValue(valueOffsets);
@@ -482,7 +482,7 @@ public class FastMap implements Map {
             } else {
                 long len = value.length() + 4;
                 if (len > Integer.MAX_VALUE) {
-                    throw CairoException.instance(0).put("binary column is too large");
+                    throw CairoException.instance(-1).put("binary column is too large");
                 }
 
                 checkSize((int) len);

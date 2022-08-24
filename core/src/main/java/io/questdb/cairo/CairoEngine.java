@@ -503,7 +503,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     private void checkTableName(CharSequence tableName) {
         if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
-            throw CairoException.instance(0)
+            throw CairoException.instance(-1)
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
@@ -515,7 +515,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
         if (TableUtils.exists(ff, path, root, tableName) != TableUtils.TABLE_EXISTS) {
             LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
-            throw CairoException.instance(0).put("Rename failed. Table '").put(tableName).put("' does not exist");
+            throw CairoException.instance(-1).put("Rename failed. Table '").put(tableName).put("' does not exist");
         }
 
         path.of(root).concat(tableName).$();
@@ -523,7 +523,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
         if (ff.exists(otherPath)) {
             LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).$("']").$();
-            throw CairoException.instance(0).put("Rename target exists");
+            throw CairoException.instance(-1).put("Rename target exists");
         }
 
         if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {

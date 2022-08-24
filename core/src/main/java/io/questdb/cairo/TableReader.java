@@ -761,7 +761,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (!existenceChecked) {
                         path.trimTo(rootLen).put(Files.SEPARATOR).$();
                         if (!ff.exists(path)) {
-                            throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
+                            throw CairoException.instance(-1).put("table does not exist [table=").put(tableName).put(']');
                         }
                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                     }

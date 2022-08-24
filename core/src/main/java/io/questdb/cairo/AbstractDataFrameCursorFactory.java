@@ -28,17 +28,13 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Path;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
     private final String tableName;
     private final int tableId;
     private final long tableVersion;
-    private final Path path = new Path();
 
     public AbstractDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
         this.tableName = tableName;
@@ -52,18 +48,17 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     protected TableReader getReader(SqlExecutionContext executionContext) throws SqlException {
-        return SqlUtil.getReader(
-                executionContext,
-                path,
-                tableName,
-                tableId,
-                tableVersion
-        );
+        return executionContext.getCairoEngine()
+                .getReader(
+                        executionContext.getCairoSecurityContext(),
+                        tableName,
+                        tableId,
+                        tableVersion
+                );
     }
 
     @Override
     public void close() {
-        Misc.free(path);
     }
 
     @Override

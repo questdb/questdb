@@ -31,18 +31,14 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
 
 public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DistinctSymbolRecordCursor cursor;
     private final String tableName;
     private final long tableVersion;
     private final int tableId;
-    private final Path path = new Path();
 
     public DistinctSymbolRecordCursorFactory(
             final GenericRecordMetadata metadata,
@@ -61,12 +57,12 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     protected void _close() {
         Misc.free(cursor);
-        Misc.free(path);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        TableReader reader = SqlUtil.getReader(executionContext, path, tableName, tableId, tableVersion);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        TableReader reader = executionContext.getCairoEngine()
+                .getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
         cursor.of(reader);
         return cursor;
     }

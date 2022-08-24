@@ -504,13 +504,13 @@ public class TableWriter implements Closeable {
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
 
         if (columnIndex == -1) {
-            throw CairoException.instance(0).put("column '").put(columnName).put("' does not exist");
+            throw CairoException.instance(-1).put("column '").put(columnName).put("' does not exist");
         }
 
         commit();
 
         if (isColumnIndexed(metaMem, columnIndex)) {
-            throw CairoException.instance(0).put("already indexed [column=").put(columnName).put(']');
+            throw CairoException.instance(-1).put("already indexed [column=").put(columnName).put(']');
         }
 
         final int existingType = getColumnType(metaMem, columnIndex);
@@ -518,7 +518,7 @@ public class TableWriter implements Closeable {
 
         if (!ColumnType.isSymbol(existingType)) {
             LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
-            throw CairoException.instance(0).put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
+            throw CairoException.instance(-1).put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
         }
 
         // create indexer
@@ -934,7 +934,7 @@ public class TableWriter implements Closeable {
             case ROW_ACTION_OPEN_PARTITION:
 
                 if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.instance(0).put("timestamp before 1970-01-01 is not allowed");
+                    throw CairoException.instance(-1).put("timestamp before 1970-01-01 is not allowed");
                 }
 
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
@@ -961,11 +961,11 @@ public class TableWriter implements Closeable {
             case ROW_ACTION_NO_PARTITION:
 
                 if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.instance(0).put("timestamp before 1970-01-01 is not allowed");
+                    throw CairoException.instance(-1).put("timestamp before 1970-01-01 is not allowed");
                 }
 
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.instance(-1).put("Cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
 
                 bumpMasterRef();
@@ -1155,7 +1155,7 @@ public class TableWriter implements Closeable {
                 commandPubSeq.done(seq);
                 return;
             } else if (seq == -1) {
-                throw CairoException.instance(0).put("cannot publish, command queue is full [table=").put(tableName).put(']');
+                throw CairoException.instance(-1).put("cannot publish, command queue is full [table=").put(tableName).put(']');
             }
         }
     }
@@ -1174,7 +1174,7 @@ public class TableWriter implements Closeable {
         boolean timestamp = index == timestampIndex;
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
-            throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
+            throw CairoException.instance(-1).put("Cannot remove timestamp from partitioned table");
         }
 
         commit();
@@ -2081,7 +2081,7 @@ public class TableWriter implements Closeable {
 
     private void checkColumnName(CharSequence name) {
         if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
-            throw CairoException.instance(0).put("invalid column name [table=").put(tableName).put(", column=").putAsPrintable(name).put(']');
+            throw CairoException.instance(-1).put("invalid column name [table=").put(tableName).put(", column=").putAsPrintable(name).put(']');
         }
     }
 
@@ -2909,13 +2909,13 @@ public class TableWriter implements Closeable {
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.instance(-1).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
             if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.instance(0).put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.instance(-1).put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
             // Safe check of the sort. No known way to reproduce
@@ -5711,7 +5711,7 @@ public class TableWriter implements Closeable {
             try {
                 l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
             } catch (NumericException e) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
+                throw CairoException.instance(-1).put("Invalid timestamp: ").put(value);
             }
             putTimestamp(columnIndex, l);
         }

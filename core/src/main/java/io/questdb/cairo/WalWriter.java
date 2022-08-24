@@ -146,7 +146,7 @@ public class WalWriter implements Closeable {
         assert isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
 
         if (metadata.getColumnIndexQuiet(name) != -1) {
-            throw CairoException.instance(0).put("Duplicate column name: ").put(name);
+            throw CairoException.instance(-1).put("Duplicate column name: ").put(name);
         }
 
         try {

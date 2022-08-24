@@ -210,7 +210,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             }
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.instance(0).put("Not the lock owner of ").put(name);
+            throw CairoException.instance(-1).put("Not the lock owner of ").put(name);
         }
 
         notifyListener(thread, name, PoolListener.EV_UNLOCKED, -1, -1);

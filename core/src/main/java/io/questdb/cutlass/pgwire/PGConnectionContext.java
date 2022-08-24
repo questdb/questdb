@@ -1648,15 +1648,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void prepareError(int position, CharSequence message, long errno) {
         prepareErrorResponse(position, message);
-        // Positive error code means that the problem originates from OS, hence it's a critical one.
-        if (errno > 0) {
-            LOG.critical()
+        // Negative error code means a non-critical error.
+        if (errno < 0) {
+            LOG.error()
                     .$("error [pos=").$(position)
                     .$(", msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)
                     .I$();
         } else {
-            LOG.error()
+            LOG.critical()
                     .$("error [pos=").$(position)
                     .$(", msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)

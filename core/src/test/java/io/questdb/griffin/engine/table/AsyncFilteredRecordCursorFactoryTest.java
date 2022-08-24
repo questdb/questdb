@@ -835,7 +835,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
-        public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
             return sqlExecutionContext.getCircuitBreaker();
         }
 
