@@ -44,9 +44,9 @@
   addr:
     host: clever-black-363-c1213c97.ilp.b04c.questdb.net
     port: 32074
-- name: ilp-auth-annotated
+- name: ilp-auth
   lang: java
-  path: examples/src/main/java/com/example/sender/AuthExampleAnnotated.java
+  path: examples/src/main/java/com/example/sender/AuthExample.java
   header: |-
     Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
     and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).

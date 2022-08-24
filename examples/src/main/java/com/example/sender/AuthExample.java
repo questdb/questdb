@@ -26,7 +26,7 @@ package com.example.sender;
 
 import io.questdb.client.Sender;
 
-public class AuthExampleAnnotated {
+public class AuthExample {
     public static void main(String[] args) {
         // Replace:
         // 1. "localhost:9000" with a host and port of your QuestDB server
