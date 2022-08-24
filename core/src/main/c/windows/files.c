@@ -67,6 +67,54 @@ int set_file_pos(HANDLE fd, jlong offset) {
     return r;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong fdFrom, jlong fdTo, jlong fromOffset, jlong length) {
+
+    char buf[4096];
+    DWORD read_sz;
+    DWORD rd_off = fromOffset;
+    DWORD wrt_off = 0;
+
+    if (length < 0) {
+        length = SIZE_MAX;
+    }
+    DWORD hi = fromOffset + length;
+    set_file_pos((HANDLE) fdFrom, fromOffset);
+
+    while (ReadFile((HANDLE) fdFrom, &buf, sizeof buf, &read_sz, NULL)) {
+        char *out_ptr = buf;
+        if (rd_off + read_sz > hi) {
+            read_sz = hi - rd_off;
+        }
+
+        DWORD wrtn;
+        do {
+            WriteFile((HANDLE) fdTo, &buf, read_sz, &wrtn, NULL);
+            if (wrtn >= 0) {
+                read_sz -= wrtn;
+                out_ptr += wrtn;
+                wrt_off += wrtn;
+            } else if (errno != EINTR) {
+                break;
+            }
+        } while (read_sz > 0);
+
+        if (read_sz > 0) {
+            // error
+            SaveLastError();
+            return -1;
+        }
+
+        rd_off += wrtn;
+        if (rd_off >= hi) {
+            /* Success! */
+            break;
+        }
+    }
+
+    return rd_off - fromOffset;
+}
+
 HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition) {
     int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
     if (len > 0) {

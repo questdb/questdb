@@ -301,9 +301,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *, jclass, jlong, jlong);
 
-
-size_t copyData0(int input, int output, off_t fromOffset, size_t length);
-
 #ifdef __cplusplus
 }
 #endif
