@@ -504,7 +504,7 @@ public class TableBackupTest {
                 mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Backup dir for table \"testTable1\" already exists"));
+                Assert.assertTrue(ex.getMessage().startsWith("[-1] Backup dir for table \"testTable1\" already exists"));
             }
         });
     }
