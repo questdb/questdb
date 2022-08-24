@@ -333,6 +333,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     @Override
     public void close() {
+        // we're about to close the context, so no need to return pending factory to cache
+        typesAndSelectIsCached = false;
+        typesAndUpdateIsCached = false;
         clear();
         // fd == -1 is only when context is closed
         // when context is initialized fd == 0
