@@ -84,7 +84,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
-        (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length) {
+        (JNIEnv *e, jclass cls, jlong input, jlong output, jlong srcOffset, jlong length) {
     // On linux sendfile can accept file as well as sockets
     off_t offset = srcOffset;
     if (length < 0) {
