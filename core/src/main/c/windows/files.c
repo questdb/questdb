@@ -55,6 +55,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return -1;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong fdFrom, jlong fdTo, long offset, long length) {
+    copyData0(fdFrom, fdTo, offset, length);
+}
+
 int set_file_pos(HANDLE fd, jlong offset) {
     if (offset < 0) {
         return 1;

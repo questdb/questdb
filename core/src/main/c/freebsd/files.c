@@ -69,51 +69,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
-size_t copyData0(int input, int output, off_t fromOffset, size_t length) {
-    char buf[4096];
-    size_t read_sz;
-    off_t rd_off = fromOffset;
-    off_t wrt_off = 0;
-
-    if (length < 0) {
-        length = SIZE_MAX;
-    }
-    size_t hi = fromOffset + length;
-
-    while ((read_sz = pread(input, buf, sizeof buf, rd_off)) > 0) {
-        char *out_ptr = buf;
-
-        if (rd_off + read_sz > hi) {
-            read_sz = hi - rd_off;
-        }
-
-        long wrtn;
-        do {
-            wrtn = pwrite(output, out_ptr, read_sz, wrt_off);
-            if (wrtn >= 0) {
-                read_sz -= wrtn;
-                out_ptr += wrtn;
-                wrt_off += wrtn;
-            } else if (errno != EINTR) {
-                break;
-            }
-        } while (read_sz > 0);
-
-        if (read_sz > 0) {
-            // error
-            return -1;
-        }
-
-        rd_off += wrtn;
-        if (rd_off >= hi) {
-            /* Success! */
-            break;
-        }
-    }
-
-    return rd_off - fromOffset;
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copyData
         (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length) {
     return copyData0((int)srcFd, (int)dstFd, srcOffset, length);
