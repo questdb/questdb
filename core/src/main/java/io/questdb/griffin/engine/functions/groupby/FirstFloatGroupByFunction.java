@@ -77,4 +77,9 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     public float getFloat(Record rec) {
         return rec.getFloat(this.valueIndex);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

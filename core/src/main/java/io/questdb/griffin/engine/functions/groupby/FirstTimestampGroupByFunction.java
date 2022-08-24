@@ -73,4 +73,9 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public void setNull(MapValue mapValue) {
         mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

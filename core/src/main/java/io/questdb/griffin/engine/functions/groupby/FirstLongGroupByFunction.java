@@ -60,9 +60,6 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public long getLong(Record rec) {
-        if(rec == null) {
-            return arg.getLong(null);
-        }
         return rec.getLong(this.valueIndex);
     }
 

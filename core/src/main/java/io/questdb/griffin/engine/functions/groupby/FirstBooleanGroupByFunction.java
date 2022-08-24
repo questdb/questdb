@@ -70,9 +70,6 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
 
     @Override
     public boolean getBool(Record rec) {
-        if(rec == null) {
-            return arg.getBool(null);
-        }
         return rec.getBool(this.valueIndex);
     }
 

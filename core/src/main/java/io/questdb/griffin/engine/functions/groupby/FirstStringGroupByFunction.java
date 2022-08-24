@@ -81,9 +81,6 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
 
     @Override
     public CharSequence getStr(Record record) {
-        if(record == null) {
-            return null;
-        }
         int ix = record.getInt(this.valueIndex);
         if(ix == -1) {
             return null;
@@ -100,5 +97,9 @@ public class FirstStringGroupByFunction extends StrFunction implements GroupByFu
     @Override
     public Function getArg() {
         return this.arg;
+    }
+
+    public boolean isConstant() {
+        return false;
     }
 }

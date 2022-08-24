@@ -87,4 +87,9 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void toSink(CharSink sink) {
         sink.put("MaxFloat(").put(arg).put(')');
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

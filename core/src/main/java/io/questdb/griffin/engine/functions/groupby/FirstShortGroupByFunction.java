@@ -76,4 +76,9 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     public short getShort(Record rec) {
         return rec.getShort(this.valueIndex);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

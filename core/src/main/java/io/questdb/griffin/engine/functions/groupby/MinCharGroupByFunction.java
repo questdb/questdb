@@ -82,4 +82,10 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     public void toSink(CharSink sink) {
         sink.put("MinChar(").put(arg).put(')');
     }
+
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

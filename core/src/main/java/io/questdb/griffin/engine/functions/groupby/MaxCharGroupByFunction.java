@@ -82,4 +82,9 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     public void toSink(CharSink sink) {
         sink.put("MaxChar(").put(arg).put(')');
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

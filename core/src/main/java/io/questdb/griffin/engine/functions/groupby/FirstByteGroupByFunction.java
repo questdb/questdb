@@ -76,4 +76,9 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     public byte getByte(Record rec) {
         return rec.getByte(this.valueIndex);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

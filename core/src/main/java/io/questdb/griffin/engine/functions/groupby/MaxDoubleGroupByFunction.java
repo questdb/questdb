@@ -75,9 +75,6 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public double getDouble(Record rec) {
-        if( rec == null) {
-            return arg.getDouble(null);
-        }
         return rec.getDouble(valueIndex);
     }
 

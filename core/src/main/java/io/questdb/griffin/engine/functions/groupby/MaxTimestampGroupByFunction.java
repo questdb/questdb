@@ -76,9 +76,6 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public long getTimestamp(Record rec) {
-        if(rec == null) {
-            return arg.getTimestamp(null);
-        }
         return rec.getTimestamp(valueIndex);
     }
 

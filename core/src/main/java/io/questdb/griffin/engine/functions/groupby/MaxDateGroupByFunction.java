@@ -83,4 +83,10 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     public void toSink(CharSink sink) {
         sink.put("MaxDate(").put(arg).put(')');
     }
+
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

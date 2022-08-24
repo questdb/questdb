@@ -76,4 +76,9 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     public char getChar(Record rec) {
         return rec.getChar(this.valueIndex);
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

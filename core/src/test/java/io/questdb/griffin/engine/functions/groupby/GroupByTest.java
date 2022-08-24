@@ -31,12 +31,28 @@ public class GroupByTest extends AbstractGriffinTest  {
     @Test
     public void testAllConstant() throws Exception {
         String[] functions = {"min", "max", "avg", "last", "first", "sum"};
-        String[] values = {"0", "0.0", "0.0000", "0L", "null", "false"};
-        String[] expected = {"0", "0.0", "0.0", "0", "NaN", "false"};
+        String[] values = {"0", "0.0", "cast(0.0 as float)", "0L", "null", "false",
+                "'1'", "cast(0 as byte)", "cast(0 as short)",
+                "'2021-01-01'", "to_date('2021-01-01', 'yyyy-mm-dd')", "to_timestamp('2021-01-01', 'yyyy-mm-dd')"};
+        String[] expected = {"0", "0.0", "0.0000", "0", "NaN", "false",
+                "1", "0", "0",
+                "2021-01-01", "2021-01-01T00:01:00.000Z", "2021-01-01T00:01:00.000000Z"};
 
         for(String fn : functions) {
             for(int i=0;i<values.length;i++) {
                 String val = values[i];
+                if((val.contains("-") && !val.contains("(")) && (fn.equals("avg") || fn.equals("sum") || fn.equals("min") || fn.equals("max"))) {
+                    //string not defined
+                    continue;
+                }
+                if(val.contains("-") && (fn.equals("avg") || fn.equals("sum"))) {
+                    //date not defined
+                    continue;
+                }
+                if((val.equals("'1'") || val.contains("-")) && (fn.equals("avg") || fn.equals("sum"))) {
+                    // char not defined
+                    continue;
+                }
                 String exp = expected[i];
                 if((fn.equals("min") || fn.equals("max") || fn.equals("avg") || fn.equals("sum")) && exp.equals("false")) {
                     // boolean gets converted to double here
@@ -46,6 +62,7 @@ public class GroupByTest extends AbstractGriffinTest  {
                     exp = "0.0";
                 }
 
+                System.out.println(fn + "/" + val + "/" + exp);
                 assertSql(
                         "select "+ fn + "(" + val + ")",
                         fn + "\n" +
