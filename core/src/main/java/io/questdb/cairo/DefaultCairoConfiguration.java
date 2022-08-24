@@ -385,7 +385,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getO3ColumnMemorySize() {
-        return 16 * Numbers.SIZE_1MB;
+        return 8 * Numbers.SIZE_1MB;
     }
 
     @Override

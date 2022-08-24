@@ -162,6 +162,50 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testDayOfYear() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2020-01-01T17:16:30.192Z");
+        Assert.assertEquals(1, Timestamps.getDayOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2019-03-10T07:16:30.192Z");
+        Assert.assertEquals(69, Timestamps.getDayOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2020-03-10T07:16:30.192Z");
+        Assert.assertEquals(70, Timestamps.getDayOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("1893-03-19T17:16:30.192Z");
+        Assert.assertEquals(78, Timestamps.getDayOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2020-12-31T12:00:00.000Z");
+        Assert.assertEquals(366, Timestamps.getDayOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2021-12-31T12:00:00.000Z");
+        Assert.assertEquals(365, Timestamps.getDayOfYear(micros));
+    }
+
+    @Test
+    public void testWeekOfYear() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2020-01-01T17:16:30.192Z");
+        Assert.assertEquals(1, Timestamps.getWeekOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2019-03-10T07:16:30.192Z");
+        Assert.assertEquals(10, Timestamps.getWeekOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2020-03-10T07:16:30.192Z");
+        Assert.assertEquals(11, Timestamps.getWeekOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("1893-03-19T17:16:30.192Z");
+        Assert.assertEquals(12, Timestamps.getWeekOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2020-12-31T12:00:00.000Z");
+        Assert.assertEquals(53, Timestamps.getWeekOfYear(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2021-12-31T12:00:00.000Z");
+        Assert.assertEquals(53, Timestamps.getWeekOfYear(micros));
+    }
+
+    @Test
+    public void testWeekOfMonth() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2020-01-01T17:16:30.192Z");
+        Assert.assertEquals(1, Timestamps.getWeekOfMonth(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2019-03-10T07:16:30.192Z");
+        Assert.assertEquals(2, Timestamps.getWeekOfMonth(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2020-12-31T12:00:00.000Z");
+        Assert.assertEquals(5, Timestamps.getWeekOfMonth(micros));
+        micros = TimestampFormatUtils.parseTimestamp("2021-12-31T12:00:00.000Z");
+        Assert.assertEquals(5, Timestamps.getWeekOfMonth(micros));
+    }
+
+    @Test
     public void testDaysBetween() throws Exception {
         Assert.assertEquals(41168,
                 Timestamps.getDaysBetween(

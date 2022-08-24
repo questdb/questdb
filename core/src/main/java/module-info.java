@@ -527,6 +527,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDistinctLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
 //                  'isOrdered'
@@ -613,6 +615,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
             io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory,
+            io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory,
+            io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,

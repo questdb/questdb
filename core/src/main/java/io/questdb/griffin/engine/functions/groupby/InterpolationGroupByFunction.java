@@ -275,11 +275,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
         return wrappedFunction.getType();
     }
 
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
     public void setTarget(Record target) {
         this.target = target;
     }

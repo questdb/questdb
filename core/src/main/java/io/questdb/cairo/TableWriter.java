@@ -1665,7 +1665,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         txWriter.resetTimestamp();
-        columnVersionWriter.truncate();
+        columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
         txWriter.truncate(columnVersionWriter.getVersion());
         row = regularRow;
         try {
