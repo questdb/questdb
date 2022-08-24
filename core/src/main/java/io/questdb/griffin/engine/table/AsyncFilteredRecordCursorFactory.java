@@ -98,6 +98,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         long rowsRemaining;
+        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;
         final int order;
         if (limitLoFunction != null) {
             limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
@@ -105,17 +106,17 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             // on negative limit we will be looking for positive number of rows
             // while scanning table from the highest timestamp to the lowest
             if (rowsRemaining > -1) {
-                order = ORDER_ASC;
+                order = baseOrder;
             } else {
-                order = ORDER_DESC;
+                order = reverse(baseOrder);
                 rowsRemaining = -rowsRemaining;
             }
         } else {
             rowsRemaining = Long.MAX_VALUE;
-            order = ORDER_ANY;
+            order = baseOrder;
         }
 
-        if (order == ORDER_DESC) {
+        if (order == ORDER_DESC && rowsRemaining != Long.MAX_VALUE) {
             if (rowsRemaining > maxNegativeLimit) {
                 throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
             }

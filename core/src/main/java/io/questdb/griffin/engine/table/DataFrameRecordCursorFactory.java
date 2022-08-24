@@ -91,7 +91,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
         if (framingSupported) {
-            if (order == ORDER_ASC || (order == ORDER_ANY && dataFrameCursorFactory.getOrder() != ORDER_DESC)) {
+            if (order == ORDER_ASC || order == ORDER_ANY) {
                 return initFwdPageFrameCursor(executionContext, dataFrameCursor);
             }
             return initBwdPageFrameCursor(executionContext, dataFrameCursor);
