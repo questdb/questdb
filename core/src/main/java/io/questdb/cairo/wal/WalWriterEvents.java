@@ -64,26 +64,26 @@ class WalWriterEvents implements Closeable {
         int columns = txnSymbolMaps.size();
         for (int i = 0; i < columns; i++) {
             final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
-            int initialCount = initialSymbolCounts.get(i);
+            if (symbolMap != null) {
+                int initialCount = initialSymbolCounts.get(i);
 
-            if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
-                eventMem.putInt(i);
-                eventMem.putInt(initialCount);
+                if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
+                    eventMem.putInt(i);
+                    eventMem.putInt(initialCount);
 
-                int size = symbolMap.size();
-                eventMem.putInt(size);
+                    int size = symbolMap.size();
+                    eventMem.putInt(size);
 
-                for (int j = 0; j < size; j++) {
-                    CharSequence symbol = symbolMap.keys().getQuick(j);
-                    int value = symbolMap.get(symbol);
+                    for (int j = 0; j < size; j++) {
+                        CharSequence symbol = symbolMap.keys().getQuick(j);
+                        int value = symbolMap.get(symbol);
 
-                    eventMem.putInt(value);
-                    eventMem.putStr(symbol);
+                        eventMem.putInt(value);
+                        eventMem.putStr(symbol);
+                    }
+
+                    eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
                 }
-
-                eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
-                initialSymbolCounts.setQuick(i, initialCount + size);
-                symbolMap.clear();
             }
         }
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
@@ -104,30 +104,24 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
-    long addColumn(int columnIndex, CharSequence columnName, int columnType) {
-        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.ADD_COLUMN);
-        eventMem.putInt(columnIndex);
-        eventMem.putStr(columnName);
-        eventMem.putInt(columnType);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-        return txn++;
-    }
-
-    long removeColumn(int columnIndex) {
-        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.REMOVE_COLUMN);
-        eventMem.putInt(columnIndex);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-        return txn++;
+    void startTxn() {
+        int columns = txnSymbolMaps.size();
+        for (int i = 0; i < columns; i++) {
+            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+            if (symbolMap != null) {
+                int initialCount = initialSymbolCounts.get(i);
+                if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
+                    int size = symbolMap.size();
+                    initialSymbolCounts.setQuick(i, initialCount + size);
+                    symbolMap.clear();
+                }
+            }
+        }
     }
 
     private void init() {
         eventMem.putInt(WAL_FORMAT_VERSION);
         eventMem.putInt(-1);
+        txn = 0;
     }
 }

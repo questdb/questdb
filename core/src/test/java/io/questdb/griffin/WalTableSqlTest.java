@@ -161,6 +161,79 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddMultipleWalColumnsBeforeCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "sym symbol," +
+                    "ts timestamp," +
+                    "sym2 symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+            try (
+                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+            ) {
+
+                insertMethod.execute();
+                compile("alter table " + tableName + " add column jjj int");
+                compile("alter table " + tableName + " add column col_str string");
+                insertMethod.commit();
+            }
+
+            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234, 'sss-value')");
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\tjjj\tcol_str\n" +
+                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\t\n" +
+                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\n");
+
+        });
+    }
+
+    @Test
+    public void testAddColumnWalRollsWalSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "sym symbol," +
+                    "str string," +
+                    "ts timestamp," +
+                    "sym2 symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                    " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+            try (
+                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+            ) {
+                insertMethod.execute();
+                insertMethod.execute();
+                insertMethod.commit();
+
+                insertMethod.execute();
+                compile("alter table " + tableName + " add column new_column int");
+                insertMethod.commit();
+            }
+
+            executeInsert("insert into " + tableName + " values (103, 'dfd', 'str-2', '2022-02-24T02', 'asdd', 1234)");
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tstr\tts\tsym2\tnew_column\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234\n");
+
+        });
+    }
+
+    @Test
     public void testCreateWalTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

@@ -59,6 +59,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+        return Files.copyData(srcFd, destFd, offsetSrc, length);
+    }
+
+    @Override
     public int errno() {
         return Os.errno();
     }

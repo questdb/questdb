@@ -38,6 +38,8 @@ public interface FilesFacade {
 
     int copy(LPSZ from, LPSZ to);
 
+    long copyData(long srcFd, long destFd, long offsetSrc, long length);
+
     int errno();
 
     boolean exists(LPSZ path);

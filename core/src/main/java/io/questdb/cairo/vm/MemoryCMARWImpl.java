@@ -164,6 +164,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public void switchTo(long fd, long offset) {
+        close();
+        this.fd = fd;
+        map(ff, null, offset, memoryTag);
+    }
+
+    @Override
     public void close() {
         close(true);
     }

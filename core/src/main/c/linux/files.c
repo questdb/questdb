@@ -83,6 +83,18 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return result;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length) {
+    // On linux sendfile can accept file as well as sockets
+    off_t offset = srcOffset;
+    if (length < 0) {
+        struct stat fileStat = {0};
+        fstat(input, &fileStat);
+        length = fileStat.st_size;
+    }
+    return sendfile(output, input, &offset, length);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0
         (JNIEnv *e, jclass cls, jlong fd, jlong offset, jlong len, jint advise) {
     return posix_fadvise((int) fd, (off_t) offset, (off_t) len, advise);

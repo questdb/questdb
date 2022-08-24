@@ -67,6 +67,10 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void switchTo(long fd, long offset) {
+    }
+
+    @Override
     public long getAppendOffset() {
         throw new UnsupportedOperationException();
     }

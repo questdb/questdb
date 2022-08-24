@@ -47,4 +47,6 @@ public interface MemoryMA extends MemoryM, MemoryA {
     default void toTop() {
         jumpTo(0);
     }
+
+    void switchTo(long fd, long offset);
 }

@@ -170,8 +170,14 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     @Override
     public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (operation.isMetadataChange()) {
-            long structureVersion = getStructureVersion();
-            return tableRegistry.nextStructureTxn(tableName, structureVersion, operation);
+            long txn;
+            do {
+                txn = tableRegistry.nextStructureTxn(tableName, getStructureVersion(), operation);
+                if (txn == Sequencer.NO_TXN) {
+                    applyStructureChanges();
+                }
+            } while (txn == Sequencer.NO_TXN);
+            return txn;
         } else {
             // This is likely to be updates and some weird alters.
             // TODO: We have to serialize the command to WAL-E and register the transaction in the sequencer.
@@ -291,6 +297,93 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
     }
 
+    public void rollUncommittedToNewSegment() {
+        long uncommittedRows = rowCount - startRowCount;
+        long newSegmentId = segmentId + 1;
+
+        path.trimTo(rootLen);
+        LOG.info().$("rolling uncommitted rows to new segment [wal=").$(path)
+                .$(", newSegmentId=").$(newSegmentId)
+                .$(", uncommittedRows=").$(uncommittedRows).I$();
+        createSegmentDir(newSegmentId);
+        path.trimTo(rootLen);
+
+        LongList newColumnFiles = new LongList();
+        newColumnFiles.setPos(columnCount * 4);
+        newColumnFiles.fill(0, columnCount * 4, -1);
+
+        if (uncommittedRows > 0) {
+            try {
+                int timestampIndex = metadata.getTimestampIndex();
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int columnType = metadata.getColumnType(columnIndex);
+
+                    if (columnType > 0) {
+                        var primaryColumn = getPrimaryColumn(columnIndex);
+                        var secondaryColumn = getSecondaryColumn(columnIndex);
+                        var columnName = metadata.getColumnName(columnIndex);
+
+                        CopySegmentFileJob.rollColumnToSegment(ff,
+                                configuration.getWriterFileOpenOpts(),
+                                primaryColumn,
+                                secondaryColumn,
+                                path,
+                                newSegmentId,
+                                columnName,
+                                columnIndex == timestampIndex ? -columnType : columnType,
+                                startRowCount,
+                                uncommittedRows,
+                                newColumnFiles,
+                                columnIndex
+                        );
+                    }
+                }
+            } catch (Throwable e) {
+                closeSegmentSwitchFiles(newColumnFiles);
+                throw e;
+            }
+            switchColumnsToNewSegment(newColumnFiles);
+            rollLastWaleRecord(newSegmentId, uncommittedRows);
+            segmentId = newSegmentId;
+            rowCount = uncommittedRows;
+            startRowCount = 0;
+            rowValueIsNotNull.fill(0, columnCount, -1);
+        }
+    }
+
+    private void rollLastWaleRecord(long newSegmentId, long uncommittedRows) {
+        path.trimTo(rootLen).slash().put(newSegmentId);
+        events.openEventFile(path, path.length());
+        lastSegmentTxn = events.data(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+    }
+
+    private void switchColumnsToNewSegment(LongList newColumnFiles) {
+        for (int i = 0; i < columnCount; i++) {
+            long newPrimaryFd = newColumnFiles.get(i * 4);
+            if (newPrimaryFd > -1L) {
+                MemoryMA primaryColumnFile = getPrimaryColumn(i);
+                long writeOffset = newColumnFiles.get(i * 4 + 1);
+                primaryColumnFile.switchTo(newPrimaryFd, writeOffset);
+
+                long newSecondaryFd = newColumnFiles.get(i * 4 + 2);
+                if (newSecondaryFd > -1L) {
+                    MemoryMA secondaryColumnFile = getSecondaryColumn(i);
+                    writeOffset = newColumnFiles.get(i * 4 + 3);
+                    secondaryColumnFile.switchTo(newSecondaryFd, writeOffset);
+                }
+            }
+        }
+    }
+
+    private void closeSegmentSwitchFiles(LongList newColumnFiles) {
+        for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex+=2) {
+            long fd = newColumnFiles.get(fdIndex);
+            if (fd > -1L) {
+                ff.close(fd);
+            }
+        }
+    }
+
     public long rollSegmentIfLimitReached() {
         long segmentSize = 0;
         if (rollStrategy.isMaxSegmentSizeSet()) {
@@ -390,7 +483,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
     private void applyStructureChanges() {
         try {
-            structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, metadata.getStructureVersion());
+            structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, getStructureVersion());
             while (structureChangeCursor.hasNext()) {
                 AlterOperation alterOperation = structureChangeCursor.next();
                 long metadataVersion = getStructureVersion();
@@ -597,7 +690,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
     }
 
-    private int createSegmentDir() {
+    private int createSegmentDir(long segmentId) {
         path.slash().put(segmentId);
         final int segmentPathLen = path.length();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
@@ -712,7 +805,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             rowCount = 0;
             startRowCount = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
-            final int segmentPathLen = createSegmentDir();
+            final int segmentPathLen = createSegmentDir(segmentId);
 
             for (int i = 0; i < columnCount; i++) {
                 int type = metadata.getColumnType(i);
@@ -731,6 +824,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             metadata.dumpTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
+            lastSegmentTxn = 0;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
             path.trimTo(rootLen);
@@ -770,6 +864,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         txnMinTimestamp = Long.MAX_VALUE;
         txnMaxTimestamp = -1;
         txnOutOfOrder = false;
+        events.startTxn();
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
@@ -997,9 +1092,15 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
             int columnIndex = metadata.getColumnIndexQuiet(name);
             if (columnIndex < 0L) {
-                if (lastSegmentTxn == 0) {
+                if (startRowCount > 0 && rowCount > startRowCount) {
+                    // Roll last transaction to new segment
+                    rollUncommittedToNewSegment();
+                }
+
+                if (startRowCount == 0 || rowCount == startRowCount) {
                     // this is the only transaction in the segment, column can be added in here
                     // without rolling to the new segment
+                    long segmentRowCount = rowCount - startRowCount;
                     metadata.addColumn(name, type);
                     columnCount = metadata.getColumnCount();
                     columnIndex = metadata.getColumnCount() - 1;
@@ -1008,13 +1109,9 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                     configureColumn(columnIndex, type);
                     path.trimTo(rootLen).slash().put(segmentId);
                     openColumnFiles(name, columnIndex, path.length());
-
-                    // set column values to null
-                    long segmentRowCount = rowCount - startRowCount;
-
                     setColumnNull(type, columnIndex, segmentRowCount);
+                    LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(name).I$();
                 } else {
-                    // TODO: support the case
                     throw CairoException.instance(0).put("column '").put(name).put("' added, cannot commit because of concurrent table definition change ");
                 }
             } else {
@@ -1034,7 +1131,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
         @Override
         public CharSequence getTableName() {
-            return null;
+            return tableName;
         }
 
         @Override
@@ -1049,15 +1146,11 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     }
 
     private void setColumnNull(int columnType, int columnIndex, long rowCount) {
-        switch (columnType) {
-            case ColumnType.STRING:
-            case ColumnType.BINARY:
-                setVarColumnVarFileNull(columnType, columnIndex, rowCount);
-                setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
-                break;
-            default:
-                setFixedSizeNull(columnType, columnIndex, rowCount);
-                break;
+        if (ColumnType.isVariableLength(columnType)) {
+            setVarColumnVarFileNull(columnType, columnIndex, rowCount);
+            setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
+        } else {
+            setFixColumnNulls(columnType, columnIndex, rowCount);
         }
     }
 
@@ -1065,39 +1158,45 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         MemoryMA varColumn = getPrimaryColumn(columnIndex);
         long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
         varColumn.jumpTo(varColSize);
-        long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
-        try {
-            Vect.memset(address, (byte) varColSize, -1);
-        } finally {
-            ff.munmap(address, varColSize, MEM_TAG);
+        if (rowCount > 0) {
+            long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
+            try {
+                Vect.memset(address, (byte) varColSize, -1);
+            } finally {
+                ff.munmap(address, varColSize, MEM_TAG);
+            }
         }
     }
 
     private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount) {
         MemoryMA fixedSizeColumn = getSecondaryColumn(columnIndex);
         long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
-        fixedSizeColumn.setSize(fixedSizeColSize);
-        long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
-        try {
-            if (columnType == ColumnType.STRING) {
-                Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
-            } else {
-                Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
+        fixedSizeColumn.jumpTo(fixedSizeColSize);
+        if (rowCount > 0) {
+            long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
+            try {
+                if (columnType == ColumnType.STRING) {
+                    Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
+                } else {
+                    Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
+                }
+            } finally {
+                ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
             }
-        } finally {
-            ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
         }
     }
 
-    private void setFixedSizeNull(int type, int columnIndex, long rowCount) {
+    private void setFixColumnNulls(int type, int columnIndex, long rowCount) {
         MemoryMA fixedSizeColumn = getPrimaryColumn(columnIndex);
         long columnFileSize = rowCount * ColumnType.sizeOf(type);
         fixedSizeColumn.jumpTo(columnFileSize);
-        long address = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), columnFileSize, MEM_TAG);
-        try {
-            TableUtils.setNull(type, address, rowCount);
-        } finally {
-            ff.munmap(address, columnFileSize, MEM_TAG);
+        if (columnFileSize > 0) {
+            long address = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), columnFileSize, MEM_TAG);
+            try {
+                TableUtils.setNull(type, address, rowCount);
+            } finally {
+                ff.munmap(address, columnFileSize, MEM_TAG);
+            }
         }
     }
 }

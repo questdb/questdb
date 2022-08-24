@@ -86,6 +86,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
+    public void switchTo(long fd, long offset) {
+        close();
+        this.fd = fd;
+        jumpTo(offset);
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         of(ff, name, extendSegmentSize, memoryTag, opts);
     }

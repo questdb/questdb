@@ -198,8 +198,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     public void deserializeBody(MemoryCR buffer, long offset) {
+        clear();
         long readPtr = offset;
-        long hi = offset + buffer.size();
+        long hi = buffer.size();
         command = buffer.getShort(readPtr);
         readPtr += 2;
         tableNamePosition = buffer.getInt(readPtr);
@@ -209,6 +210,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         if (longSize < 0 || readPtr + longSize * 8L >= hi) {
             throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [2]");
         }
+        longList.clear();
         for (int i = 0; i < longSize; i++) {
             longList.add(buffer.getLong(readPtr));
             readPtr += 8;

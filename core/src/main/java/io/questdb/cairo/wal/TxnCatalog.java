@@ -69,11 +69,11 @@ public class TxnCatalog implements Closeable {
         txnMem.putLong(newStructureVersion);
         txnMem.jumpTo(++maxTxn * RECORD_SIZE + HEADER_SIZE);
 
-        long varMemBegin = txnMetaMem.getAppendOffset();
         txnMetaMem.putInt(0);
+        long varMemBegin = txnMetaMem.getAppendOffset();
         serializer.toSink(instance, txnMetaMem);
         int len = (int)(txnMetaMem.getAppendOffset() - varMemBegin);
-        txnMetaMem.putInt(varMemBegin, len);
+        txnMetaMem.putInt(varMemBegin - Integer.BYTES, len);
         txnMetaMemIndex.putLong(varMemBegin + len);
 
         Unsafe.getUnsafe().storeFence();

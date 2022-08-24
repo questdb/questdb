@@ -159,7 +159,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
 
 /*
  * Class:     com_questdb_std_Files
- * Method:    copy
+ * Method:    close
  * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close
