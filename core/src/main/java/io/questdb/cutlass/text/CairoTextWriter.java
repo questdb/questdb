@@ -358,7 +358,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 break;
             default:
-                throw CairoException.critical(0).put("name is reserved [table=").put(tableName).put(']');
+                throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
         }
         if (canUpdateMetadata) {
             if (PartitionBy.isPartitioned(partitionBy)) {
