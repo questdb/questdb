@@ -664,11 +664,8 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-
-        long increment = 0;
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
             assert partitionAddMethod != null;
@@ -746,32 +743,13 @@ public final class TestUtils {
         return sql.toString();
     }
 
-    public static void insertFromSelectIntoTable(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException, SqlException {
-        compiler.compile(
-                insertFromSelectPopulateTableStmt(
-                        tableModel,
-                        totalRows,
-                        startDate,
-                        partitionCount
-                ),
-                sqlExecutionContext
-        );
-    }
-
     public static String insertFromSelectPopulateTableStmt(
             TableModel tableModel,
             int totalRows,
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
 
         StringBuilder insertFromSelect = new StringBuilder();
