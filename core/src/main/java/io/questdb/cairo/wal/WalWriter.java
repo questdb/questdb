@@ -495,27 +495,29 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     private long commit(boolean rollSegment) {
         checkDistressed();
         rollSegmentOnNextRow = rollSegment;
-        final long transientRowCount = getTransientRowCount();
         try {
-            if (transientRowCount != 0) {
+            if (getTransientRowCount() != 0) {
                 lastSegmentTxn = events.data(startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-
-                long txn;
-                do {
-                    txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
-                    if (txn == Sequencer.NO_TXN) {
-                        applyStructureChanges();
-                    }
-                } while (txn == Sequencer.NO_TXN);
-
+                final long tableTxn = getTableTxn();
                 resetDataTxnProperties();
-                return txn;
+                return tableTxn;
             }
         } catch (Throwable th) {
             rollback();
             throw th;
         }
         return Sequencer.NO_TXN;
+    }
+
+    private long getTableTxn() {
+        long txn;
+        do {
+            txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            if (txn == Sequencer.NO_TXN) {
+                applyStructureChanges();
+            }
+        } while (txn == Sequencer.NO_TXN);
+        return txn;
     }
 
     private void configureColumn(int index, int type) {
@@ -1136,7 +1138,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         @Override
         public void addColumn(CharSequence columnName, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
-            if (columnIndex < 0L) {
+            if (columnIndex < 0) {
 
                 long uncommittedRows = rowCount - startRowCount;
                 if (startRowCount > 0) {
@@ -1220,7 +1222,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
         @Override
         public void renameColumn(CharSequence columnName, CharSequence newName) {
-
         }
     }
 

@@ -302,12 +302,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
                                 CharSequence taskTableName = task.getTableName();
                                 int taskTableId = task.getTableId();
-                                long taskTxn = task.getTxn();
 
                                 // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
                                 subSeq.done(cursor);
 
-                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, taskTxn, this, null);
+                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, null);
                             }
                         }
                     } catch (Throwable throwable) {

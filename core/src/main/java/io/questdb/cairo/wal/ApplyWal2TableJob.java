@@ -50,7 +50,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public static SequencerStructureChangeCursor processWalTxnNotification(
             CharSequence tableName,
             int tableId,
-            long txn,
             CairoEngine engine,
             @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
     ) {
@@ -75,7 +74,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return null;
     }
 
-
     private static SequencerStructureChangeCursor applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine, @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor) {
         TableRegistry tableRegistry = engine.getTableRegistry();
         long lastCommitted = writer.getTxn();
@@ -86,7 +84,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             int rootLen = tempPath.length();
 
             while (sequencerCursor.hasNext()) {
-                int walid = sequencerCursor.getWalId();
+                int walId = sequencerCursor.getWalId();
                 int segmentId = sequencerCursor.getSegmentId();
                 long segmentTxn = sequencerCursor.getSegmentTxn();
                 long nextTableTxn = sequencerCursor.getTxn();
@@ -94,8 +92,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (nextTableTxn != writer.getTxn() + 1) {
                     throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
-                tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walid).slash().put(segmentId);
-                if (walid != TxnCatalog.METADATA_WALID) {
+                tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                if (walId != TxnCatalog.METADATA_WALID) {
                     writer.processWalCommit(tempPath, segmentTxn);
                 } else {
                     // This is metadata change
@@ -137,8 +135,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
             int tableId = walTxnNotificationTask.getTableId();
             CharSequence tableName = walTxnNotificationTask.getTableName();
-            long txn = walTxnNotificationTask.getTxn();
-            reusableStructureChangeCursor = processWalTxnNotification(tableName, tableId, txn, engine, reusableStructureChangeCursor);
+            reusableStructureChangeCursor = processWalTxnNotification(tableName, tableId, engine, reusableStructureChangeCursor);
         } finally {
             subSeq.done(cursor);
         }

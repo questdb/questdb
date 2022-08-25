@@ -36,6 +36,8 @@ public interface AsyncWriterCommand extends Closeable {
 
     AsyncWriterCommand deserialize(TableWriterTask task);
 
+    int getCommandType();
+
     String getCommandName();
 
     int getTableId();

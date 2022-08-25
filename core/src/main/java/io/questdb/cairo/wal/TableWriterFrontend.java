@@ -36,7 +36,7 @@ import java.io.Closeable;
 public interface TableWriterFrontend extends Closeable {
     long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges)  throws SqlException, AlterTableContextException;
 
-    long applyUpdate(UpdateOperation operations)  throws SqlException;
+    long applyUpdate(UpdateOperation operation)  throws SqlException;
 
     @Override
     void close();

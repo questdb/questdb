@@ -329,7 +329,7 @@ public class TableRegistry extends AbstractPool {
            return removed;
         }
 
-        private static class Entry extends WalWriter {
+        public static class Entry extends WalWriter {
             private WalWriterPool pool;
             private volatile long releaseTime = Long.MAX_VALUE;
 
@@ -355,5 +355,4 @@ public class TableRegistry extends AbstractPool {
             }
         }
     }
-
 }

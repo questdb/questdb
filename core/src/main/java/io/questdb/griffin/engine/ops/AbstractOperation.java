@@ -32,8 +32,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietClosable {
-
-    static final long NO_CORRELATION_ID = -1L;
+    private static final long NO_CORRELATION_ID = -1L;
 
     private int cmdType;
     private String cmdName;
@@ -75,6 +74,11 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     @Override
     public String getTableName() {
         return tableName;
+    }
+
+    @Override
+    public int getCommandType() {
+        return cmdType;
     }
 
     @Override

@@ -86,7 +86,7 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                 tableWriter.commit();
             }
 
-            TableWriterMetadata writerMetadata = tableWriter.getMetadata();
+            final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
 
             // Check that table structure hasn't changed between planning and executing the UPDATE
             if (writerMetadata.getId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
@@ -167,7 +167,7 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                                     minRow
                             );
 
-                            rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableName, writerMetadata, tableWriter);
+                            rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), writerMetadata, tableWriter);
                         }
 
                         openColumns(srcColumns, rowPartitionIndex, false);
@@ -204,7 +204,7 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                             minRow
                     );
 
-                    rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableName, writerMetadata, tableWriter);
+                    rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), writerMetadata, tableWriter);
                 }
             } finally {
                 Misc.freeObjList(srcColumns);
@@ -664,7 +664,6 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
 
     private void rebuildIndexes(
             long partitionTimestamp,
-            String tableName,
             TableWriterMetadata writerMetadata,
             TableWriter tableWriter
     ) {

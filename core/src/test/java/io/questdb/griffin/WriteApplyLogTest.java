@@ -128,7 +128,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
                 LOG.info().$("=== Applying WAL transaction ===").$();
-                applyWal(writer, walPath, 0, count1, true, timestampLo, timestampHi);
+                applyWalData(writer, walPath, 0, count1, true, timestampLo, timestampHi);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "wal_clean limit " + count1, "x", LOG);
 
                 // Apply second WAL segment
@@ -136,7 +136,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
-                applyWal(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
+                applyWalData(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
 
                 compareTables("select * from wal_clean order by ts", "x");
             }
@@ -179,7 +179,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
                 LOG.info().$("=== Applying WAL transaction ===").$();
-                applyWal(writer, walPath, 0, count1, false, timestampLo, timestampHi);
+                applyWalData(writer, walPath, 0, count1, false, timestampLo, timestampHi);
 
                 compareTables("select * from (wal_clean limit " + count1 + ") order by ts", "x");
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select * from (wal_clean limit " + count1 + ") order by ts", "x", LOG);
@@ -189,14 +189,14 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
-                applyWal(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);
+                applyWalData(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);
 
                 compareTables("select * from wal_clean order by ts", "x");
             }
         });
     }
 
-    private void applyWal(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
+    private void applyWalData(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
         writer.processWalCommit(walPath, inOrder, rowLo, count1, timestampLo, timestampHi, null);
     }
 }

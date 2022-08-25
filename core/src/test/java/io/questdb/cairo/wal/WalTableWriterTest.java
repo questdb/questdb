@@ -359,9 +359,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
-        int tableId;
-        long walTxn;
+    private int addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
+        final int tableId;
         try (
                 TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "test");
                 TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply wal")
@@ -382,21 +381,43 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     rowTs += rnd.nextLong(2 * tsIncrement);
                 }
 
-                TableWriter.Row walRow = walWriter.newRow(rowTs);
-                addRowRwAllTypes(iteration, walRow, i, symbol, rndStr);
+                addRowRwAllTypes(iteration, walWriter.newRow(rowTs), i, symbol, rndStr);
                 addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr);
                 startTs += tsIncrement;
             }
 
             copyWriter.commit();
-            walTxn = walWriter.commit();
+            walWriter.commit();
         }
-        ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, walTxn, engine, null);
+        ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, null);
+        return tableId;
     }
 
     @SuppressWarnings("SameParameterValue")
     private void createTableAndCopy(String tableName, String tableCopyName) {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+        // tableName is WAL enabled
+        try (TableModel model = createTableModel(tableName).wal()) {
+            engine.createTableUnsafe(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    model.getMem(),
+                    model.getPath(),
+                    model
+            );
+        }
+
+        // tableCopyName is not WAL enabled
+        try (TableModel model = createTableModel(tableCopyName).noWal()) {
+            engine.createTableUnsafe(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    model.getMem(),
+                    model.getPath(),
+                    model
+            );
+        }
+    }
+
+    private TableModel createTableModel(String tableName) {
+        return new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("int", ColumnType.INT)
                 .col("byte", ColumnType.BYTE)
                 .col("long", ColumnType.LONG)
@@ -415,22 +436,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("geoLong", ColumnType.getGeoHashTypeWithBits(30))
                 .col("stringc", ColumnType.STRING)
                 .col("label", ColumnType.SYMBOL)
-                .timestamp("ts")
-                .wal()
-        ) {
-            engine.createTableUnsafe(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    model
-            );
-            model.setName(tableCopyName);
-            engine.createTableUnsafe(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    model
-            );
-        }
+                .timestamp("ts");
     }
 }
