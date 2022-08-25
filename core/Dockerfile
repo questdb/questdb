@@ -16,7 +16,7 @@ RUN echo tag_name ${tag_name:-master}
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
   && unzip maven.zip \
-  && git clone --depth=1 --progress --branch ${tag_name:-master} --verbose https://github.com/questdb/questdb.git
+  && git clone --depth=1 --progress --branch "${tag_name:-master}" --verbose https://github.com/questdb/questdb.git
 
 WORKDIR /build/questdb
 

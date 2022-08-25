@@ -41,6 +41,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 
 public class TextImportTask {
@@ -497,7 +498,9 @@ public class TextImportTask {
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
                 path.put("_").put(i);
-                try (TxReader txFile = new TxReader(ff).ofRO(path, partitionBy)) {
+                int tableLen = path.length();
+                try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
+                    path.trimTo(tableLen);
                     txFile.unsafeLoadAll();
                     int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
                     try (

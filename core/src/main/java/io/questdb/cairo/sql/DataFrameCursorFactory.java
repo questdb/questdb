@@ -61,4 +61,15 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
     // In this case frame order will be driven by the optimiser.
     // Any order is not returned by the factory
     int ORDER_ANY = 2;
+
+    static int reverse(int order) {
+        switch (order) {
+            case ORDER_ASC:
+                return ORDER_DESC;
+            case ORDER_DESC:
+                return ORDER_ASC;
+            default:
+                return ORDER_ANY;
+        }
+    }
 }

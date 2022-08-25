@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
@@ -103,6 +103,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
+        // check for the first hasNext call
+        if (frameIndex == -1 && frameLimit > -1) {
+            fetchNextFrame();
+        }
+
         // we have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
             record.setRowIndex(rows.get(rowIndex()));
@@ -161,7 +166,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         rowsRemaining = ogRowsRemaining;
         if (frameLimit > -1) {
             frameIndex = -1;
-            fetchNextFrame();
         }
         allFramesActive = true;
     }
@@ -224,11 +228,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-        }
-        // when frameCount is 0 our collect sequence is not subscribed
-        // we should not be attempting to fetch queue using it
-        if (frameLimit > -1) {
-            fetchNextFrame();
         }
     }
 

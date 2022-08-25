@@ -39,6 +39,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPurgeTask> implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
@@ -284,8 +286,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         int tableRootLen = path.length();
         try {
             txnScoreboard.ofRO(path);
-            path.trimTo(tableRootLen);
-            txReader.ofRO(path, partitionBy);
+            txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             TableUtils.safeReadTxn(txReader, this.configuration.getMillisecondClock(), this.configuration.getSpinLockTimeout());
 
             for (int i = 0; i < n; i += 2) {

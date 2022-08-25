@@ -34,6 +34,5 @@ public interface Counter extends Scrapable {
 
     void add(long value);
 
-    @TestOnly
     long get();
 }

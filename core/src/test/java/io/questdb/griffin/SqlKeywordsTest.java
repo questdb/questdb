@@ -27,6 +27,13 @@ package io.questdb.griffin;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
+
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlKeywordsTest {
@@ -101,13 +108,13 @@ public class SqlKeywordsTest {
 
     @Test
     public void testIsMaxUncommittedRowsParamIsCaseInsensitive() {
-        Assert.assertTrue(isMaxUncommittedRowsParam("MaxUncommittedRows"));
-        Assert.assertTrue(isMaxUncommittedRowsParam("maxuncommittedrows"));
-        Assert.assertTrue(isMaxUncommittedRowsParam("maxuncommittedrowS"));
-        Assert.assertTrue(isMaxUncommittedRowsParam("MAXUNCOMMITTEDROWS"));
-        Assert.assertTrue(isMaxUncommittedRowsParam("MAXUNCOMMITTEDROWs"));
-        Assert.assertTrue(isMaxUncommittedRowsParam("MaxUncommittedRowS"));
-        Assert.assertFalse(isMaxUncommittedRowsParam("MaxUncommittedRowD"));
+        Assert.assertTrue(isMaxUncommittedRowsKeyword("MaxUncommittedRows"));
+        Assert.assertTrue(isMaxUncommittedRowsKeyword("maxuncommittedrows"));
+        Assert.assertTrue(isMaxUncommittedRowsKeyword("maxuncommittedrowS"));
+        Assert.assertTrue(isMaxUncommittedRowsKeyword("MAXUNCOMMITTEDROWS"));
+        Assert.assertTrue(isMaxUncommittedRowsKeyword("MAXUNCOMMITTEDROWs"));
+        Assert.assertTrue(isMaxUncommittedRowsKeyword("MaxUncommittedRowS"));
+        Assert.assertFalse(isMaxUncommittedRowsKeyword("MaxUncommittedRowD"));
     }
 
     @Test
@@ -158,5 +165,36 @@ public class SqlKeywordsTest {
         Assert.assertTrue(isMonthKeyword("MONTh"));
         Assert.assertTrue(isMonthKeyword("MONth"));
         Assert.assertFalse(isMonthKeyword("MONTi"));
+    }
+
+    @Test
+    public void testIs() throws Exception {
+        Map<String, String> specialCases = new HashMap<>();
+        specialCases.put("isColonColon", "::");
+        specialCases.put("isConcatOperator", "||");
+        specialCases.put("isMaxIdentifierLength", "max_identifier_length");
+        specialCases.put("isQuote", "'");
+        specialCases.put("isSearchPath", "search_path");
+        specialCases.put("isSemicolon", ";");
+        specialCases.put("isStandardConformingStrings", "standard_conforming_strings");
+        specialCases.put("isTextArray", "text[]");
+        specialCases.put("isTransactionIsolation", "transaction_isolation");
+
+        Method[] methods = SqlKeywords.class.getMethods();
+        Arrays.sort(methods, Comparator.comparing(Method::getName));
+        for (Method method : methods) {
+            String name;
+            int m = method.getModifiers() & Modifier.methodModifiers();
+            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
+                String keyword;
+                System.out.printf("NAME: %s%n", name);
+                if (name.endsWith("Keyword")) {
+                    keyword = name.substring(2, name.length() - 7).toLowerCase();
+                } else {
+                    keyword = specialCases.get(name);
+                }
+                Assert.assertTrue((boolean) method.invoke(null, keyword));
+            }
+        }
     }
 }

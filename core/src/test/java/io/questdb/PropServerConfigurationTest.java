@@ -92,7 +92,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
-        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
+        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
         Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
@@ -248,6 +248,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("http-server", configuration.getHttpServerConfiguration().getDispatcherConfiguration().getDispatcherLogName());
 
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
+        TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getDetachRoot());
         TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
         TestUtils.assertEquals(new File(root, "snapshot").getAbsolutePath(), configuration.getCairoConfiguration().getSnapshotRoot());
 
@@ -324,15 +325,15 @@ public class PropServerConfigurationTest {
         // Pg wire
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
-        Assert.assertEquals(16, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
-        Assert.assertEquals(16, configuration.getPGWireConfiguration().getSelectCacheRowCount());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getSelectCacheRowCount());
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
-        Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
-        Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheRowCount());
-        Assert.assertEquals(64, configuration.getPGWireConfiguration().getInsertPoolCapacity());
+        Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
+        Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
+        Assert.assertEquals(16, configuration.getPGWireConfiguration().getInsertPoolCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
-        Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
-        Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
+        Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
+        Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
         Assert.assertEquals(127, configuration.getCairoConfiguration().getMaxFileNameLength());
@@ -343,6 +344,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewColumns());
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
+
+        Assert.assertEquals(".attachable", configuration.getCairoConfiguration().getAttachPartitionSuffix());
+        Assert.assertFalse(configuration.getCairoConfiguration().attachPartitionCopy());
     }
 
     @Test
@@ -864,6 +868,9 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewColumns());
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
+
+            Assert.assertEquals(".detached", configuration.getCairoConfiguration().getAttachPartitionSuffix());
+            Assert.assertTrue(configuration.getCairoConfiguration().attachPartitionCopy());
         }
     }
 

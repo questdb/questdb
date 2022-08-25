@@ -7892,17 +7892,55 @@ create table tab as (
             try {
                 connection.prepareCall("drop table xyz;").execute();
                 Assert.fail();
-            }catch (SQLException e) {
+            } catch (SQLException e) {
                 TestUtils.assertContains(e.getMessage(), "table 'xyz' does not exist");
                 TestUtils.assertEquals("00000", e.getSQLState());
             }
         });
     }
-    
+
+    @Test
+    public void testTruncateAndUpdateOnNonPartitionedTableWithoutDesignatedTs() throws Exception {
+        testTruncateAndUpdateOnTable("");
+    }
+
+    @Test
+    public void testTruncateAndUpdateOnNonPartitionedTableWithDesignatedTs() throws Exception {
+        testTruncateAndUpdateOnTable("timestamp(ts)");
+    }
+
+    @Test
+    public void testTruncateAndUpdateOnPartitionedTable() throws Exception {
+        testTruncateAndUpdateOnTable("timestamp(ts) partition by DAY");
+    }
+
+    public void testTruncateAndUpdateOnTable(String config) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
+            }
+
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("insert into tb values (1, true, now() );");
+                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("truncate table tb;");
+                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
+                stat.execute("insert into tb values (1, true, now() );");
+                stat.execute("update tb set i = 1, b = true;");
+
+                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
+                    StringSink sink = new StringSink();
+                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
+                }
+            }
+        });
+    }
+
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);
     }
+
     @FunctionalInterface
     interface ConnectionAwareRunnable {
         void run(Connection connection, boolean binary) throws Exception;

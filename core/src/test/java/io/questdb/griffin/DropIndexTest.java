@@ -36,7 +36,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
@@ -44,6 +47,8 @@ import java.nio.file.Files;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class DropIndexTest extends AbstractGriffinTest {
 
@@ -498,7 +503,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             Assert.assertEquals(expectedDFiles,
                     countFiles("temperature", 0L, DropIndexTest::isDataFile)
             );
-            // check index files have been dropped
+            // check index files exist
             Assert.assertEquals(expectedDFiles * 2,
                     countFiles("temperature", 0L, DropIndexTest::isIndexFile)
             );
@@ -544,7 +549,9 @@ public class DropIndexTest extends AbstractGriffinTest {
             int indexValueBlockSize
     ) {
         try (TxReader txReader = new TxReader(ff)) {
-            txReader.ofRO(path, partitionedBy);
+            int pathLen = path.length();
+            txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionedBy);
+            path.trimTo(pathLen);
             txReader.unsafeLoadAll();
             Assert.assertEquals(expectedStructureVersion, txReader.getStructureVersion());
             Assert.assertEquals(expectedReaderVersion, txReader.getTxn());

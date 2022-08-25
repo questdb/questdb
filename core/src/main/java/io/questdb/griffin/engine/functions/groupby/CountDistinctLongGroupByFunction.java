@@ -27,30 +27,69 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.ObjList;
 
-public class CountGroupByFunction extends LongFunction implements GroupByFunction, Sinkable {
+public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+    private final Function arg;
+    private final ObjList<LongHashSet> sets = new ObjList<>();
     private int valueIndex;
+    private int setIndex;
+
+    public CountDistinctLongGroupByFunction(Function arg) {
+        this.arg = arg;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, 1L);
+        final LongHashSet set;
+        if (sets.size() <= setIndex) {
+            sets.extendAndSet(setIndex, set = new LongHashSet());
+        } else {
+            set = sets.getQuick(setIndex);
+        }
+
+        set.clear();
+        final long val = arg.getLong(record);
+        if (val != Numbers.LONG_NaN) {
+            set.add(val);
+            mapValue.putLong(valueIndex, 1L);
+        } else {
+            mapValue.putLong(valueIndex, 0L);
+        }
+        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.addLong(valueIndex, 1);
+        final LongHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final long val = arg.getLong(record);
+        if (val != Numbers.LONG_NaN) {
+            final int index = set.keyIndex(val);
+            if (index < 0) {
+                return;
+            }
+            set.addAt(index, val);
+            mapValue.addLong(valueIndex, 1);
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.INT);
     }
 
     @Override
@@ -80,11 +119,12 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
 
     @Override
     public boolean isReadThreadSafe() {
-        return true;
+        return false;
     }
 
-    public void toSink(CharSink sink) {
-        sink.put("Count(").put(valueIndex).put(')');
+    @Override
+    public void toTop() {
+        UnaryFunction.super.toTop();
+        setIndex = 0;
     }
-
 }

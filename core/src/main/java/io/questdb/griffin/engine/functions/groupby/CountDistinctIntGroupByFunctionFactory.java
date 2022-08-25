@@ -22,12 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.groupby;
 
-public final class StatusCode {
-    public final static int OK = 0;
-    public final static int PARTITION_EMPTY = 1;
-    public final static int TABLE_HAS_SYMBOLS = 2;
-    public final static int CANNOT_ATTACH_MISSING_PARTITION = 4;
-    public final static int PARTITION_ALREADY_ATTACHED = 5;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+public class CountDistinctIntGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "count_distinct(I)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CountDistinctIntGroupByFunction(args.getQuick(0));
+    }
 }

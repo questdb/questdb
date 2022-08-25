@@ -28,7 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
@@ -39,7 +39,7 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
-    private static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
+    protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected final LongList attachedPartitions = new LongList();
     private final IntList symbolCountSnapshot = new IntList();
     private final FilesFacade ff;
@@ -261,16 +261,14 @@ public class TxReader implements Closeable, Mutable {
         this.partitionBy = partitionBy;
     }
 
-    public TxReader ofRO(@Transient Path path, int partitionBy) {
+    public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
         clear();
-        int tableRootLen = path.length();
         try {
             openTxnFile(ff, path);
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();
-            path.trimTo(tableRootLen);
             throw e;
         }
         return this;
@@ -395,21 +393,16 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.setQuick(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
-    private void openTxnFile(FilesFacade ff, Path path) {
-        int pathLen = path.length();
-        try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                if (roTxMemBase == null) {
-                    roTxMemBase = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
-                } else {
-                    roTxMemBase.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.MMAP_DEFAULT);
-                }
-                return;
+    private void openTxnFile(FilesFacade ff, LPSZ path) {
+        if (ff.exists(path)) {
+            if (roTxMemBase == null) {
+                roTxMemBase = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+            } else {
+                roTxMemBase.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.MMAP_DEFAULT);
             }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
-        } finally {
-            path.trimTo(pathLen);
+            return;
         }
+        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     protected void switchRecord(int readBaseOffset, long readRecordSize) {

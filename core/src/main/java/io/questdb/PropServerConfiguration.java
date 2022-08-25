@@ -62,6 +62,7 @@ import java.util.*;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    public static final String DETACHED_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
@@ -207,6 +208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbDirectory;
     private final String confRoot;
     private final String snapshotRoot;
+    private final String detachRoot;
     private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
@@ -271,6 +273,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyLogRetentionDays;
     private final boolean ioURingEnabled;
     private final int cairoMaxCrashFiles;
+    private final boolean walEnabledDefault;
+    private final String cairoAttachPartitionSuffix;
+    private final boolean cairoAttachPartitionCopy;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -408,7 +413,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
-    private final boolean walEnabledDefault;
 
     public PropServerConfiguration(
             String root,
@@ -428,15 +432,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
+
+        String detachRoot = getString(properties, env, PropertyKey.CAIRO_DETACH_ROOT, DETACHED_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
-            this.confRoot = rootSubdir(this.root, PropServerConfiguration.CONFIG_DIRECTORY); // ../conf
-            this.snapshotRoot = rootSubdir(this.root, PropServerConfiguration.SNAPSHOT_DIRECTORY); // ../snapshot
+            this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
+            this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
+            this.detachRoot = rootSubdir(this.root, detachRoot); // ../detached_partitions
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
+            this.detachRoot = new File(root, detachRoot).getAbsolutePath();
         }
+        this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, ".attachable");
+        this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
@@ -662,15 +672,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgWorkerSleepThreshold = getLong(properties, env, PropertyKey.PG_WORKER_SLEEP_THRESHOLD, 10000);
                 this.pgDaemonPool = getBoolean(properties, env, PropertyKey.PG_DAEMON_POOL, true);
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
-                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 16);
-                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 16);
+                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 8);
+                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 8);
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
-                this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 8);
-                this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 8);
-                this.pgInsertPoolCapacity = getInt(properties, env, PropertyKey.PG_INSERT_POOL_CAPACITY, 64);
+                this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
+                this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
+                this.pgInsertPoolCapacity = getInt(properties, env, PropertyKey.PG_INSERT_POOL_CAPACITY, 16);
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
-                this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 8);
-                this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 8);
+                this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
+                this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
@@ -692,7 +702,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.spinLockTimeout = getLong(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 4);
-            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 16);
+            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 4);
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
             this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
             this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
@@ -836,7 +846,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY, 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
-            this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 16 * Numbers.SIZE_1MB));
+            this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
             this.commitLag = getLong(properties, env, PropertyKey.CAIRO_COMMIT_LAG, 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, false);
@@ -1855,6 +1865,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
+        public boolean attachPartitionCopy() {
+            return cairoAttachPartitionCopy;
+        }
+
+        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -1862,6 +1877,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
+        }
+
+        @Override
+        public String getAttachPartitionSuffix() {
+            return cairoAttachPartitionSuffix;
         }
 
         @Override
@@ -2025,8 +2045,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getWallEnabledDefault() {
-            return walEnabledDefault;
+        public CharSequence getDetachRoot() {
+            return detachRoot;
         }
 
         @Override
@@ -2080,26 +2100,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getSqlCopyInputRoot() {
-            return cairoSqlCopyRoot;
-        }
-
-        @Override
-        public CharSequence getSqlCopyInputWorkRoot() {
-            return cairoSqlCopyWorkRoot;
-        }
-
-        @Override
-        public long getSqlCopyMaxIndexChunkSize() {
-            return cairoSqlCopyMaxIndexChunkSize;
-        }
-
-        @Override
-        public int getSqlCopyQueueCapacity() {
-            return cairoSqlCopyQueueCapacity;
-        }
-
-        @Override
         public int getInsertPoolCapacity() {
             return sqlInsertModelPoolCapacity;
         }
@@ -2107,6 +2107,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLatestByQueueCapacity() {
             return latestByQueueCapacity;
+        }
+
+        @Override
+        public int getMaxCrashFiles() {
+            return cairoMaxCrashFiles;
         }
 
         @Override
@@ -2235,6 +2240,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getReplaceFunctionMaxBufferLength() {
+            return replaceFunctionBufferMaxSize;
+        }
+
+        @Override
         public int getRndFunctionMemoryMaxPages() {
             return rndFunctionMemoryMaxPages;
         }
@@ -2242,11 +2252,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRndFunctionMemoryPageSize() {
             return rndFunctionMemoryPageSize;
-        }
-
-        @Override
-        public int getReplaceFunctionMaxBufferLength() {
-            return replaceFunctionBufferMaxSize;
         }
 
         @Override
@@ -2332,6 +2337,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
+        }
+
+        @Override
+        public CharSequence getSqlCopyInputRoot() {
+            return cairoSqlCopyRoot;
+        }
+
+        @Override
+        public CharSequence getSqlCopyInputWorkRoot() {
+            return cairoSqlCopyWorkRoot;
+        }
+
+        @Override
+        public int getSqlCopyLogRetentionDays() {
+            return cairoSqlCopyLogRetentionDays;
+        }
+
+        @Override
+        public long getSqlCopyMaxIndexChunkSize() {
+            return cairoSqlCopyMaxIndexChunkSize;
+        }
+
+        @Override
+        public int getSqlCopyQueueCapacity() {
+            return cairoSqlCopyQueueCapacity;
         }
 
         @Override
@@ -2440,11 +2470,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSmallMapKeyCapacity() {
-            return sqlSmallMapKeyCapacity;
-        }
-
-        @Override
         public int getSqlMapMaxPages() {
             return sqlMapMaxPages;
         }
@@ -2477,6 +2502,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlPageFrameMinRows() {
             return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public int getSqlSmallMapKeyCapacity() {
+            return sqlSmallMapKeyCapacity;
         }
 
         @Override
@@ -2534,6 +2564,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getWallEnabledDefault() {
+            return walEnabledDefault;
+        }
+
+        @Override
         public int getWithClauseModelPoolCapacity() {
             return sqlWithClauseModelPoolCapacity;
         }
@@ -2574,6 +2609,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isIOURingEnabled() {
+            return ioURingEnabled;
+        }
+
+        @Override
         public boolean isO3QuickSortEnabled() {
             return o3QuickSortEnabled;
         }
@@ -2596,21 +2636,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
-        }
-
-        @Override
-        public int getSqlCopyLogRetentionDays() {
-            return cairoSqlCopyLogRetentionDays;
-        }
-
-        @Override
-        public boolean isIOURingEnabled() {
-            return ioURingEnabled;
-        }
-
-        @Override
-        public int getMaxCrashFiles() {
-            return cairoMaxCrashFiles;
         }
     }
 

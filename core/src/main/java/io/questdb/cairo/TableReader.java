@@ -43,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final int PARTITIONS_SLOT_SIZE = 4;
@@ -100,12 +102,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.partitionBy = this.metadata.getPartitionBy();
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
-            path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
                     .$(", table=").$(this.tableName)
                     .I$();
-            this.txFile = new TxReader(ff).ofRO(path, partitionBy);
+            this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
             openSymbolMaps();
@@ -712,10 +713,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
         final int idx = getPrimaryColumnIndex(columnBase, 0);
-        columns.insert(idx, columnSlotSize);
-        columns.set(idx, columnBase + columnSlotSize + 1, NullMemoryMR.INSTANCE);
-        bitmapIndexes.insert(idx, columnSlotSize);
-        bitmapIndexes.set(idx, columnBase + columnSlotSize, null);
+        columns.insert(idx, columnSlotSize, NullMemoryMR.INSTANCE);
+        bitmapIndexes.insert(idx, columnSlotSize, null);
         columnTops.insert(topBase, topSlotSize);
         columnTops.seed(topBase, topSlotSize, 0);
 
@@ -1022,7 +1021,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check the partition timestamp in Column Version file
             // of when the column was added.
-            if (partitionRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
+            if (columnRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(columnType)) {
@@ -1065,8 +1064,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                 Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
 
-                // Column to present in the partition. Set column top to be the size of the partition.
-                columnTops.setQuick(columnBase / 2 + columnIndex, columnRowCount);
+                // Column is not present in the partition. Set column top to be the size of the partition.
+                columnTops.setQuick(columnBase / 2 + columnIndex, partitionRowCount);
             }
         } finally {
             path.trimTo(plen);
