@@ -278,7 +278,7 @@ public class CompactMap implements Map, Reallocatable {
                     sz = 2 * Long.BYTES;
                     break;
                 default:
-                    throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
+                    throw CairoException.critical(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
             }
             columnOffsets[startPosition + i] = o;
             o += sz;

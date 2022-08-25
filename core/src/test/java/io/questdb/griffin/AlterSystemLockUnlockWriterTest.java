@@ -106,7 +106,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testNonExistentTable() throws Exception {
-        assertFailure("alter system unlock writer z", 27, "table 'z' does not exist");
+        assertFailure("alter system unlock writer z", 27, "table does not exist [table=z]");
     }
 
     @Test
@@ -116,9 +116,8 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
                 compile("alter system unlock writer y", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "table 'y' does not exist");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist [table=y]");
             }
-
         });
     }
 

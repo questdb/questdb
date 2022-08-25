@@ -132,7 +132,7 @@ public class EngineMigration {
 
             LOG.info().$("backing up [file=").$(src).$(",to=").$(toTemp).I$();
             if (ff.copy(src.$(), toTemp.$()) < 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
+                throw CairoException.critical(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
             }
         } finally {
             toTemp.trimTo(copyPathLen);

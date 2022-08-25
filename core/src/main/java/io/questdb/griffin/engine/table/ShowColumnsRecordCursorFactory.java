@@ -40,6 +40,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_DESIGNATED_COL = 6;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final CharSequence tableName;
+
     public ShowColumnsRecordCursorFactory(CharSequence tableName) {
         super(METADATA);
         this.tableName = tableName.toString();

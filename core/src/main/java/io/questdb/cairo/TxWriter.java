@@ -470,7 +470,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             }
             return;
         }
-        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+        throw CairoException.critical(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     private void putInt(long offset, int value) {

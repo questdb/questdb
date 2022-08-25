@@ -3610,11 +3610,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         try {
                             assertCursor(
                                     "a\tb\tk\n" +
-                                            "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n",
+                                            "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                                     factory,
                                     true,
                                     true,
-                                    false
+                                    false,
+                                    false,
+                                    // we need to pass the engine here, so the global test context won't do
+                                    AllowAllSqlSecurityContext.instance(engine)
                             );
                             Assert.fail();
                         } catch (CairoException e) {

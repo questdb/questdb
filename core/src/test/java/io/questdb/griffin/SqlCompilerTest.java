@@ -3433,11 +3433,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                     compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
                     compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
-                    compiler.compile("insert into x select * from y", sqlExecutionContext);
+                    // we need to pass the engine here, so the global test context won't do
+                    compiler.compile("insert into x select * from y", AllowAllSqlSecurityContext.instance(engine));
 
                     TestUtils.assertSql(
                             compiler,
-                            sqlExecutionContext,
+                            // we need to pass the engine here, so the global test context won't do
+                            AllowAllSqlSecurityContext.instance(engine),
                             "select * from x",
                             sink,
                             expected
@@ -3455,7 +3457,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "select" +
                 " rnd_double(2)," +
                 " timestamp_sequence(0, 1000000000)" +
-                " from long_sequence(30)", 12, "table 'x' does not exist");
+                " from long_sequence(30)", 12, "table does not exist [table=x]");
     }
 
     @Test

@@ -333,6 +333,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     @Override
     public void close() {
+        // we're about to close the context, so no need to return pending factory to cache
+        typesAndSelectIsCached = false;
+        typesAndUpdateIsCached = false;
         clear();
         // fd == -1 is only when context is closed
         // when context is initialized fd == 0
@@ -433,7 +436,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
-            reportError(-1, e.getFlyweightMessage(), e.getErrno());
+            if (e.isInterruption()) {
+                reportQueryCancelled(e.getFlyweightMessage());
+            } else {
+                reportError(-1, e.getFlyweightMessage(), e.getErrno());
+            }
         } catch (AuthenticationException e) {
             prepareError(-1, e.getMessage(), 0);
             sendAndReset();
@@ -885,7 +892,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             // oopsie, buffer is too small for single record
             LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
             responseAsciiSink.reset();
-            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
+            freeFactory();
+            throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
         }
     }
 
@@ -1615,7 +1623,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 LOG.error().$("not enough space in buffer for row description [buffer=").$(sendBufferSize).I$();
                 responseAsciiSink.reset();
-                throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row description");
+                freeFactory();
+                throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row description");
             }
         } else {
             prepareNoDataMessage();
@@ -1630,7 +1639,31 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareDescribePortalResponse();
     }
 
+    private void prepareQueryCanceled(CharSequence message) {
+        prepareErrorResponse(-1, message);
+        LOG.info()
+                .$("query cancelled [msg=`").$(message).$('`')
+                .I$();
+    }
+
     private void prepareError(int position, CharSequence message, long errno) {
+        prepareErrorResponse(position, message);
+        if (errno == CairoException.NON_CRITICAL) {
+            LOG.error()
+                    .$("error [pos=").$(position)
+                    .$(", msg=`").$(message).$('`')
+                    .$(", errno=`").$(errno)
+                    .I$();
+        } else {
+            LOG.critical()
+                    .$("error [pos=").$(position)
+                    .$(", msg=`").$(message).$('`')
+                    .$(", errno=`").$(errno)
+                    .I$();
+        }
+    }
+
+    private void prepareErrorResponse(int position, CharSequence message) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
         responseAsciiSink.put('C');
@@ -1644,11 +1677,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
         responseAsciiSink.put((char) 0);
         responseAsciiSink.putLen(addr);
-        LOG.error()
-                .$("error [pos=").$(position)
-                .$(", msg=`").$(message).$('`')
-                .$(", errno=`").$(errno)
-                .I$();
     }
 
     //clears whole state except for characterStore because top-level batch text is using it
@@ -2263,7 +2291,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } catch (SqlException ex) {
                 prepareError(ex.getPosition(), ex.getFlyweightMessage(), 0);
             } catch (CairoException ex) {
-                prepareError(0, ex.getFlyweightMessage(), ex.getErrno());
+                if (ex.isInterruption()) {
+                    prepareQueryCanceled(ex.getFlyweightMessage());
+                } else {
+                    prepareError(-1, ex.getFlyweightMessage(), ex.getErrno());
+                }
             }
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -2356,6 +2388,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         clearRecvBuffer();
     }
 
+    private void reportQueryCancelled(CharSequence flyweightMessage)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareQueryCanceled(flyweightMessage);
+        sendReadyForNewQuery();
+        clearRecvBuffer();
+    }
+
     private void resumeCommandComplete() {
         prepareCommandComplete(true);
     }
@@ -2413,7 +2452,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
             responseAsciiSink.putLen(addr);
         } else {
-            final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
+            final SqlException e = SqlException.$(0, "table does not exist [table=").put(textLoader.getTableName()).put(']');
             prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
             prepareReadyForQuery();
         }

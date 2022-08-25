@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
@@ -40,6 +41,11 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     public AbstractDataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
         super(metadata);
         this.dataFrameCursorFactory = dataFrameCursorFactory;
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(dataFrameCursorFactory);
     }
 
     @Override

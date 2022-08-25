@@ -30,7 +30,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
@@ -95,7 +94,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             int srcEnd = src.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
             dest.insertFromSource(index, src, srcIndex, srcEnd + BLOCK_SIZE);
         } else {
-            throw CairoException.instance(0)
+            throw CairoException.critical(0)
                     .put("invalid Column Version state ")
                     .ts(partitionTimestamp)
                     .put(" column version state, cannot update partition information");

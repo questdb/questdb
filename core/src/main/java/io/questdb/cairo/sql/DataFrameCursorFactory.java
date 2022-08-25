@@ -55,6 +55,9 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
      */
     int getOrder();
 
+    @Override
+    void close();
+
     int ORDER_ASC = 0;
     int ORDER_DESC = 1;
     // Any order means that algorithm is able to work with frames in any order.

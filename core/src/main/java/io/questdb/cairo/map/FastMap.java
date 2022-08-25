@@ -155,7 +155,7 @@ public class FastMap implements Map, Reallocatable {
                         break;
                     default:
                         close();
-                        throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                        throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
                 }
             }
             this.value = new FastMapValue(valueOffsets);
@@ -493,7 +493,7 @@ public class FastMap implements Map, Reallocatable {
             } else {
                 long len = value.length() + 4;
                 if (len > Integer.MAX_VALUE) {
-                    throw CairoException.instance(0).put("binary column is too large");
+                    throw CairoException.nonCritical().put("binary column is too large");
                 }
 
                 checkSize((int) len);
@@ -724,7 +724,7 @@ public class FastMap implements Map, Reallocatable {
         private void writeOffset() {
             long len = appendAddress - startAddress;
             if (len > Integer.MAX_VALUE) {
-                throw CairoException.instance(0).put("row data is too large");
+                throw CairoException.critical(0).put("row data is too large");
             }
             Unsafe.getUnsafe().putInt(nextColOffset, (int) len);
             nextColOffset += 4;

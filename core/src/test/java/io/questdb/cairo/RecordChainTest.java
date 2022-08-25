@@ -286,7 +286,7 @@ public class RecordChainTest extends AbstractCairoTest {
                     TestUtils.assertEquals(expected.getBin(i), actual.getBin(i), actual.getBinLen(i));
                     break;
                 default:
-                    throw CairoException.instance(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));
+                    throw CairoException.critical(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));
 
             }
         }

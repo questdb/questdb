@@ -35,9 +35,16 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextStub implements SqlExecutionContext {
+
+    private final CairoEngine engine;
+
+    public SqlExecutionContextStub(@NotNull CairoEngine engine) {
+        this.engine = engine;
+    }
 
     @Override
     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
@@ -61,12 +68,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void popTimestampRequiredFlag() {
-
     }
 
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
-
     }
 
     @Override
@@ -81,12 +86,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setRandom(Rnd rnd) {
-
     }
 
     @Override
-    public CairoEngine getCairoEngine() {
-        return null;
+    public @NotNull CairoEngine getCairoEngine() {
+        return engine;
     }
 
     @Override
@@ -95,13 +99,12 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return null;
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     }
 
     @Override
     public void storeTelemetry(short event, short origin) {
-
     }
 
     @Override
@@ -111,12 +114,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, boolean baseSupportsRandomAccess) {
-
     }
 
     @Override
     public void initNow() {
-
     }
 
     @Override
@@ -131,12 +132,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setJitMode(int jitMode) {
-
     }
 
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
-
     }
 
     @Override

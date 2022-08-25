@@ -67,7 +67,7 @@ class TableStructureAdapter implements TableStructure {
         if (TableUtils.isValidColumnName(colName, cairoConfiguration.getMaxFileNameLength())) {
             return colName;
         }
-        throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
+        throw CairoException.nonCritical().put("column name contains invalid characters [colName=").put(colName).put(']');
     }
 
     @Override
