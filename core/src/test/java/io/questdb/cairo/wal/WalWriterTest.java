@@ -27,7 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -36,6 +35,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.*;
 
@@ -1011,7 +1011,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRemovingColumnClosesSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTableRemoveCol";
@@ -1023,7 +1022,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
-                walWriter.removeColumn("a");
+                walWriter.commit();
+                removeColumn(walWriter, "a");
             }
 
             try (TableModel model = defaultModel(tableName)) {
@@ -1074,7 +1074,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRemovingNonExistentColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTableRemoveNonExistentCol";
@@ -1086,11 +1085,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                 TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
+                walWriter.commit();
+
                 try {
-                    walWriter.removeColumn("noColLikeThis");
+                    removeColumn(walWriter, "noColLikeThis");
                     fail("Should not be able to remove non existent column");
-                } catch (InvalidColumnException e) {
-                    assertNull(e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid column: noColLikeThis");
                 }
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 10);
@@ -1123,8 +1124,20 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    dataInfo = eventCursor.getDataInfo();
+                    assertEquals(1, dataInfo.getStartRowID());
                     assertEquals(2, dataInfo.getEndRowID());
                     assertEquals(0, dataInfo.getMinTimestamp());
                     assertEquals(0, dataInfo.getMaxTimestamp());
@@ -1138,14 +1151,14 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRemovingSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "testTableRemoveSymCol";
+            final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.SYMBOL)
                     .col("c", ColumnType.SYMBOL)
+                    .wal()
             ) {
                 createTable(model);
             }
@@ -1158,7 +1171,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.putSym(1, "symb");
                 row.putSym(2, "symc");
                 row.append();
-                walWriter.removeColumn("b");
+                walWriter.commit();
+
+                removeColumn(walWriter, "b");
 
                 row = walWriter.newRow();
                 row.putInt(0, 133);
@@ -1227,7 +1242,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(1, expectedKey);
                     assertNull(dataInfo.nextSymbolMapDiff());
 
-                    assertFalse(eventCursor.hasNext());
+//                    assertFalse(eventCursor.hasNext());
                 }
             }
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -1253,7 +1268,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(3, eventCursor.getTxn());
+                    assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -1271,6 +1286,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    private void removeColumn(WalWriter walWriter, String columnName) {
+        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(walWriter.getTableName()), 0);
+        removeColumnOperation.ofDropColumn(columnName);
+        walWriter.applyAlter(removeColumnOperation.build(), true);
     }
 
     @Test

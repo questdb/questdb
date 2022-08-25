@@ -70,7 +70,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn0(columnName, columnType);
         structureVersion++;
-        syncToMetaFile();
     }
 
     @Override
@@ -126,6 +125,29 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         return true;
     }
 
+    public void syncToMetaFile() {
+        metaMem.jumpTo(0);
+        // Size of metadata
+        metaMem.putInt(0);
+        metaMem.putInt(WAL_FORMAT_VERSION);
+        metaMem.putLong(structureVersion);
+        int metaSize = columnMetadata.size();
+        metaMem.putInt(metaSize);
+        metaMem.putInt(timestampIndex);
+        metaMem.putInt(tableId);
+        for (int i = 0; i < metaSize; i++) {
+            final int type = getColumnType(i);
+            metaMem.putInt(type);
+            metaMem.putStr(getColumnName(i));
+        }
+
+        // Set metadata size
+        int size = (int) metaMem.getAppendOffset();
+        metaMem.jumpTo(0);
+        metaMem.putInt(size);
+        metaMem.jumpTo(size);
+    }
+
     public void open(String tableName, Path path, int pathLen) {
         reset();
         this.tableName = tableName;
@@ -159,7 +181,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         deletedMeta.markDeleted();
         columnNameIndexMap.remove(deletedMeta.getName());
         structureVersion++;
-        syncToMetaFile();
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
@@ -170,7 +191,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         int columnType = columnMetadata.getQuick(columnIndex).getType();
         columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newName.toString(), 0L, columnType));
         structureVersion++;
-        syncToMetaFile();
     }
 
     private void addColumn0(CharSequence columnName, int columnType) {
@@ -194,25 +214,25 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         tableName = null;
     }
 
-    private void syncToMetaFile() {
-        metaMem.jumpTo(0);
-        // Size of metadata
-        metaMem.putInt(0);
-        metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putLong(structureVersion);
-        metaMem.putInt(columnMetadata.size());
-        metaMem.putInt(timestampIndex);
-        metaMem.putInt(tableId);
-        for (int i = 0; i < columnMetadata.size(); i++) {
-            final int type = getColumnType(i);
-            metaMem.putInt(type);
-            metaMem.putStr(getColumnName(i));
+    @Override
+    public void toReaderIndexes() {
+        // Remove deleted columns from the metadata, e.g. make it reader metadata.
+        // Deleted columns have negative type.
+        int copyTo = 0;
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = columnMetadata.getQuick(i).getType();
+            if (columnType > 0) {
+                if (copyTo != i) {
+                    TableColumnMetadata columnMeta = columnMetadata.get(i);
+                    columnMetadata.set(copyTo, columnMeta);
+                    if (i == timestampIndex) {
+                        timestampIndex = copyTo;
+                    }
+                }
+                copyTo++;
+            }
         }
-
-        // Set metadata size
-        int size = (int) metaMem.getAppendOffset();
-        metaMem.jumpTo(0);
-        metaMem.putInt(size);
-        metaMem.jumpTo(size);
+        columnCount = copyTo;
+        columnMetadata.setPos(columnCount);
     }
 }

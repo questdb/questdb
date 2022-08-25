@@ -34,4 +34,6 @@ public interface TableRecordMetadata extends RecordMetadata, QuietClosable {
     String getTableName();
 
     boolean isWalEnabled();
+
+    void toReaderIndexes();
 }

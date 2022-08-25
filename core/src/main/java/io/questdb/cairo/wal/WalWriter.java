@@ -50,6 +50,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final Runnable NOOP = () -> {
     };
+    private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders;
     private final IntList initialSymbolCounts = new IntList();
@@ -86,7 +87,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     };
     private long lastSegmentTxn = -1L;
     private SequencerStructureChangeCursor structureChangeCursor;
-    private static final int MEM_TAG  = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private boolean open;
     private boolean distressed;
 
@@ -129,15 +129,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     }
 
     @Override
-    public void clear() {
-        try {
-            closeCurrentSegment();
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
-    }
-
-    @Override
     public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
@@ -171,33 +162,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             // TODO: We have to serialize the command to WAL-E and register the transaction in the sequencer.
             throw new UnsupportedOperationException();
         }
-    }
-
-    public TableWriter.Row newRow(long timestamp) {
-        checkDistressed();
-        try {
-            if (rollSegmentOnNextRow) {
-                rollSegment();
-            }
-
-            final int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex != -1) {
-                //avoid lookups by having a designated field with primaryColumn
-                final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLongLong(timestamp, rowCount);
-                setRowValueNotNull(timestampIndex);
-                row.timestamp = timestamp;
-            }
-            return row;
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
-    }
-
-    @Override
-    public void rollback() {
-        // TODO: roll back current transaction
-//        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -240,6 +204,56 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return newRow(0L);
     }
 
+    @Override
+    public void clear() {
+        try {
+            closeCurrentSegment();
+        } catch (Throwable e) {
+            throw new CairoError(e);
+        }
+    }
+
+    public void doClose(boolean truncate) {
+        open = false;
+        Misc.free(metadata);
+        Misc.free(events);
+        freeSymbolMapWriters();
+        Misc.free(symbolMapMem);
+        freeColumns(truncate);
+
+        try {
+            releaseLock(!truncate);
+        } finally {
+            Misc.free(path);
+            LOG.info().$("closed '").utf8(tableName).$('\'').$();
+        }
+    }
+
+    public boolean isOpen() {
+        return this.open;
+    }
+
+    public TableWriter.Row newRow(long timestamp) {
+        checkDistressed();
+        try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+            }
+
+            final int timestampIndex = metadata.getTimestampIndex();
+            if (timestampIndex != -1) {
+                //avoid lookups by having a designated field with primaryColumn
+                final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
+                primaryColumn.putLongLong(timestamp, rowCount);
+                setRowValueNotNull(timestampIndex);
+                row.timestamp = timestamp;
+            }
+            return row;
+        } catch (Throwable e) {
+            throw new CairoError(e);
+        }
+    }
+
     public long getSegment() {
         return segmentId;
     }
@@ -260,27 +274,10 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return distressed;
     }
 
-    public void removeColumn(CharSequence name) {
-//        final int index = metadata.getColumnIndex(name);
-//        final int type = metadata.getColumnType(index);
-//
-//        try {
-//            LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
-//            commit(true);
-//
-//            if (ColumnType.isSymbol(type)) {
-//                removeSymbolMapWriter(index);
-//            }
-//            metadata.removeColumn(index);
-//            removeColumn(index);
-//
-//            final long txn = sequencer.removeColumn(index, walId, segmentId);
-//            events.removeColumn(txn, index);
-//            LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
-//        } catch (Throwable e) {
-//            throw new CairoError(e);
-//        }
-        throw new UnsupportedOperationException();
+    @Override
+    public void rollback() {
+        // TODO: roll back current transaction
+//        throw new UnsupportedOperationException();
     }
 
     public long rollSegment() {
@@ -292,6 +289,25 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         } catch (Throwable e) {
             throw new CairoError(e);
         }
+    }
+
+    public long rollSegmentIfLimitReached() {
+        long segmentSize = 0;
+        if (rollStrategy.isMaxSegmentSizeSet()) {
+            for (int i = 0; i < columnCount; i++) {
+                segmentSize = updateSegmentSize(segmentSize, i);
+            }
+        }
+
+        long segmentAge = 0;
+        if (rollStrategy.isRollIntervalSet()) {
+            segmentAge = millisecondClock.getTicks() - segmentStartMillis;
+        }
+
+        if (rollStrategy.shouldRoll(segmentSize, rowCount, segmentAge)) {
+            return rollSegment();
+        }
+        return 0L;
     }
 
     public void rollUncommittedToNewSegment() {
@@ -347,85 +363,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             startRowCount = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
         } else if (rowCount > 0 && uncommittedRows == 0) {
-            closeCurrentSegment();
-            openNewSegment();
+            rollSegmentOnNextRow = true;
         }
-    }
-
-    private void applyStructureChanges() {
-        try {
-            structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, getStructureVersion());
-            while (structureChangeCursor.hasNext()) {
-                AlterOperation alterOperation = structureChangeCursor.next();
-                long metadataVersion = getStructureVersion();
-                try {
-                    alterOperation.apply(walMetadataUpdater, true);
-                } catch (SqlException e) {
-                    distressed = true;
-                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
-                }
-                if (metadataVersion >= getStructureVersion()) {
-                    distressed = true;
-                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction, version unchanged");
-                }
-            }
-        } finally {
-            if (structureChangeCursor != null) {
-                structureChangeCursor.reset();
-            }
-        }
-    }
-
-    private void rollLastWaleRecord(long newSegmentId, long uncommittedRows) {
-        path.trimTo(rootLen).slash().put(newSegmentId);
-        events.openEventFile(path, path.length());
-        lastSegmentTxn = events.data(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-    }
-
-    private void switchColumnsToNewSegment(LongList newColumnFiles) {
-        for (int i = 0; i < columnCount; i++) {
-            long newPrimaryFd = newColumnFiles.get(i * 4);
-            if (newPrimaryFd > -1L) {
-                MemoryMA primaryColumnFile = getPrimaryColumn(i);
-                long writeOffset = newColumnFiles.get(i * 4 + 1);
-                primaryColumnFile.switchTo(newPrimaryFd, writeOffset);
-
-                long newSecondaryFd = newColumnFiles.get(i * 4 + 2);
-                if (newSecondaryFd > -1L) {
-                    MemoryMA secondaryColumnFile = getSecondaryColumn(i);
-                    writeOffset = newColumnFiles.get(i * 4 + 3);
-                    secondaryColumnFile.switchTo(newSecondaryFd, writeOffset);
-                }
-            }
-        }
-    }
-
-    private void closeSegmentSwitchFiles(LongList newColumnFiles) {
-        for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex+=2) {
-            long fd = newColumnFiles.get(fdIndex);
-            if (fd > -1L) {
-                ff.close(fd);
-            }
-        }
-    }
-
-    public long rollSegmentIfLimitReached() {
-        long segmentSize = 0;
-        if (rollStrategy.isMaxSegmentSizeSet()) {
-            for (int i = 0; i < columnCount; i++) {
-                segmentSize = updateSegmentSize(segmentSize, i);
-            }
-        }
-
-        long segmentAge = 0;
-        if (rollStrategy.isRollIntervalSet()) {
-            segmentAge = millisecondClock.getTicks() - segmentStartMillis;
-        }
-
-        if (rollStrategy.shouldRoll(segmentSize, rowCount, segmentAge)) {
-            return rollSegment();
-        }
-        return 0L;
     }
 
     public void setRollStrategy(WalWriterRollStrategy rollStrategy) {
@@ -506,6 +445,30 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
     }
 
+    private void applyStructureChanges() {
+        try {
+            structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, getStructureVersion());
+            while (structureChangeCursor.hasNext()) {
+                AlterOperation alterOperation = structureChangeCursor.next();
+                long metadataVersion = getStructureVersion();
+                try {
+                    alterOperation.apply(walMetadataUpdater, true);
+                } catch (SqlException e) {
+                    distressed = true;
+                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+                }
+                if (metadataVersion >= getStructureVersion()) {
+                    distressed = true;
+                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction, version unchanged");
+                }
+            }
+        } finally {
+            if (structureChangeCursor != null) {
+                structureChangeCursor.reset();
+            }
+        }
+    }
+
     private void checkDistressed() {
         if (!distressed) {
             return;
@@ -516,7 +479,17 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     }
 
     private void closeCurrentSegment() {
+        // TODO: mark segment as closed, commits should not be hidden to the client
         commit();
+    }
+
+    private void closeSegmentSwitchFiles(LongList newColumnFiles) {
+        for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += 2) {
+            long fd = newColumnFiles.get(fdIndex);
+            if (fd > -1L) {
+                ff.close(fd);
+            }
+        }
     }
 
     private long commit(boolean rollSegment) {
@@ -713,26 +686,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return segmentPathLen;
     }
 
-    public boolean isOpen() {
-        return this.open;
-    }
-
-    public void doClose(boolean truncate) {
-        open = false;
-        Misc.free(metadata);
-        Misc.free(events);
-        freeSymbolMapWriters();
-        Misc.free(symbolMapMem);
-        freeColumns(truncate);
-
-        try {
-            releaseLock(!truncate);
-        } finally {
-            Misc.free(path);
-            LOG.info().$("closed '").utf8(tableName).$('\'').$();
-        }
-    }
-
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         Misc.free(columns.getAndSetQuick(pi, NullMemory.INSTANCE));
         Misc.free(columns.getAndSetQuick(si, NullMemory.INSTANCE));
@@ -783,6 +736,13 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         if (lockFd == -1L) {
             throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
+    }
+
+    private void markColumnRemoved(int columnIndex) {
+        final int pi = getPrimaryColumnIndex(columnIndex);
+        final int si = getSecondaryColumnIndex(columnIndex);
+        freeNullSetter(nullSetters, columnIndex);
+        freeAndRemoveColumnPair(columns, pi, si);
     }
 
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
@@ -860,13 +820,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
     }
 
-    private void removeColumn(int columnIndex) {
-        final int pi = getPrimaryColumnIndex(columnIndex);
-        final int si = getSecondaryColumnIndex(columnIndex);
-        freeNullSetter(nullSetters, columnIndex);
-        freeAndRemoveColumnPair(columns, pi, si);
-    }
-
     private void removeSymbolMapWriter(int index) {
         Misc.free(symbolMapReaders.getAndSetQuick(index, null));
         initialSymbolCounts.setQuick(index, -1);
@@ -878,6 +831,12 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         txnMaxTimestamp = -1;
         txnOutOfOrder = false;
         events.startTxn();
+    }
+
+    private void rollLastWaleRecord(long newSegmentId, long uncommittedRows) {
+        path.trimTo(rootLen).slash().put(newSegmentId);
+        events.openEventFile(path, path.length());
+        lastSegmentTxn = events.data(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
@@ -899,9 +858,82 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         rowCount++;
     }
 
+    private void setColumnNull(int columnType, int columnIndex, long rowCount) {
+        if (ColumnType.isVariableLength(columnType)) {
+            setVarColumnVarFileNull(columnType, columnIndex, rowCount);
+            setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
+        } else {
+            setFixColumnNulls(columnType, columnIndex, rowCount);
+        }
+    }
+
+    private void setFixColumnNulls(int type, int columnIndex, long rowCount) {
+        MemoryMA fixedSizeColumn = getPrimaryColumn(columnIndex);
+        long columnFileSize = rowCount * ColumnType.sizeOf(type);
+        fixedSizeColumn.jumpTo(columnFileSize);
+        if (columnFileSize > 0) {
+            long address = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), columnFileSize, MEM_TAG);
+            try {
+                TableUtils.setNull(type, address, rowCount);
+            } finally {
+                ff.munmap(address, columnFileSize, MEM_TAG);
+            }
+        }
+    }
+
     private void setRowValueNotNull(int columnIndex) {
         assert rowValueIsNotNull.getQuick(columnIndex) != rowCount;
         rowValueIsNotNull.setQuick(columnIndex, rowCount);
+    }
+
+    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount) {
+        MemoryMA fixedSizeColumn = getSecondaryColumn(columnIndex);
+        long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
+        fixedSizeColumn.jumpTo(fixedSizeColSize);
+        if (rowCount > 0) {
+            long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
+            try {
+                if (columnType == ColumnType.STRING) {
+                    Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
+                } else {
+                    Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
+                }
+            } finally {
+                ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
+            }
+        }
+    }
+
+    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount) {
+        MemoryMA varColumn = getPrimaryColumn(columnIndex);
+        long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
+        varColumn.jumpTo(varColSize);
+        if (rowCount > 0) {
+            long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
+            try {
+                Vect.memset(address, (byte) varColSize, -1);
+            } finally {
+                ff.munmap(address, varColSize, MEM_TAG);
+            }
+        }
+    }
+
+    private void switchColumnsToNewSegment(LongList newColumnFiles) {
+        for (int i = 0; i < columnCount; i++) {
+            long newPrimaryFd = newColumnFiles.get(i * 4);
+            if (newPrimaryFd > -1L) {
+                MemoryMA primaryColumnFile = getPrimaryColumn(i);
+                long writeOffset = newColumnFiles.get(i * 4 + 1);
+                primaryColumnFile.switchTo(newPrimaryFd, writeOffset);
+
+                long newSecondaryFd = newColumnFiles.get(i * 4 + 2);
+                if (newSecondaryFd > -1L) {
+                    MemoryMA secondaryColumnFile = getSecondaryColumn(i);
+                    writeOffset = newColumnFiles.get(i * 4 + 3);
+                    secondaryColumnFile.switchTo(newSecondaryFd, writeOffset);
+                }
+            }
+        }
     }
 
     private long updateSegmentSize(long segmentSize, int columnIndex) {
@@ -1102,43 +1134,48 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
     private class WalMetadataUpdaterBackend implements SequencerMetadataWriterBackend {
         @Override
-        public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
-            int columnIndex = metadata.getColumnIndexQuiet(name);
+        public void addColumn(CharSequence columnName, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0L) {
 
-                if (startRowCount > 0 && rowCount >= startRowCount) {
+                long uncommittedRows = rowCount - startRowCount;
+                if (startRowCount > 0) {
                     // Roll last transaction to new segment
                     rollUncommittedToNewSegment();
                 }
 
                 if (startRowCount == 0 || rowCount == startRowCount) {
                     long segmentRowCount = rowCount - startRowCount;
-                    metadata.addColumn(name, type);
+                    metadata.addColumn(columnName, type);
                     columnCount = metadata.getColumnCount();
                     columnIndex = metadata.getColumnCount() - 1;
-
                     // create column file
                     configureColumn(columnIndex, type);
-                    path.trimTo(rootLen).slash().put(segmentId);
-                    openColumnFiles(name, columnIndex, path.length());
-                    setColumnNull(type, columnIndex, segmentRowCount);
-                    LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(name).I$();
+
+                    if (uncommittedRows > 0) {
+                        metadata.syncToMetaFile();
+
+                        path.trimTo(rootLen).slash().put(segmentId);
+                        openColumnFiles(columnName, columnIndex, path.length());
+                        setColumnNull(type, columnIndex, segmentRowCount);
+                    }
+                    LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(columnName).I$();
                 } else {
-                    throw CairoException.critical(0).put("column '").put(name).put("' added, cannot commit because of concurrent table definition change ");
+                    throw CairoException.critical(0).put("column '").put(columnName).put("' added, cannot commit because of concurrent table definition change ");
                 }
             } else {
                 // Assuming WAL added the column already added to the table
                 if (metadata.getColumnType(columnIndex) == type) {
-                    // Same column name, type added in this WAL and in another WAL
+                    // Same column columnName, type added in this WAL and in another WAL
                     // TODO: use specific exception that it's not a total fail
                 }
-                throw CairoException.nonCritical().put("column '").put(name).put("' already exists");
+                throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
             }
         }
 
         @Override
         public RecordMetadata getMetadata() {
-            return null;
+            return metadata;
         }
 
         @Override
@@ -1148,67 +1185,42 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
         @Override
         public void removeColumn(CharSequence columnName) {
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex > -1L) {
+                int type = metadata.getColumnType(columnIndex);
+                if (type > 0) {
+                    long uncommittedRows = rowCount - startRowCount;
+                    if (startRowCount > 0) {
+                        // Roll last transaction to new segment
+                        rollUncommittedToNewSegment();
+                    }
 
+                    if (startRowCount == 0 || rowCount == startRowCount) {
+                        int index = metadata.getColumnIndex(columnName);
+                        metadata.removeColumn(columnName);
+                        columnCount = metadata.getColumnCount();
+
+                        if (uncommittedRows > 0) {
+                            metadata.syncToMetaFile();
+                        }
+
+                        if (ColumnType.isSymbol(type)) {
+                            removeSymbolMapWriter(index);
+                        }
+                        markColumnRemoved(index);
+
+                        LOG.info().$("removed column from wal [path=").$(path).$(", columnName=").$(columnName).I$();
+                    } else {
+                        throw CairoException.instance(0).put("column '").put(columnName)
+                                .put("' removed, cannot commit because of concurrent table definition change ");
+                    }
+                }
+            }
         }
 
         @Override
         public void renameColumn(CharSequence columnName, CharSequence newName) {
 
-        }
-    }
-
-    private void setColumnNull(int columnType, int columnIndex, long rowCount) {
-        if (ColumnType.isVariableLength(columnType)) {
-            setVarColumnVarFileNull(columnType, columnIndex, rowCount);
-            setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
-        } else {
-            setFixColumnNulls(columnType, columnIndex, rowCount);
-        }
-    }
-
-    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount) {
-        MemoryMA varColumn = getPrimaryColumn(columnIndex);
-        long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
-        varColumn.jumpTo(varColSize);
-        if (rowCount > 0) {
-            long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
-            try {
-                Vect.memset(address, (byte) varColSize, -1);
-            } finally {
-                ff.munmap(address, varColSize, MEM_TAG);
-            }
-        }
-    }
-
-    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount) {
-        MemoryMA fixedSizeColumn = getSecondaryColumn(columnIndex);
-        long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
-        fixedSizeColumn.jumpTo(fixedSizeColSize);
-        if (rowCount > 0) {
-            long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
-            try {
-                if (columnType == ColumnType.STRING) {
-                    Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
-                } else {
-                    Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
-                }
-            } finally {
-                ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
-            }
-        }
-    }
-
-    private void setFixColumnNulls(int type, int columnIndex, long rowCount) {
-        MemoryMA fixedSizeColumn = getPrimaryColumn(columnIndex);
-        long columnFileSize = rowCount * ColumnType.sizeOf(type);
-        fixedSizeColumn.jumpTo(columnFileSize);
-        if (columnFileSize > 0) {
-            long address = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), columnFileSize, MEM_TAG);
-            try {
-                TableUtils.setNull(type, address, rowCount);
-            } finally {
-                ff.munmap(address, columnFileSize, MEM_TAG);
-            }
         }
     }
 
@@ -1228,7 +1240,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
         @Override
         public RecordMetadata getMetadata() {
-            return null;
+            return metadata;
         }
 
         @Override

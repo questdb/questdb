@@ -2294,6 +2294,7 @@ public class SqlCompiler implements Closeable {
                 name.token,
                 metadataFactory
         )) {
+            metadata.toReaderIndexes();
             final long structureVersion = metadata.getStructureVersion();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableName(), structureVersion);
             final int writerTimestampIndex = metadata.getTimestampIndex();

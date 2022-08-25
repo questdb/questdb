@@ -303,4 +303,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     public boolean isWalEnabled() {
         return walEnabled;
     }
+
+    @Override
+    public void toReaderIndexes() {
+        // Do nothing, already reading indexes
+    }
 }

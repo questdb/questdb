@@ -37,10 +37,6 @@ public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
-    public static final long WAL_META_OFFSET_VERSION = 0;
-    public static final long WAL_META_OFFSET_COLUMN_COUNT = 4;
-    public static final long WAL_META_OFFSET_TIMESTAMP_INDEX = 8;
-    public static final long WAL_META_OFFSET_COLUMNS = 12;
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
     public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
@@ -70,16 +66,14 @@ public class WalUtils {
                 final String name = getColumnName(metaMem, memSize, offset, i).toString();
                 offset += Vm.getStorageLength(name);
 
-                if (type > 0) {
-                    nameIndex.put(name, i);
+                // Negative type means deleted column, but it is still loaded included
+                nameIndex.put(name, i);
 
-                    if (ColumnType.isSymbol(type)) {
-                        columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
-                    } else {
-                        columnMetadata.add(new TableColumnMetadata(name, -1L, type));
-                    }
+                if (ColumnType.isSymbol(Math.abs(type))) {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
+                } else {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type));
                 }
-                // Negative type means deleted column
             }
 
             // validate designated timestamp column

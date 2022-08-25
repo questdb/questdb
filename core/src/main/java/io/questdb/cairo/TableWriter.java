@@ -3146,6 +3146,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 }
             } else {
                 walMappedColumns.add(null);
+                walMappedColumns.add(null);
             }
         }
     }
@@ -5070,7 +5071,15 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             SymbolMapDiff symbolMapDiff;
             while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
                 int columnIndex = symbolMapDiff.getColumnIndex();
-                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType == -ColumnType.SYMBOL) {
+                    // Scroll the cursor, don't apply, symbol is deleted
+                    while (symbolMapDiff.nextEntry() != null) {
+                    }
+                    continue;
+                }
+
+                if (!ColumnType.isSymbol(columnType)) {
                     // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
                     throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
                             .put(", walPath=").put(walPath)
