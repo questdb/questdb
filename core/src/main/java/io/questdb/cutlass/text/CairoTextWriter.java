@@ -237,7 +237,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             switch (atomicity) {
                 case Atomicity.SKIP_ALL:
                     writer.rollback();
-                    throw CairoException.instance(0).put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
+                    throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
                 case Atomicity.SKIP_ROW:
                     w.cancel();
                     return true;
@@ -264,7 +264,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
         if (metadata.getColumnCount() < detectedTypes.size()) {
             writer.close();
-            throw CairoException.instance(0)
+            throw CairoException.nonCritical()
                     .put("column count mismatch [textColumnCount=").put(detectedTypes.size())
                     .put(", tableColumnCount=").put(metadata.getColumnCount())
                     .put(", table=").put(tableName)
@@ -303,7 +303,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                         break;
                     case ColumnType.BINARY:
                         writer.close();
-                        throw CairoException.instance(0).put("cannot import text into BINARY column [index=").put(i).put(']');
+                        throw CairoException.nonCritical().put("cannot import text into BINARY column [index=").put(i).put(']');
                     default:
                         this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
@@ -324,7 +324,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         assert writer == null;
 
         if (detectedTypes.size() == 0) {
-            throw CairoException.instance(0).put("cannot determine text structure");
+            throw CairoException.nonCritical().put("cannot determine text structure");
         }
 
         boolean canUpdateMetadata = true;
@@ -358,7 +358,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 break;
             default:
-                throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
+                throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
         }
         if (canUpdateMetadata) {
             if (PartitionBy.isPartitioned(partitionBy)) {

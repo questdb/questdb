@@ -34,6 +34,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
+    public static final int NON_CRITICAL = -1;
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = -101;
 
@@ -42,7 +43,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     protected final StringSink message = new StringSink();
     protected int errno;
     private boolean cacheable;
-    private boolean interruption;
+    private boolean interruption; // used when a query times out
 
     public static CairoException duplicateColumn(CharSequence columnName) {
         return duplicateColumn(columnName, null);
@@ -57,18 +58,18 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
-        return instance(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+        return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
     }
 
     public static CairoException detachedMetadataMismatch(CharSequence attribute) {
-        return instance(METADATA_VALIDATION)
+        return critical(METADATA_VALIDATION)
                 .put("Detached partition metadata [")
                 .put(attribute)
                 .put("] is not compatible with current table metadata");
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
-        return instance(METADATA_VALIDATION)
+        return critical(METADATA_VALIDATION)
                 .put("Detached column [index=")
                 .put(columnIndex)
                 .put(", name=")
@@ -78,7 +79,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put("] does not match current table metadata");
     }
 
-    public static CairoException instance(int errno) {
+    public static CairoException nonCritical() {
+        return critical(NON_CRITICAL);
+    }
+
+    public static CairoException critical(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new CairoException()) != null;
@@ -109,6 +114,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         // This is to have correct stack trace reported in CI 
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    public boolean isCritical() {
+        return errno != NON_CRITICAL;
     }
 
     public boolean isCacheable() {

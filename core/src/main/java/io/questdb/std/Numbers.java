@@ -579,20 +579,6 @@ public final class Numbers {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
     }
 
-    public static double longToDouble(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Double.NaN;
-    }
-
-    public static float longToFloat(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Float.NaN;
-    }
-
     public static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

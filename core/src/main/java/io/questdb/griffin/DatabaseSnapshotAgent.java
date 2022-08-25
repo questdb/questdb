@@ -204,7 +204,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             // Delete snapshot directory to avoid recovery on next restart.
             path.trimTo(snapshotRootLen).$();
             if (ff.rmdir(path) != 0) {
-                throw CairoException.instance(ff.errno())
+                throw CairoException.critical(ff.errno())
                         .put("could not remove snapshot dir [dir=").put(path)
                         .put(", errno=").put(ff.errno())
                         .put(']');
@@ -253,13 +253,13 @@ public class DatabaseSnapshotAgent implements Closeable {
             if (ff.exists(path.slash$())) {
                 path.trimTo(snapshotLen).$();
                 if (ff.rmdir(path) != 0) {
-                    throw CairoException.instance(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
+                    throw CairoException.critical(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
                 }
             }
             // Recreate the snapshot/db dir.
             path.trimTo(snapshotLen).slash$();
             if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
             }
 
             try (
@@ -285,7 +285,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                                 path.trimTo(snapshotLen).concat(tableName).slash$();
                                 if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                                    throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+                                    throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
                                 }
 
                                 int rootLen = path.length();
@@ -316,7 +316,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                         // Flush dirty pages and filesystem metadata to disk
                         if (ff.sync() != 0) {
-                            throw CairoException.instance(ff.errno()).put("Could not sync");
+                            throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
 
                         LOG.info().$("snapshot copying finished").$();

@@ -74,7 +74,7 @@ public class DropIndexOperator extends PurgingOperator {
                 // hard link
                 partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
                 if (-1 == ff.hardLink(path, other)) {
-                    throw CairoException.instance(ff.errno())
+                    throw CairoException.critical(ff.errno())
                             .put("cannot hardLink [src=").put(path)
                             .put(", hardLink=").put(other)
                             .put(']');

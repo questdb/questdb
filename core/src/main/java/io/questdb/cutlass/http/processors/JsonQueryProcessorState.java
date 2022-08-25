@@ -250,8 +250,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 $(']').$();
     }
 
-    public void logSyntaxError(SqlException e) {
-        info().$("syntax-error [q=`").utf8(query).$("`, at=").$(e.getPosition()).$(", message=`").utf8(e.getFlyweightMessage()).$('`').$(']').$();
+    public void logSqlError(SqlException e) {
+        info().$("sql error [q=`").utf8(query).$("`, at=").$(e.getPosition()).$(", message=`").utf8(e.getFlyweightMessage()).$('`').$(']').$();
     }
 
     public void logTimings() {

@@ -104,13 +104,13 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             long keyMemSize = this.keyMem.size();
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Index file too short: ").put(path);
+                throw CairoException.critical(0).put("Index file too short: ").put(path);
             }
 
             // verify header signature
             if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Unknown format: ").put(path);
+                throw CairoException.critical(0).put("Unknown format: ").put(path);
             }
 
             // Triple check atomic read. We read first and last sequences. If they match - there is a chance at stable
@@ -137,7 +137,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
                 if (clock.getTicks() > deadline) {
                     LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
-                    throw CairoException.instance(0).put(INDEX_CORRUPT);
+                    throw CairoException.critical(0).put(INDEX_CORRUPT);
                 }
 
                 Os.pause();
@@ -178,7 +178,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
-                throw CairoException.instance(0).put(INDEX_CORRUPT);
+                throw CairoException.critical(0).put(INDEX_CORRUPT);
             }
             Os.pause();
         }

@@ -184,7 +184,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 compileQuery(state);
             }
         } catch (SqlException e) {
-            syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
+            sqlError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] Resource busy, will retry").$();
@@ -361,13 +361,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
     }
 
-    private static void syntaxError(
+    private static void sqlError(
             HttpChunkedResponseSocket socket,
             SqlException sqlException,
             JsonQueryProcessorState state,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.logSyntaxError(sqlException);
+        state.logSqlError(sqlException);
         sendException(
                 socket,
                 sqlException.getPosition(),
@@ -566,8 +566,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (e instanceof CairoException && ((CairoException) e).isInterruption()) {
-            state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
+        if (e instanceof CairoException) {
+            CairoException ce = (CairoException) e;
+            if (ce.isInterruption()) {
+                state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
+            } else {
+                if (ce.isCritical()) {
+                    state.critical().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
+                } else {
+                    state.error().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
+                }
+            }
         } else if (e instanceof HttpException) {
             state.error().$("internal HTTP server error [q=`").utf8(state.getQuery()).$("`, reason=`").$(((HttpException) e).getFlyweightMessage()).$("`]").$();
         } else {

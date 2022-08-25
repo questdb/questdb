@@ -97,7 +97,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public long findFirst(LPSZ path) {
         long ptr = Files.findFirst(path);
         if (ptr == -1) {
-            throw CairoException.instance(Os.errno()).put("findFirst failed on ").put(path);
+            throw CairoException.critical(Os.errno()).put("findFirst failed on ").put(path);
         }
         return ptr;
     }
@@ -111,7 +111,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public int findNext(long findPtr) {
         int r = Files.findNext(findPtr);
         if (r == -1) {
-            throw CairoException.instance(Os.errno()).put("findNext failed");
+            throw CairoException.critical(Os.errno()).put("findNext failed");
         }
         return r;
     }
@@ -187,7 +187,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public long length(long fd) {
         long r = Files.length(fd);
         if (r < 0) {
-            throw CairoException.instance(Os.errno()).put("Checking file size failed");
+            throw CairoException.critical(Os.errno()).put("Checking file size failed");
         }
         return r;
     }

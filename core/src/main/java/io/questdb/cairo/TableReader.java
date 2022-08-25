@@ -547,7 +547,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
-            throw CairoException.instance(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
+            throw CairoException.critical(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
 
         MemoryR col = columns.getQuick(globalIndex);
@@ -760,7 +760,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (!existenceChecked) {
                         path.trimTo(rootLen).put(Files.SEPARATOR).$();
                         if (!ff.exists(path)) {
-                            throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
+                            throw CairoException.nonCritical().put("table does not exist [table=").put(tableName).put(']');
                         }
                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                     }
@@ -829,7 +829,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
 
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
-                CairoException exception = CairoException.instance(0).put("Partition '");
+                CairoException exception = CairoException.critical(0).put("Partition '");
                 formatPartitionDirName(partitionIndex, exception.message);
                 TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
                 exception.put("' does not exist in table '")
@@ -840,7 +840,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 exception.put("'] to repair the table or restore the partition directory.");
                 throw exception;
             } else {
-                throw CairoException.instance(0).put("Table '").put(tableName)
+                throw CairoException.critical(0).put("Table '").put(tableName)
                         .put("' data directory does not exist on the disk at ")
                         .put(path)
                         .put(". Restore data on disk or drop the table.");
@@ -916,7 +916,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             count++;
             if (clock.getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                throw CairoException.instance(0).put("Transaction read timeout");
+                throw CairoException.critical(0).put("Transaction read timeout");
             }
             Os.pause();
         }
@@ -1094,7 +1094,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         return false;
                     }
                     LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                    throw CairoException.instance(0).put("Metadata read timeout");
+                    throw CairoException.critical(0).put("Metadata read timeout");
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other

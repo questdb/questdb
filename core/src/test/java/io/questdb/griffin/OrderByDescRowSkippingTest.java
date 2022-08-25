@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.std.IntList;
@@ -719,7 +720,8 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
 
         try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-             RecordCursor cursor = prepareCursor(reader)) {
+             RecordCursorFactory factory = prepareFactory(reader);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             cursor.skipTo(1);
             Assert.assertFalse(cursor.hasNext());
         }
@@ -731,13 +733,14 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         preparePartitionPerRowTableWithLongNames();
 
         try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-             RecordCursor cursor = prepareCursor(reader)) {
+             RecordCursorFactory factory = prepareFactory(reader);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             cursor.skipTo(11);
             Assert.assertFalse(cursor.hasNext());
         }
     }
 
-    private RecordCursor prepareCursor(TableReader reader) throws SqlException {
+    private RecordCursorFactory prepareFactory(TableReader reader) throws SqlException {
         TableReaderMetadata metadata = reader.getMetadata();
         IntList columnIndexes = new IntList();
         columnIndexes.add(0);
@@ -747,8 +750,8 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
         columnSizes.add(3);
 
-        DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
-                new FullBwdDataFrameCursorFactory(engine, "trips", metadata.getId(), reader.getVersion()),
+        return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
+                new FullBwdDataFrameCursorFactory("trips", metadata.getId(), reader.getVersion()),
                 new BwdDataFrameRowCursorFactory(),
                 false,
                 null,
@@ -757,8 +760,6 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                 columnSizes,
                 true
         );
-
-        return factory.getCursor(sqlExecutionContext);
     }
 
     @Test
@@ -776,7 +777,8 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                 row.append();
 
                 try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-                     RecordCursor cursor = prepareCursor(reader)) {
+                     RecordCursorFactory factory = prepareFactory(reader);
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     cursor.skipTo(1);
                     Assert.assertFalse(cursor.hasNext());
                 }

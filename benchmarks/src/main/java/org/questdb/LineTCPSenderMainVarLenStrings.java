@@ -38,8 +38,6 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
-import java.io.IOException;
-
 public class LineTCPSenderMainVarLenStrings {
     private static final StringSink sink = new StringSink();
     private static final char[] chars = new char[] {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', ' ', '"', '\\', '\n'};
@@ -118,7 +116,7 @@ public class LineTCPSenderMainVarLenStrings {
         public void send(long ptr, int len) {
             if (outFileFd > -1) {
                 if (ff.write(outFileFd, ptr, len, fileOffset) != len) {
-                    throw CairoException.instance(ff.errno()).put("Cannot write to file");
+                    throw CairoException.critical(ff.errno()).put("Cannot write to file");
                 }
                 fileOffset += len;
             }
