@@ -97,7 +97,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         } else {
             throw CairoException.instance(0)
                     .put("invalid Column Version state ")
-                    .put(Timestamps.toString(partitionTimestamp))
+                    .ts(partitionTimestamp)
                     .put(" column version state, cannot update partition information");
         }
         hasChanges = true;

@@ -4890,8 +4890,8 @@ public class TableWriter implements Closeable {
                     || partitionFloorMethod.floor(attachMaxTimestamp) != partitionTimestamp) {
                 throw CairoException.instance(0)
                         .put("invalid timestamp column data in detached partition, data does not match partition directory name [path=").put(path)
-                        .put(", minTimestamp=").put(Timestamps.toString(attachMinTimestamp))
-                        .put(", maxTimestamp=").put(Timestamps.toString(attachMaxTimestamp)).put(']');
+                        .put(", minTimestamp=").ts(attachMinTimestamp)
+                        .put(", maxTimestamp=").ts(attachMaxTimestamp).put(']');
             }
         } finally {
             ff.close(fd);

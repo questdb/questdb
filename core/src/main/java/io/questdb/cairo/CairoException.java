@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -140,6 +141,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException put(CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException ts(long timestamp) {
+        TimestampFormatUtils.appendDateTime(message, timestamp);
         return this;
     }
 
