@@ -25,12 +25,15 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.engine.ops.*;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DoneOperationFuture;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,14 +53,14 @@ public class CompiledQueryImpl implements CompiledQuery {
     private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
+        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterFrontend writerFronted) throws SqlException {
                 return writerFronted.applyUpdate(operation);
             }
         };
 
-        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
+        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterFrontend writerFronted) throws SqlException {
                 return writerFronted.applyAlter(operation, true);

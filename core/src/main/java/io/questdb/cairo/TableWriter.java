@@ -1115,8 +1115,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     public void processWalCommit(Path walPath, long segmentTxn) {
-        var walCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
-        var dataInfo = walCursor.getDataInfo();
+        WalEventCursor walCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+        WalEventCursor.DataInfo dataInfo = walCursor.getDataInfo();
 
         processWalCommit(
                 walPath,

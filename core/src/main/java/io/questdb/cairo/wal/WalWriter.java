@@ -319,9 +319,9 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                     int columnType = metadata.getColumnType(columnIndex);
 
                     if (columnType > 0) {
-                        var primaryColumn = getPrimaryColumn(columnIndex);
-                        var secondaryColumn = getSecondaryColumn(columnIndex);
-                        var columnName = metadata.getColumnName(columnIndex);
+                        MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
+                        MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
+                        String columnName = metadata.getColumnName(columnIndex);
 
                         CopySegmentFileJob.rollColumnToSegment(ff,
                                 configuration.getWriterFileOpenOpts(),
