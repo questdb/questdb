@@ -169,7 +169,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.isOpen = true;
+            if (!this.isOpen) {
+                this.isOpen = true;
+                this.slaveChain.reallocate();
+                this.joinKeyMap.reallocate();
+            }
             buildMapOfSlaveRecords(slaveCursor, circuitBreaker);
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
@@ -181,8 +185,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
 
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             try {
-                slaveChain.inflate();
-                joinKeyMap.inflate();
                 final Record record = slaveCursor.getRecord();
                 while (slaveCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();

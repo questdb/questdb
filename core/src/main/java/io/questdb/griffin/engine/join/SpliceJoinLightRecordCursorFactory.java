@@ -272,8 +272,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            this.isOpen = true;
-            this.joinKeyMap.inflate();
+            if (!this.isOpen) {
+                this.isOpen = true;
+                this.joinKeyMap.reallocate();
+            }
             // avoid resetting these
             if (this.masterCursor == null) {
                 this.masterCursor = masterCursor;

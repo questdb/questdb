@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.Inflatable;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -44,13 +43,14 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
         super(rows, columnIndexes);
         this.map = map;
         this.recordSink = recordSink;
-        this.isOpen = true;
     }
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         DataFrame frame;
-        map.inflate();
+        if (!isOpen()) {
+            map.reallocate();
+        }
         try {
             while ((frame = this.dataFrameCursor.next()) != null) {
                 final int partitionIndex = frame.getPartitionIndex();
@@ -74,8 +74,7 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     public void close() {
-        if (isOpen) {
-            isOpen = false;
+        if (isOpen()) {
             map.close();
             super.close();
         }

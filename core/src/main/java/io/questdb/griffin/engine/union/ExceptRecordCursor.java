@@ -57,10 +57,12 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        isOpen = true;
         super.of(cursorA, cursorB, circuitBreaker);
         this.recordB = cursorB.getRecord();
-        map.inflate();
+        if (!isOpen) {
+            map.reallocate();
+            isOpen = true;
+        }
         hashCursorB();
         recordA = cursorA.getRecord();
         toTop();

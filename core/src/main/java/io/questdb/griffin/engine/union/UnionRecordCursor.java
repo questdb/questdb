@@ -101,8 +101,10 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        this.isOpen = true;
-        this.map.inflate();
+        if (!isOpen) {
+            this.isOpen = true;
+            this.map.reallocate();
+        }
         super.of(cursorA, cursorB, circuitBreaker);
         this.record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();

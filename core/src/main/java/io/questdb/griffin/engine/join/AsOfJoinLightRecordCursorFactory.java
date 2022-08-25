@@ -205,8 +205,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            isOpen = true;
-            joinKeyMap.inflate();
+            if (!isOpen) {
+                isOpen = true;
+                joinKeyMap.reallocate();
+            }
             slaveTimestamp = Long.MIN_VALUE;
             lastSlaveRowID = Long.MIN_VALUE;
             this.masterCursor = masterCursor;

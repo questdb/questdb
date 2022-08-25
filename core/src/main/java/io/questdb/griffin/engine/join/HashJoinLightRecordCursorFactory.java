@@ -158,9 +158,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             try {
-                this.isOpen = true;
-                this.joinKeyMap.inflate();
-                this.slaveChain.inflate();
+                if (!isOpen) {
+                    this.isOpen = true;
+                    this.joinKeyMap.reallocate();
+                    this.slaveChain.reallocate();
+                }
 
                 buildMapOfSlaveRecords(slaveCursor, circuitBreaker);
 

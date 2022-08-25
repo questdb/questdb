@@ -92,7 +92,7 @@ import org.jetbrains.annotations.TestOnly;
  * entry will be stored in bucket, which can be computed directly from
  * this hash code.
  */
-public class CompactMap implements Map, Inflatable {
+public class CompactMap implements Map, Reallocatable {
     public static final byte BITS_DIRECT_HIT = (byte) 0b10000000;
     public static final byte BITS_DISTANCE = 0b01111111;
     public static final int jumpDistancesLen = 126;
@@ -195,7 +195,7 @@ public class CompactMap implements Map, Inflatable {
     }
 
     @Override
-    public void inflate() {
+    public void reallocate() {
         clear();
     }
 

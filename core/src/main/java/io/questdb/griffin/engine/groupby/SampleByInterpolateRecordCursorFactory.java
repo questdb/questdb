@@ -160,9 +160,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.isOpen = true;
-        cursor.recordKeyMap.inflate();
-        cursor.dataMap.inflate();
+        if (!cursor.isOpen) {
+            cursor.isOpen = true;
+            cursor.recordKeyMap.reallocate();
+            cursor.dataMap.reallocate();
+        }
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();

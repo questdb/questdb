@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.Inflatable;
+import io.questdb.cairo.Reallocatable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.MemoryTag;
@@ -32,7 +32,7 @@ import io.questdb.std.Mutable;
 
 import java.io.Closeable;
 
-public class LongChain implements Closeable, Mutable, Inflatable {
+public class LongChain implements Closeable, Mutable, Reallocatable {
 
     private final MemoryARW valueChain;
     private final TreeCursor cursor;
@@ -58,7 +58,7 @@ public class LongChain implements Closeable, Mutable, Inflatable {
     }
 
     @Override
-    public void inflate() {
+    public void reallocate() {
         //nothing to do here
     }
 

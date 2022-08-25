@@ -133,8 +133,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             try {
-                isOpen = true;
-                dataMap.inflate();
+                if (!isOpen) {
+                    isOpen = true;
+                    dataMap.reallocate();
+                }
                 final Record baseRecord = baseCursor.getRecord();
                 final int n = groupByFunctions.size();
                 while (baseCursor.hasNext()) {

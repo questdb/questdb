@@ -183,12 +183,15 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
-            this.isOpen = true;
+            if (!isOpen) {
+                this.isOpen = true;
+                this.dataMap.reallocate();
+            }
             this.baseCursor = baseCursor;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.record = baseCursor.getRecord();
             this.recordB = baseCursor.getRecordB();
-            this.dataMap.inflate();
+
 
             // first iteration to get initial timestamp value
             if (baseCursor.hasNext()) {

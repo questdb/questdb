@@ -78,7 +78,10 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.latestByMap.inflate();
+        if (!cursor.isOpen) {
+            cursor.isOpen = true;
+            cursor.latestByMap.reallocate();
+        }
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
@@ -159,7 +162,6 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.isOpen = true;
             this.baseCursor = baseCursor;
             this.baseRecord = baseCursor.getRecord();
             this.mapCursor = latestByMap.getCursor();

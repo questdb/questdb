@@ -24,14 +24,14 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.Inflatable;
+import io.questdb.cairo.Reallocatable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class DirectLongList implements Mutable, Closeable, Inflatable {
+public class DirectLongList implements Mutable, Closeable, Reallocatable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
     private final int memoryTag;
@@ -112,7 +112,7 @@ public class DirectLongList implements Mutable, Closeable, Inflatable {
     }
 
     @Override
-    public void inflate() {
+    public void reallocate() {
         if (address == 0) {
             resetCapacity();
         }

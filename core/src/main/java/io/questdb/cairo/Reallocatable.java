@@ -24,12 +24,14 @@
 
 package io.questdb.cairo;
 
+import java.io.Closeable;
+
 /**
  * Resource with native memory allocations that can be released with close(),
- * re-initialized with inflate() and then used again.
+ * re-initialized with reallocate() and then used again.
  */
-public interface Inflatable {
+public interface Reallocatable extends Closeable {
 
     /* allocate native resource (usually using default sizes) */
-    void inflate();
+    void reallocate();
 }

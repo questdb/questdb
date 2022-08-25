@@ -208,8 +208,10 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            isOpen = true;
-            joinKeyMap.inflate();
+            if (!isOpen) {
+                isOpen = true;
+                joinKeyMap.reallocate();
+            }
             slaveTimestamp = Long.MIN_VALUE;
             danglingSlaveRecord = false;
             this.masterCursor = masterCursor;

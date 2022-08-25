@@ -41,6 +41,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     public AbstractDescendingRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
         super(columnIndexes);
         this.rows = rows;
+        this.isOpen = true;
     }
 
     @Override
@@ -67,12 +68,22 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
 
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.isOpen = true;
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
         rows.clear();
         buildTreeMap(executionContext);
+        this.isOpen = true;
         index = rows.size() - 1;
+    }
+
+    public boolean isOpen() {
+        return isOpen;
+    }
+
+    @Override
+    public void close() {
+        this.isOpen = false;
+        super.close();
     }
 }

@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-public class FastMap implements Map, Inflatable {
+public class FastMap implements Map, Reallocatable {
 
     private static final HashFunction DEFAULT_HASH = Hash::hashMem;
     private static final int MIN_INITIAL_CAPACITY = 128;
@@ -177,7 +177,7 @@ public class FastMap implements Map, Inflatable {
         this.cursor = new FastMapCursor(record, this);
     }
 
-    public void inflate() {
+    public void reallocate() {
         if (kStart == 0) {
             //handles both mem and offsets
             restoreInitialCapacity();
