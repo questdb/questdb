@@ -24,7 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.MetadataFactory;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.Sequencer;
 import io.questdb.cairo.wal.SequencerMetadata;
@@ -109,7 +111,7 @@ public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
         boolean closing = false;
 
         ReusableSequencerMetadata() {
-            super(ff);
+            super(ff, SequencerMetadata.READ_WRITE);
         }
 
         @Override

@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.pool.AbstractPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.PoolClosedException;
@@ -342,7 +345,7 @@ public class TableRegistry extends AbstractPool {
             @Override
             public void close() {
                 if (isOpen()) {
-                    if (pool != null) {
+                    if (!isDistressed() && pool != null) {
                         if (pool.returnToPool(this)) {
                             return;
                         }

@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -53,15 +54,13 @@ public class WalReader implements Closeable {
     private final String tableName;
     private final String walName;
     private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
-    private final long segmentId;
     private final long rowCount;
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, SequencerMetadata metadata, long segmentId, long rowCount) {
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, long rowCount) {
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
-        this.segmentId = segmentId;
         this.rowCount = rowCount;
 
         ff = configuration.getFilesFacade();
@@ -70,7 +69,8 @@ public class WalReader implements Closeable {
         rootLen = path.length();
 
         try {
-            this.metadata = metadata;
+            this.metadata = new SequencerMetadata(ff, SequencerMetadata.READ_ONLY);
+            this.metadata.open(Chars.toString(tableName), path.slash().put(segmentId), rootLen);
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$(tableName).I$();

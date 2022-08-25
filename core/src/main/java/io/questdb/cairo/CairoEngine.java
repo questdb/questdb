@@ -369,11 +369,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         if (tableRegistry.hasSequencer(tableName)) {
             // This is WAL table because sequencer exists
-            SequencerMetadata metadata = new SequencerMetadata(configuration.getFilesFacade());
-//            String tableNameStr = Chars.toString(tableName);
-            tableRegistry.copyMetadataTo(tableName, metadata);
-//            final Sequencer sequencer = tableRegistry.getSequencer(tableNameStr);
-            return new WalReader(configuration, tableName, walName, metadata, segmentId, walRowCount);
+            return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
         }
 
         throw CairoException.instance(0).put("WAL reader is not supported for table ").put(tableName);

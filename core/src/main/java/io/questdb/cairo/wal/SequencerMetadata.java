@@ -31,24 +31,38 @@ import io.questdb.cairo.TableDescriptor;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends BaseRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
+    public static boolean READ_ONLY = true;
+    public static boolean READ_WRITE = false;
+
     private final FilesFacade ff;
-    private final MemoryMAR metaMem = Vm.getMARInstance();
+    private final boolean readonly;
+    private final MemoryMAR metaMem;
+    private final MemoryMR roMetaMem;
 
     private long structureVersion = -1;
     private int tableId;
     private String tableName;
 
-    public SequencerMetadata(FilesFacade ff) {
+    public SequencerMetadata(FilesFacade ff, boolean readonly) {
         this.ff = ff;
+        this.readonly = readonly;
+        if (!readonly) {
+            roMetaMem = metaMem = Vm.getMARInstance();
+        } else {
+            metaMem = null;
+            roMetaMem = Vm.getMRInstance();
+        }
         columnMetadata = new ObjList<>();
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
@@ -115,18 +129,25 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     public void open(String tableName, Path path, int pathLen) {
         reset();
         this.tableName = tableName;
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
 
         // get written data size
-        metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
-        int size = metaMem.getInt(0);
-        metaMem.jumpTo(size);
+        if (readonly == READ_WRITE) {
+            metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
+            int size = metaMem.getInt(0);
+            metaMem.jumpTo(size);
+        }
 
-        loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap);
-        structureVersion = metaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
+        loadSequencerMetadata(roMetaMem, columnMetadata, columnNameIndexMap);
+        structureVersion = roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
         columnCount = columnMetadata.size();
-        timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
-        tableId = metaMem.getInt(SEQ_META_TABLE_ID);
+        timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+        tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
+
+        if (readonly == READ_ONLY) {
+            // close early
+            roMetaMem.close();
+        }
     }
 
     public void removeColumn(CharSequence columnName) {
@@ -162,6 +183,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     protected void clear() {
         reset();
         Misc.free(metaMem);
+        Misc.free(roMetaMem);
     }
 
     private void reset() {

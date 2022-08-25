@@ -28,15 +28,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 
-import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalTxnType.DATA;
+import static io.questdb.cairo.wal.WalTxnType.NONE;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
 
     private final DataInfo dataInfo = new DataInfo();
-    private final AddColumnInfo addColumnInfo = new AddColumnInfo();
-    private final RemoveColumnInfo removeColumnInfo = new RemoveColumnInfo();
-
     private final MemoryMR eventMem;
     private long memSize;
     private long offset = Integer.BYTES; // skip wal meta version
@@ -105,12 +103,6 @@ public class WalEventCursor {
             case DATA:
                 dataInfo.read();
                 break;
-            case ADD_COLUMN:
-                addColumnInfo.read();
-                break;
-            case REMOVE_COLUMN:
-                removeColumnInfo.read();
-                break;
             default:
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
         }
@@ -121,20 +113,6 @@ public class WalEventCursor {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
         }
         return dataInfo;
-    }
-
-    public AddColumnInfo getAddColumnInfo() {
-        if (type != ADD_COLUMN) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not ADD_COLUMN, type=").put(type);
-        }
-        return addColumnInfo;
-    }
-
-    public RemoveColumnInfo getRemoveColumnInfo() {
-        if (type != REMOVE_COLUMN) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not REMOVE_COLUMN, type=").put(type);
-        }
-        return removeColumnInfo;
     }
 
     public long getTxn() {
@@ -183,42 +161,6 @@ public class WalEventCursor {
 
         public SymbolMapDiff nextSymbolMapDiff() {
             return readNextSymbolMapDiff(symbolMapDiff);
-        }
-    }
-
-    public class AddColumnInfo {
-        private int columnIndex;
-        private CharSequence columnName;
-        private int columnType;
-
-        private void read() {
-            columnIndex = readInt();
-            columnName = readStr();
-            columnType = readInt();
-        }
-
-        public int getColumnIndex() {
-            return columnIndex;
-        }
-
-        public CharSequence getColumnName() {
-            return columnName;
-        }
-
-        public int getColumnType() {
-            return columnType;
-        }
-    }
-
-    public class RemoveColumnInfo {
-        private int columnIndex;
-
-        private void read() {
-            columnIndex = readInt();
-        }
-
-        public int getColumnIndex() {
-            return columnIndex;
         }
     }
 
