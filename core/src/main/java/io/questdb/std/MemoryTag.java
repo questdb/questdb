@@ -111,7 +111,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_IMPORT, "NATIVE_IMPORT");
         tagNameMap.extendAndSet(NATIVE_ROSTI, "NATIVE_ROSTI");
         tagNameMap.extendAndSet(MMAP_TABLE_WAL_READER, "MMAP_TABLE_WAL_READER");
-        tagNameMap.extendAndSet(MMAP_TABLE_WAL_WRITER, "MMAP_TABLE_WALD_WRITER");
+        tagNameMap.extendAndSet(MMAP_TABLE_WAL_WRITER, "MMAP_TABLE_WAL_WRITER");
         tagNameMap.extendAndSet(MMAP_SEQUENCER, "MMAP_SEQUENCER");
         tagNameMap.extendAndSet(MMAP_PARALLEL_IMPORT, "MMAP_PARALLEL_IMPORT");
         tagNameMap.extendAndSet(NATIVE_PARALLEL_IMPORT, "NATIVE_PARALLEL_IMPORT");

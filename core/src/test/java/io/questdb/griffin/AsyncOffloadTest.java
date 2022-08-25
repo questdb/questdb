@@ -43,10 +43,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -120,6 +117,14 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
 
         AbstractGriffinTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
+        pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;
+        pageFrameReduceShardCount = 2;
+        pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
+        super.setUp();
     }
 
     @Test
@@ -217,6 +222,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 SqlJitMode.JIT_MODE_DISABLED
         );
     }
+
 
     private static void assertQuery(
             CharSequence expected,
