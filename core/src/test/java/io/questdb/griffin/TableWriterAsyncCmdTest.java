@@ -144,7 +144,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         Assert.fail();
                     }
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot publish, command queue is full [table=product]");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not publish, command queue is full [table=product]");
                 }
             } // Unblock table
 

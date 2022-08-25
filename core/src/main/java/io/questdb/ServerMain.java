@@ -158,8 +158,10 @@ public class ServerMain {
         log.advisoryW().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
         log.advisoryW().$("db root: ").$(cairoConfiguration.getRoot()).$();
         log.advisoryW().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
+        log.advisoryW().$("partition detach root: ").$(cairoConfiguration.getDetachRoot()).$();
         try (Path path = new Path()) {
             verifyFileSystem("db", cairoConfiguration.getRoot(), path, log);
+            verifyFileSystem("partition detach", cairoConfiguration.getDetachRoot(), path, log);
             verifyFileSystem("backup", cairoConfiguration.getBackupRoot(), path, log);
             verifyFileOpts(cairoConfiguration, path);
         }
@@ -474,6 +476,10 @@ public class ServerMain {
 
     private static void setPublicVersion(String publicDir, String version) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
+        File publicFolder = f.getParentFile();
+        if (!publicFolder.exists()) {
+            publicFolder.mkdirs();
+        }
         try (FileOutputStream fos = new FileOutputStream(f)) {
             byte[] buf = version.getBytes();
             fos.write(buf, 0, buf.length);
@@ -617,7 +623,7 @@ public class ServerMain {
         if (file == null) {
             throw new IllegalArgumentException("File must not be null");
         }
-        if (File.separatorChar == '\\') {
+        if (Os.type == Os.WINDOWS) {
             return true;
         }
 

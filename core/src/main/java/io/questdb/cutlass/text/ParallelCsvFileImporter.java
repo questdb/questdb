@@ -49,6 +49,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.function.Consumer;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 
 /**
  * Class is responsible for importing of large unordered import files into partitioned tables.
@@ -125,6 +127,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte status = TextImportTask.STATUS_STARTED;
     private byte phase = TextImportTask.PHASE_SETUP;
     private CharSequence errorMessage;
+    private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
+    private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
+    private final Consumer<TextImportTask> collectStubRef = this::collectStub;
     //incremented in phase 2
     private long linesIndexed;
     //row stats are incremented in phase 3
@@ -132,11 +137,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private long rowsImported;
     private long errors;
     private long phaseErrors;
-    private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
-    private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
     private final Consumer<TextImportTask> collectIndexStatsRef = this::collectIndexStats;
-    private final Consumer<TextImportTask> collectStubRef = this::collectStub;
     private long startMs;//start time of current phase (in millis)
     private boolean createdWorkDir;
     private ExecutionCircuitBreaker circuitBreaker;
@@ -509,7 +511,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void attachPartitions(TableWriter writer) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ATTACH_PARTITIONS);
 
-        for (int i = 0, sz = partitions.size(); i < sz; i++) {
+        // Go descending, attaching last partition is more expensive than others
+        for (int i = partitions.size() - 1; i > -1; i--) {
             PartitionInfo partition = partitions.getQuick(i);
             if (partition.importedRows == 0) {
                 continue;
@@ -518,7 +521,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final CharSequence partitionDirName = partition.name;
             try {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
-                writer.attachPartition(timestamp, false);
+                writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
                 throw TextImportException.instance(
                                 TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
@@ -629,7 +632,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return path.equals(normalize(configuration.getConfRoot())) ||
                 path.equals(normalize(configuration.getRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
-                path.equals(normalize(configuration.getSnapshotRoot()));
+                path.equals(normalize(configuration.getSnapshotRoot())) ||
+                path.equals(normalize(configuration.getDetachRoot())) ||
+                path.equals(normalize(configuration.getBackupRoot()));
     }
 
     private void logTypeError(int i, int type) {
@@ -651,9 +656,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put("_").put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableName);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDetachRoot()).concat(tableName);
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
+
+                if (!ff.exists(dstPath.slash$())) {
+                    if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
+                        throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                    }
+                }
 
                 for (int j = lo; j < hi; j++) {
                     PartitionInfo partition = partitions.get(j);
@@ -662,28 +673,30 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                     final CharSequence partitionName = partition.name;
 
-                    srcPath.trimTo(srcPlen).concat(partitionName).slash$();
-                    dstPath.trimTo(dstPlen).concat(partitionName).slash$();
+                    srcPath.trimTo(srcPlen).concat(partitionName);
+                    dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix());
 
-                    int res = ff.rename(srcPath, dstPath);
+                    int res = ff.rename(srcPath.slash$(), dstPath.slash$());
+
                     if (res == Files.FILES_RENAME_ERR_EXDEV) {
                         LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
 
                         if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
-                            throw TextException.$("Cannot create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                            throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
                         ff.iterateDir(srcPath, (long name, int type) -> {
                             if (type == Files.DT_FILE) {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                                dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
+                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
-                                    throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                    throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                                 }
                             }
                         });
+                        srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
-                        throw CairoException.critical(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
+                        throw CairoException.critical(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
                     }
                 }
             }
@@ -1133,7 +1146,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int t = 0; t < tmpTableCount; ++t) {
             tmpPath.of(importRoot).concat(tableName).put("_").put(t);
 
-            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath, partitionBy)) {
+            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txFile.unsafeLoadAll();
                 final int partitionCount = txFile.getPartitionCount();
 
@@ -1368,7 +1381,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         if (ff.exists(workDirPath)) {
             if (isOneOfMainDirectories(importRoot)) {
-                throw TextException.$("cannot remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
+                throw TextException.$("could not remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
             }
 
             LOG.info().$("removing import directory [path='").$(workDirPath).$("']").$();
@@ -1504,6 +1517,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return configuration.getRandom().nextLong();
+        }
+
+        @Override
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
         }
@@ -1514,8 +1532,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
+        public long getCommitLag() {
+            return configuration.getCommitLag();
         }
 
         @Override
@@ -1524,13 +1542,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
         }
 
         @Override
@@ -1564,13 +1577,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return configuration.getMaxUncommittedRows();
+        public boolean isIndexed(int columnIndex) {
+            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
         }
 
         @Override
-        public long getCommitLag() {
-            return configuration.getCommitLag();
+        public boolean isSequential(int columnIndex) {
+            return false;
         }
 
         public int getSymbolColumnIndex(CharSequence symbolColumnName) {

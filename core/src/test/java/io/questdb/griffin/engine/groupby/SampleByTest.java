@@ -1984,13 +1984,13 @@ public class SampleByTest extends AbstractGriffinTest {
             compiler.compile(
                     "insert into xx " +
                             "select " +
-                            "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
+                            "timestamp_sequence('1970-01-01T12', 2 * 60 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
+                            "long_sequence(8)\n", sqlExecutionContext);
             compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
             compiler.compile("insert into xx " +
                     "select " +
-                    "timestamp_sequence(24 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
+                    "timestamp_sequence('1970-01-03', 1 * 60 * 1000000L),\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                     "from\n" +
                     "long_sequence(60)\n", sqlExecutionContext);
@@ -1999,19 +1999,19 @@ public class SampleByTest extends AbstractGriffinTest {
         // 1970-01-01 data does not have s column
         // first hour of 1970-01-02 does not have s column
         assertSampleByIndexQuery("fk\tlk\tk\ts\n" +
-                        "1970-01-02T00:00:00.000000Z\t1970-01-02T00:58:00.000000Z\t1970-01-02T00:00:00.000000Z\tb\n" +
                         "1970-01-02T01:00:00.000000Z\t1970-01-02T01:58:00.000000Z\t1970-01-02T01:00:00.000000Z\tb\n" +
                         "1970-01-02T02:00:00.000000Z\t1970-01-02T02:58:00.000000Z\t1970-01-02T02:00:00.000000Z\tb\n" +
                         "1970-01-02T03:00:00.000000Z\t1970-01-02T03:58:00.000000Z\t1970-01-02T03:00:00.000000Z\tb\n" +
                         "1970-01-02T04:00:00.000000Z\t1970-01-02T04:58:00.000000Z\t1970-01-02T04:00:00.000000Z\tb\n" +
-                        "1970-01-02T05:00:00.000000Z\t1970-01-02T05:58:00.000000Z\t1970-01-02T05:00:00.000000Z\tb\n",
+                        "1970-01-02T05:00:00.000000Z\t1970-01-02T05:58:00.000000Z\t1970-01-02T05:00:00.000000Z\tb\n" +
+                        "1970-01-03T00:00:00.000000Z\t1970-01-03T00:58:00.000000Z\t1970-01-03T00:00:00.000000Z\tb\n",
                 "select first(k) fk, last(k) lk, k, s\n" +
                         "from xx " +
                         "where s in ('b')" +
                         "sample by 1h",
                 "insert into xx " +
                         "select " +
-                        "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
+                        "timestamp_sequence('1970-01-02T01', 1 * 60 * 1000000L),\n" +
                         "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                         "from\n" +
                         "long_sequence(300)\n");
@@ -9269,6 +9269,7 @@ public class SampleByTest extends AbstractGriffinTest {
     private void assertSampleByIndexQuery(String expected, String query, String insert, boolean expectSize) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
+
         assertQuery(expected,
                 forceNoIndexQuery,
                 insert,

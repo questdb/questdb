@@ -157,15 +157,13 @@ public class IODispatcherTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
-                            "72\r\n" +
-                                    "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"count\":1}\r\n"
-                                    + "00\r\n"
-                                    + "\r\n"
-                    );
-                });
+                .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                        "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
+                        "72\r\n" +
+                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"count\":1}\r\n"
+                                + "00\r\n"
+                                + "\r\n"
+                ));
     }
 
     @Before

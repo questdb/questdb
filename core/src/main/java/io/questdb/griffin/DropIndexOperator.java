@@ -120,7 +120,7 @@ public class DropIndexOperator extends PurgingOperator {
             CharSequence columnName,
             long columnNameTxn
     ) {
-        setPathOnPartition(
+        TableUtils.setPathForPartition(
                 path,
                 rootLen,
                 partitionBy,
@@ -128,17 +128,5 @@ public class DropIndexOperator extends PurgingOperator {
                 partitionNameTxn
         );
         dFile(path, columnName, columnNameTxn);
-    }
-
-    private static void setPathOnPartition(
-            Path path,
-            int rootLen,
-            int partitionBy,
-            long partitionTimestamp,
-            long partitionNameTxn
-    ) {
-        path.trimTo(rootLen);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
     }
 }
