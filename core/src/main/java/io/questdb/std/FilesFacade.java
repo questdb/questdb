@@ -40,6 +40,8 @@ public interface FilesFacade {
 
     long copyData(long srcFd, long destFd, long offsetSrc, long length);
 
+    int copyRecursive(Path src, Path dst, int dirMode);
+
     int errno();
 
     boolean exists(LPSZ path);
@@ -69,6 +71,10 @@ public interface FilesFacade {
     long getPageSize();
 
     int hardLink(LPSZ src, LPSZ hardLink);
+
+    int hardLinkDirRecursive(Path src, Path dst, int dirMode);
+
+    boolean isCrossDeviceCopyError(int errno);
 
     boolean isRestrictedFileSystem();
 

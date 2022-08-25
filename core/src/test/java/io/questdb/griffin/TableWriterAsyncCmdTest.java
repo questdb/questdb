@@ -141,7 +141,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         Assert.fail();
                     }
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot publish, command queue is full [table=product]");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not publish, command queue is full [table=product]");
                 }
             } // Unblock table
 
@@ -194,7 +194,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 @Override
                 public int rmdir(Path name) {
                     if (Chars.contains(name, "2020-01-01")) {
-                        throw CairoException.instance(11);
+                        throw CairoException.critical(11);
                     }
                     return super.rmdir(name);
                 }

@@ -190,7 +190,7 @@ public class TableWriterTask implements Closeable {
 
     private void checkCapacity(long byteCount) {
         if (appendPtr + byteCount > appendLim) {
-            throw CairoException.instance(0).put("async command/event queue buffer overflow");
+            throw CairoException.critical(0).put("async command/event queue buffer overflow");
         }
     }
 }

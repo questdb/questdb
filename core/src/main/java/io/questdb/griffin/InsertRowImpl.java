@@ -72,7 +72,7 @@ public class InsertRowImpl {
             long timestamp = IntervalUtils.parseFloorPartialDate(tsStr);
             return tableWriter.newRow(timestamp);
         } catch (NumericException e) {
-            throw CairoException.instance(0).put("Invalid timestamp: ").put(tsStr);
+            throw CairoException.nonCritical().put("Invalid timestamp: ").put(tsStr);
         }
     }
 

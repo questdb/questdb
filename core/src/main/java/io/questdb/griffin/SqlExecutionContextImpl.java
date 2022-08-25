@@ -135,7 +135,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public CairoEngine getCairoEngine() {
+    public @NotNull CairoEngine getCairoEngine() {
         return cairoEngine;
     }
 
@@ -145,7 +145,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
         circuitBreaker.resetTimer();
         return circuitBreaker;
     }

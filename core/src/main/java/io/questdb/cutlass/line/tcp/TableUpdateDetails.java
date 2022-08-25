@@ -38,6 +38,7 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
@@ -331,7 +332,7 @@ public class TableUpdateDetails implements Closeable {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
-                    throw CairoException.instance(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
+                    throw CairoException.critical(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
                 }
                 path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
                 SymbolCache symCache;
@@ -348,7 +349,9 @@ public class TableUpdateDetails implements Closeable {
                     if (this.txReader == null) {
                         this.txReader = new TxReader(filesFacade);
                     }
-                    this.txReader.ofRO(path, reader.getPartitionedBy());
+                    int pathLen = path.length();
+                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());
+                    path.trimTo(pathLen);
                     this.clean = false;
                 }
 

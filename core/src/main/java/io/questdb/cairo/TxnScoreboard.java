@@ -62,7 +62,7 @@ public class TxnScoreboard implements Closeable, Mutable {
             return false;
         }
         final long min = fromInternalTxn(-response - 2);
-        throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
+        throw CairoException.critical(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
     }
 
     @Override
@@ -198,6 +198,6 @@ public class TxnScoreboard implements Closeable, Mutable {
             LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
-        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
+        throw CairoException.critical(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
     }
 }

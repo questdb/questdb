@@ -226,11 +226,12 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
     }
 
-    public void insert(int index, int length) {
+    public void insert(int index, int length, T defaultValue) {
         ensureCapacity(pos + length);
         if (pos > index) {
             System.arraycopy(buffer, index, buffer, index + length, pos - index);
         }
+        Arrays.fill(buffer, index, index + length, defaultValue);
         pos += length;
     }
 

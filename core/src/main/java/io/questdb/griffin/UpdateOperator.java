@@ -134,7 +134,7 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                     if (rowId < lastRowId) {
                         // We're assuming, but not enforcing the fact that
                         // factory produces rows in incrementing order.
-                        throw CairoException.instance(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
+                        throw CairoException.critical(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
                     }
                     lastRowId = rowId;
 

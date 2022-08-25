@@ -36,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.lockName;
 
 public abstract class RebuildColumnBase implements Closeable, Mutable {
@@ -157,7 +158,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
 
         if (this.lockFd == -1L) {
-            throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
     }
 
@@ -181,7 +182,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             final int partitionBy = metadata.getPartitionBy();
             final DateFormat partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
-            try (TxReader txReader = new TxReader(ff).ofRO(path, partitionBy)) {
+            try (TxReader txReader = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txReader.unsafeLoadAll();
                 path.trimTo(rootLen);
 
@@ -232,7 +233,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    private void reindexColumn(
+    public void reindexColumn(
             ColumnVersionReader columnVersionReader,
             RecordMetadata metadata,
             int columnIndex,
@@ -291,7 +292,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         partitionSize
                 );
             } else {
-                throw CairoException.instance(0).put(unsupportedColumnMessage);
+                throw CairoException.nonCritical().put(unsupportedColumnMessage);
             }
         }
     }
@@ -328,7 +329,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 path.trimTo(rootLen);
                 lockName(path);
                 if (ff.exists(path) && !ff.remove(path)) {
-                    throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
+                    throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
                 }
             } finally {
                 path.trimTo(rootLen);

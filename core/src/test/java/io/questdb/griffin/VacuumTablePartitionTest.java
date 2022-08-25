@@ -77,7 +77,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
                 compiler.compile("vacuum partitions asdfad", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "table 'asdfad' does not exist");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist [table=asdfad]");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
             }
         });

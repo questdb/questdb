@@ -43,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final int PARTITIONS_SLOT_SIZE = 4;
@@ -100,12 +102,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.partitionBy = this.metadata.getPartitionBy();
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
-            path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
                     .$(", table=").$(this.tableName)
                     .I$();
-            this.txFile = new TxReader(ff).ofRO(path, partitionBy);
+            this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
             openSymbolMaps();
@@ -546,7 +547,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
-            throw CairoException.instance(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
+            throw CairoException.critical(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
 
         MemoryR col = columns.getQuick(globalIndex);
@@ -712,10 +713,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
         final int idx = getPrimaryColumnIndex(columnBase, 0);
-        columns.insert(idx, columnSlotSize);
-        columns.set(idx, columnBase + columnSlotSize + 1, NullMemoryMR.INSTANCE);
-        bitmapIndexes.insert(idx, columnSlotSize);
-        bitmapIndexes.set(idx, columnBase + columnSlotSize, null);
+        columns.insert(idx, columnSlotSize, NullMemoryMR.INSTANCE);
+        bitmapIndexes.insert(idx, columnSlotSize, null);
         columnTops.insert(topBase, topSlotSize);
         columnTops.seed(topBase, topSlotSize, 0);
 
@@ -815,7 +814,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
 
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
-                CairoException exception = CairoException.instance(0).put("Partition '");
+                CairoException exception = CairoException.critical(0).put("Partition '");
                 formatPartitionDirName(partitionIndex, exception.message);
                 TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
                 exception.put("' does not exist in table '")
@@ -826,7 +825,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 exception.put("'] to repair the table or restore the partition directory.");
                 throw exception;
             } else {
-                throw CairoException.instance(0).put("Table '").put(tableName)
+                throw CairoException.critical(0).put("Table '").put(tableName)
                         .put("' data directory does not exist on the disk at ")
                         .put(path)
                         .put(". Restore data on disk or drop the table.");
@@ -902,7 +901,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             count++;
             if (clock.getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                throw CairoException.instance(0).put("Transaction read timeout");
+                throw CairoException.critical(0).put("Transaction read timeout");
             }
             Os.pause();
         }
@@ -1007,7 +1006,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check the partition timestamp in Column Version file
             // of when the column was added.
-            if (partitionRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
+            if (columnRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(columnType)) {
@@ -1050,8 +1049,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                 Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
 
-                // Column to present in the partition. Set column top to be the size of the partition.
-                columnTops.setQuick(columnBase / 2 + columnIndex, columnRowCount);
+                // Column is not present in the partition. Set column top to be the size of the partition.
+                columnTops.setQuick(columnBase / 2 + columnIndex, partitionRowCount);
             }
         } finally {
             path.trimTo(plen);
@@ -1080,7 +1079,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         return false;
                     }
                     LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                    throw CairoException.instance(0).put("Metadata read timeout");
+                    throw CairoException.critical(0).put("Metadata read timeout");
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other

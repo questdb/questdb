@@ -177,7 +177,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         }
 
         tmpValidationMap.clear();
-        TableUtils.validate(transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        TableUtils.validateMeta(transitionMeta, tmpValidationMap, ColumnType.VERSION);
         return TableUtils.createTransitionIndex(transitionMeta, this);
     }
 
@@ -256,7 +256,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             this.tableName = tableName;
             this.metaMem.smallFile(ff, this.path, MemoryTag.MMAP_DEFAULT);
             this.columnNameIndexMap.clear();
-            TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
+            TableUtils.validateMeta(metaMem, this.columnNameIndexMap, expectedVersion);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);

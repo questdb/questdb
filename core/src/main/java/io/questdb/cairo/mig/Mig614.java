@@ -66,11 +66,11 @@ final class Mig614 {
         long fileLen = ff.length(path);
 
         if (fileLen < 0) {
-            throw CairoException.instance(ff.errno()).put("cannot read file length: ").put(path);
+            throw CairoException.critical(ff.errno()).put("cannot read file length: ").put(path);
         }
 
         if (fileLen < readOffset + Long.BYTES) {
-            throw CairoException.instance(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
+            throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
         }
 
         metaMem.of(

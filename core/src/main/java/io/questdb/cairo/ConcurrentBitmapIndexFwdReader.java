@@ -180,7 +180,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
                     if (clock.getTicks() > deadline) {
                         LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
-                        throw CairoException.instance(0).put(INDEX_CORRUPT);
+                        throw CairoException.critical(0).put(INDEX_CORRUPT);
                     }
                 }
 

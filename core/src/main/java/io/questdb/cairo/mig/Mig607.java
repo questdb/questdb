@@ -85,7 +85,7 @@ final class Mig607 {
                         long fileLen = ff.length(fd);
 
                         if (fileLen < offset) {
-                            throw CairoException.instance(0).put("file is too short [path=").put(path).put("]");
+                            throw CairoException.critical(0).put("file is too short [path=").put(path).put("]");
                         }
 
                         TableUtils.allocateDiskSpace(ff, fd, offset + 8);
@@ -139,7 +139,7 @@ final class Mig607 {
                     long n;
                     if ((n = ff.readULong(fd, 0)) < 0) {
                         if (failIfCouldNotRead) {
-                            throw CairoException.instance(Os.errno())
+                            throw CairoException.critical(Os.errno())
                                     .put("could not read top of column [file=").put(path)
                                     .put(", read=").put(n).put(']');
                         } else {
@@ -305,11 +305,11 @@ final class Mig607 {
         long fd = TableUtils.openFileRWOrFail(ff, path, opts);
         if (!ff.truncate(fd, size)) {
             // This should never happens on migration but better to be on safe side anyway
-            throw CairoException.instance(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
+            throw CairoException.critical(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
         }
         if (!ff.close(fd)) {
             // This should never happens on migration but better to be on safe side anyway
-            throw CairoException.instance(ff.errno()).put("Cannot close [file=").put(path).put(']');
+            throw CairoException.critical(ff.errno()).put("Cannot close [file=").put(path).put(']');
         }
     }
 

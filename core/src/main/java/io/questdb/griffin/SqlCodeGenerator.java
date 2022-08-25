@@ -224,7 +224,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (node.type != ExpressionNode.LITERAL) {
                 ExpressionNode columnAst = column.getAst();
                 CharSequence token = columnAst.token;
-                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastFunction(token)) {
+                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastKeyword(token)) {
                     return false;
                 }
 
@@ -1089,14 +1089,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateFilter0(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext, ExpressionNode filter) throws SqlException {
         model.setWhereClause(null);
 
-        final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
+        final Function f;
+        try {
+            f = compileFilter(filter, factory.getMetadata(), executionContext);
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
         if (f.isConstant()) {
             try {
                 if (f.getBool(null)) {
                     return factory;
                 }
-                // metadata is always a GenericRecordMetadata instance
-                return new EmptyTableRecordCursorFactory(factory.getMetadata());
+                RecordMetadata metadata = factory.getMetadata();
+                assert (metadata instanceof GenericRecordMetadata);
+                Misc.free(factory);
+                return new EmptyTableRecordCursorFactory(metadata);
             } finally {
                 f.close();
             }
@@ -1107,53 +1115,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<Function> perWorkerFilters = preparePerWorkerFilters(factory.getMetadata(), executionContext, filter, f);
 
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
-            if (useJit) {
-                final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
-                if (optimize) {
-                    try {
-                        int jitOptions;
-                        final ObjList<Function> bindVarFunctions = new ObjList<>();
-                        try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
-                            final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                            jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                            jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
-                        }
-
-                        final CompiledFilter jitFilter = new CompiledFilter();
-                        jitFilter.compile(jitIRMem, jitOptions);
-
-                        final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-                        final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-
-                        LOG.info()
-                                .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
-                                .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                        return new AsyncJitFilteredRecordCursorFactory(
-                                configuration,
-                                executionContext.getMessageBus(),
-                                factory,
-                                bindVarFunctions,
-                                f,
-                                perWorkerFilters,
-                                jitFilter,
-                                reduceTaskPool,
-                                limitLoFunction,
-                                limitLoPos
-                        );
-                    } catch (SqlException | LimitOverflowException ex) {
-                        LOG.debug()
-                                .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
-                                .$(", ex=").$(ex.getFlyweightMessage())
-                                .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    } finally {
-                        jitIRSerializer.clear();
-                        jitIRMem.truncate();
+            final boolean canCompile = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
+            if (useJit && canCompile) {
+                CompiledFilter jitFilter = null;
+                try {
+                    int jitOptions;
+                    final ObjList<Function> bindVarFunctions = new ObjList<>();
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
+                        final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                        jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                        jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
                     }
+
+                    jitFilter = new CompiledFilter();
+                    jitFilter.compile(jitIRMem, jitOptions);
+
+                    final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                    final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+
+                    LOG.info()
+                            .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
+                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                    return new AsyncJitFilteredRecordCursorFactory(
+                            configuration,
+                            executionContext.getMessageBus(),
+                            factory,
+                            bindVarFunctions,
+                            f,
+                            perWorkerFilters,
+                            jitFilter,
+                            reduceTaskPool,
+                            limitLoFunction,
+                            limitLoPos
+                    );
+                } catch (SqlException | LimitOverflowException ex) {
+                    Misc.free(jitFilter);
+                    LOG.debug()
+                            .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
+                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                } finally {
+                    jitIRSerializer.clear();
+                    jitIRMem.truncate();
                 }
             }
 
             // Use Java filter.
-            final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+            final Function limitLoFunction;
+            try {
+                limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+            } catch (Throwable e) {
+                Misc.free(f);
+                Misc.free(factory);
+                throw e;
+            }
             final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
             return new AsyncFilteredRecordCursorFactory(
                     configuration,
@@ -1441,10 +1456,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // We require timestamp with any order.
-        final int timestampIndex = getTimestampIndex(model, factory);
-        if (timestampIndex == -1) {
+        final int timestampIndex;
+        try {
+            timestampIndex = getTimestampIndex(model, factory);
+            if (timestampIndex == -1) {
+                throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
+            }
+        } catch (Throwable e) {
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
+            throw e;
         }
 
         final RecordMetadata metadata = factory.getMetadata();
@@ -1499,9 +1519,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
         } else {
-            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
         }
 
         assert model.getLatestBy() != null && model.getLatestBy().size() > 0;
@@ -1534,9 +1554,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
 
             if (intrinsicModel.keySubQuery != null) {
-
-                final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                final Record.CharSequenceFunction func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
+                final RecordCursorFactory rcf;
+                final Record.CharSequenceFunction func;
+                try {
+                    rcf = generate(intrinsicModel.keySubQuery, executionContext);
+                    func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
+                } catch (Throwable e) {
+                    Misc.free(dataFrameCursorFactory);
+                    throw e;
+                }
 
                 return new LatestBySubQueryRecordCursorFactory(
                         configuration,
@@ -1713,10 +1739,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
-        final Function loFunc = getLoFunction(model, executionContext);
-        final Function hiFunc = getHiFunction(model, executionContext);
+        try {
+            final Function loFunc = getLoFunction(model, executionContext);
+            final Function hiFunc = getHiFunction(model, executionContext);
 
-        return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+            return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
     }
 
     private RecordCursorFactory generateNoSelect(
@@ -1947,25 +1978,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata metadata = factory.getMetadata();
             final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
             final TimestampSampler timestampSampler;
-            if (sampleByUnits == null) {
-                timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
-            } else {
-                Function sampleByPeriod = functionParser.parseFunction(
-                        sampleByNode,
-                        EmptyRecordMetadata.INSTANCE,
-                        executionContext
-                );
-                if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
-                    sampleByPeriod.close();
-                    throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
-                }
-                long period = sampleByPeriod.getLong(null);
-                sampleByPeriod.close();
-                timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
-            }
-
             final int fillCount = sampleByFill.size();
             try {
+                if (sampleByUnits == null) {
+                    timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
+                } else {
+                    Function sampleByPeriod = functionParser.parseFunction(
+                            sampleByNode,
+                            EmptyRecordMetadata.INSTANCE,
+                            executionContext
+                    );
+                    if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
+                        Misc.free(sampleByPeriod);
+                        throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
+                    }
+                    long period = sampleByPeriod.getLong(null);
+                    sampleByPeriod.close();
+                    timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
+                }
+
                 keyTypes.clear();
                 valueTypes.clear();
                 listColumnFilterA.clear();
@@ -2229,7 +2260,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetFuncPos
                 );
             } catch (Throwable e) {
-                factory.close();
+                Misc.free(factory);
                 throw e;
             }
         } finally {
@@ -2334,6 +2365,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 final ExpressionNode ast = qc.getAst();
                 if (ast.paramCount > 1) {
+                    Misc.free(base);
                     throw SqlException.$(ast.position, "too many arguments");
                 }
 
@@ -2384,6 +2416,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final Function f = functionParser.parseFunction(ast, baseMetadata, executionContext);
                 if (!(f instanceof AnalyticFunction)) {
+                    Misc.free(base);
                     throw SqlException.$(ast.position, "non-analytic function called in analytic context");
                 }
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
@@ -2533,10 +2566,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // We require timestamp with asc order.
-        final int timestampIndex = getTimestampIndex(model, factory);
-        if (executionContext.isTimestampRequired() && (timestampIndex == -1 || factory.hasDescendingOrder())) {
+        final int timestampIndex;
+        try {
+            timestampIndex = getTimestampIndex(model, factory);
+            if (executionContext.isTimestampRequired() && (timestampIndex == -1 || factory.hasDescendingOrder())) {
+                throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
+            }
+        } catch (Throwable e) {
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
+            throw e;
         }
 
         final IntList columnCrossIndex = new IntList(selectColumnCount);
@@ -2623,12 +2661,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 tempVaf,
                                 executionContext.getSharedWorkerCount(),
                                 tempSymbolSkewIndexes
-
                         );
                     } else {
                         // Shouldn't really happen, we cannot recompile below, QueryModel is changed during compilation
                         Misc.free(factory);
-                        throw CairoException.instance(0).put("Optimization error, incorrect path chosen, please contact support.");
+                        throw CairoException.critical(0).put("Optimization error, incorrect path chosen, please contact support.");
                     }
                 }
             }
@@ -3087,6 +3124,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final RecordCursorFactory factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+        ObjList<Function> castFunctionsA = null;
+        ObjList<Function> castFunctionsB = null;
         try {
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
@@ -3097,14 +3136,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case SET_OPERATION_UNION: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
 
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata,
                             SET_UNION_CONSTRUCTOR
                     );
@@ -3112,26 +3155,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case SET_OPERATION_UNION_ALL: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
+
                     return generateUnionAllFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata
                     );
                 }
                 case SET_OPERATION_EXCEPT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
+
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata,
                             SET_EXCEPT_CONSTRUCTOR
                     );
@@ -3139,13 +3192,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case SET_OPERATION_INTERSECT: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
+                    if (castIsRequired) {
+                        castFunctionsA = generateCastFunctions(setMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(setMetadata, metadataB, positionB);
+                    }
+
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
+                            castFunctionsA,
+                            castFunctionsB,
                             setMetadata,
                             SET_INTERSECT_CONSTRUCTOR
                     );
@@ -3155,7 +3213,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return null;
             }
         } catch (Throwable e) {
+            Misc.free(factoryA);
             Misc.free(factoryB);
+            Misc.freeObjList(castFunctionsA);
+            Misc.freeObjList(castFunctionsB);
             throw e;
         }
     }
@@ -3320,7 +3381,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (f != null && f.isConstant() && !f.getBool(null)) {
                         // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
                         model.getLatestBy().clear();
-
+                        Misc.free(f);
                         return new EmptyTableRecordCursorFactory(myMeta);
                     }
 
@@ -3347,10 +3408,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
                     RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex);
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex);
                     intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
                 } else {
-                    dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    dfcFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
                     intervalHitsOnlyOnePartition = false;
                 }
 
@@ -3366,6 +3427,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant() && !f.getBool(null)) {
+                            Misc.free(dfcFactory);
                             return new EmptyTableRecordCursorFactory(myMeta);
                         }
                         return new FilterOnSubQueryRecordCursorFactory(
@@ -3408,6 +3470,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (f != null && f.isConstant()) {
                             try {
                                 if (!f.getBool(null)) {
+                                    Misc.free(dfcFactory);
                                     return new EmptyTableRecordCursorFactory(myMeta);
                                 }
                             } finally {
@@ -3503,6 +3566,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (f != null && f.isConstant()) {
                             try {
                                 if (!f.getBool(null)) {
+                                    Misc.free(dfcFactory);
                                     return new EmptyTableRecordCursorFactory(myMeta);
                                 }
                             } finally {
@@ -3567,7 +3631,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 RowCursorFactory rowFactory;
 
                 if (isOrderByTimestampDesc && !intrinsicModel.hasIntervalFilters()) {
-                    dfcFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    Misc.free(dfcFactory);
+                    dfcFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
                     rowFactory = new BwdDataFrameRowCursorFactory();
                 } else {
                     rowFactory = new DataFrameRowCursorFactory();
@@ -3597,10 +3662,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 RowCursorFactory rowCursorFactory;
 
                 if (isOrderDescendingByDesignatedTimestampOnly(model)) {
-                    cursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    cursorFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
                     rowCursorFactory = new BwdDataFrameRowCursorFactory();
                 } else {
-                    cursorFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    cursorFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
                     rowCursorFactory = new DataFrameRowCursorFactory();
                 }
 
@@ -3628,7 +3693,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return new LatestByAllIndexedRecordCursorFactory(
                             myMeta,
                             configuration,
-                            new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                            new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
                             listColumnFilterA.getColumnIndexFactored(0),
                             columnIndexes,
                             prefixes
@@ -3641,7 +3706,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                             configuration,
                             myMeta,
-                            new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                            new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
                             latestByColumnIndex,
                             null,
                             columnIndexes
@@ -3652,7 +3717,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllFilteredRecordCursorFactory(
                     myMeta,
                     configuration,
-                    new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                    new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                     keyTypes,
                     null,

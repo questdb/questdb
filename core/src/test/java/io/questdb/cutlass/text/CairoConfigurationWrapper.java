@@ -43,6 +43,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean attachPartitionCopy() {
+        return false;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return conf.enableTestFactories();
     }
@@ -50,6 +55,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getAnalyticColumnPoolCapacity() {
         return conf.getAnalyticColumnPoolCapacity();
+    }
+
+    @Override
+    public String getAttachPartitionSuffix() {
+        return conf.getAttachPartitionSuffix();
     }
 
     @Override
@@ -65,6 +75,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public CharSequence getBackupRoot() {
         return conf.getBackupRoot();
+    }
+
+    @Override
+    public CharSequence getDetachRoot() {
+        return conf.getDetachRoot();
     }
 
     @Override

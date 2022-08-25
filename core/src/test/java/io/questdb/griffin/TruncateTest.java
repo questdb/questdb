@@ -315,7 +315,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(20, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'z' does not");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=z]");
             }
 
             assertQuery(

@@ -31,8 +31,8 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public class TableWriterMetadata extends BaseRecordMetadata {
-    private final int id;
-    private final int metaFileSize;
+    private int id;
+    private int metaFileSize;
     private int symbolMapCount;
     private int version;
     private int maxUncommittedRows;
@@ -40,13 +40,17 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private long structureVersion;
 
     public TableWriterMetadata(MemoryMR metaMem) {
+        reload(metaMem);
+    }
+
+    public void reload(MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
-        TableUtils.validate(metaMem, columnNameIndexMap, ColumnType.VERSION);
+        TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata = new ObjList<>(this.columnCount);
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);

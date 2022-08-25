@@ -1104,14 +1104,21 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         return alterTableDropColumn(tableNamePosition, tableName, tableMetadata);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropOrAttachPartition(reader, PartitionAction.DROP, executionContext);
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DROP, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
                 } else if (SqlKeywords.isAttachKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                    }
+                } else if (SqlKeywords.isDetachKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DETACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
@@ -1491,8 +1498,11 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private CompiledQuery alterTableDropOrAttachPartition(TableReader reader, int action, SqlExecutionContext executionContext)
-            throws SqlException {
+    private CompiledQuery alterTableDropDetachOrAttachPartition(
+            TableReader reader,
+            int action,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         TableReaderMetadata readerMetadata = reader.getMetadata();
         if (readerMetadata.getPartitionBy() == PartitionBy.NONE) {
@@ -1502,12 +1512,19 @@ public class SqlCompiler implements Closeable {
         String tableName = reader.getTableName();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
-            return alterTableDropOrAttachPartitionByList(reader, pos, action);
+            return alterTableDropDetachOrAttachPartitionByList(reader, pos, action);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
-            if (action != PartitionAction.DROP) {
-                throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
+            AlterOperationBuilder alterPartitionStatement;
+            switch (action) {
+                case PartitionAction.DROP:
+                    alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+                    break;
+                case PartitionAction.DETACH:
+                    alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
+                    break;
+                default:
+                    throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
             }
-            AlterOperationBuilder alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = null;
             int tsIndex = readerMetadata.getTimestampIndex();
@@ -1533,15 +1550,21 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
+    private CompiledQuery alterTableDropDetachOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
         String tableName = reader.getTableName();
         AlterOperationBuilder partitions;
-        if (action == PartitionAction.DROP) {
-            partitions = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
-        } else {
-            partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
+        switch (action) {
+            case PartitionAction.DROP:
+                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+                break;
+            case PartitionAction.DETACH:
+                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
+                break;
+            default:
+                // attach
+                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
         }
-        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH;
+        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH || action == PartitionAction.DETACH;
         int semicolonPos = -1;
         do {
             CharSequence tok = maybeExpectToken(lexer, "partition name", semicolonPos < 0);
@@ -1634,7 +1657,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
-        if (isMaxUncommittedRowsParam(paramName)) {
+        if (isMaxUncommittedRowsKeyword(paramName)) {
             int maxUncommittedRows;
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
@@ -1645,7 +1668,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
             return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
-        } else if (isCommitLag(paramName)) {
+        } else if (isCommitLagKeyword(paramName)) {
             long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
             if (commitLag < 0) {
                 throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
@@ -1864,7 +1887,7 @@ public class SqlCompiler implements Closeable {
                     deadline = rowCount + batchSize;
                 }
             } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+                throw CairoException.nonCritical().put("Invalid timestamp: ").put(str);
             }
         }
 
@@ -1885,7 +1908,7 @@ public class SqlCompiler implements Closeable {
                 row.append();
                 rowCount++;
             } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+                throw CairoException.nonCritical().put("Invalid timestamp: ").put(str);
             }
         }
 
@@ -2169,10 +2192,7 @@ public class SqlCompiler implements Closeable {
             if (hasIfExists) {
                 return compiledQuery.ofDrop();
             }
-            throw SqlException
-                    .$(tableNamePosition, "table '")
-                    .put(tableName)
-                    .put("' does not exist");
+            throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
         return compiledQuery.ofDrop();
@@ -2727,15 +2747,15 @@ public class SqlCompiler implements Closeable {
                 return sqlShowTransaction();
             }
 
-            if (isTransactionIsolationKeyword(tok)) {
+            if (isTransactionIsolation(tok)) {
                 return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
             }
 
-            if (isMaxIdentifierLengthKeyword(tok)) {
+            if (isMaxIdentifierLength(tok)) {
                 return compiledQuery.of(new ShowMaxIdentifierLengthCursorFactory());
             }
 
-            if (isStandardConformingStringsKeyword(tok)) {
+            if (isStandardConformingStrings(tok)) {
                 return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
             }
 
@@ -2743,7 +2763,7 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.of(new ShowSearchPathCursorFactory());
             }
 
-            if (isDateStyle(tok)) {
+            if (isDateStyleKeyword(tok)) {
                 return compiledQuery.of(new ShowDateStyleCursorFactory());
             }
 
@@ -2771,7 +2791,7 @@ public class SqlCompiler implements Closeable {
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
         int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
         if (status != TableUtils.TABLE_EXISTS) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
+            throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
         }
         return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableName));
     }
@@ -2790,7 +2810,7 @@ public class SqlCompiler implements Closeable {
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
+            throw SqlException.$(position, "table does not exist [table=").put(tableName).put(']');
         }
     }
 
@@ -3073,6 +3093,7 @@ public class SqlCompiler implements Closeable {
     public final static class PartitionAction {
         public static final int DROP = 1;
         public static final int ATTACH = 2;
+        public static final int DETACH = 3;
     }
 
     private static class TableStructureAdapter implements TableStructure {
@@ -3210,7 +3231,7 @@ public class SqlCompiler implements Closeable {
                 dstPath.trimTo(currDirPrefixLen).concat(file).$();
                 LOG.info().$("backup copying config file [from=").$(srcPath).$(",to=").$(dstPath).I$();
                 if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.instance(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
+                    throw CairoException.critical(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
                 }
             }
         };
@@ -3253,7 +3274,7 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(currDirPrefixLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             LOG.info().$("backup copying file [from=").$(srcPath).$(",to=").$(dstPath).I$();
             if (ff.copy(srcPath, dstPath) < 0) {
-                throw CairoException.instance(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
             }
         }
 
@@ -3261,7 +3282,7 @@ public class SqlCompiler implements Closeable {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
-                    throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                    throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
                 }
                 srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
                 cachedTmpBackupRoot = Chars.toString(srcPath);
@@ -3323,11 +3344,11 @@ public class SqlCompiler implements Closeable {
             srcPath.of(backupRoot).concat(tableName).slash$();
 
             if (ff.exists(srcPath)) {
-                throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
+                throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
             }
 
             if (ff.mkdirs(srcPath, mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
+                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
             }
 
             int rootLen = srcPath.length();
@@ -3362,7 +3383,7 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(changeDirPrefixLen).concat(dir).slash$();
             currDirPrefixLen = dstPath.length();
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put(errorMessage).put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put(errorMessage).put(dstPath).put(']');
             }
         }
 
@@ -3385,7 +3406,7 @@ public class SqlCompiler implements Closeable {
             } while (ff.exists(dstPath));
 
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
             changeDirPrefixLen = dstPath.length();
         }
@@ -3393,7 +3414,7 @@ public class SqlCompiler implements Closeable {
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
             executionContext.getCairoSecurityContext().checkWritePermission();
             if (null == configuration.getBackupRoot()) {
-                throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
             final CharSequence tok = SqlUtil.fetchNext(lexer);
             if (null != tok) {
@@ -3436,7 +3457,7 @@ public class SqlCompiler implements Closeable {
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     int status = engine.getStatus(executionContext.getCairoSecurityContext(), srcPath, tableName, 0, tableName.length());
                     if (status != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not  a valid table");
+                        throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
                     }
                     tableNames.add(tableName);
 

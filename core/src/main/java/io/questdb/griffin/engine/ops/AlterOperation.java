@@ -55,6 +55,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short RENAME_COLUMN = 9;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
     public final static short SET_PARAM_COMMIT_LAG = 11;
+    public final static short DETACH_PARTITION = 12;
+
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final ObjCharSequenceList objCharList;
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
@@ -97,6 +99,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case DROP_PARTITION:
                     applyDropPartition(tableWriter);
+                    break;
+                case DETACH_PARTITION:
+                    applyDetachPartition(tableWriter);
                     break;
                 case ATTACH_PARTITION:
                     applyAttachPartition(tableWriter);
@@ -154,7 +159,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
         // This is not hot path, do safe deserialization
         if (readPtr + 10 >= hi) {
-            throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [1]");
+            throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [1]");
         }
 
         if (deserializeMem == null) {
@@ -303,44 +308,45 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
-                int statusCode = tableWriter.attachPartition(partitionTimestamp);
-                switch (statusCode) {
-                    case StatusCode.OK:
-                        break;
-                    case StatusCode.CANNOT_ATTACH_MISSING_PARTITION:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "attach partition failed, folder '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put("' does not exist");
-                    case StatusCode.TABLE_HAS_SYMBOLS:
-                        throw SqlException.$(tableNamePosition, "attaching partitions to tables with symbol columns not supported");
-                    case StatusCode.PARTITION_EMPTY:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "failed to attach partition '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put("', data does not correspond to the partition folder or partition is empty");
-                    case StatusCode.PARTITION_ALREADY_ATTACHED:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "failed to attach partition '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put("', partition already attached to the table");
-                    default:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "attach partition  '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put(statusCode);
+                AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
+                if (attachDetachStatus != AttachDetachStatus.OK) {
+                    throw putPartitionName(
+                            SqlException.$(tableNamePosition, "failed to attach partition '"),
+                            tableWriter.getPartitionBy(),
+                            partitionTimestamp
+                    ).put("': ").put(attachDetachStatus.name());
                 }
             } catch (CairoException e) {
-                LOG.error().$("failed to drop partition [table=").$(tableName)
-                        .$(",ts=").$ts(partitionTimestamp)
-                        .$(",errno=").$(e.getErrno())
-                        .$(",error=").$(e.getFlyweightMessage())
+                LOG.error().$("failed to attach partition [table=").$(tableName)
+                        .$(", ts=").$ts(partitionTimestamp)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage())
                         .I$();
+                throw e;
+            }
+        }
+    }
 
+    private void applyDetachPartition(TableWriter tableWriter) throws SqlException {
+        for (int i = 0, n = longList.size(); i < n; i++) {
+            long partitionTimestamp = longList.getQuick(i);
+            try {
+                AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
+                if (AttachDetachStatus.OK != attachDetachStatus) {
+                    throw putPartitionName(
+                            SqlException.$(tableNamePosition, "could not detach [statusCode=").put(attachDetachStatus.name())
+                                    .put(", table=").put(tableName)
+                                    .put(", partition='"),
+                            tableWriter.getPartitionBy(),
+                            partitionTimestamp
+                    ).put("']");
+                }
+            } catch (CairoException e) {
+                LOG.error().$("failed to detach partition [table=").$(tableName)
+                        .$(", ts=").$ts(partitionTimestamp)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
                 throw e;
             }
         }
@@ -556,18 +562,18 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         public long of(MemoryCR buffer, long lo, long hi) {
             long initialAddress = lo;
             if (lo + Integer.BYTES >= hi) {
-                throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [11]");
+                throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [11]");
             }
             int size = buffer.getInt(lo);
             lo += 4;
             for (int i = 0; i < size; i++) {
                 if (lo + Integer.BYTES > hi) {
-                    throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [12]");
+                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [12]");
                 }
                 int stringSize = 2 * buffer.getInt(lo);
                 lo += 4;
                 if (lo + stringSize > hi) {
-                    throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [13]");
+                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [13]");
                 }
                 long address = buffer.addressOf(lo);
                 offsets.add(address, address + stringSize);

@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.DefaultTelemetryConfiguration;
-import io.questdb.MessageBus;
-import io.questdb.Metrics;
-import io.questdb.TelemetryConfiguration;
+import io.questdb.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -113,6 +110,9 @@ public class AbstractCairoTest {
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
     protected static int defaultTableWriteMode = -1;
+    protected static Boolean copyPartitionOnAttach = null;
+    protected static String attachableDirSuffix = null;
+
 
     private static TelemetryConfiguration telemetryConfiguration;
     @Rule
@@ -157,6 +157,11 @@ public class AbstractCairoTest {
                     return backupDirTimestampFormat;
                 }
                 return super.getBackupDirTimestampFormat();
+            }
+
+            @Override
+            public CharSequence getDetachRoot() {
+                return PropServerConfiguration.rootSubdir(getRoot(), "dbRoot_detached");
             }
 
             @Override
@@ -371,6 +376,16 @@ public class AbstractCairoTest {
             public int getMetadataPoolCapacity() {
                 return 1;
             }
+
+            @Override
+            public boolean attachPartitionCopy() {
+                return copyPartitionOnAttach == null ? super.attachPartitionCopy() : copyPartitionOnAttach;
+            }
+
+            @Override
+            public String getAttachPartitionSuffix() {
+                return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -433,7 +448,10 @@ public class AbstractCairoTest {
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
         defaultTableWriteMode = -1;
+        copyPartitionOnAttach = null;
+        attachableDirSuffix = null;
         sink.clear();
+        ff = null;
     }
 
     protected static void configureForBackups() throws IOException {
@@ -442,11 +460,12 @@ public class AbstractCairoTest {
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        assertMemoryLeak(null, code);
+        assertMemoryLeak(AbstractCairoTest.ff, code);
     }
 
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
         final FilesFacade ff2 = ff;
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
             try {
@@ -456,7 +475,7 @@ public class AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
                 engine.clear();
-                AbstractCairoTest.ff = null;
+                AbstractCairoTest.ff = ffBefore;
             }
         });
     }
