@@ -2333,9 +2333,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (qc instanceof AnalyticColumn) {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 final ExpressionNode ast = qc.getAst();
-                if (ast.paramCount > 1) {
-                    throw SqlException.$(ast.position, "too many arguments");
-                }
 
                 ObjList<Function> partitionBy = null;
                 int psz = ac.getPartitionBy().size();

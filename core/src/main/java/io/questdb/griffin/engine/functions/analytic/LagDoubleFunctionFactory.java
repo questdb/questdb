@@ -24,44 +24,57 @@
 
 package io.questdb.griffin.engine.functions.analytic;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class RowNumberFunctionFactory implements FunctionFactory {
-
-    private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
-
+public class LagDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "row_number()";
+        return "lag(DI)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
-
+        final IntFunction lagFunction = (IntFunction)args.getQuick(1);
+        if(!lagFunction.isConstant()) {
+            throw SqlException.$(position, "Lag must be a constant value.");
+        }
+        int lag = lagFunction.getInt(null);
+        if(lag < 0 ) {
+            throw SqlException.$(position, "Lag must be zero or positive. Use lag() together with partition over to reverse the sorting.");
+        }
         if (analyticContext.getPartitionByRecord() != null) {
+            ArrayColumnTypes ct = new ArrayColumnTypes();
+            for(int i=0;i<lag;i++) {
+                // we will store the N latest variables
+                ct.add(ColumnType.DOUBLE);
+            }
             Map map = MapFactory.createMap(
                     configuration,
                     analyticContext.getPartitionByKeyTypes(),
-                    LONG_COLUMN_TYPE
+                    ct
             );
-            return new RowNumberFunction(
+            return new LagDoubleFunction(
                     map,
                     analyticContext.getPartitionByRecord(),
-                    analyticContext.getPartitionBySink()
+                    analyticContext.getPartitionBySink(),
+                    (DoubleFunction) args.getQuick(0),
+                    lag
             );
         }
-        return new SequenceRowNumberFunction();
+
+        return new SequenceLagDoubleFunction((DoubleFunction) args.getQuick(0), lag);
     }
 
 }
