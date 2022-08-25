@@ -2338,8 +2338,6 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.DOUBLE:
                             if (function.isConstant()) {
                                 function = SqlUtil.parseStr(function.getStr(null), tupleIndex, ColumnType.tagOf(columnType));
-                            } else {
-                                System.out.println("oops");
                             }
                             break;
                         case ColumnType.GEOBYTE:
