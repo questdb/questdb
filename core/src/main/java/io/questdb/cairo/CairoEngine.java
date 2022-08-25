@@ -28,11 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.pool.ReaderPool;
-import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.pool.WalWriterSource;
+import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -42,7 +38,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -441,7 +440,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 unlock(securityContext, tableName, null, false);
             }
         }
-        throw CairoException.critical(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
+        throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {

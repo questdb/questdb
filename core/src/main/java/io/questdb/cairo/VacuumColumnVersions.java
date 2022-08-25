@@ -166,7 +166,7 @@ public class VacuumColumnVersions implements Closeable {
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                throw CairoException.critical(0).put("failed to schedule column version purge, queue is full. " +
+                throw CairoException.nonCritical().put("failed to schedule column version purge, queue is full. " +
                                 "Please retry and consider increasing ").put(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath())
                         .put(" configuration parameter");
             }
