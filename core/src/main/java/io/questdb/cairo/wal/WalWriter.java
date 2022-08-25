@@ -455,11 +455,11 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                     alterOperation.apply(walMetadataUpdater, true);
                 } catch (SqlException e) {
                     distressed = true;
-                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
                 }
                 if (metadataVersion >= getStructureVersion()) {
                     distressed = true;
-                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction, version unchanged");
+                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
         } finally {
@@ -1211,7 +1211,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
                         LOG.info().$("removed column from wal [path=").$(path).$(", columnName=").$(columnName).I$();
                     } else {
-                        throw CairoException.instance(0).put("column '").put(columnName)
+                        throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' removed, cannot commit because of concurrent table definition change ");
                     }
                 }
