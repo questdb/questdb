@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -57,6 +58,24 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
         return instance(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+    }
+
+    public static CairoException detachedMetadataMismatch(CharSequence attribute) {
+        return instance(METADATA_VALIDATION)
+                .put("Detached partition metadata [")
+                .put(attribute)
+                .put("] is not compatible with current table metadata");
+    }
+
+    public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
+        return instance(METADATA_VALIDATION)
+                .put("Detached column [index=")
+                .put(columnIndex)
+                .put(", name=")
+                .put(columnName)
+                .put(", attribute=")
+                .put(attribute)
+                .put("] does not match current table metadata");
     }
 
     public static CairoException instance(int errno) {
@@ -122,6 +141,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException put(CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException ts(long timestamp) {
+        TimestampFormatUtils.appendDateTime(message, timestamp);
         return this;
     }
 

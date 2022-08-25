@@ -935,6 +935,28 @@ public final class TableUtils {
     }
 
     /**
+     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param tableRootLen     Trim to this length to go back to the root path of the table
+     * @param partitionBy      Partitioning scheme
+     * @param timestamp        A timestamp in the partition
+     * @param partitionNameTxn Partition txn suffix
+     */
+    public static void setPathForPartition(
+            Path tablePath,
+            int tableRootLen,
+            int partitionBy,
+            long timestamp,
+            long partitionNameTxn
+    ) {
+        tablePath.trimTo(tableRootLen);
+        TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);
+        TableUtils.txnPartitionConditionally(tablePath, partitionNameTxn);
+    }
+
+    /**
      * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
      *
      * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
@@ -961,7 +983,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(
+    public static void validateMeta(
             MemoryMR metaMem,
             LowerCaseCharSequenceIntHashMap nameIndex,
             int expectedVersion
@@ -1302,52 +1324,6 @@ public final class TableUtils {
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
-    // Scans timestamp file
-    // returns size of partition detected, e.g. size of monotonic increase
-    // of timestamp longs read from 0 offset to the end of the file
-    // It also writes min and max values found in tempMem16b
-    static long readPartitionSizeMinMax(FilesFacade ff, Path path, CharSequence columnName, long tempMem16b, long timestamp) {
-        int plen = path.chop$().length();
-        try {
-            if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
-                try {
-                    long fileSize = ff.length(fd);
-                    long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                    try {
-                        long minTimestamp;
-                        long maxTimestamp = timestamp;
-                        long size = 0L;
-
-                        for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
-                            long ts = Unsafe.getUnsafe().getLong(ptr);
-                            if (ts >= maxTimestamp) {
-                                maxTimestamp = ts;
-                                size++;
-                            } else {
-                                break;
-                            }
-                        }
-                        if (size > 0) {
-                            minTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
-                            Unsafe.getUnsafe().putLong(tempMem16b, minTimestamp);
-                            Unsafe.getUnsafe().putLong(tempMem16b + Long.BYTES, maxTimestamp);
-                        }
-                        return size;
-                    } finally {
-                        ff.munmap(mappedMem, fileSize, MemoryTag.MMAP_DEFAULT);
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.instance(0).put("path does not exist [path=").put(path).put(']');
-            }
-        } finally {
-            path.trimTo(plen);
         }
     }
 

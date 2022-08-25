@@ -47,9 +47,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
     public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
+    // PARTITION_TIMESTAMP_OFFSET = 0;
+    public static final int COLUMN_INDEX_OFFSET = 1;
+    public static final int COLUMN_NAME_TXN_OFFSET = 2;
+    public static final int COLUMN_TOP_OFFSET = 3;
 
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
-    private final LongList cachedList = new LongList();
+    protected final LongList cachedList = new LongList();
     private MemoryCMR mem;
     private boolean ownMem;
     private long version;
@@ -80,9 +84,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         while (p < lim) {
             mem.putLong(p, cachedList.getQuick(i));
-            mem.putLong(p + Long.BYTES, cachedList.getQuick(i + 1));
-            mem.putLong(p + 2 * Long.BYTES, cachedList.getQuick(i + 2));
-            mem.putLong(p + 3 * Long.BYTES, cachedList.getQuick(i + 3));
+            mem.putLong(p + COLUMN_INDEX_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_INDEX_OFFSET));
+            mem.putLong(p + COLUMN_NAME_TXN_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_NAME_TXN_OFFSET));
+            mem.putLong(p + COLUMN_TOP_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_TOP_OFFSET));
             i += BLOCK_SIZE;
             p += BLOCK_SIZE_BYTES;
         }
@@ -94,11 +98,11 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
         int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : getDefaultColumnNameTxn(columnIndex);
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);
     }
 
     public long getColumnNameTxnByIndex(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : -1L;
     }
 
     /**
@@ -111,7 +115,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         // Check if there is explicit record for this partitionTimestamp / columnIndex combination
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
-            return cachedList.getQuick(recordIndex + 3);
+            return cachedList.getQuick(recordIndex + COLUMN_TOP_OFFSET);
         }
 
         // Check if column has been already added before this partition
@@ -136,7 +140,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     public long getColumnTopByIndex(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 3) : 0L;
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_TOP_OFFSET) : 0L;
     }
 
     /**
@@ -163,7 +167,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         if (index > -1) {
             final int sz = cachedList.size();
             for (; index < sz && cachedList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
-                final long thisIndex = cachedList.getQuick(index + 1);
+                final long thisIndex = cachedList.getQuick(index + COLUMN_INDEX_OFFSET);
 
                 if (thisIndex == columnIndex) {
                     return index;
@@ -246,9 +250,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         while (p < lim) {
             cachedList.setQuick(i, mem.getLong(p));
-            cachedList.setQuick(i + 1, mem.getLong(p + Long.BYTES));
-            cachedList.setQuick(i + 2, mem.getLong(p + 2 * Long.BYTES));
-            cachedList.setQuick(i + 3, mem.getLong(p + 3 * Long.BYTES));
+            cachedList.setQuick(i + COLUMN_INDEX_OFFSET, mem.getLong(p + COLUMN_INDEX_OFFSET * Long.BYTES));
+            cachedList.setQuick(i + COLUMN_NAME_TXN_OFFSET, mem.getLong(p + COLUMN_NAME_TXN_OFFSET * Long.BYTES));
+            cachedList.setQuick(i + COLUMN_TOP_OFFSET, mem.getLong(p + COLUMN_TOP_OFFSET * Long.BYTES));
             i += BLOCK_SIZE;
             p += BLOCK_SIZE_BYTES;
         }

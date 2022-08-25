@@ -29,6 +29,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -38,14 +40,12 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1416,13 +1416,33 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
+            int partitionCount
+    ) throws NumericException, SqlException {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    protected void createPopulateTable(
+            int tableId,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException, SqlException {
+        try (
+                MemoryMARW mem = Vm.getMARWInstance();
+                Path path = new Path().of(configuration.getRoot()).concat(tableModel.getTableName())
+        ) {
+            TableUtils.createTable(configuration, mem, path, tableModel, tableId);
+            compiler.compile(
+                    TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
+                    sqlExecutionContext
+            );
+        }
     }
 
     protected <T extends AbstractOperation> void executeOperation(
             String query,
-            int opType,
+            short opType,
             Function<CompiledQuery, T> op
     ) throws SqlException {
         CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
