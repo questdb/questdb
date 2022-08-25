@@ -49,6 +49,7 @@ public final class Files {
     public static final int FILES_RENAME_ERR_OTHER = 2;
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
+    public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
 
     private Files() {
         // Prevent construction.
@@ -220,7 +221,7 @@ public final class Files {
     public static int mkdirs(Path path, int mode) {
         for (int i = 0, n = path.length(); i < n; i++) {
             char c = path.charAt(i);
-            if (c == File.separatorChar) {
+            if (c == Files.SEPARATOR) {
 
                 // do not attempt to create '/' on linux or 'C:\' on Windows
                 if ((i == 0 && Os.type != Os.WINDOWS) || (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':')) {
@@ -233,11 +234,11 @@ public final class Files {
                 if (path.length() > 0 && !Files.exists(path)) {
                     int r = Files.mkdir(path, mode);
                     if (r != 0) {
-                        path.put(i, File.separatorChar);
+                        path.put(i, Files.SEPARATOR);
                         return r;
                     }
                 }
-                path.put(i, File.separatorChar);
+                path.put(i, Files.SEPARATOR);
             }
         }
         return 0;
@@ -443,7 +444,7 @@ public final class Files {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;
         PAGE_SIZE = getPageSize();
-        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
+        SEPARATOR = File.separatorChar;
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             POSIX_FADV_RANDOM = getPosixFadvRandom();
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();

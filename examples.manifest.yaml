@@ -10,13 +10,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>6.4.3</version>
+        <version>6.5</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '6.4.3'
+    compile group: 'org.questdb', name: 'questdb', version: '6.5'
     ```
 - name: ilp-auth-tls
   lang: java
@@ -30,13 +30,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>6.4.3</version>
+        <version>6.5</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '6.4.3'
+    compile group: 'org.questdb', name: 'questdb', version: '6.5'
     ```
   auth:
     kid: admin
@@ -44,3 +44,29 @@
   addr:
     host: clever-black-363-c1213c97.ilp.b04c.questdb.net
     port: 32074
+- name: ilp-auth
+  lang: java
+  path: examples/src/main/java/com/example/sender/AuthExample.java
+  header: |-
+    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+
+    Maven
+    ```
+    <dependency>
+        <groupId>org.questdb</groupId>
+        <artifactId>questdb</artifactId>
+        <version>6.5</version>
+    </dependency>
+    ```
+
+    Gradle
+    ```
+    compile group: 'org.questdb', name: 'questdb', version: '6.5'
+    ```
+  auth:
+    kid: testUser1
+    d: GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0
+  addr:
+    host: localhost
+    port: 9009

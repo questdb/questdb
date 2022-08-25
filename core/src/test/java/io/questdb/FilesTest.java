@@ -147,6 +147,45 @@ public class FilesTest {
     }
 
     @Test
+    public void testCopyRecursive() throws Exception {
+        assertMemoryLeak(() -> {
+            int mkdirMode = 509;
+            try (Path src = new Path().of(temporaryFolder.getRoot().getAbsolutePath())) {
+                File f1 = new File(Chars.toString(src.concat("file")));
+                TestUtils.writeStringToFile(f1, "abcde");
+
+                src.parent();
+                src.concat("subdir");
+                Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
+                src.chop$();
+
+                File f2 = new File(Chars.toString(src.concat("file2")));
+                TestUtils.writeStringToFile(f2, "efgh");
+
+                src.of(temporaryFolder.getRoot().getAbsolutePath());
+                try (Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$()) {
+                    Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
+
+                    dst.concat("file");
+                    src.concat("file");
+                    TestUtils.assertFileContentsEquals(src, dst);
+                    dst.parent();
+                    src.parent();
+
+                    src.concat("subdir").concat("file2");
+                    dst.concat("subdir").concat("file2");
+                    TestUtils.assertFileContentsEquals(src, dst);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHardLinkAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("some_column.d");
+    }
+
+    @Test
     public void testDeleteDir2() throws Exception {
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
@@ -191,6 +230,64 @@ public class FilesTest {
                     Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
                 } finally {
                     Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHardLinkFailuresSrcDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> {
+            File dbRoot = temporaryFolder.newFolder("dbRoot");
+            dbRoot.mkdirs();
+            Path srcFilePath = null;
+            Path hardLinkFilePath = null;
+            try {
+                srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d").$();
+                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
+                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
+            } finally {
+                Misc.free(srcFilePath);
+                Misc.free(hardLinkFilePath);
+                temporaryFolder.delete();
+            }
+        });
+    }
+
+    @Test
+    public void testHardLinkNonAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("いくつかの列.d");
+    }
+
+    @Test
+    public void testHardLinkRecursive() throws Exception {
+        assertMemoryLeak(() -> {
+            int mkdirMode = 509;
+            try (Path src = new Path().of(temporaryFolder.getRoot().getAbsolutePath())) {
+                File f1 = new File(Chars.toString(src.concat("file")));
+                TestUtils.writeStringToFile(f1, "abcde");
+
+                src.parent();
+                src.concat("subdir");
+                Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
+                src.chop$();
+
+                File f2 = new File(Chars.toString(src.concat("file2")));
+                TestUtils.writeStringToFile(f2, "efgh");
+
+                src.of(temporaryFolder.getRoot().getAbsolutePath());
+                try (Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$()) {
+                    Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
+
+                    dst.concat("file");
+                    src.concat("file");
+                    TestUtils.assertFileContentsEquals(src, dst);
+                    dst.parent();
+                    src.parent();
+
+                    src.concat("subdir").concat("file2");
+                    dst.concat("subdir").concat("file2");
+                    TestUtils.assertFileContentsEquals(src, dst);
                 }
             }
         });
@@ -242,87 +339,6 @@ public class FilesTest {
             try (Path path = new Path().of(temp).concat("xyz").$()) {
                 long pFind = Files.findFirst(path);
                 Assert.assertEquals("failed os=" + Os.errno(), 0, pFind);
-            }
-        });
-    }
-
-    @Test
-    public void testHardLinkAsciiName() throws Exception {
-        assertHardLinkPreservesFileContent("some_column.d");
-    }
-
-    @Test
-    public void testHardLinkNonAsciiName() throws Exception {
-        assertHardLinkPreservesFileContent("いくつかの列.d");
-    }
-
-    private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
-        assertMemoryLeak(() -> {
-            File dbRoot = temporaryFolder.newFolder("dbRoot");
-            dbRoot.mkdirs();
-            Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
-            Path hardLinkFilePath = null;
-            try {
-                final String EOL = System.lineSeparator();
-                final String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
-                        "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
-                        "received signal power S through an analog communication channel subject to" + EOL +
-                        "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
-                        "C = B * log_2(1 + S/N)" + EOL + EOL +
-                        "where" + EOL + EOL +
-                        "C is the channel capacity in bits per second, a theoretical upper bound on the net " + EOL +
-                        "  bit rate (information rate, sometimes denoted I) excluding error-correction codes;" + EOL +
-                        "B is the bandwidth of the channel in hertz (passband bandwidth in case of a bandpass " + EOL +
-                        "signal);" + EOL +
-                        "S is the average received signal power over the bandwidth (in case of a carrier-modulated " + EOL +
-                        "passband transmission, often denoted C), measured in watts (or volts squared);" + EOL +
-                        "N is the average power of the noise and interference over the bandwidth, measured in " + EOL +
-                        "watts (or volts squared); and" + EOL +
-                        "S/N is the signal-to-noise ratio (SNR) or the carrier-to-noise ratio (CNR) of the " + EOL +
-                        "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
-                        "power ratio, not aslogarithmic decibels)." + EOL;
-
-                createTempFile(srcFilePath, fileName, fileContent);
-
-                // perform the hard link
-                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
-                Assert.assertEquals(0, Files.hardLink(srcFilePath, hardLinkFilePath));
-
-                // check content are the same
-                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
-
-                // delete source file
-                Assert.assertTrue(Files.remove(srcFilePath));
-
-                // check linked file still exists and content are the same
-                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
-            } finally {
-                Files.remove(srcFilePath);
-                Misc.free(srcFilePath);
-                if (null != hardLinkFilePath) {
-                    Assert.assertTrue(Files.remove(hardLinkFilePath));
-                }
-                Misc.free(hardLinkFilePath);
-                temporaryFolder.delete();
-            }
-        });
-    }
-
-    @Test
-    public void testHardLinkFailuresSrcDoesNotExist() throws Exception {
-        assertMemoryLeak(() -> {
-            File dbRoot = temporaryFolder.newFolder("dbRoot");
-            dbRoot.mkdirs();
-            Path srcFilePath = null;
-            Path hardLinkFilePath = null;
-            try {
-                srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d").$();
-                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
-                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
-            } finally {
-                Misc.free(srcFilePath);
-                Misc.free(hardLinkFilePath);
-                temporaryFolder.delete();
             }
         });
     }
@@ -446,13 +462,6 @@ public class FilesTest {
         fos.close();
     }
 
-    private void assertLastModified(Path path, long t) throws IOException {
-        File f = temporaryFolder.newFile();
-        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
-        Assert.assertTrue(Files.setLastModified(path, t));
-        Assert.assertEquals(t, Files.getLastModified(path));
-    }
-
     private static void createTempFile(Path path, String fileName, String fileContent) {
         final int buffSize = fileContent.length() * 3;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
@@ -507,5 +516,64 @@ public class FilesTest {
             }
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
+        assertMemoryLeak(() -> {
+            File dbRoot = temporaryFolder.newFolder("dbRoot");
+            dbRoot.mkdirs();
+            Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
+            Path hardLinkFilePath = null;
+            try {
+                final String EOL = System.lineSeparator();
+                final String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
+                        "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
+                        "received signal power S through an analog communication channel subject to" + EOL +
+                        "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
+                        "C = B * log_2(1 + S/N)" + EOL + EOL +
+                        "where" + EOL + EOL +
+                        "C is the channel capacity in bits per second, a theoretical upper bound on the net " + EOL +
+                        "  bit rate (information rate, sometimes denoted I) excluding error-correction codes;" + EOL +
+                        "B is the bandwidth of the channel in hertz (passband bandwidth in case of a bandpass " + EOL +
+                        "signal);" + EOL +
+                        "S is the average received signal power over the bandwidth (in case of a carrier-modulated " + EOL +
+                        "passband transmission, often denoted C), measured in watts (or volts squared);" + EOL +
+                        "N is the average power of the noise and interference over the bandwidth, measured in " + EOL +
+                        "watts (or volts squared); and" + EOL +
+                        "S/N is the signal-to-noise ratio (SNR) or the carrier-to-noise ratio (CNR) of the " + EOL +
+                        "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
+                        "power ratio, not aslogarithmic decibels)." + EOL;
+
+                createTempFile(srcFilePath, fileName, fileContent);
+
+                // perform the hard link
+                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
+                Assert.assertEquals(0, Files.hardLink(srcFilePath, hardLinkFilePath));
+
+                // check content are the same
+                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
+
+                // delete source file
+                Assert.assertTrue(Files.remove(srcFilePath));
+
+                // check linked file still exists and content are the same
+                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
+            } finally {
+                Files.remove(srcFilePath);
+                Misc.free(srcFilePath);
+                if (null != hardLinkFilePath) {
+                    Assert.assertTrue(Files.remove(hardLinkFilePath));
+                }
+                Misc.free(hardLinkFilePath);
+                temporaryFolder.delete();
+            }
+        });
+    }
+
+    private void assertLastModified(Path path, long t) throws IOException {
+        File f = temporaryFolder.newFile();
+        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
+        Assert.assertTrue(Files.setLastModified(path, t));
+        Assert.assertEquals(t, Files.getLastModified(path));
     }
 }

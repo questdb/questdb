@@ -34,6 +34,8 @@ import io.questdb.tasks.ColumnPurgeTask;
 import java.io.Closeable;
 import java.io.IOException;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class ColumnPurgeOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
     private final Path path = new Path();
@@ -161,7 +163,8 @@ public class ColumnPurgeOperator implements Closeable {
             return true;
         }
 
-        txReader.ofRO(path.trimTo(pathTableLen), task.getPartitionBy());
+        path.trimTo(pathTableLen).concat(TXN_FILE_NAME);
+        txReader.ofRO(path.$(), task.getPartitionBy());
         txReader.unsafeLoadAll();
         if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
             LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();

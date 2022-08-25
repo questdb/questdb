@@ -22,17 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.cairo;
 
-import org.jetbrains.annotations.TestOnly;
-
-public interface Counter extends Scrapable {
-
-    default void inc() {
-        add(1);
-    }
-
-    void add(long value);
-
-    long get();
+public enum AttachDetachStatus {
+    OK,
+    DETACH_ERR_ACTIVE,
+    DETACH_ERR_MISSING_PARTITION,
+    DETACH_ERR_MISSING_PARTITION_DIR,
+    DETACH_ERR_COPY_META,
+    DETACH_ERR_HARD_LINK,
+    DETACH_ERR_COPY,
+    DETACH_ERR_ALREADY_DETACHED,
+    DETACH_ERR_MKDIR,
+    ATTACH_ERR_PARTITION_EXISTS,
+    ATTACH_ERR_RENAME,
+    ATTACH_ERR_COPY,
+    ATTACH_ERR_MISSING_PARTITION,
+    ATTACH_ERR_DIR_EXISTS,
+    ATTACH_ERR_EMPTY_PARTITION
 }

@@ -29,6 +29,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -38,19 +40,19 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
@@ -767,6 +769,21 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean sizeCanBeVariable,
             CharSequence expectedPlan
     ) throws SqlException {
+        printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, expectedPlan);
+    }
+
+    protected static void printSqlResult(
+            Supplier<? extends CharSequence> expectedSupplier,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            CharSequence ddl2,
+            CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean expectSize,
+            boolean sizeCanBeVariable,
+            CharSequence expectedPlan
+    ) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
@@ -776,6 +793,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
         try {
             assertTimestamp(expectedTimestamp, factory);
+            CharSequence expected = expectedSupplier.get();
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
             // make sure we get the same outcome when we get factory to create new cursor
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
@@ -1402,13 +1420,33 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
+            int partitionCount
+    ) throws NumericException, SqlException {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    protected void createPopulateTable(
+            int tableId,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException, SqlException {
+        try (
+                MemoryMARW mem = Vm.getMARWInstance();
+                Path path = new Path().of(configuration.getRoot()).concat(tableModel.getTableName())
+        ) {
+            TableUtils.createTable(configuration, mem, path, tableModel, tableId);
+            compiler.compile(
+                    TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
+                    sqlExecutionContext
+            );
+        }
     }
 
     protected <T extends AbstractOperation> void executeOperation(
             String query,
-            int opType,
+            short opType,
             Function<CompiledQuery, T> op
     ) throws SqlException {
         CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
