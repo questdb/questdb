@@ -212,7 +212,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             if (defaultRecordIndex >= 0) {
                 long columnNameTxn = cachedList.getQuick(defaultRecordIndex + COLUMN_NAME_TXN_OFFSET);
                 long defaultPartitionTimestamp = cachedList.getQuick(defaultRecordIndex + COLUMN_TOP_OFFSET);
-                // Do not add 0 column top if the default parttion
+                // Do not add 0 column top if the default partition
                 if (defaultPartitionTimestamp > partitionTimestamp || colTop > 0) {
                     upsert(partitionTimestamp, columnIndex, columnNameTxn, colTop);
                 }

@@ -45,7 +45,7 @@ public interface CairoConfiguration {
 
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
-    boolean copyPartitionOnAttach();
+    boolean attachPartitionCopy();
 
     boolean enableTestFactories();
 
@@ -56,7 +56,7 @@ public interface CairoConfiguration {
         return "crash+";
     }
 
-    String getAttachableDirSuffix();
+    String getAttachPartitionSuffix();
 
     DateFormat getBackupDirTimestampFormat();
 
@@ -129,7 +129,7 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    CharSequence getDetachedRoot();
+    CharSequence getDetachRoot();
 
     int getDoubleToStrCastScale();
 

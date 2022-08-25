@@ -40,6 +40,8 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.AttachDetachStatus.*;
+
 
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private final static int DIR_MODE = configuration.getMkDirMode();
@@ -253,7 +255,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': PARTITION_CANNOT_ATTACH_MISSING", e.getMessage());
+                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
                 }
             }
         });
@@ -273,7 +275,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': PARTITION_CANNOT_ATTACH_MISSING", e.getMessage());
+                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
                 }
             }
         });
@@ -282,8 +284,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachPartitionInWrongDirectoryName() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src11", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst11", PartitionBy.DAY)) {
+            try (
+                    TableModel src = new TableModel(configuration, "src11", PartitionBy.DAY);
+                    TableModel dst = new TableModel(configuration, "dst11", PartitionBy.DAY)
+            ) {
 
                 createPopulateTable(
                         1,
@@ -305,7 +309,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': PARTITION_CANNOT_ATTACH_MISSING");
+                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': " + ATTACH_ERR_MISSING_PARTITION.name());
                 }
             }
         });
@@ -918,7 +922,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2022-08-09': PARTITION_ALREADY_ATTACHED", e.getMessage());
+                    Assert.assertEquals("[25] failed to attach partition '2022-08-09': "+ ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
                 }
             }
         });
@@ -997,7 +1001,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcRen", "dstRen", false, "PARTITION_FOLDER_CANNOT_RENAME");
+        testSqlFailedOnFsOperation(ff, "srcRen", "dstRen", false, ATTACH_ERR_RENAME.name());
     }
 
     @Test
@@ -1058,7 +1062,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getTableName(), "testing")) {
                         writer.removePartition(timestamp);
                         copyPartitionToAttachable(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
-                        Assert.assertEquals(AttachPartitionStatusCode.OK, writer.attachPartition(timestamp));
+                        Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestamp));
                     }
 
                     // Go active
@@ -1176,7 +1180,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
-            Files.rmdir(path.of(root).concat(dstTableName).concat("2022-08-01").put(configuration.getAttachableDirSuffix()).$());
+            Files.rmdir(path.of(root).concat(dstTableName).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
         }
     }
 
@@ -1195,12 +1199,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         engine.clear();
         path.of(configuration.getRoot()).concat(src.getName());
         int pathLen = path.length();
-        other.of(configuration.getDetachedRoot()).concat(dst.getName());
+        other.of(configuration.getDetachRoot()).concat(dst.getName());
         int otherLen = other.length();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
             path.trimTo(pathLen).concat(partition).$();
-            other.trimTo(otherLen).concat(partition).put(configuration.getAttachableDirSuffix()).$();
+            other.trimTo(otherLen).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
             TestUtils.copyDirectory(path, other, DIR_MODE);
         }
 
@@ -1241,10 +1245,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 .concat(srcTableName)
                 .concat(srcPartitionName)
                 .slash$();
-        other.of(configuration.getDetachedRoot())
+        other.of(configuration.getDetachRoot())
                 .concat(dstTableName)
                 .concat(dstPartitionName)
-                .put(configuration.getAttachableDirSuffix())
+                .put(configuration.getAttachPartitionSuffix())
                 .slash$();
 
         TestUtils.copyDirectory(path, other, DIR_MODE);
@@ -1252,12 +1256,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         // copy _meta
         Files.copy(
                 path.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
-                other.parent().concat(TableUtils.DETACHED_META_FILE_NAME).$()
+                other.parent().concat(TableUtils.META_FILE_NAME).$()
         );
         // copy _cv
         Files.copy(
                 path.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                other.parent().concat(TableUtils.DETACHED_COLUMN_VERSION_FILE_NAME).$()
+                other.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
         );
     }
 
@@ -1277,7 +1281,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
     }
 
-    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String srcTableName, String dstTableName, boolean catchAll, String... errorContains) throws Exception {
+    private void testSqlFailedOnFsOperation(
+            FilesFacadeImpl ff,
+            String srcTableName,
+            String dstTableName,
+            boolean catchAll,
+            String... errorContains
+    ) throws Exception {
         assertMemoryLeak(ff, () -> {
             try (
                     TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);

@@ -43,7 +43,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean copyPartitionOnAttach() {
+    public boolean attachPartitionCopy() {
         return false;
     }
 
@@ -58,8 +58,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public String getAttachableDirSuffix() {
-        return conf.getAttachableDirSuffix();
+    public String getAttachPartitionSuffix() {
+        return conf.getAttachPartitionSuffix();
     }
 
     @Override
@@ -78,8 +78,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getDetachedRoot() {
-        return conf.getDetachedRoot();
+    public CharSequence getDetachRoot() {
+        return conf.getDetachRoot();
     }
 
     @Override

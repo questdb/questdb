@@ -270,13 +270,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
-                AttachPartitionStatusCode attachPartitionStatusCode = tableWriter.attachPartition(partitionTimestamp);
-                if (attachPartitionStatusCode != AttachPartitionStatusCode.OK) {
+                AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
+                if (attachDetachStatus != AttachDetachStatus.OK) {
                     throw putPartitionName(
                             SqlException.$(tableNamePosition, "failed to attach partition '"),
                             tableWriter.getPartitionBy(),
                             partitionTimestamp
-                    ).put("': ").put(attachPartitionStatusCode.name());
+                    ).put("': ").put(attachDetachStatus.name());
                 }
             } catch (CairoException e) {
                 LOG.error().$("failed to attach partition [table=").$(tableName)
@@ -293,10 +293,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
-                AttachPartitionStatusCode attachPartitionStatusCode = tableWriter.detachPartition(partitionTimestamp);
-                if (AttachPartitionStatusCode.OK != attachPartitionStatusCode) {
+                AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
+                if (AttachDetachStatus.OK != attachDetachStatus) {
                     throw putPartitionName(
-                            SqlException.$(tableNamePosition, "could not detach [statusCode=").put(attachPartitionStatusCode.name())
+                            SqlException.$(tableNamePosition, "could not detach [statusCode=").put(attachDetachStatus.name())
                                     .put(", table=").put(tableName)
                                     .put(", partition='"),
                             tableWriter.getPartitionBy(),

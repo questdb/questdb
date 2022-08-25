@@ -633,7 +633,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 path.equals(normalize(configuration.getRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
                 path.equals(normalize(configuration.getSnapshotRoot())) ||
-                path.equals(normalize(configuration.getDetachedRoot())) ||
+                path.equals(normalize(configuration.getDetachRoot())) ||
                 path.equals(normalize(configuration.getBackupRoot()));
     }
 
@@ -656,7 +656,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put("_").put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDetachedRoot()).concat(tableName);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDetachRoot()).concat(tableName);
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
 
@@ -674,7 +674,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final CharSequence partitionName = partition.name;
 
                     srcPath.trimTo(srcPlen).concat(partitionName);
-                    dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachableDirSuffix());
+                    dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix());
 
                     int res = ff.rename(srcPath.slash$(), dstPath.slash$());
 
@@ -688,7 +688,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         ff.iterateDir(srcPath, (long name, int type) -> {
                             if (type == Files.DT_FILE) {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachableDirSuffix()).concat(name).$();
+                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
                                     throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                                 }

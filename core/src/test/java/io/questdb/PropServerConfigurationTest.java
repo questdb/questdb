@@ -248,7 +248,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("http-server", configuration.getHttpServerConfiguration().getDispatcherConfiguration().getDispatcherLogName());
 
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
-        TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getDetachedRoot());
+        TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getDetachRoot());
         TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
         TestUtils.assertEquals(new File(root, "snapshot").getAbsolutePath(), configuration.getCairoConfiguration().getSnapshotRoot());
 
@@ -345,8 +345,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
 
-        Assert.assertEquals(".attachable", configuration.getCairoConfiguration().getAttachableDirSuffix());
-        Assert.assertEquals(false, configuration.getCairoConfiguration().copyPartitionOnAttach());
+        Assert.assertEquals(".attachable", configuration.getCairoConfiguration().getAttachPartitionSuffix());
+        Assert.assertFalse(configuration.getCairoConfiguration().attachPartitionCopy());
     }
 
     @Test
@@ -869,8 +869,8 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
 
-            Assert.assertEquals(".detached", configuration.getCairoConfiguration().getAttachableDirSuffix());
-            Assert.assertEquals(true, configuration.getCairoConfiguration().copyPartitionOnAttach());
+            Assert.assertEquals(".detached", configuration.getCairoConfiguration().getAttachPartitionSuffix());
+            Assert.assertTrue(configuration.getCairoConfiguration().attachPartitionCopy());
         }
     }
 

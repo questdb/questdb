@@ -66,7 +66,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean copyPartitionOnAttach() {
+    public boolean attachPartitionCopy() {
         return false;
     }
 
@@ -81,7 +81,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public String getAttachableDirSuffix() {
+    public String getAttachPartitionSuffix() {
         return ".attachable";
     }
 
@@ -101,7 +101,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getDetachedRoot() {
+    public CharSequence getDetachRoot() {
         return detachedRoot;
     }
 

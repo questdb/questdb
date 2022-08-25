@@ -148,7 +148,7 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getDetachedRoot() {
+            public CharSequence getDetachRoot() {
                 return PropServerConfiguration.rootSubdir(getRoot(), "dbRoot_detached");
             }
 
@@ -361,13 +361,13 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public boolean copyPartitionOnAttach() {
-                return copyPartitionOnAttach == null ? super.copyPartitionOnAttach() : copyPartitionOnAttach;
+            public boolean attachPartitionCopy() {
+                return copyPartitionOnAttach == null ? super.attachPartitionCopy() : copyPartitionOnAttach;
             }
 
             @Override
-            public String getAttachableDirSuffix() {
-                return attachableDirSuffix == null ? super.getAttachableDirSuffix() : attachableDirSuffix;
+            public String getAttachPartitionSuffix() {
+                return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
             }
         };
         engine = new CairoEngine(configuration, metrics);

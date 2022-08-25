@@ -49,6 +49,7 @@ public final class Files {
     public static final int FILES_RENAME_ERR_OTHER = 2;
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
+    public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
 
     private Files() {
         // Prevent construction.

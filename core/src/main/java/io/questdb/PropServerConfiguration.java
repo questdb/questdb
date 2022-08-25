@@ -208,7 +208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbDirectory;
     private final String confRoot;
     private final String snapshotRoot;
-    private final String detachedRoot;
+    private final String detachRoot;
     private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
@@ -273,6 +273,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyLogRetentionDays;
     private final boolean ioURingEnabled;
     private final int cairoMaxCrashFiles;
+    private final boolean walEnabledDefault;
+    private final String cairoAttachPartitionSuffix;
+    private final boolean cairoAttachPartitionCopy;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -410,9 +413,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
-    private final boolean walEnabledDefault;
-    private final String attachableDirSuffix;
-    private final boolean copyPartitionOnAttach;
 
     public PropServerConfiguration(
             String root,
@@ -433,20 +433,20 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
 
-        String detached = getString(properties, env, PropertyKey.CAIRO_SQL_DETACHED_ROOT, DETACHED_DIRECTORY);
+        String detachRoot = getString(properties, env, PropertyKey.CAIRO_DETACH_ROOT, DETACHED_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
-            this.detachedRoot = rootSubdir(this.root, detached); // ../detached_partitions
+            this.detachRoot = rootSubdir(this.root, detachRoot); // ../detached_partitions
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
-            this.detachedRoot = new File(root, detached).getAbsolutePath();
+            this.detachRoot = new File(root, detachRoot).getAbsolutePath();
         }
-        this.attachableDirSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACHABLE_PARTITION_SUFFIX, ".attachable");
-        this.copyPartitionOnAttach = getBoolean(properties, env, PropertyKey.CAIRO_COPY_PARTITION_ON_ATTACH, false);
+        this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, ".attachable");
+        this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
@@ -1865,8 +1865,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
-        public boolean copyPartitionOnAttach() {
-            return copyPartitionOnAttach;
+        public boolean attachPartitionCopy() {
+            return cairoAttachPartitionCopy;
         }
 
         @Override
@@ -1880,8 +1880,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getAttachableDirSuffix() {
-            return attachableDirSuffix;
+        public String getAttachPartitionSuffix() {
+            return cairoAttachPartitionSuffix;
         }
 
         @Override
@@ -1897,11 +1897,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getBackupRoot() {
             return backupRoot;
-        }
-
-        @Override
-        public CharSequence getDetachedRoot() {
-            return detachedRoot;
         }
 
         @Override
@@ -2050,8 +2045,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getWallEnabledDefault() {
-            return walEnabledDefault;
+        public CharSequence getDetachRoot() {
+            return detachRoot;
         }
 
         @Override
@@ -2105,26 +2100,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public CharSequence getSqlCopyInputRoot() {
-            return cairoSqlCopyRoot;
-        }
-
-        @Override
-        public CharSequence getSqlCopyInputWorkRoot() {
-            return cairoSqlCopyWorkRoot;
-        }
-
-        @Override
-        public long getSqlCopyMaxIndexChunkSize() {
-            return cairoSqlCopyMaxIndexChunkSize;
-        }
-
-        @Override
-        public int getSqlCopyQueueCapacity() {
-            return cairoSqlCopyQueueCapacity;
-        }
-
-        @Override
         public int getInsertPoolCapacity() {
             return sqlInsertModelPoolCapacity;
         }
@@ -2132,6 +2107,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLatestByQueueCapacity() {
             return latestByQueueCapacity;
+        }
+
+        @Override
+        public int getMaxCrashFiles() {
+            return cairoMaxCrashFiles;
         }
 
         @Override
@@ -2260,6 +2240,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getReplaceFunctionMaxBufferLength() {
+            return replaceFunctionBufferMaxSize;
+        }
+
+        @Override
         public int getRndFunctionMemoryMaxPages() {
             return rndFunctionMemoryMaxPages;
         }
@@ -2267,11 +2252,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRndFunctionMemoryPageSize() {
             return rndFunctionMemoryPageSize;
-        }
-
-        @Override
-        public int getReplaceFunctionMaxBufferLength() {
-            return replaceFunctionBufferMaxSize;
         }
 
         @Override
@@ -2357,6 +2337,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
+        }
+
+        @Override
+        public CharSequence getSqlCopyInputRoot() {
+            return cairoSqlCopyRoot;
+        }
+
+        @Override
+        public CharSequence getSqlCopyInputWorkRoot() {
+            return cairoSqlCopyWorkRoot;
+        }
+
+        @Override
+        public int getSqlCopyLogRetentionDays() {
+            return cairoSqlCopyLogRetentionDays;
+        }
+
+        @Override
+        public long getSqlCopyMaxIndexChunkSize() {
+            return cairoSqlCopyMaxIndexChunkSize;
+        }
+
+        @Override
+        public int getSqlCopyQueueCapacity() {
+            return cairoSqlCopyQueueCapacity;
         }
 
         @Override
@@ -2465,11 +2470,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSmallMapKeyCapacity() {
-            return sqlSmallMapKeyCapacity;
-        }
-
-        @Override
         public int getSqlMapMaxPages() {
             return sqlMapMaxPages;
         }
@@ -2502,6 +2502,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlPageFrameMinRows() {
             return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public int getSqlSmallMapKeyCapacity() {
+            return sqlSmallMapKeyCapacity;
         }
 
         @Override
@@ -2559,6 +2564,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getWallEnabledDefault() {
+            return walEnabledDefault;
+        }
+
+        @Override
         public int getWithClauseModelPoolCapacity() {
             return sqlWithClauseModelPoolCapacity;
         }
@@ -2599,6 +2609,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isIOURingEnabled() {
+            return ioURingEnabled;
+        }
+
+        @Override
         public boolean isO3QuickSortEnabled() {
             return o3QuickSortEnabled;
         }
@@ -2621,21 +2636,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
-        }
-
-        @Override
-        public int getSqlCopyLogRetentionDays() {
-            return cairoSqlCopyLogRetentionDays;
-        }
-
-        @Override
-        public boolean isIOURingEnabled() {
-            return ioURingEnabled;
-        }
-
-        @Override
-        public int getMaxCrashFiles() {
-            return cairoMaxCrashFiles;
         }
     }
 

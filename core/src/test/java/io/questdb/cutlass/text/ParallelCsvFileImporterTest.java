@@ -1382,7 +1382,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, File.separator + "tab41" + File.separator + "1970-06" + configuration.getAttachableDirSuffix())) {
+                if (Chars.contains(path, File.separator + "tab41" + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -1449,7 +1449,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
-                if (Chars.endsWith(path, "1972-09" + configuration.getAttachableDirSuffix() + File.separator + "ts.d")) {
+                if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
                 return super.openRO(path);
@@ -2097,7 +2097,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
-                if (Chars.endsWith(path, "1972-09" + configuration.getAttachableDirSuffix() + File.separator + "ts.d")) {
+                if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
                 return super.openRO(path);
