@@ -131,8 +131,6 @@ public interface CairoConfiguration {
 
     int getMetadataPoolCapacity();
 
-    boolean getWallEnabledDefault();
-
     CharSequence getDetachRoot();
 
     int getDoubleToStrCastScale();

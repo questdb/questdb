@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.UpdateOperator;
 
@@ -31,22 +32,27 @@ public interface SequencerMetadataWriterBackend extends TableWriterBackend {
 
     @Override
     default void addIndex(CharSequence columnName, int indexValueBlockSize) {
-        throw CairoException.instance(0).put("add index does not update sequencer metadata");
+        throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
 
     @Override
-    default int attachPartition(long partitionTimestamp) {
-        throw CairoException.instance(0).put("attach partition does not update sequencer metadata");
+    default AttachDetachStatus attachPartition(long partitionTimestamp) {
+        throw CairoException.critical(0).put("attach partition does not update sequencer metadata");
+    }
+
+    @Override
+    default AttachDetachStatus detachPartition(long partitionTimestamp) {
+        throw CairoException.critical(0).put("detach partition does not update sequencer metadata");
     }
 
     @Override
     default void changeCacheFlag(int columnIndex, boolean isCacheOn) {
-        throw CairoException.instance(0).put("change cache flag does not update sequencer metadata");
+        throw CairoException.critical(0).put("change cache flag does not update sequencer metadata");
     }
 
     @Override
     default void dropIndex(CharSequence columnName) {
-        throw CairoException.instance(0).put("drop index does not update sequencer metadata");
+        throw CairoException.critical(0).put("drop index does not update sequencer metadata");
     }
 
     @Override
@@ -61,17 +67,17 @@ public interface SequencerMetadataWriterBackend extends TableWriterBackend {
 
     @Override
     default boolean removePartition(long partitionTimestamp) {
-        throw CairoException.instance(0).put("remove partition does not update sequencer metadata");
+        throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
     }
 
     @Override
     default void setMetaCommitLag(long commitLag) {
-        throw CairoException.instance(0).put("change commit lag does not update sequencer metadata");
+        throw CairoException.critical(0).put("change commit lag does not update sequencer metadata");
     }
 
     @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        throw CairoException.instance(0).put("change max uncommitted does not update sequencer metadata");
+        throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
     }
 }
 

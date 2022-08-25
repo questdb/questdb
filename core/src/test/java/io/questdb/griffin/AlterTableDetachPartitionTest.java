@@ -1930,6 +1930,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
 
                 // Existing partition but wrong folder name
+                dst = Path.PATH2.get().of(configuration.getDetachRoot()).concat(tableName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 Path dst2 = Path.PATH.get().of(configuration.getDetachRoot()).concat(tableName).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash$();
                 Assert.assertEquals(0, ff.rename(dst, dst2));
 

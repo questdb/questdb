@@ -171,7 +171,7 @@ public class SequencerImpl implements Sequencer {
         try {
             operation.apply(sequencerMetadataUpdater, true);
         } catch (SqlException e) {
-            throw CairoException.instance(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
+            throw CairoException.critical(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
         }
     }
 
@@ -201,7 +201,7 @@ public class SequencerImpl implements Sequencer {
     }
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("Cannot create sequencer directory: ").put(path);
+            throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
         }
         path.trimTo(rootLen);
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.UpdateOperator;
@@ -71,7 +72,9 @@ public interface TableWriterBackend {
 
     void addIndex(CharSequence columnName, int indexValueBlockSize);
 
-    int attachPartition(long partitionTimestamp);
+    AttachDetachStatus attachPartition(long partitionTimestamp);
+
+    AttachDetachStatus detachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
 

@@ -153,7 +153,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     public void removeColumn(CharSequence columnName) {
         int columnIndex = columnNameIndexMap.get(columnName);
         if (columnIndex < 0) {
-            throw CairoException.instance(0).put("Column not found: ").put(columnName);
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
         }
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
@@ -165,7 +165,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     public void renameColumn(CharSequence columnName, CharSequence newName) {
         int columnIndex = columnNameIndexMap.get(columnName);
         if (columnIndex < 0) {
-            throw CairoException.instance(0).put("Column not found: ").put(columnName);
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
         }
         int columnType = columnMetadata.getQuick(columnIndex).getType();
         columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newName.toString(), 0L, columnType));

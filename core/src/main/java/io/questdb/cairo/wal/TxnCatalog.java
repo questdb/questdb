@@ -166,7 +166,7 @@ public class TxnCatalog implements Closeable {
             if (fd > -1) {
                 return fd;
             }
-            throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+            throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
         } finally {
             path.trimTo(rootLen);
         }
@@ -275,7 +275,7 @@ public class TxnCatalog implements Closeable {
         public AlterOperation next() {
             int recordSize = txnMetaMem.getInt(txnMetaOffset);
             if (recordSize < 0 || recordSize > Files.PAGE_SIZE) {
-                throw CairoException.instance(0).put("Invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
+                throw CairoException.critical(0).put("Invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
             }
             txnMetaOffset += Integer.BYTES;
             serializer.fromSink(alterOperation, txnMetaMem, txnMetaOffset);
@@ -323,7 +323,7 @@ public class TxnCatalog implements Closeable {
                     ff.close(fdTxnMetaIndex);
                 }
             }
-            throw CairoException.instance(0).put("expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');
+            throw CairoException.critical(0).put("expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');
         }
 
         public void reset() {

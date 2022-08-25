@@ -92,7 +92,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 long nextTableTxn = sequencerCursor.getTxn();
 
                 if (nextTableTxn != writer.getTxn() + 1) {
-                    throw CairoException.instance(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
+                    throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
                 tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walid).slash().put(segmentId);
                 if (walid != TxnCatalog.METADATA_WALID) {
@@ -102,7 +102,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // to be taken from Sequencer directly
                     final int newStructureVersion = segmentId;
                     if (writer.getStructureVersion() != newStructureVersion - 1) {
-                        throw CairoException.instance(0)
+                        throw CairoException.critical(0)
                                 .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
                                 .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                 .put(']');
@@ -112,11 +112,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         try {
                             reusableStructureChangeCursor.next().apply(writer, true);
                         } catch (SqlException e) {
-                            throw CairoException.instance(0)
+                            throw CairoException.critical(0)
                                     .put("cannot apply structure change from WAL to table. ").put(e.getFlyweightMessage());
                         }
                     } else {
-                        throw CairoException.instance(0)
+                        throw CairoException.critical(0)
                                 .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                 .put(newStructureVersion)
                                 .put(']');

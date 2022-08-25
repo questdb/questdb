@@ -49,7 +49,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private long wptr;
     private int capacity;
     private int len;
-    private static AtomicInteger uqCapacity = new AtomicInteger(0);
+    private static final AtomicInteger uqCapacity = new AtomicInteger(0);
 
     public Path() {
         this(255 + uqCapacity.incrementAndGet());

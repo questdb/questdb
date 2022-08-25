@@ -213,7 +213,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int longSize = buffer.getInt(readPtr);
         readPtr += 4;
         if (longSize < 0 || readPtr + longSize * 8L >= hi) {
-            throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [2]");
+            throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [2]");
         }
         longList.clear();
         for (int i = 0; i < longSize; i++) {
@@ -328,7 +328,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyDetachPartition(TableWriter tableWriter) throws SqlException {
+    private void applyDetachPartition(TableWriterBackend tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {

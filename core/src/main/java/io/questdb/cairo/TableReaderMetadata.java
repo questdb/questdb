@@ -241,7 +241,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
                 if (!existenceChecked) {
                     path.trimTo(rootLen).slash$();
                     if (!ff.exists(path)) {
-                        throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
+                        throw CairoException.critical(2).put("table does not exist [table=").put(tableName).put(']');
                     }
                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                 }

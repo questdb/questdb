@@ -40,10 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -372,7 +369,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
         }
 
-        throw CairoException.instance(0).put("WAL reader is not supported for table ").put(tableName);
+        throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
     }
 
     public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {

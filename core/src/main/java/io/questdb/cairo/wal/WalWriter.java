@@ -362,11 +362,11 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                     alterOperation.apply(walMetadataUpdater, true);
                 } catch (SqlException e) {
                     distressed = true;
-                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
                 }
                 if (metadataVersion >= getStructureVersion()) {
                     distressed = true;
-                    throw CairoException.instance(0).put("could not apply table definition changes to the current transaction, version unchanged");
+                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
         } finally {
@@ -510,8 +510,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         if (!distressed) {
             return;
         }
-        throw CairoException.instance(0).
-                put("wal writer is disstresed and cannot be used any more [table=").put(tableName)
+        throw CairoException.critical(0).
+                put("wal writer is distressed and cannot be used any more [table=").put(tableName)
                 .put(", wal=").put(walId).put(']');
     }
 
@@ -667,12 +667,12 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         ) {
             MillisecondClock milliClock = configuration.getMillisecondClock();
             long spinLockTimeout = configuration.getSpinLockTimeout();
+
             Path path = Path.PATH2.get();
+            path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
 
-            path.of(configuration.getRoot()).concat(tableName);
-
-            // Doesn't matter what partition is by, as long as it's partitioned
-            // All WAL tables must be partitioned
+            // Does not matter which PartitionBy, as long as it is partitioned
+            // WAL tables must be partitioned
             txReader.ofRO(path, PartitionBy.DAY);
             path.of(configuration.getRoot()).concat(tableName).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
             columnVersionReader.ofRO(ff, path);
@@ -1124,7 +1124,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                     setColumnNull(type, columnIndex, segmentRowCount);
                     LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(name).I$();
                 } else {
-                    throw CairoException.instance(0).put("column '").put(name).put("' added, cannot commit because of concurrent table definition change ");
+                    throw CairoException.critical(0).put("column '").put(name).put("' added, cannot commit because of concurrent table definition change ");
                 }
             } else {
                 // Assuming WAL added the column already added to the table
@@ -1132,7 +1132,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                     // Same column name, type added in this WAL and in another WAL
                     // TODO: use specific exception that it's not a total fail
                 }
-                throw CairoException.instance(0).put("column '").put(name).put("' already exists");
+                throw CairoException.nonCritical().put("column '").put(name).put("' already exists");
             }
         }
 
@@ -1216,13 +1216,13 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         @Override
         public void addColumn(CharSequence columnName, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
-                throw CairoException.instance(0).put("invalid column name: ").put(columnName);
+                throw CairoException.critical(0).put("invalid column name: ").put(columnName);
             }
             if (metadata.getColumnIndexQuiet(columnName) > -1) {
-                throw CairoException.instance(0).put("duplicate column name: ").put(columnName);
+                throw CairoException.critical(0).put("duplicate column name: ").put(columnName);
             }
             if (type <= 0 || type >= ColumnType.MAX) {
-                throw CairoException.instance(0).put("invalid column type: ").put(type);
+                throw CairoException.critical(0).put("invalid column type: ").put(type);
             }
         }
 
@@ -1240,12 +1240,12 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         public void removeColumn(CharSequence columnName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                throw CairoException.instance(0).put("cannot remove column, column does not exists [table=").put(tableName)
+                throw CairoException.critical(0).put("cannot remove column, column does not exists [table=").put(tableName)
                         .put(", column=").put(columnName).put(']');
             }
 
             if (columnIndex == metadata.getTimestampIndex()) {
-                throw CairoException.instance(0).put("cannot remove designated timestamp column [table=").put(tableName)
+                throw CairoException.critical(0).put("cannot remove designated timestamp column [table=").put(tableName)
                         .put(", column=").put(columnName);
             }
         }
@@ -1254,21 +1254,21 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         public void renameColumn(CharSequence columnName, CharSequence newName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
-                throw CairoException.instance(0).put("cannot rename column, column does not exists [table=").put(tableName)
+                throw CairoException.critical(0).put("cannot rename column, column does not exists [table=").put(tableName)
                         .put(", column=").put(columnName).put(']');
             }
             if (columnIndex == metadata.getTimestampIndex()) {
-                throw CairoException.instance(0).put("cannot rename designated timestamp column [table=").put(tableName)
+                throw CairoException.critical(0).put("cannot rename designated timestamp column [table=").put(tableName)
                         .put(", column=").put(columnName).put(']');
             }
 
             int columnIndexNew = metadata.getColumnIndexQuiet(newName);
             if (columnIndexNew > -1) {
-                throw CairoException.instance(0).put("cannot rename column, column with the name already exists [table=").put(tableName)
+                throw CairoException.critical(0).put("cannot rename column, column with the name already exists [table=").put(tableName)
                         .put(", newName=").put(newName).put(']');
             }
             if (!TableUtils.isValidColumnName(newName, newName.length())) {
-                throw CairoException.instance(0).put("invalid column name: ").put(columnName);
+                throw CairoException.critical(0).put("invalid column name: ").put(columnName);
             }
         }
     }

@@ -63,7 +63,7 @@ public class WalEventReader implements Closeable {
                 return eventCursor;
             }
 
-            throw CairoException.instance(0).put("segment does not have txn with id ").put(segmentTxn);
+            throw CairoException.critical(0).put("segment does not have txn with id ").put(segmentTxn);
         } catch (Throwable e) {
             close();
             throw e;

@@ -74,7 +74,7 @@ public class CopySegmentFileJob {
         }
 
         if (!success) {
-            throw CairoException.instance(ff.errno()).put("failed to copy column file to new segment" +
+            throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
                             " [path=").put(newSegPath)
                     .put(", column=").put(columnName)
                     .put(", rowOffset=").put(rowOffset)

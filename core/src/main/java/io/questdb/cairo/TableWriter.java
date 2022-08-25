@@ -1349,7 +1349,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         txWriter.beginPartitionSizeUpdate();
-        if (processWalAppend(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
+        if (processO3Block(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
             return;
         }
 
@@ -5290,7 +5290,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             if (
                     Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
                             || Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
-                            || Chars.startsWith(fileNameSink, WalWriter.WAL_NAME_BASE)
+                            || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
                             || Chars.startsWith(fileNameSink, Sequencer.SEQ_DIR)
             ) {
                 // Do not remove detached partitions, wals and sequencer directories
