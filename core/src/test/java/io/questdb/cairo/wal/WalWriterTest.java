@@ -698,6 +698,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testConcurrentWalWriters() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
