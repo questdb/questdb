@@ -28,13 +28,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 
-import static io.questdb.cairo.wal.WalTxnType.DATA;
-import static io.questdb.cairo.wal.WalTxnType.NONE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
 
     private final DataInfo dataInfo = new DataInfo();
+    private final SqlInfo sqlInfo = new SqlInfo();
+
     private final MemoryMR eventMem;
     private long memSize;
     private long offset = Integer.BYTES; // skip wal meta version
@@ -103,6 +104,9 @@ public class WalEventCursor {
             case DATA:
                 dataInfo.read();
                 break;
+            case SQL:
+                sqlInfo.read();
+                break;
             default:
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
         }
@@ -113,6 +117,13 @@ public class WalEventCursor {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
         }
         return dataInfo;
+    }
+
+    public SqlInfo getSqlInfo() {
+        if (type != SQL) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not SQL, type=").put(type);
+        }
+        return sqlInfo;
     }
 
     public long getTxn() {
@@ -161,6 +172,24 @@ public class WalEventCursor {
 
         public SymbolMapDiff nextSymbolMapDiff() {
             return readNextSymbolMapDiff(symbolMapDiff);
+        }
+    }
+
+    public class SqlInfo {
+        private int cmdType;
+        private CharSequence sql;
+
+        private void read() {
+            cmdType = readInt();
+            sql = readStr();
+        }
+
+        public int getCmdType() {
+            return cmdType;
+        }
+
+        public CharSequence getSql() {
+            return sql;
         }
     }
 

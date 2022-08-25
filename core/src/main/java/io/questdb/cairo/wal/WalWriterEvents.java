@@ -104,6 +104,17 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
+    long sql(int cmdType, CharSequence sql) {
+        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.SQL);
+        eventMem.putInt(cmdType); //byte would be enough probably
+        eventMem.putStr(sql);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+        return txn++;
+    }
+
     void startTxn() {
         int columns = txnSymbolMaps.size();
         for (int i = 0; i < columns; i++) {
