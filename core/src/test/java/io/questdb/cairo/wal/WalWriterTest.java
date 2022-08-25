@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -60,10 +61,103 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
+    public void tesWalWritersOpenPoolClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+            }
+
+            engine.getTableRegistry().close();
+
+            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.fail();
+            } catch (PoolClosedException ignored) {
+            }
+            engine.getTableRegistry().reopen();
+        });
+    }
+
+    @Test
+    public void tesWalWritersReturnToClosedPool() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+                engine.getTableRegistry().close();
+            }
+
+            engine.getTableRegistry().reopen();
+        });
+    }
+
+    @Test
+    public void tesWalWritersReturnToClosedPool2() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+            } // return it to pool
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.assertTrue(walWriter.isOpen());
+                engine.getTableRegistry().close();
+            } // close it as the pool is closed too
+
+            engine.getTableRegistry().reopen();
+        });
+    }
+
+    @Test
+    public void tesWalWritersUnknownTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "NotExist";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts") // not a WAL table
+            ) {
+                createTable(model);
+            }
+            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.fail();
+            } catch (CairoError e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" + tableName + "`]"));
+            }
+        });
+    }
+
+    @Test
     public void testAddingColumnClosesSegment() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "testTableAddCol";
+            final String tableName = testName.getMethodName();
             createTable(tableName);
 
             final String walName;
@@ -72,11 +166,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                 TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
-                walWriter.addColumn("c", ColumnType.INT);
+                walWriter.commit();
+
+                addColumn(walWriter, "c", ColumnType.INT);
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 10);
                 row.append();
-                walWriter.addColumn("d", ColumnType.SHORT);
+                walWriter.commit();
+
+                addColumn(walWriter, "d", ColumnType.SHORT);
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 100);
                 row.append();
@@ -112,15 +210,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
                     assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(2, eventCursor.getTxn());
-                    assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
-
-                    final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
-                    assertEquals(2, addColumnInfo.getColumnIndex());
-                    assertEquals("c", addColumnInfo.getColumnName().toString());
-                    assertEquals(ColumnType.INT, addColumnInfo.getColumnType());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -144,7 +233,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(3, eventCursor.getTxn());
+                    assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -154,15 +243,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
                     assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(4, eventCursor.getTxn());
-                    assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
-
-                    final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
-                    assertEquals(3, addColumnInfo.getColumnIndex());
-                    assertEquals("d", addColumnInfo.getColumnName().toString());
-                    assertEquals(ColumnType.SHORT, addColumnInfo.getColumnType());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -186,7 +266,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(5, eventCursor.getTxn());
+                    assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -204,7 +284,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testAddingDuplicateColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTableAddDuplicateCol";
@@ -216,16 +295,21 @@ public class WalWriterTest extends AbstractGriffinTest {
                 TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
-                walWriter.addColumn("c", ColumnType.INT);
+                walWriter.commit();
+
+                addColumn(walWriter, "c", ColumnType.INT);
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 10);
                 row.append();
+                walWriter.commit();
+
                 try {
-                    walWriter.addColumn("c", ColumnType.SHORT);
+                    addColumn(walWriter, "c", ColumnType.SHORT);
                     fail("Should not be able to add duplicate column");
                 } catch (CairoException e) {
-                    assertEquals("[0] Duplicate column name: c", e.getMessage());
+                    assertEquals("[0] could not add column [error=duplicate column name: c, errno=0]", e.getMessage());
                 }
+
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 100);
                 row.append();
@@ -261,15 +345,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
                     assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(2, eventCursor.getTxn());
-                    assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
-
-                    final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
-                    assertEquals(2, addColumnInfo.getColumnIndex());
-                    assertEquals("c", addColumnInfo.getColumnName().toString());
-                    assertEquals(ColumnType.INT, addColumnInfo.getColumnType());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -298,11 +373,23 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(3, eventCursor.getTxn());
+                    assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    dataInfo = eventCursor.getDataInfo();
+                    assertEquals(1, dataInfo.getStartRowID());
                     assertEquals(2, dataInfo.getEndRowID());
                     assertEquals(0, dataInfo.getMinTimestamp());
                     assertEquals(0, dataInfo.getMaxTimestamp());
@@ -327,7 +414,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testAddingSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTableAddSymbolCol";
@@ -339,7 +425,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 125);
                 row.append();
-                walWriter.addColumn("c", ColumnType.SYMBOL);
+                walWriter.commit();
+                addColumn(walWriter, "c", ColumnType.SYMBOL);
             }
 
             try (TableModel model = defaultModel(tableName)) {
@@ -371,15 +458,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
                     assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(2, eventCursor.getTxn());
-                    assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
-
-                    final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
-                    assertEquals(2, addColumnInfo.getColumnIndex());
-                    assertEquals("c", addColumnInfo.getColumnName().toString());
-                    assertEquals(ColumnType.SYMBOL, addColumnInfo.getColumnType());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -600,100 +678,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(eventCursor.hasNext());
                 }
             }
-        });
-    }
-
-    @Test
-    public void tesWalWritersUnknownTable() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "NotExist";
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts") // not a WAL table
-            ) {
-                createTable(model);
-            }
-            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.fail();
-            } catch (CairoError e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" + tableName + "`]"));
-            }
-        });
-    }
-
-    @Test
-    public void tesWalWritersOpenPoolClose() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testTable";
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
-            ) {
-                createTable(model);
-            }
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.assertTrue(walWriter.isOpen());
-            }
-
-            engine.getTableRegistry().close();
-
-            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.fail();
-            } catch (PoolClosedException ignored) {
-            }
-            engine.getTableRegistry().reopen();
-        });
-    }
-
-    @Test
-    public void tesWalWritersReturnToClosedPool() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testTable";
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
-            ) {
-                createTable(model);
-            }
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.assertTrue(walWriter.isOpen());
-                engine.getTableRegistry().close();
-            }
-
-            engine.getTableRegistry().reopen();
-        });
-    }
-
-    @Test
-    public void tesWalWritersReturnToClosedPool2() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testTable";
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
-            ) {
-                createTable(model);
-            }
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.assertTrue(walWriter.isOpen());
-            } // return it to pool
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.assertTrue(walWriter.isOpen());
-                engine.getTableRegistry().close();
-            } // close it as the pool is closed too
-
-            engine.getTableRegistry().reopen();
         });
     }
 
@@ -1072,13 +1056,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(dataInfo.isOutOfOrder());
                     assertNull(dataInfo.nextSymbolMapDiff());
 
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(2, eventCursor.getTxn());
-                    assertEquals(WalTxnType.REMOVE_COLUMN, eventCursor.getType());
-
-                    final WalEventCursor.RemoveColumnInfo removeColumnInfo = eventCursor.getRemoveColumnInfo();
-                    assertEquals(0, removeColumnInfo.getColumnIndex());
-
                     assertFalse(eventCursor.hasNext());
                 }
 
@@ -1249,13 +1226,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     }
                     assertEquals(1, expectedKey);
                     assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(2, eventCursor.getTxn());
-                    assertEquals(WalTxnType.REMOVE_COLUMN, eventCursor.getType());
-
-                    final WalEventCursor.RemoveColumnInfo removeColumnInfo = eventCursor.getRemoveColumnInfo();
-                    assertEquals(1, removeColumnInfo.getColumnIndex());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -1933,6 +1903,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertWalFileExist(path, tableName, walName, "d.v");
             }
         });
+    }
+
+    private static void addColumn(WalWriter walWriter, String columnName, int columnType) {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter.getTableName()), 0);
+        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
+        walWriter.applyAlter(addColumnC.build(), true);
     }
 
     private static void prepareBinPayload(long pointer, int limit) {

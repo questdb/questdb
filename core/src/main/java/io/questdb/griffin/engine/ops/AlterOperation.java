@@ -227,6 +227,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     ) {
         init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableName, tableId, -1, tableNamePosition);
         this.command = command;
+        this.charSequenceList = this.objCharList;
         return this;
     }
 
