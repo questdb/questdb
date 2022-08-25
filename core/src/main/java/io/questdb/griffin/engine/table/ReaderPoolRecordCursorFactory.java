@@ -198,7 +198,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     case TXN_COLUMN_INDEX:
                         return txn;
                     default:
-                        throw CairoException.instance(-1).put("unsupported column number. [column=").put(col).put("]");
+                        throw CairoException.nonCritical().put("unsupported column number. [column=").put(col).put("]");
                 }
             }
         }

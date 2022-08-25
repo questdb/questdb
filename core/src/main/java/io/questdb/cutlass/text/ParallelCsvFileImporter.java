@@ -208,7 +208,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
                         LOG.error().$("remove failed [tableName='").utf8(tableName).$("',path='").utf8(path).$(", error=").$(errno).$(']').$();
-                        throw CairoException.instance(errno).put("Table remove failed [tableName=").put(tableName).put("]");
+                        throw CairoException.critical(errno).put("Table remove failed [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
@@ -457,7 +457,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
         if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
-            throw CairoException.instance(-1)
+            throw CairoException.nonCritical()
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
@@ -605,7 +605,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Path workDirPath = tmpPath.of(importRoot).slash$();
         int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
         if (errno != 0) {
-            throw CairoException.instance(errno).put("could not create temporary import directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
+            throw CairoException.critical(errno).put("could not create temporary import directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
         }
 
         createdWorkDir = true;
@@ -683,7 +683,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             }
                         });
                     } else if (res != Files.FILES_RENAME_OK) {
-                        throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
+                        throw CairoException.critical(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
                     }
                 }
             }
@@ -1195,10 +1195,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             TypeManager typeManager
     ) throws TextException {
         if (types.size() == 0) {
-            throw CairoException.instance(-1).put("cannot determine text structure");
+            throw CairoException.nonCritical().put("cannot determine text structure");
         }
         if (partitionBy == PartitionBy.NONE) {
-            throw CairoException.instance(-1).put("partition strategy for parallel import cannot be NONE");
+            throw CairoException.nonCritical().put("partition strategy for parallel import cannot be NONE");
         }
 
         if (partitionBy < 0) {

@@ -79,7 +79,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         if (size < 0) {
             size = ff.length(fd);
             if (size < 0) {
-                throw CairoException.instance(ff.errno()).put("Could not get length: ").put(name);
+                throw CairoException.critical(ff.errno()).put("Could not get length: ").put(name);
             }
         }
         map(ff, name, size);

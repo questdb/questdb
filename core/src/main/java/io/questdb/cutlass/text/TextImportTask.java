@@ -1015,7 +1015,7 @@ public class TextImportTask {
 
                 final long len = ff.length(fd);
                 if (len == -1) {
-                    throw CairoException.instance(ff.errno())
+                    throw CairoException.critical(ff.errno())
                             .put("could not get length of file [path=").put(tmpPath)
                             .put(']');
                 }
@@ -1129,7 +1129,7 @@ public class TextImportTask {
 
                 final long len = ff.length(fd);
                 if (len == -1) {
-                    throw CairoException.instance(ff.errno()).put(
+                    throw CairoException.critical(ff.errno()).put(
                                     "could not get length of file [path=").put(tmpPath)
                             .put(']');
                 }

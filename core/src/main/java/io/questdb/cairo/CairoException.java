@@ -33,13 +33,14 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
+    public static final int NON_CRITICAL = -1;
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = -101;
 
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
-    protected int errno; // code -1 is used for non-critical errors
+    protected int errno;
     private boolean cacheable;
     private boolean interruption; // used when a query times out
 
@@ -56,10 +57,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
-        return instance(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+        return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
     }
 
-    public static CairoException instance(int errno) {
+    public static CairoException nonCritical() {
+        return critical(NON_CRITICAL);
+    }
+
+    public static CairoException critical(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new CairoException()) != null;
@@ -90,6 +95,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         // This is to have correct stack trace reported in CI 
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    public boolean isCritical() {
+        return errno != NON_CRITICAL;
     }
 
     public boolean isCacheable() {

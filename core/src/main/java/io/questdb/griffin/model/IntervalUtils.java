@@ -617,7 +617,7 @@ public final class IntervalUtils {
         try {
             return parseFloorPartialDate(seq, 0, seq.length());
         } catch (NumericException e) {
-            throw CairoException.instance(-1).put("Invalid timestamp: ").put(seq);
+            throw CairoException.nonCritical().put("Invalid timestamp: ").put(seq);
         }
     }
 

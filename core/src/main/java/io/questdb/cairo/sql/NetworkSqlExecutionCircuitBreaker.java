@@ -95,7 +95,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             testCount = 0;
             testTimeout();
             if (testConnection(this.fd)) {
-                throw CairoException.instance(-1).put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
+                throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
             }
         }
     }
@@ -161,7 +161,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     private void testTimeout() {
         if (clock.getTicks() - timeout > powerUpTime) {
-            throw CairoException.instance(-1).put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+            throw CairoException.nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }
 }

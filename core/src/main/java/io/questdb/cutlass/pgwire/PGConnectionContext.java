@@ -893,7 +893,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
             responseAsciiSink.reset();
             freeFactory();
-            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
+            throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
         }
     }
 
@@ -1624,7 +1624,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 LOG.error().$("not enough space in buffer for row description [buffer=").$(sendBufferSize).I$();
                 responseAsciiSink.reset();
                 freeFactory();
-                throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row description");
+                throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row description");
             }
         } else {
             prepareNoDataMessage();
@@ -1648,8 +1648,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void prepareError(int position, CharSequence message, long errno) {
         prepareErrorResponse(position, message);
-        // Negative error code means a non-critical error.
-        if (errno < 0) {
+        if (errno == CairoException.NON_CRITICAL) {
             LOG.error()
                     .$("error [pos=").$(position)
                     .$(", msg=`").$(message).$('`')

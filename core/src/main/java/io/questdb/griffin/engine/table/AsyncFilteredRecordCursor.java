@@ -131,7 +131,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
 
         if (!allFramesActive) {
-            throw CairoException.instance(-1).put(exceptionMessage).setInterruption(true);
+            throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
         }
         return false;
     }
@@ -214,7 +214,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             } while (this.frameIndex < frameLimit);
         } catch (Throwable e) {
             LOG.critical().$("unexpected error [ex=").$(e).I$();
-            throw CairoException.instance(-1).put(exceptionMessage).setInterruption(true);
+            throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
         }
     }
 

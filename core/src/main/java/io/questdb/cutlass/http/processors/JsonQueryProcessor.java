@@ -571,11 +571,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             if (ce.isInterruption()) {
                 state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
             } else {
-                // Negative error code means a non-critical error.
-                if (ce.getErrno() < 0) {
-                    state.error().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
-                } else {
+                if (ce.isCritical()) {
                     state.critical().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
+                } else {
+                    state.error().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
                 }
             }
         } else if (e instanceof HttpException) {

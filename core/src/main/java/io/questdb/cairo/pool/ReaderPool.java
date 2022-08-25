@@ -210,7 +210,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             }
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.instance(-1).put("Not the lock owner of ").put(name);
+            throw CairoException.nonCritical().put("Not the lock owner of ").put(name);
         }
 
         notifyListener(thread, name, PoolListener.EV_UNLOCKED, -1, -1);
@@ -334,7 +334,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
-        throw CairoException.instance(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
+        throw CairoException.critical(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
     }
 
     public static final class Entry {

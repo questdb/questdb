@@ -1859,7 +1859,7 @@ public class SqlCompiler implements Closeable {
                     deadline = rowCount + batchSize;
                 }
             } catch (NumericException numericException) {
-                throw CairoException.instance(-1).put("Invalid timestamp: ").put(str);
+                throw CairoException.nonCritical().put("Invalid timestamp: ").put(str);
             }
         }
 
@@ -1880,7 +1880,7 @@ public class SqlCompiler implements Closeable {
                 row.append();
                 rowCount++;
             } catch (NumericException numericException) {
-                throw CairoException.instance(-1).put("Invalid timestamp: ").put(str);
+                throw CairoException.nonCritical().put("Invalid timestamp: ").put(str);
             }
         }
 
@@ -3188,7 +3188,7 @@ public class SqlCompiler implements Closeable {
                 dstPath.trimTo(currDirPrefixLen).concat(file).$();
                 LOG.info().$("backup copying config file [from=").$(srcPath).$(",to=").$(dstPath).I$();
                 if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.instance(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
+                    throw CairoException.critical(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
                 }
             }
         };
@@ -3231,7 +3231,7 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(currDirPrefixLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             LOG.info().$("backup copying file [from=").$(srcPath).$(",to=").$(dstPath).I$();
             if (ff.copy(srcPath, dstPath) < 0) {
-                throw CairoException.instance(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
             }
         }
 
@@ -3239,7 +3239,7 @@ public class SqlCompiler implements Closeable {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
-                    throw CairoException.instance(-1).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                    throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
                 }
                 srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
                 cachedTmpBackupRoot = Chars.toString(srcPath);
@@ -3301,11 +3301,11 @@ public class SqlCompiler implements Closeable {
             srcPath.of(backupRoot).concat(tableName).slash$();
 
             if (ff.exists(srcPath)) {
-                throw CairoException.instance(-1).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
+                throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
             }
 
             if (ff.mkdirs(srcPath, mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
+                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
             }
 
             int rootLen = srcPath.length();
@@ -3340,7 +3340,7 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(changeDirPrefixLen).concat(dir).slash$();
             currDirPrefixLen = dstPath.length();
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put(errorMessage).put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put(errorMessage).put(dstPath).put(']');
             }
         }
 
@@ -3363,7 +3363,7 @@ public class SqlCompiler implements Closeable {
             } while (ff.exists(dstPath));
 
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
             changeDirPrefixLen = dstPath.length();
         }
@@ -3371,7 +3371,7 @@ public class SqlCompiler implements Closeable {
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
             executionContext.getCairoSecurityContext().checkWritePermission();
             if (null == configuration.getBackupRoot()) {
-                throw CairoException.instance(-1).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
             final CharSequence tok = SqlUtil.fetchNext(lexer);
             if (null != tok) {

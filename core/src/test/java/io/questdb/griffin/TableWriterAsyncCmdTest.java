@@ -197,7 +197,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 @Override
                 public int rmdir(Path name) {
                     if (Chars.contains(name, "2020-01-01")) {
-                        throw CairoException.instance(11);
+                        throw CairoException.critical(11);
                     }
                     return super.rmdir(name);
                 }

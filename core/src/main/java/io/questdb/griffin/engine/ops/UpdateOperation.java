@@ -102,7 +102,7 @@ public class UpdateOperation extends AbstractOperation {
 
     public void forceTestTimeout() {
         if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            throw CairoException.instance(-1)
+            throw CairoException.nonCritical()
                     .put("timeout, query aborted [fd=")
                     .put(circuitBreaker.getFd())
                     .put(']')
@@ -112,7 +112,7 @@ public class UpdateOperation extends AbstractOperation {
 
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.instance(-1)
+            throw CairoException.nonCritical()
                     .put("timeout, query aborted [fd=")
                     .put(circuitBreaker.getFd())
                     .put(']')

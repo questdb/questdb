@@ -504,13 +504,13 @@ public class TableWriter implements Closeable {
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
 
         if (columnIndex == -1) {
-            throw CairoException.instance(-1).put("column '").put(columnName).put("' does not exist");
+            throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exist");
         }
 
         commit();
 
         if (isColumnIndexed(metaMem, columnIndex)) {
-            throw CairoException.instance(-1).put("already indexed [column=").put(columnName).put(']');
+            throw CairoException.nonCritical().put("already indexed [column=").put(columnName).put(']');
         }
 
         final int existingType = getColumnType(metaMem, columnIndex);
@@ -518,7 +518,7 @@ public class TableWriter implements Closeable {
 
         if (!ColumnType.isSymbol(existingType)) {
             LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
-            throw CairoException.instance(-1).put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
+            throw CairoException.nonCritical().put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
         }
 
         // create indexer
@@ -603,7 +603,7 @@ public class TableWriter implements Closeable {
                         rollbackRename = true;
                         LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
                     } else {
-                        throw CairoException.instance(ff.errno()).put("File system error on trying to rename [from=")
+                        throw CairoException.critical(ff.errno()).put("File system error on trying to rename [from=")
                                 .put(other).put(",to=").put(path).put(']');
                     }
                 }
@@ -782,7 +782,7 @@ public class TableWriter implements Closeable {
                     .$(", column=").$(columnName)
                     .I$();
         } catch (Throwable e) {
-            throw CairoException.instance(0)
+            throw CairoException.critical(0)
                     .put("Cannot DROP INDEX for [txn=").put(txWriter.getTxn())
                     .put(", table=").put(tableName)
                     .put(", column=").put(columnName)
@@ -795,7 +795,7 @@ public class TableWriter implements Closeable {
         if (index > -1) {
             return index;
         }
-        throw CairoException.instance(0).put("column '").put(name).put("' does not exist");
+        throw CairoException.critical(0).put("column '").put(name).put("' does not exist");
     }
 
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
@@ -934,7 +934,7 @@ public class TableWriter implements Closeable {
             case ROW_ACTION_OPEN_PARTITION:
 
                 if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.instance(-1).put("timestamp before 1970-01-01 is not allowed");
+                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
                 }
 
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
@@ -961,11 +961,11 @@ public class TableWriter implements Closeable {
             case ROW_ACTION_NO_PARTITION:
 
                 if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.instance(-1).put("timestamp before 1970-01-01 is not allowed");
+                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
                 }
 
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.instance(-1).put("Cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.nonCritical().put("Cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
 
                 bumpMasterRef();
@@ -1112,7 +1112,7 @@ public class TableWriter implements Closeable {
             SymbolMapDiffCursor mapDiffCursor
     ) {
         if (inTransaction()) {
-            throw CairoException.instance(0).put("cannot process WAL while in transaction");
+            throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
 
         txWriter.beginPartitionSizeUpdate();
@@ -1155,7 +1155,7 @@ public class TableWriter implements Closeable {
                 commandPubSeq.done(seq);
                 return;
             } else if (seq == -1) {
-                throw CairoException.instance(-1).put("cannot publish, command queue is full [table=").put(tableName).put(']');
+                throw CairoException.nonCritical().put("cannot publish, command queue is full [table=").put(tableName).put(']');
             }
         }
     }
@@ -1174,7 +1174,7 @@ public class TableWriter implements Closeable {
         boolean timestamp = index == timestampIndex;
 
         if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
-            throw CairoException.instance(-1).put("Cannot remove timestamp from partitioned table");
+            throw CairoException.nonCritical().put("Cannot remove timestamp from partitioned table");
         }
 
         commit();
@@ -1869,7 +1869,7 @@ public class TableWriter implements Closeable {
         if (ff.exists(path.$())) {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
-                throw CairoException.instance(0)
+                throw CairoException.critical(0)
                         .put("Column file is too small. ")
                         .put("Partition files inconsistent [file=")
                         .put(path)
@@ -1881,7 +1881,7 @@ public class TableWriter implements Closeable {
             }
             return;
         }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
+        throw CairoException.critical(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
     private void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
@@ -1940,7 +1940,7 @@ public class TableWriter implements Closeable {
                 long fileSize = ff.length(indexFd);
                 long expectedFileSize = (partitionSize + 1) * typeSize;
                 if (fileSize < expectedFileSize) {
-                    throw CairoException.instance(0)
+                    throw CairoException.critical(0)
                             .put("Column file is too small. ")
                             .put("Partition files inconsistent [file=")
                             .put(path)
@@ -1957,7 +1957,7 @@ public class TableWriter implements Closeable {
                     for (long offset = partitionSize * typeSize; offset >= 0; offset -= typeSize) {
                         long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
                         if (dataAddress < 0 || dataAddress > dataLength) {
-                            throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
+                            throw CairoException.critical(0).put("Variable size column has invalid data address value [path=").put(path)
                                     .put(", indexOffset=").put(offset)
                                     .put(", dataAddress=").put(dataAddress)
                                     .put(", dataFileSize=").put(dataLength)
@@ -1966,7 +1966,7 @@ public class TableWriter implements Closeable {
 
                         // Check that addresses are monotonic
                         if (dataAddress > prevDataAddress) {
-                            throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
+                            throw CairoException.critical(0).put("Variable size column has invalid data address value [path=").put(path)
                                     .put(", indexOffset=").put(offset)
                                     .put(", dataAddress=").put(dataAddress)
                                     .put(", prevDataAddress=").put(prevDataAddress)
@@ -1983,7 +1983,7 @@ public class TableWriter implements Closeable {
                 ff.close(indexFd);
             }
         }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
+        throw CairoException.critical(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
     private void attachPartitionCheckSymbolColumn(FilesFacade ff, Path path, int columnIndex, long partitionSize, String columnName, long columnNameTxn) {
@@ -1995,7 +1995,7 @@ public class TableWriter implements Closeable {
             int typeSize = Integer.BYTES;
             long expectedSize = partitionSize * typeSize;
             if (fileSize < expectedSize) {
-                throw CairoException.instance(0)
+                throw CairoException.critical(0)
                         .put("Column file is too small. ")
                         .put("Partition files inconsistent [file=")
                         .put(path)
@@ -2011,7 +2011,7 @@ public class TableWriter implements Closeable {
                 int maxKey = Vect.maxInt(address, partitionSize);
                 int symbolValues = symbolMapWriters.getQuick(columnIndex).getSymbolCount();
                 if (maxKey >= symbolValues) {
-                    throw CairoException.instance(0)
+                    throw CairoException.critical(0)
                             .put("Symbol file does not match symbol column [file=")
                             .put(path)
                             .put(", key=")
@@ -2022,7 +2022,7 @@ public class TableWriter implements Closeable {
                 }
                 int minKey = Vect.minInt(address, partitionSize);
                 if (minKey != SymbolTable.VALUE_IS_NULL && minKey < 0) {
-                    throw CairoException.instance(0)
+                    throw CairoException.critical(0)
                             .put("Symbol file does not match symbol column, invalid key [file=")
                             .put(path)
                             .put(", key=")
@@ -2036,14 +2036,14 @@ public class TableWriter implements Closeable {
             if (metadata.isColumnIndexed(columnIndex)) {
                 BitmapIndexUtils.valueFileName(path.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(path.$())) {
-                    throw CairoException.instance(0)
+                    throw CairoException.critical(0)
                             .put("Symbol index value file does not exist [file=")
                             .put(path)
                             .put(']');
                 }
                 BitmapIndexUtils.keyFileName(path.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(path.$())) {
-                    throw CairoException.instance(0)
+                    throw CairoException.critical(0)
                             .put("Symbol index key file does not exist [file=")
                             .put(path)
                             .put(']');
@@ -2081,7 +2081,7 @@ public class TableWriter implements Closeable {
 
     private void checkColumnName(CharSequence name) {
         if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
-            throw CairoException.instance(-1).put("invalid column name [table=").put(tableName).put(", column=").putAsPrintable(name).put(']');
+            throw CairoException.nonCritical().put("invalid column name [table=").put(tableName).put(", column=").putAsPrintable(name).put(']');
         }
     }
 
@@ -2423,7 +2423,7 @@ public class TableWriter implements Closeable {
             }
             if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 LOG.error().$("could not create index [name=").$(path).$(']').$();
-                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
         } finally {
             path.trimTo(plen);
@@ -2774,7 +2774,7 @@ public class TableWriter implements Closeable {
         }
 
         if (this.lockFd == -1L) {
-            throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
     }
 
@@ -2909,13 +2909,13 @@ public class TableWriter implements Closeable {
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.instance(-1).put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
             if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.instance(-1).put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
             }
 
             // Safe check of the sort. No known way to reproduce
@@ -3910,7 +3910,7 @@ public class TableWriter implements Closeable {
             setStateForTimestamp(path, timestamp, true);
             int plen = path.length();
             if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
+                throw CairoException.critical(ff.errno()).put("Cannot create directory: ").put(path);
             }
 
             assert columnCount > 0;
@@ -3956,7 +3956,7 @@ public class TableWriter implements Closeable {
             if (ff.exists(path)) {
                 long fileLen = ff.length(path);
                 if (fileLen < 32) {
-                    throw CairoException.instance(0).put("corrupt ").put(path);
+                    throw CairoException.critical(0).put("corrupt ").put(path);
                 }
 
                 todoMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
@@ -4349,7 +4349,7 @@ public class TableWriter implements Closeable {
             o3InError = !success || o3ErrorCount.get() > 0;
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
-                throw CairoException.instance(0).put("bulk update failed and will be rolled back");
+                throw CairoException.critical(0).put("bulk update failed and will be rolled back");
             }
         }
 
@@ -4479,7 +4479,7 @@ public class TableWriter implements Closeable {
                     ff.close(fd);
                 }
             } else {
-                throw CairoException.instance(0).put("Partition does not exist [path=").put(other).put(']');
+                throw CairoException.critical(0).put("Partition does not exist [path=").put(other).put(']');
             }
         } finally {
             other.trimTo(rootLen);
@@ -4542,7 +4542,7 @@ public class TableWriter implements Closeable {
                 int columnIndex = symbolMapDiff.getColumnIndex();
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
                     // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
-                    throw CairoException.instance(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
+                    throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
                             .put(", walPath=").put(walPath)
                             .put(']');
                 }
@@ -4582,7 +4582,7 @@ public class TableWriter implements Closeable {
                                 // This symbol was not mapped in the WAL
                                 // The WAL is invalid
                                 // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
-                                throw CairoException.instance(0).put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
+                                throw CairoException.critical(0).put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
                                         .put(", columnKey=").put(symKey)
                                         .put(", walPath=").put(walPath)
                                         .put(", walRowId=").put(rowId)
@@ -4718,7 +4718,7 @@ public class TableWriter implements Closeable {
         try {
             path.concat(META_FILE_NAME).$();
             if (ff.exists(path) && !ff.remove(path)) {
-                throw CairoException.instance(ff.errno()).put("Recovery failed. Cannot remove: ").put(path);
+                throw CairoException.critical(ff.errno()).put("Recovery failed. Cannot remove: ").put(path);
             }
         } finally {
             path.trimTo(rootLen);
@@ -4853,7 +4853,7 @@ public class TableWriter implements Closeable {
 
             } while (index < retries);
 
-            throw CairoException.instance(0).put("Cannot rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
+            throw CairoException.critical(0).put("Cannot rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);
@@ -5048,11 +5048,11 @@ public class TableWriter implements Closeable {
             if (ff.exists(path)) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
                 if (ff.exists(other.concat(META_FILE_NAME).$()) && !ff.remove(other)) {
-                    throw CairoException.instance(ff.errno()).put("Repair failed. Cannot replace ").put(other);
+                    throw CairoException.critical(ff.errno()).put("Repair failed. Cannot replace ").put(other);
                 }
 
                 if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
-                    throw CairoException.instance(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
+                    throw CairoException.critical(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
                 }
             }
         } finally {
@@ -5181,7 +5181,7 @@ public class TableWriter implements Closeable {
                         setStateForTimestamp(path, dirtyMaxTimestamp, false);
                         int errno;
                         if ((errno = ff.rmdir(path.$())) != 0) {
-                            throw CairoException.instance(errno).put("Cannot remove directory: ").put(path);
+                            throw CairoException.critical(errno).put("Cannot remove directory: ").put(path);
                         }
                         removeDirOnCancelRow = false;
                     } finally {
@@ -5711,7 +5711,7 @@ public class TableWriter implements Closeable {
             try {
                 l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
             } catch (NumericException e) {
-                throw CairoException.instance(-1).put("Invalid timestamp: ").put(value);
+                throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
             }
             putTimestamp(columnIndex, l);
         }

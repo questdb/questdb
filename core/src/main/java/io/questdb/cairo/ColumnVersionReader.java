@@ -227,7 +227,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
             if (microsecondClock.getTicks() - tick > spinLockTimeout) {
                 LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
-                throw CairoException.instance(0).put("Column Version read timeout");
+                throw CairoException.critical(0).put("Column Version read timeout");
             }
             Os.pause();
             LOG.debug().$("read dirty version ").$(version).$(", retrying").$();

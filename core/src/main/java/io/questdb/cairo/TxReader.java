@@ -406,7 +406,7 @@ public class TxReader implements Closeable, Mutable {
                 }
                 return;
             }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+            throw CairoException.critical(ff.errno()).put("Cannot append. File does not exist: ").put(path);
         } finally {
             path.trimTo(pathLen);
         }

@@ -76,7 +76,7 @@ public class WalEventCursor {
                 removeColumnInfo.read();
                 break;
             default:
-                throw CairoException.instance(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
         }
         return true;
     }
@@ -90,21 +90,21 @@ public class WalEventCursor {
 
     public DataInfo getDataInfo() {
         if (type != DATA) {
-            throw CairoException.instance(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
         }
         return dataInfo;
     }
 
     public AddColumnInfo getAddColumnInfo() {
         if (type != ADD_COLUMN) {
-            throw CairoException.instance(CairoException.ILLEGAL_OPERATION).put("WAL event type is not ADD_COLUMN, type=").put(type);
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not ADD_COLUMN, type=").put(type);
         }
         return addColumnInfo;
     }
 
     public RemoveColumnInfo getRemoveColumnInfo() {
         if (type != REMOVE_COLUMN) {
-            throw CairoException.instance(CairoException.ILLEGAL_OPERATION).put("WAL event type is not REMOVE_COLUMN, type=").put(type);
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not REMOVE_COLUMN, type=").put(type);
         }
         return removeColumnInfo;
     }
@@ -258,7 +258,7 @@ public class WalEventCursor {
 
     private void checkMemSize(long requiredBytes) {
         if (memSize < offset + requiredBytes) {
-            throw CairoException.instance(0).put("WAL event file is too small, size=").put(memSize)
+            throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
                     .put(", required=").put(offset + requiredBytes);
         }
     }
