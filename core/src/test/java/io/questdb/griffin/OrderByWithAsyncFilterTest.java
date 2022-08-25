@@ -33,7 +33,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int PAGE_FRAME_COUNT = 4;
 
-    public static final String DDL = "create table weather_data as \n" +
+    private static final String DDL = "create table weather_data as \n" +
             "(select  dateadd( 'm' , cast(x-1000 as int), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ) sensor_time, " +
             "1000-x temperature_out \n" +
             "from long_sequence(1000)) timestamp(sensor_time) partition by year;";
@@ -56,6 +56,27 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
         super.setUp();
+    }
+
+    @Test
+    public void testAsyncJitFilterWithOrderByDesc() throws Exception {
+        assertQuery("sensor_time\ttemperature_out\n" +
+                        "2022-08-01T00:00:00.000000Z\t0\n" +
+                        "2022-07-31T23:59:00.000000Z\t1\n" +
+                        "2022-07-31T23:58:00.000000Z\t2\n" +
+                        "2022-07-31T23:57:00.000000Z\t3\n" +
+                        "2022-07-31T23:56:00.000000Z\t4\n" +
+                        "2022-07-31T23:55:00.000000Z\t5\n" +
+                        "2022-07-31T23:54:00.000000Z\t6\n" +
+                        "2022-07-31T23:53:00.000000Z\t7\n" +
+                        "2022-07-31T23:52:00.000000Z\t8\n" +
+                        "2022-07-31T23:51:00.000000Z\t9\n",
+                "select sensor_time, temperature_out\n" +
+                        "from weather_data \n" +
+                        "where temperature_out < 10 \n" +
+                        "order by sensor_time desc \n",
+                DDL,
+                "sensor_time###DESC", true, true, false);
     }
 
     @Test
@@ -110,6 +131,26 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncJitFilterWithOrderByAsc() throws Exception {
+        assertQuery("sensor_time\ttemperature_out\n" +
+                        "2022-07-31T07:21:00.000000Z\t999\n" +
+                        "2022-07-31T07:22:00.000000Z\t998\n" +
+                        "2022-07-31T07:23:00.000000Z\t997\n" +
+                        "2022-07-31T07:24:00.000000Z\t996\n" +
+                        "2022-07-31T07:25:00.000000Z\t995\n" +
+                        "2022-07-31T07:26:00.000000Z\t994\n" +
+                        "2022-07-31T07:27:00.000000Z\t993\n" +
+                        "2022-07-31T07:28:00.000000Z\t992\n" +
+                        "2022-07-31T07:29:00.000000Z\t991\n",
+                "select sensor_time, temperature_out\n" +
+                        "from weather_data \n" +
+                        "where temperature_out > 990 \n" +
+                        "order by sensor_time  asc \n",
+                DDL,
+                "sensor_time", true, true, false);
+    }
+
+    @Test
     public void testAsyncJitFilterWithNegativeLimitOrderByAsc() throws Exception {
         assertQuery("sensor_time\ttemperature_out\n" +
                         "2022-07-31T23:56:00.000000Z\t4\n" +
@@ -159,6 +200,38 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncFilterWithOrderByDesc() throws Exception {
+        assertQuery("sensor_time\ttemperature_out\n" +
+                        "2022-08-01T00:00:00.000000Z\t0\n" +
+                        "2022-07-31T23:59:00.000000Z\t1\n" +
+                        "2022-07-31T23:58:00.000000Z\t2\n" +
+                        "2022-07-31T23:57:00.000000Z\t3\n" +
+                        "2022-07-31T23:56:00.000000Z\t4\n",
+                "select sensor_time, temperature_out\n" +
+                        "from weather_data \n" +
+                        "where sensor_time >= dateadd( 's', rnd_int(0,1,0)*0, to_timestamp('2022-07-31:23:56:00', 'yyyy-MM-dd:HH:mm:ss'))  \n" +
+                        "order by sensor_time  desc \n",
+                DDL,
+                "sensor_time###DESC", true, true, false);
+    }
+
+    @Test
+    public void testAsyncFilterWithOrderByAsc() throws Exception {
+        assertQuery("sensor_time\ttemperature_out\n" +
+                        "2022-07-31T07:21:00.000000Z\t999\n" +
+                        "2022-07-31T07:22:00.000000Z\t998\n" +
+                        "2022-07-31T07:23:00.000000Z\t997\n" +
+                        "2022-07-31T07:24:00.000000Z\t996\n" +
+                        "2022-07-31T07:25:00.000000Z\t995\n",
+                "select sensor_time, temperature_out\n" +
+                        "from weather_data \n" +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-07-31:07:25:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
+                        "order by sensor_time  asc \n",
+                DDL,
+                "sensor_time", true, true, false);
+    }
+
+    @Test
     public void testAsyncFilterWithPositiveLimitOrderByDesc() throws Exception {
         assertQuery("sensor_time\ttemperature_out\n" +
                         "2022-08-01T00:00:00.000000Z\t0\n" +
@@ -168,7 +241,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "2022-07-31T23:56:00.000000Z\t4\n",
                 "select sensor_time, temperature_out\n" +
                         "from weather_data \n" +
-                        "where sensor_time <= systimestamp() \n" +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "order by sensor_time  desc \n" +
                         "limit 5; ",
                 DDL,
@@ -185,7 +258,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "2022-07-31T07:21:00.000000Z\t999\n",
                 "select sensor_time, temperature_out\n" +
                         "from weather_data \n" +
-                        "where sensor_time <= systimestamp() \n" +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "order by sensor_time  desc \n" +
                         "limit -5; ",
                 DDL,
@@ -202,7 +275,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "2022-07-31T07:25:00.000000Z\t995\n",
                 "select sensor_time, temperature_out\n" +
                         "from weather_data \n" +
-                        "where sensor_time <= systimestamp() \n" +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "order by sensor_time  asc \n" +
                         "limit 5; ",
                 DDL,
@@ -219,7 +292,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "2022-08-01T00:00:00.000000Z\t0\n",
                 "select sensor_time, temperature_out\n" +
                         "from weather_data \n" +
-                        "where sensor_time <= systimestamp() \n" +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "order by sensor_time  asc \n" +
                         "limit -5; ",
                 DDL,
@@ -236,7 +309,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "2022-07-31T07:25:00.000000Z\t995\n",
                 "select sensor_time, temperature_out\n" +
                         "from weather_data \n" +
-                        "where sensor_time <= systimestamp() \n" +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "limit 5; ",
                 DDL,
                 "sensor_time", true, true, false);
@@ -252,7 +325,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "2022-08-01T00:00:00.000000Z\t0\n",
                 "select sensor_time, temperature_out\n" +
                         "from weather_data \n" +
-                        "where sensor_time <= systimestamp() \n" +
+                        "where sensor_time <= dateadd( 's', rnd_int(0,1,0), to_timestamp('2022-08-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')) \n" +
                         "limit -5; ",
                 DDL,
                 "sensor_time", true, true, true);
