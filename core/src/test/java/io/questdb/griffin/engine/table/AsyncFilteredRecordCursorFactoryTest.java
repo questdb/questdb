@@ -773,6 +773,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     public int getSharedWorkerCount() {
                         return sharedWorkerCount;
                     }
+
                 });
             } catch (Throwable e) {
                 e.printStackTrace();
@@ -858,6 +859,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 boolean baseSupportsRandomAccess
         ) {
             sqlExecutionContext.configureAnalyticContext(partitionByRecord, partitionBySink, keyTypes, isOrdered, baseSupportsRandomAccess);
+        }
+
+        @Override
+        public void resetAnalyticContext() {
+            sqlExecutionContext.resetAnalyticContext();
         }
 
         @Override

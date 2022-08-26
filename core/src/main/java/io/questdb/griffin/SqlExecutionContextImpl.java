@@ -161,6 +161,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void resetAnalyticContext() {
+        analyticContext.of(
+                null, null, null, false, false
+        );
+    }
+
+    @Override
     public void configureAnalyticContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,

@@ -83,6 +83,8 @@ public interface SqlExecutionContext extends Closeable {
 
     AnalyticContext getAnalyticContext();
 
+    void resetAnalyticContext();
+
     void configureAnalyticContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,

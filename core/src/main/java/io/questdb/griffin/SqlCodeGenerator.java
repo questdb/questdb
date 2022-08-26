@@ -2273,6 +2273,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             boolean processJoins
     ) throws SqlException {
+        executionContext.resetAnalyticContext();
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
                 return generateSelectChoose(model, executionContext);
