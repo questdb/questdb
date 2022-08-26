@@ -386,8 +386,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void copyBottomToTopColumns() {
         topDownColumns.clear();
+        topDownNameSet.clear();
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            topDownColumns.add(bottomUpColumns.getQuick(i));
+            QueryColumn column = bottomUpColumns.getQuick(i);
+            addTopDownColumn(column, column.getAlias());
         }
     }
 
