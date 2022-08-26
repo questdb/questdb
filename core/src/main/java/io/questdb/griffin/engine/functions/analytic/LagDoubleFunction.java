@@ -75,40 +75,25 @@ class LagDoubleFunction extends DoubleFunction implements ScalarFunction, Analyt
         MapKey key = map.withKey();
         key.put(partitionByRecord, partitionBySink);
         MapValue value = key.createValue();
-        double cVal = Unsafe.getUnsafe().getDouble(spi.getAddress(recordOffset, columnIndex));
-        double delta;
-        System.out.println(cVal + ">" + record.getDouble(columnIndex) + ">" + value.isNew());
         if(value.isNew()) {
-            delta = Double.NaN;
-        } else {
-            delta = cVal - value.getDouble(0);
+            // initialize all lags with NaN
+            for(int i=0;i<this.lag;i++) {
+                value.putDouble(i, Double.NaN);
+            }
         }
-        value.putDouble(0, cVal);
-//        if(value.isNew()) {
-//            System.out.println("Reset");
-//            for(int i=0;i<this.lag;i++) {
-//                value.putDouble(i, Double.NaN);
-//            }
-//        }
-//        double cVal = base.getDouble(record);
-//
-//        // index 0 always keeps the oldest entry
-//        double delta = cVal - value.getDouble(0);
-//        // shift left
-//        for(int i=1;i<this.lag;i++) {
-//            value.putDouble(i-1, value.getDouble(i));
-//        }
-//
-//        // set the last queue item
-//        value.putDouble(this.lag - 1, cVal);
-//
-//        System.out.println(">" + cVal + "/" + delta);
-//
-//        for(int i=0;i<this.lag;i++) {
-//            System.out.println(i + "->" + value.getDouble(i));
-//        }
+        double cVal = base.getDouble(record);
 
-        Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), delta);
+        // index 0 always keeps the oldest entry which we want to get
+        double oVal = value.getDouble(0);
+        // shift left (i.e. make room for "latest" value to be added at right side)
+        for(int i=1;i<this.lag;i++) {
+            value.putDouble(i-1, value.getDouble(i));
+        }
+
+        // set the last queue item on right
+        value.putDouble(this.lag - 1, cVal);
+
+        Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), oVal);
     }
 
     @Override

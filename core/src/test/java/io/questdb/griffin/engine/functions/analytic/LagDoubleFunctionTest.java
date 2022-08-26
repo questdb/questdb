@@ -33,8 +33,8 @@ public class LagDoubleFunctionTest extends AbstractGriffinTest {
     public void testLagInvalid() throws Exception {
         assertQuery(
                 "",
-                "select lag(a, -1) from tmp",
-                "create table tmp as (select rnd_double() a from long_sequence(10))",
+                "select lag(a, -1) from tmp1",
+                "create table tmp1 as (select rnd_double() a from long_sequence(10))",
                 null,
                 false,
                 true,
@@ -45,8 +45,8 @@ public class LagDoubleFunctionTest extends AbstractGriffinTest {
     public void testLagInvalidNonConstant() throws Exception {
         assertQuery(
                 "",
-                "select lag(a, rnd_int()) from tmp",
-                "create table tmp as (select rnd_double() a from long_sequence(10))",
+                "select lag(a, rnd_int()) from tmp2",
+                "create table tmp2 as (select rnd_double() a from long_sequence(10))",
                 null,
                 false,
                 true,
@@ -69,35 +69,35 @@ public class LagDoubleFunctionTest extends AbstractGriffinTest {
         assertQuery(
                 "lag\n" +
                         "NaN\n" +
-                        "-0.43614765516900733\n" +
-                        "-0.1397604919241192\n" +
-                        "0.2143294036362383\n" +
-                        "-0.09472462758306743\n" +
-                        "0.44638498420675254\n" +
-                        "0.19148168950280442\n" +
-                        "0.14328799249909174\n" +
-                        "-0.761105676026544\n" +
-                        "0.28485929160085843\n",
-                "select lag(a, 1) from tmp",
-                "create table tmp as (select rnd_double() a from long_sequence(10))",
+                        "0.6607777894187332\n" +
+                        "0.2246301342497259\n" +
+                        "0.08486964232560668\n" +
+                        "0.299199045961845\n" +
+                        "0.20447441837877756\n" +
+                        "0.6508594025855301\n" +
+                        "0.8423410920883345\n" +
+                        "0.9856290845874263\n" +
+                        "0.22452340856088226\n",
+                "select lag(a, 1) from tmp3",
+                "create table tmp3 as (select rnd_double() a from long_sequence(10))",
                 null,
                 false,
                 true,
                 true
         );
         assertSql(
-                "select lag(a, 3) from tmp",
+                "select lag(a, 3) from tmp3",
                 "lag\n" +
                         "NaN\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "-0.36157874345688823\n" +
-                        "-0.020155715870948332\n" +
-                        "0.5659897602599234\n" +
-                        "0.5431420461264895\n" +
-                        "0.7811546662086487\n" +
-                        "-0.42633599402464784\n" +
-                        "-0.3329583919265938\n"
+                        "0.6607777894187332\n" +
+                        "0.2246301342497259\n" +
+                        "0.08486964232560668\n" +
+                        "0.299199045961845\n" +
+                        "0.20447441837877756\n" +
+                        "0.6508594025855301\n" +
+                        "0.8423410920883345\n"
 
         );
     }
@@ -110,20 +110,59 @@ public class LagDoubleFunctionTest extends AbstractGriffinTest {
         //0.299199045961845	true
         //0.9344604857394011	false
         //0.8423410920883345	true
-
-        // lag
-        //0.5311111915029997
-        //-0.16953244804611145
-        //-0.5431420461264895
-        //NaN
-        //-0.09211939365106658
-
         assertQuery(
-                "",
-                // "select row_number() over (partition by b order by a desc) from tmp",
-                "select lag(a, 1) over (partition by b order by a desc) from tmp",
-                //"select * from tmp order by b asc, a desc",
-                "create table tmp as (select rnd_double() a, rnd_boolean() b from long_sequence(5))",
+                "a\tb\tlag\n" +
+                        "0.6607777894187332\tfalse\t0.9344604857394011\n" +
+                        "0.12966659791573354\tfalse\t0.6607777894187332\n" +
+                        "0.299199045961845\ttrue\t0.8423410920883345\n" +
+                        "0.9344604857394011\tfalse\tNaN\n" +
+                        "0.8423410920883345\ttrue\tNaN\n",
+                "select a, b, lag(a, 1) over (partition by b order by a desc) from tmp4",
+                "create table tmp4 as (select rnd_double() a, rnd_boolean() b from long_sequence(5))",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLagDoublePartitionedBigLag() throws Exception {
+        //a	b
+        //0.6607777894187332	false
+        //0.12966659791573354	false
+        //0.299199045961845	true
+        //0.9344604857394011	false
+        //0.8423410920883345	true
+        assertQuery(
+                "a\tb\tlag\n" +
+                        "0.6607777894187332\tfalse\tNaN\n" +
+                        "0.12966659791573354\tfalse\t0.9344604857394011\n" +
+                        "0.299199045961845\ttrue\tNaN\n" +
+                        "0.9344604857394011\tfalse\tNaN\n" +
+                        "0.8423410920883345\ttrue\tNaN\n",
+                "select a, b, lag(a, 2) over (partition by b order by a desc) from tmp4",
+                "create table tmp4 as (select rnd_double() a, rnd_boolean() b from long_sequence(5))",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLagDoublePartitionedOnlyColumn() throws Exception {
+        // if you remove this test, all tests are successful
+        // however, with this test included, also testLagDoubleSequence will fail...
+        assertQuery(
+                "lag\n" +
+                        "0.9344604857394011\n" +
+                        "0.6607777894187332\n" +
+                        "0.8423410920883345\n" +
+                        "NaN\n" +
+                        "NaN\n",
+                "select lag(a, 1) over (partition by b order by a desc) from tmp5",
+                "create table tmp5 as (select rnd_double() a, rnd_boolean() b from long_sequence(5))",
                 null,
                 true,
                 true,

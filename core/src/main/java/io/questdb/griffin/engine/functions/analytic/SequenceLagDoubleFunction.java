@@ -49,14 +49,14 @@ class SequenceLagDoubleFunction extends DoubleFunction implements ScalarFunction
     }
     @Override
     public double getDouble(Record rec) {
-        double val = base.getDouble(rec);
+        double cVal = base.getDouble(rec);
         if(this.queue.size() < this.lag) {
-            this.queue.add(val);
+            this.queue.add(cVal);
             return Double.NaN;
         }
-        double delta = val - this.queue.pop();
-        this.queue.add(val);
-        return delta;
+        double oVal = this.queue.pop();
+        this.queue.add(cVal);
+        return oVal;
     }
 
     @Override
