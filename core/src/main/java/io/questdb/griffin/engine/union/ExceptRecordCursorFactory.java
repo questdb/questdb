@@ -36,7 +36,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
-    private final Map map;
 
     public ExceptRecordCursorFactory(
             CairoConfiguration configuration,
@@ -49,7 +48,7 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
             ColumnTypes valueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        this.map = MapFactory.createMap(configuration, metadata, valueTypes);
+        Map map = MapFactory.createMap(configuration, metadata, valueTypes);
         if (castFunctionsA == null && castFunctionsB == null) {
             this.cursor = new ExceptRecordCursor(map, recordSink);
         } else {
@@ -60,7 +59,7 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
 
     @Override
     protected void _close() {
+        Misc.free(this.cursor);
         super._close();
-        Misc.free(map);
     }
 }

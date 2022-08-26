@@ -48,6 +48,9 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         DataFrame frame;
+        if (!isOpen()) {
+            map.reallocate();
+        }
         try {
             while ((frame = this.dataFrameCursor.next()) != null) {
                 final int partitionIndex = frame.getPartitionIndex();
@@ -66,6 +69,14 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
             }
         } finally {
             map.clear();
+        }
+    }
+
+    @Override
+    public void close() {
+        if (isOpen()) {
+            map.close();
+            super.close();
         }
     }
 }

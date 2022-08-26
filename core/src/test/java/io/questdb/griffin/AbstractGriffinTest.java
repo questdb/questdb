@@ -45,6 +45,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+import org.junit.AfterClass;
 import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
@@ -61,6 +63,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static Metrics metrics = Metrics.enabled();
 
     protected final SCSequence eventSubSequence = new SCSequence();
+
+    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
 
     public static boolean assertCursor(
             CharSequence expected,
@@ -1470,5 +1474,65 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
         TestUtils.assertEquals(expectedPlan, getPlan(query).getText());
+    }
+
+
+    @TestOnly
+    public static void printMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            System.err.print(MemoryTag.nameOf(i));
+            System.err.print(":");
+            System.err.println(Unsafe.getMemUsedByTag(i));
+        }
+    }
+
+    @TestOnly
+    public static void snapshotMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
+        }
+    }
+
+    @TestOnly
+    public static void diffMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (SNAPSHOT[i] != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(SNAPSHOT[i]);
+            }
+        }
+    }
+
+    @TestOnly
+    public static long getMemUsedExceptMmap() {
+        long tags = 0;
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (Chars.startsWith(MemoryTag.nameOf(i), "MMAP")) {
+                tags = tags | 1L << i;
+            }
+        }
+
+        return getMemUsedExcept(tags);
+    }
+
+    @TestOnly
+    public static long getMemUsedExcept(long tagsToIgnore) {
+        long memUsed = 0;
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if ((tagsToIgnore & 1L << i) == 0) {
+                memUsed += Unsafe.getMemUsedByTag(i);
+            }
+        }
+
+        return memUsed;
     }
 }
