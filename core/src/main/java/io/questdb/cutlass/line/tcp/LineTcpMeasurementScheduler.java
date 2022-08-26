@@ -35,7 +35,6 @@ import io.questdb.network.IODispatcher;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
@@ -271,12 +270,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 int status = engine.getStatus(securityContext, path, tableNameUtf16, 0, tableNameUtf16.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     if (!autoCreateNewTables) {
-                        throw CairoException.instance(0)
+                        throw CairoException.nonCritical()
                                 .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
                                 .put(']');
                     }
                     if (!autoCreateNewColumns) {
-                        throw CairoException.instance(0)
+                        throw CairoException.nonCritical()
                                 .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
                                 .put(']');
                     }
@@ -284,7 +283,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
                     for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
                         if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
-                            throw CairoException.instance(0).put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+                            throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                         }
                     }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
@@ -353,7 +352,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         if (seq > -1) {
             try {
                 if (tab.isWriterInError()) {
-                    throw CairoException.instance(0).put("writer is in error, aborting ILP pipeline");
+                    throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
                 }
                 queue[writerThreadId].get(seq).createMeasurementEvent(
                         tab,

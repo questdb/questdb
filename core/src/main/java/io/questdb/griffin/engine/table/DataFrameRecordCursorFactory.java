@@ -35,8 +35,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     protected final int pageFrameMinRows;
@@ -79,8 +78,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     protected void _close() {
+        super._close();
         Misc.free(filter);
-        Misc.free(dataFrameCursorFactory);
     }
 
     @Override

@@ -171,7 +171,3 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 }
-
-
-
-

@@ -156,7 +156,7 @@ public final class TableUtils {
 
     public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
-            throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 
@@ -240,7 +240,7 @@ public final class TableUtils {
         path.of(root).concat(tableName);
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
+            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
         }
 
         final int rootLen = path.length();
@@ -618,7 +618,7 @@ public final class TableUtils {
 
     static void removeOrException(FilesFacade ff, LPSZ path) {
         if (ff.exists(path) && !ff.remove(path)) {
-            throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
+            throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
         }
     }
 
@@ -642,7 +642,7 @@ public final class TableUtils {
         assert offset % ff.getPageSize() == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
-            throw CairoException.instance(ff.errno())
+            throw CairoException.critical(ff.errno())
                     .put("could not mmap ")
                     .put(" [size=").put(size)
                     .put(", offset=").put(offset)
@@ -679,9 +679,9 @@ public final class TableUtils {
         }
         int errno = ff.errno();
         if (Os.type != Os.WINDOWS || errno != 112) {
-            throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+            throw CairoException.critical(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
         }
-        throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
     }
 
     public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
@@ -720,7 +720,7 @@ public final class TableUtils {
             // Since the failed resize can occur before append offset can be
             // explicitly set, we must assume that file size should be
             // equal to previous memory size
-            throw CairoException.instance(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", offset=").put(offset).put(", fd=").put(fd).put(']');
+            throw CairoException.critical(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", offset=").put(offset).put(", fd=").put(fd).put(']');
         }
         return page;
     }
@@ -747,7 +747,7 @@ public final class TableUtils {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
-        throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+        throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
     public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
@@ -756,12 +756,12 @@ public final class TableUtils {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
-        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+        throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+            throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
         }
         return Unsafe.getUnsafe().getInt(tempMem8b);
     }
@@ -778,16 +778,16 @@ public final class TableUtils {
     public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, @Nullable Path path) {
         if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             if (path != null) {
-                throw CairoException.instance(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
+                throw CairoException.critical(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
             }
-            throw CairoException.instance(ff.errno()).put("could not read long [fd=").put(fd).put(", offset=").put(offset);
+            throw CairoException.critical(ff.errno()).put("could not read long [fd=").put(fd).put(", offset=").put(offset);
         }
         return Unsafe.getUnsafe().getLong(tempMem8b);
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
         if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {
-            throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
+            throw CairoException.critical(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
         }
     }
 
@@ -859,7 +859,7 @@ public final class TableUtils {
             // We must discard and try again
             if (clock.getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
-                throw CairoException.instance(0).put("Transaction read timeout");
+                throw CairoException.critical(0).put("Transaction read timeout");
             }
 
             LOG.debug().$("loaded __dirty__ txn, version ").$(txReader.getVersion()).$();
@@ -935,6 +935,28 @@ public final class TableUtils {
     }
 
     /**
+     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param tableRootLen     Trim to this length to go back to the root path of the table
+     * @param partitionBy      Partitioning scheme
+     * @param timestamp        A timestamp in the partition
+     * @param partitionNameTxn Partition txn suffix
+     */
+    public static void setPathForPartition(
+            Path tablePath,
+            int tableRootLen,
+            int partitionBy,
+            long timestamp,
+            long partitionNameTxn
+    ) {
+        tablePath.trimTo(tableRootLen);
+        TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);
+        TableUtils.txnPartitionConditionally(tablePath, partitionNameTxn);
+    }
+
+    /**
      * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
      *
      * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
@@ -961,7 +983,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(
+    public static void validateMeta(
             MemoryMR metaMem,
             LowerCaseCharSequenceIntHashMap nameIndex,
             int expectedVersion
@@ -1107,7 +1129,7 @@ public final class TableUtils {
     static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
-            throw CairoException.instance(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
     }
@@ -1156,7 +1178,7 @@ public final class TableUtils {
 
     private static int getInt(MemoryMR metaMem, long memSize, long offset) {
         if (memSize < offset + Integer.BYTES) {
-            throw CairoException.instance(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
     }
@@ -1168,7 +1190,7 @@ public final class TableUtils {
         }
         final long storageLength = Vm.getStorageLength(strLength);
         if (offset + storageLength > memSize) {
-            throw CairoException.instance(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStr(offset);
     }
@@ -1200,7 +1222,7 @@ public final class TableUtils {
     public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno())
+            throw CairoException.critical(ff.errno())
                     .put("could not write 8 bytes [path=").put(path)
                     .put(", fd=").put(fd)
                     .put(", offset=").put(offset)
@@ -1212,7 +1234,7 @@ public final class TableUtils {
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
-            throw CairoException.instance(ff.errno())
+            throw CairoException.critical(ff.errno())
                     .put("could not write 8 bytes [path=").put(path)
                     .put(", fd=").put(fd)
                     .put(", offset=").put(offset)
@@ -1267,7 +1289,7 @@ public final class TableUtils {
                             .$(']').$();
                 }
             } while (++index < retryCount);
-            throw CairoException.instance(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);
+            throw CairoException.critical(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1296,58 +1318,12 @@ public final class TableUtils {
     }
 
     private static CairoException validationException(MemoryMR mem) {
-        return CairoException.instance(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
+        return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path, mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
-    // Scans timestamp file
-    // returns size of partition detected, e.g. size of monotonic increase
-    // of timestamp longs read from 0 offset to the end of the file
-    // It also writes min and max values found in tempMem16b
-    static long readPartitionSizeMinMax(FilesFacade ff, Path path, CharSequence columnName, long tempMem16b, long timestamp) {
-        int plen = path.chop$().length();
-        try {
-            if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
-                try {
-                    long fileSize = ff.length(fd);
-                    long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                    try {
-                        long minTimestamp;
-                        long maxTimestamp = timestamp;
-                        long size = 0L;
-
-                        for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
-                            long ts = Unsafe.getUnsafe().getLong(ptr);
-                            if (ts >= maxTimestamp) {
-                                maxTimestamp = ts;
-                                size++;
-                            } else {
-                                break;
-                            }
-                        }
-                        if (size > 0) {
-                            minTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
-                            Unsafe.getUnsafe().putLong(tempMem16b, minTimestamp);
-                            Unsafe.getUnsafe().putLong(tempMem16b + Long.BYTES, maxTimestamp);
-                        }
-                        return size;
-                    } finally {
-                        ff.munmap(mappedMem, fileSize, MemoryTag.MMAP_DEFAULT);
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.instance(0).put("path does not exist [path=").put(path).put(']');
-            }
-        } finally {
-            path.trimTo(plen);
+            throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
     }
 
@@ -1365,7 +1341,7 @@ public final class TableUtils {
                 Os.pause();
             } else {
                 LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("μs]").$();
-                throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
+                throw CairoException.critical(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
             }
         } else {
             throw ex;

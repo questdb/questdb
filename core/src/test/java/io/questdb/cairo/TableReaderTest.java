@@ -3615,7 +3615,7 @@ public class TableReaderTest extends AbstractCairoTest {
             case PartitionBy.HOUR:
                 return Timestamps.floorHH(timestampA) == Timestamps.floorHH(timestampB);
             default:
-                throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
+                throw CairoException.critical(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
         }
     }
 

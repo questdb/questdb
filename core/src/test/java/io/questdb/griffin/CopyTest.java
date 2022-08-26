@@ -678,7 +678,6 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
-        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         ioURingEnabled = false;
 
         CopyRunnable stmt = () -> runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
@@ -799,8 +798,8 @@ public class CopyTest extends AbstractGriffinTest {
         CopyRunnable stmt = () -> runAndFetchImportId("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
 
-        CopyRunnable test = () -> assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
-                "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
+        CopyRunnable test = () -> assertQuery("message\ncould not remove work dir because it points to one of main instance directories\n",
+                "select left(message, 79) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true
         );

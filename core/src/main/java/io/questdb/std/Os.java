@@ -116,8 +116,19 @@ public final class Os {
 
     public static native int getPid();
 
+    //returns physical memory used by this process (Resident Set Ssize/Working Set Size)
+    public static native long getRss();
+
     @SuppressWarnings("EmptyMethod")
     public static void init() {
+    }
+
+    public static boolean isLinux() {
+        return type == LINUX_AMD64 || type == LINUX_ARM64;
+    }
+
+    public static boolean isPosix() {
+        return type != Os.WINDOWS;
     }
 
     public static void pause() {

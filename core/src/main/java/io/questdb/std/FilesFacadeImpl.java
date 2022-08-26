@@ -33,6 +33,8 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
     private long mapPageSize = 0;
+    private final FsOperation copyFsOperation = this::copy;
+    private final FsOperation hardLinkFsOperation = this::hardLink;
 
     @Override
     public boolean allocate(long fd, long size) {
@@ -56,6 +58,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int copy(LPSZ from, LPSZ to) {
         return Files.copy(from, to);
+    }
+
+    @Override
+    public int copyRecursive(Path src, Path dst, int dirMode) {
+        return runRecursive(src, dst, dirMode, copyFsOperation);
     }
 
     @Override
@@ -90,7 +97,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public long findFirst(LPSZ path) {
         long ptr = Files.findFirst(path);
         if (ptr == -1) {
-            throw CairoException.instance(Os.errno()).put("findFirst failed on ").put(path);
+            throw CairoException.critical(Os.errno()).put("findFirst failed on ").put(path);
         }
         return ptr;
     }
@@ -104,7 +111,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public int findNext(long findPtr) {
         int r = Files.findNext(findPtr);
         if (r == -1) {
-            throw CairoException.instance(Os.errno()).put("findNext failed");
+            throw CairoException.critical(Os.errno()).put("findNext failed");
         }
         return r;
     }
@@ -148,6 +155,16 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+        return runRecursive(src, dst, dirMode, hardLinkFsOperation);
+    }
+
+    @Override
+    public boolean isCrossDeviceCopyError(int errno) {
+        return Os.isPosix() && errno == 18;
+    }
+
+    @Override
     public boolean isRestrictedFileSystem() {
         return Os.type == Os.WINDOWS;
     }
@@ -170,7 +187,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public long length(long fd) {
         long r = Files.length(fd);
         if (r < 0) {
-            throw CairoException.instance(Os.errno()).put("Checking file size failed");
+            throw CairoException.critical(Os.errno()).put("Checking file size failed");
         }
         return r;
     }
@@ -323,5 +340,68 @@ public class FilesFacadeImpl implements FilesFacade {
         } else {
             return mapPageSize;
         }
+    }
+
+    private int runRecursive(Path src, Path dst, int dirMode, FsOperation operation) {
+        int dstLen = dst.length();
+        int srcLen = src.length();
+        int len = src.length();
+        long p = findFirst(src.$());
+        src.chop$();
+
+        if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
+            return -1;
+        }
+        dst.chop$();
+
+        if (p > 0) {
+            try {
+                int res;
+                do {
+                    long name = findName(p);
+                    if (Files.notDots(name)) {
+                        int type = findType(p);
+                        src.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            src.concat(name);
+                            dst.concat(name);
+
+                            if ((res = operation.invoke(src.$(), dst.$())) < 0) {
+                                return res;
+                            }
+
+                            src.trimTo(srcLen);
+                            dst.trimTo(dstLen);
+
+                        } else {
+                            src.concat(name);
+                            dst.concat(name);
+
+                            // Ignore if subfolder already exists
+                            mkdir(dst.$(), dirMode);
+
+                            dst.chop$();
+                            if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
+                                return res;
+                            }
+
+                            src.trimTo(srcLen);
+                            dst.trimTo(dstLen);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+                src.trimTo(srcLen);
+                dst.trimTo(dstLen);
+            }
+        }
+
+        return 0;
+    }
+
+    @FunctionalInterface
+    private interface FsOperation {
+        int invoke(LPSZ src, LPSZ dst);
     }
 }

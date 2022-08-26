@@ -133,8 +133,10 @@ public enum PropertyKey {
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
-
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
+    CAIRO_DETACH_ROOT("cairo.detach.root"),
+    CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
+    CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
     CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY("cairo.column.indexer.queue.capacity"),

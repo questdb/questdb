@@ -144,7 +144,7 @@ public class WalReader implements Closeable {
                 return rowCount;
             }
             LOG.error().$("open segment failed, segment does not exist on the disk. [path=").utf8(path.$()).I$();
-            throw CairoException.instance(0)
+            throw CairoException.critical(0)
                     .put("WAL data directory does not exist on disk at ")
                     .put(path);
         } finally {

@@ -24,13 +24,14 @@
 
 package io.questdb.cairo;
 
-public interface CairoSecurityContext {
+import java.io.Closeable;
 
-    default void checkWritePermission() {
-        if (!canWrite()) {
-            throw CairoException.nonCritical().put("Write permission denied").setCacheable(true);
-        }
-    }
+/**
+ * Resource with native memory allocations that can be released with close(),
+ * re-initialized with reallocate() and then used again.
+ */
+public interface Reallocatable extends Closeable {
 
-    boolean canWrite();
+    /* allocate native resource (usually using default sizes) */
+    void reallocate();
 }

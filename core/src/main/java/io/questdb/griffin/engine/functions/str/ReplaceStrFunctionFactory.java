@@ -177,7 +177,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
 
         private void checkLengthLimit(int length) {
             if (length > maxLength) {
-                throw CairoException.instance(-1)
+                throw CairoException.nonCritical()
                         .put("breached memory limit set for ").put(SIGNATURE)
                         .put(" [maxLength=").put(maxLength)
                         .put(", requiredLength=").put(length).put(']');

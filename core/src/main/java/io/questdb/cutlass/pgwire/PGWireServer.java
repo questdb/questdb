@@ -50,6 +50,7 @@ public class PGWireServer implements Closeable {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
     private final WorkerPool workerPool;
+    private final Metrics metrics;
 
     public PGWireServer(
             PGWireConfiguration configuration,
@@ -65,6 +66,7 @@ public class PGWireServer implements Closeable {
                 configuration.getDispatcherConfiguration(),
                 contextFactory
         );
+        this.metrics = engine.getMetrics();
 
         workerPool.assign(dispatcher);
 
@@ -88,8 +90,10 @@ public class PGWireServer implements Closeable {
                         context.getDispatcher().disconnect(context, operation == IOOperation.READ ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
                     } catch (BadProtocolException e) {
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                    } catch (Throwable e) {//must remain last in catch list!
-                        LOG.error().$(e).$();
+                    } catch (Throwable e) { //must remain last in catch list!
+                        LOG.critical().$("internal error [ex=").$(e).$(']').$();
+                        // This is a critical error, so we treat it as an unhandled one.
+                        metrics.healthCheck().incrementUnhandledErrors();
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
                 };

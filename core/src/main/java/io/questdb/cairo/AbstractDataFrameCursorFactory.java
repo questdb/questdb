@@ -26,17 +26,17 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
-    private final CairoEngine engine;
     private final String tableName;
     private final int tableId;
     private final long tableVersion;
 
-    public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
-        this.engine = engine;
+    public AbstractDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
@@ -47,13 +47,14 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
         sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableName).put("\"}");
     }
 
-    protected TableReader getReader(CairoSecurityContext sqlContext) {
-        return engine.getReader(
-                sqlContext,
-                tableName,
-                tableId,
-                tableVersion
-        );
+    protected TableReader getReader(SqlExecutionContext executionContext) throws SqlException {
+        return executionContext.getCairoEngine()
+                .getReader(
+                        executionContext.getCairoSecurityContext(),
+                        tableName,
+                        tableId,
+                        tableVersion
+                );
     }
 
     @Override

@@ -32,7 +32,7 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
     @Override
     public void setMaxSegmentSize(long maxSegmentSize) {
         if (maxSegmentSize < 1) {
-            throw CairoException.instance(CairoException.METADATA_VALIDATION)
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("Max segment size cannot be less than 1 byte, maxSegmentSize=").put(maxSegmentSize);
         }
         this.maxSegmentSize = maxSegmentSize;
@@ -41,7 +41,7 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
     @Override
     public void setMaxRowCount(long maxRowCount) {
         if (maxRowCount < 1) {
-            throw CairoException.instance(CairoException.METADATA_VALIDATION)
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("Max number of rows cannot be less than 1, maxRowCount=").put(maxRowCount);
         }
         this.maxRowCount = maxRowCount;
@@ -50,7 +50,7 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
     @Override
     public void setRollInterval(long rollInterval) {
         if (rollInterval < 1) {
-            throw CairoException.instance(CairoException.METADATA_VALIDATION)
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("Roll interval cannot be less than 1 millisecond, rollInterval=").put(rollInterval);
         }
         this.rollInterval = rollInterval;

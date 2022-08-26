@@ -29,6 +29,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -38,14 +40,14 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,6 +63,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static Metrics metrics = Metrics.enabled();
 
     protected final SCSequence eventSubSequence = new SCSequence();
+
+    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
 
     public static boolean assertCursor(
             CharSequence expected,
@@ -1416,13 +1420,33 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
+            int partitionCount
+    ) throws NumericException, SqlException {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    protected void createPopulateTable(
+            int tableId,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException, SqlException {
+        try (
+                MemoryMARW mem = Vm.getMARWInstance();
+                Path path = new Path().of(configuration.getRoot()).concat(tableModel.getTableName())
+        ) {
+            TableUtils.createTable(configuration, mem, path, tableModel, tableId);
+            compiler.compile(
+                    TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
+                    sqlExecutionContext
+            );
+        }
     }
 
     protected <T extends AbstractOperation> void executeOperation(
             String query,
-            int opType,
+            short opType,
             Function<CompiledQuery, T> op
     ) throws SqlException {
         CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
@@ -1450,5 +1474,65 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
         TestUtils.assertEquals(expectedPlan, getPlan(query).getText());
+    }
+
+
+    @TestOnly
+    public static void printMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            System.err.print(MemoryTag.nameOf(i));
+            System.err.print(":");
+            System.err.println(Unsafe.getMemUsedByTag(i));
+        }
+    }
+
+    @TestOnly
+    public static void snapshotMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
+        }
+    }
+
+    @TestOnly
+    public static void diffMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (SNAPSHOT[i] != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(SNAPSHOT[i]);
+            }
+        }
+    }
+
+    @TestOnly
+    public static long getMemUsedExceptMmap() {
+        long tags = 0;
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (Chars.startsWith(MemoryTag.nameOf(i), "MMAP")) {
+                tags = tags | 1L << i;
+            }
+        }
+
+        return getMemUsedExcept(tags);
+    }
+
+    @TestOnly
+    public static long getMemUsedExcept(long tagsToIgnore) {
+        long memUsed = 0;
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if ((tagsToIgnore & 1L << i) == 0) {
+                memUsed += Unsafe.getMemUsedByTag(i);
+            }
+        }
+
+        return memUsed;
     }
 }
