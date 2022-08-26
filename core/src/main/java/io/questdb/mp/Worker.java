@@ -145,6 +145,8 @@ public class Worker extends Thread {
             }
         } catch (Throwable e) {
             ex = e;
+            System.err.println("0000-00-00T00:00:00.000000Z C Fatal exception in worker " + getName());
+            e.printStackTrace();
         } finally {
             // cleaner will typically attempt to release
             // thread-local instances
@@ -161,6 +163,7 @@ public class Worker extends Thread {
         if (log != null) {
             log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
         } else {
+            System.err.println("0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName());
             e.printStackTrace();
         }
         if (haltOnError) {
