@@ -137,8 +137,8 @@ public class TxnCatalog implements Closeable {
         openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MEMORY_TAG);
 
         maxTxn = txnMem.getLong(MAX_TXN_OFFSET);
-        long maxStructureVersion = txnMetaMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);
-        long txnMetaMemSize = txnMetaMem.getLong(TXN_META_SIZE_OFFSET);
+        long maxStructureVersion = txnMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);
+        long txnMetaMemSize = txnMem.getLong(TXN_META_SIZE_OFFSET);
 
         if (maxTxn == 0) {
             txnMem.jumpTo(0L);
