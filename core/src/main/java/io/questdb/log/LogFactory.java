@@ -417,6 +417,11 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
+
+            @Override
+            public String getPoolName() {
+                return "logging";
+            }
         }, Metrics.disabled());
         assign(workerPool);
         workerPool.start(null);

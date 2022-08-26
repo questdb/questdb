@@ -480,7 +480,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return readerPool.lock(tableName);
     }
 
-    public CharSequence lockWriter(CharSequence tableName, String lockReason) {
+    public CharSequence lockWriter(CairoSecurityContext securityContext, CharSequence tableName, String lockReason) {
+        securityContext.checkWritePermission();
         checkTableName(tableName);
         return writerPool.lock(tableName, lockReason);
     }
@@ -574,7 +575,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         readerPool.unlock(tableName);
     }
 
-    public void unlockWriter(CharSequence tableName) {
+    public void unlockWriter(CairoSecurityContext securityContext, CharSequence tableName) {
+        securityContext.checkWritePermission();
         checkTableName(tableName);
         writerPool.unlock(tableName);
     }
