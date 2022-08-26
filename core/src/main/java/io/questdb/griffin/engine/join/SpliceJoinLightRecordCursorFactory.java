@@ -61,7 +61,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     private static final long NULL_ROWID = -1L;
     private final RecordCursorFactory slaveFactory;
     private final RecordCursorFactory masterFactory;
-    private final Map joinKeyMap;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final SpliceJoinLightRecordCursor cursor;
@@ -80,13 +79,14 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        this.joinKeyMap = MapFactory.createMap(
+        this.masterKeySink = masterSink;
+        this.slaveKeySink = slaveSink;
+
+        Map joinKeyMap = MapFactory.createMap(
                 cairoConfiguration,
                 joinColumnTypes,
                 valueTypes
         );
-        this.masterKeySink = masterSink;
-        this.slaveKeySink = slaveSink;
         this.cursor = new SpliceJoinLightRecordCursor(
                 joinKeyMap,
                 columnSplit,
@@ -99,10 +99,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        joinKeyMap.close();
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();
         slaveFactory.close();
+        cursor.close();
     }
 
     @Override
@@ -150,6 +150,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         private boolean hasMaster = true;
         private boolean hasSlave = true;
         private boolean dualRecord = false;
+        private boolean isOpen;
 
         public SpliceJoinLightRecordCursor(
                 Map joinKeyMap,
@@ -166,6 +167,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
+            this.isOpen = true;
         }
 
         @Override
@@ -270,6 +272,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+            if (!this.isOpen) {
+                this.isOpen = true;
+                this.joinKeyMap.reallocate();
+            }
             // avoid resetting these
             if (this.masterCursor == null) {
                 this.masterCursor = masterCursor;
@@ -304,6 +310,15 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             } else {
                 masterCursor.recordAt(masterRecord2, rowid);
                 record.of(masterRecord2, slaveRecord);
+            }
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                super.close();
             }
         }
     }

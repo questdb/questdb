@@ -26,6 +26,10 @@ package io.questdb.std;
 
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.test.tools.TestUtils;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.*;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -89,5 +93,10 @@ public class OsTest {
         t.interrupt();
         Assert.assertTrue(doneLatch.await(10_000_000_000L));
         Assert.assertTrue(System.currentTimeMillis() - time >= 1000);
+    }
+
+    @Test
+    public void testGetRss() {
+        assertThat(Os.getRss(), not(equalTo(0)));
     }
 }

@@ -22,27 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.map;
-
-import io.questdb.cairo.Reallocatable;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.Mutable;
+package io.questdb.cairo;
 
 import java.io.Closeable;
 
-public interface Map extends Mutable, Closeable, Reallocatable {
-    @Override
-    void close();
+/**
+ * Resource with native memory allocations that can be released with close(),
+ * re-initialized with reallocate() and then used again.
+ */
+public interface Reallocatable extends Closeable {
 
-    RecordCursor getCursor();
-
-    MapRecord getRecord();
-
-    long size();
-
-    MapValue valueAt(long address);
-
-    MapKey withKey();
-
-    void restoreInitialCapacity();
+    /* allocate native resource (usually using default sizes) */
+    void reallocate();
 }

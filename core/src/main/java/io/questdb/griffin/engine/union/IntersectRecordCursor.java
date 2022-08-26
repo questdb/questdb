@@ -39,21 +39,29 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
     private final RecordSink recordSink;
     private Record recordA;
     private Record recordB;
+    private boolean isOpen;
 
     public IntersectRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        super.close();
-        this.map.clear();
+        if (isOpen) {
+            isOpen = false;
+            this.map.close();
+            super.close();
+        }
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         super.of(cursorA, cursorB, circuitBreaker);
-        map.clear();
+        if (!isOpen) {
+            map.reallocate();
+            isOpen = true;
+        }
         this.recordB = cursorB.getRecord();
         hashCursorB();
         recordA = cursorA.getRecord();
