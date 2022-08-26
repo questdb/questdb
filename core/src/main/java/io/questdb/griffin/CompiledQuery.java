@@ -90,4 +90,6 @@ public interface CompiledQuery {
     long getAffectedRowsCount();
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
+
+    CompiledQuery withSqlStatement(String sqlStatement);
 }

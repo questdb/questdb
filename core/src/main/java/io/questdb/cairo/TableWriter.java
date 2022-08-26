@@ -36,6 +36,7 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
+import io.questdb.griffin.SqlToOperation;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperator;
@@ -68,6 +69,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterFrontend, TableWriterBackend, Closeable {
@@ -214,7 +216,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private UpdateOperator updateOperator;
     private DropIndexOperator dropIndexOperator;
     private final WalEventReader walEventReader;
-
+    private SqlToOperation sqlToOperation;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -769,7 +771,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
     @Override
     public long applyUpdate(UpdateOperation operation) throws SqlException {
-        return operation.apply(this, true);
+        return operation.apply(this, false);
     }
 
     @Override
@@ -1143,6 +1145,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         return updateOperator;
     }
 
+    public void initSqlToOperation(CairoEngine engine) {
+        sqlToOperation = new SqlToOperation(engine, configuration);
+    }
+
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
     }
@@ -1321,21 +1327,51 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     public void processWalCommit(Path walPath, long segmentTxn) {
-        WalEventCursor walCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
-        WalEventCursor.DataInfo dataInfo = walCursor.getDataInfo();
-
-        processWalCommit(
-                walPath,
-                !dataInfo.isOutOfOrder(),
-                dataInfo.getStartRowID(),
-                dataInfo.getEndRowID(),
-                dataInfo.getMinTimestamp(),
-                dataInfo.getMaxTimestamp(),
-                dataInfo
-        );
+        final WalEventCursor walEventCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+        final byte walTxnType = walEventCursor.getType();
+        switch (walTxnType) {
+            case DATA:
+                final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
+                processWalData(
+                        walPath,
+                        !dataInfo.isOutOfOrder(),
+                        dataInfo.getStartRowID(),
+                        dataInfo.getEndRowID(),
+                        dataInfo.getMinTimestamp(),
+                        dataInfo.getMaxTimestamp(),
+                        dataInfo
+                );
+                break;
+            case SQL:
+                final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
+                processWalSql(sqlInfo);
+                break;
+            default:
+                throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+        }
     }
 
-    public void processWalCommit(
+    private void processWalSql(WalEventCursor.SqlInfo sqlInfo) {
+        final int cmdType = sqlInfo.getCmdType();
+        final CharSequence sql = sqlInfo.getSql();
+        try {
+            switch(cmdType) {
+                case CMD_ALTER_TABLE:
+                    applyAlter(sqlToOperation.toAlterOperation(sql), false);
+                    break;
+                case CMD_UPDATE_TABLE:
+                    applyUpdate(sqlToOperation.toUpdateOperation(sql));
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
+            }
+        } catch (SqlException e) {
+            throw CairoException.critical(0)
+                    .put("cannot apply UPDATE from WAL to table. ").put(e.getFlyweightMessage());
+        }
+    }
+
+    public void processWalData(
             Path walPath,
             boolean inOrder,
             long rowLo,
@@ -2778,6 +2814,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(walEventReader);
+        Misc.free(sqlToOperation);
         updateOperator = Misc.free(updateOperator);
         dropIndexOperator = Misc.free(dropIndexOperator);
         freeColumns(truncate & !distressed);

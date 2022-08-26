@@ -84,7 +84,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.metrics = metrics;
         this.tableRegistry = new TableRegistry(this, configuration);
         this.messageBus = new MessageBusImpl(configuration);
-        this.writerPool = new WriterPool(configuration, messageBus, metrics);
+        this.writerPool = new WriterPool(configuration, messageBus, this);
         this.readerPool = new ReaderPool(configuration, messageBus);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {

@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -158,15 +159,43 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             }
             return txn;
         } else {
-            // This is likely to be updates and some weird alters.
-            // TODO: We have to serialize the command to WAL-E and register the transaction in the sequencer.
-            throw new UnsupportedOperationException();
+            return applyNonStructuralOperation(operation);
         }
     }
 
+    // Returns table transaction number
     @Override
-    public long applyUpdate(UpdateOperation operations) {
-        throw new UnsupportedOperationException();
+    public long applyUpdate(UpdateOperation operation) {
+        if (operation.getFactory().recordCursorSupportsRandomAccess() && operation.getFactory().supportsUpdateRowId(tableName)) {
+            // no join in UPDATE statement
+            return applyNonStructuralOperation(operation);
+        }
+
+        // here we have 2 options instead of throwing exception
+        // 1. we could write the updated partitions into WAL.
+        //   since we cannot really rely on row ids we should probably create
+        //   a PARTITION_REWRITE event and use it here to replace the updated
+        //   partitions entirely with new ones.
+        // 2. we could still pass the SQL statement if we made sure that all
+        //   tables involved in the join are guaranteed to be on the same
+        //   version (exact same txn number) on each node when the update
+        //   statement is run.
+        //   so we would need to read current txn number for each table and
+        //   put it into the SQL event as a requirement for running the SQL.
+        //   when the WAL event is processed we would need to query the exact
+        //   versions of each table involved in the join when running the SQL.
+        operation.close();
+        throw new UnsupportedOperationException("UPDATE statements with join are not supported yet for WAL tables");
+    }
+
+    private long applyNonStructuralOperation(AbstractOperation operation) {
+        try {
+            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement());
+            return getTableTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
     }
 
     @Override

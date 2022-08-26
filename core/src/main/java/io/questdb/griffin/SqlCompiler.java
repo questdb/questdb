@@ -889,8 +889,7 @@ public class SqlCompiler implements Closeable {
         lexer.of(query);
         isSingleQueryMode = true;
 
-        compileInner(executionContext);
-        compiledQuery.withContext(executionContext);
+        compileInner(executionContext, query);
         return compiledQuery;
     }
 
@@ -939,7 +938,7 @@ public class SqlCompiler implements Closeable {
                 try {
                     batchCallback.preCompile(this);
                     clear();//we don't use normal compile here because we can't reset existing lexer
-                    CompiledQuery current = compileInner(executionContext);
+                    CompiledQuery current = compileInner(executionContext, query);
                     //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
                     //some code in postCompile might need full text of current query
                     CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
@@ -1720,21 +1719,20 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext, CharSequence query) throws SqlException {
         final CharSequence tok = SqlUtil.fetchNext(lexer);
-
         if (tok == null) {
             throw SqlException.$(0, "empty query");
         }
 
-        // Save execution context in resulting Compiled Query
-        // it may be used for Alter Table statement execution
-        compiledQuery.withContext(executionContext);
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        if (executor == null) {
-            return compileUsingModel(executionContext);
+        final CompiledQuery cq = executor == null ? compileUsingModel(executionContext) : executor.execute(executionContext);
+        final short type = cq.getType();
+        if (type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) {
+            cq.withSqlStatement(Chars.toString(query));
         }
-        return executor.execute(executionContext);
+        cq.withContext(executionContext);
+        return cq;
     }
 
     private CompiledQuery compileRollback(SqlExecutionContext executionContext) {
@@ -1773,10 +1771,10 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.ofRenameTable();
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
-                UpdateOperation updateStatement = generateUpdate(updateQueryModel, executionContext);
-                return compiledQuery.ofUpdate(updateStatement);
+                final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext);
+                return compiledQuery.ofUpdate(updateOperation);
             default:
-                InsertModel insertModel = (InsertModel) executionModel;
+                final InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {
                     return executeWithRetries(
                             insertAsSelectMethod,

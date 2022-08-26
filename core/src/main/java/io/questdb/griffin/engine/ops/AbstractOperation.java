@@ -42,6 +42,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     String tableName;
     int tableNamePosition;
+    @Nullable String sqlStatement;
     @Nullable SqlExecutionContext sqlExecutionContext;
 
     void init(
@@ -114,6 +115,14 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         assert sqlExecutionContext != null;
         this.sqlExecutionContext = sqlExecutionContext;
+    }
+
+    public @Nullable String getSqlStatement() {
+        return sqlStatement;
+    }
+
+    public void withSqlStatement(String sqlStatement) {
+        this.sqlStatement = sqlStatement;
     }
 
     @Override

@@ -45,6 +45,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private TextLoader textLoader;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
+    private String sqlStatement;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
@@ -53,14 +54,14 @@ public class CompiledQueryImpl implements CompiledQuery {
     private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
+        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterFrontend writerFronted) throws SqlException {
                 return writerFronted.applyUpdate(operation);
             }
         };
 
-        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
+        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterFrontend writerFronted) throws SqlException {
                 return writerFronted.applyAlter(operation, true);
@@ -115,8 +116,10 @@ public class CompiledQueryImpl implements CompiledQuery {
             case INSERT:
                 return insertOperation.execute(sqlExecutionContext);
             case UPDATE:
+                updateOperation.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
+                alterOperation.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
             default:
                 return doneFuture.of(0);
@@ -144,6 +147,11 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
+        return this;
+    }
+
+    public CompiledQueryImpl withSqlStatement(String sqlStatement) {
+        this.sqlStatement = sqlStatement;
         return this;
     }
 

@@ -25,7 +25,6 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
@@ -82,16 +81,16 @@ public class WriterPool extends AbstractPool {
     @NotNull
     private final MessageBus messageBus;
     @NotNull
-    private final Metrics metrics;
+    private final CairoEngine engine;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
      * @param configuration configuration parameters.
      * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
-     * @param metrics       metrics instance to be used by table writers.
+     * @param engine        engine instance to be used by table writers.
      */
-    public WriterPool(CairoConfiguration configuration, @NotNull MessageBus messageBus, @NotNull Metrics metrics) {
+    public WriterPool(CairoConfiguration configuration, @NotNull MessageBus messageBus, @NotNull CairoEngine engine) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.messageBus = messageBus;
@@ -99,7 +98,7 @@ public class WriterPool extends AbstractPool {
         this.root = configuration.getRoot();
         this.path.concat(this.root);
         this.rootLen = this.path.length();
-        this.metrics = metrics;
+        this.engine = engine;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
@@ -248,7 +247,8 @@ public class WriterPool extends AbstractPool {
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, name, messageBus, null, false, e, root, metrics);
+                writer = new TableWriter(configuration, name, messageBus, null, false, e, root, engine.getMetrics());
+                writer.initSqlToOperation(engine);
             }
 
             if (writer == null) {
@@ -424,7 +424,8 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(configuration, name, messageBus, null, true, e, root, metrics);
+            e.writer = new TableWriter(configuration, name, messageBus, null, true, e, root, engine.getMetrics());
+            e.writer.initSqlToOperation(engine);
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
