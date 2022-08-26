@@ -29,10 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -3260,12 +3257,27 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "x");
     }
 
-    public void testInsertAsSelectError(CharSequence ddl, CharSequence insert, int errorPosition, CharSequence errorMessage) throws Exception {
+    public void testInsertAsSelectError(
+            CharSequence ddl,
+            CharSequence insert,
+            int errorPosition,
+            CharSequence errorMessage
+    ) throws Exception {
+        testInsertAsSelectError(ddl, insert, errorPosition, errorMessage, SqlException.class);
+    }
+
+    public void testInsertAsSelectError(
+            CharSequence ddl,
+            CharSequence insert,
+            int errorPosition,
+            CharSequence errorMessage,
+            Class<?> exception
+    ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
-            assertFailure0(errorPosition, errorMessage, insert);
+            assertFailure0(errorPosition, errorMessage, insert, exception);
         });
     }
 
@@ -3301,8 +3313,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_int()," +
                         " rnd_char()" +
                         " from long_sequence(30)",
-                32,
-                "inconvertible value: T [CHAR -> BYTE]"
+                -1,
+                "inconvertible value: T [CHAR -> BYTE]",
+                ImplicitCastException.class
         );
     }
 
@@ -3325,8 +3338,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_int()," +
                         " rnd_char()" +
                         " from long_sequence(30)",
-                17,
-                "inconvertible value: T [CHAR -> BYTE]"
+                -1,
+                "inconvertible value: T [CHAR -> BYTE]",
+                ImplicitCastException.class
         );
     }
 
@@ -3339,8 +3353,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_int()," +
                         " rnd_char()" +
                         " from long_sequence(30)",
-                17,
-                "inconvertible value: T [CHAR -> BYTE]"
+                -1,
+                "inconvertible value: T [CHAR -> BYTE]",
+                ImplicitCastException.class
         );
     }
 
@@ -3363,8 +3378,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_int()," +
                         " rnd_str(5,5,0)" +
                         " from long_sequence(30)",
-                17,
-                "inconvertible value: JWCPS [STRING -> FLOAT]"
+                -1,
+                "inconvertible value: JWCPS [STRING -> FLOAT]",
+                ImplicitCastException.class
         );
     }
 
@@ -3653,7 +3669,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
-            } catch (SqlException e) {
+            } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 2020-01-10T18:00:01.800Zz [STRING -> TIMESTAMP]");
             }
 
@@ -4250,15 +4266,24 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     protected void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) throws Exception {
-        assertMemoryLeak(() -> assertFailure0(position, expectedMessage, sql));
+        assertMemoryLeak(() -> assertFailure0(position, expectedMessage, sql, SqlException.class));
     }
 
-    private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql) {
+    private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql, Class<?> exception) {
         try {
             compiler.compile(sql, sqlExecutionContext);
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        } catch (Throwable e) {
+            Assert.assertSame(exception, e.getClass());
+            if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer)e).getFlyweightMessage(), expectedMessage);
+                if (position != -1) {
+                    Assert.assertSame(SqlException.class, e.getClass());
+                    Assert.assertEquals(position, ((SqlException)e).getPosition());
+                }
+            } else {
+                Assert.fail();
+            }
         }
     }
 

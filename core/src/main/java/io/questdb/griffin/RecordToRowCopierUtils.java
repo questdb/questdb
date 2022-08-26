@@ -85,10 +85,16 @@ public class RecordToRowCopierUtils {
         int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
-        int parseTimestamp = asm.poolMethod(SqlUtil.class, "parseTimestamp", "(Ljava/lang/CharSequence;)J");
         int parseChar = asm.poolMethod(SqlUtil.class, "parseChar", "(CI)B");
-        int parseFloat = asm.poolMethod(SqlUtil.class, "parseFloat", "(Ljava/lang/CharSequence;)F");
-        int dateToTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
+        int parseStrAsFloat = asm.poolMethod(SqlUtil.class, "parseFloat", "(Ljava/lang/CharSequence;)F");
+        int parseStrAsDouble = asm.poolMethod(SqlUtil.class, "parseDouble", "(Ljava/lang/CharSequence;)D");
+        int parseStrAsByte = asm.poolMethod(SqlUtil.class, "parseByte", "(Ljava/lang/CharSequence;)B");
+        int parseStrAsShort = asm.poolMethod(SqlUtil.class, "parseShort", "(Ljava/lang/CharSequence;)S");
+        int parseStrAsInt = asm.poolMethod(SqlUtil.class, "parseInt", "(Ljava/lang/CharSequence;)I");
+        int parseStrAsLong = asm.poolMethod(SqlUtil.class, "parseLong", "(Ljava/lang/CharSequence;)J");
+        int parseStrAsDate = asm.poolMethod(SqlUtil.class, "parseDate", "(Ljava/lang/CharSequence;)J");
+        int parseStrAsTimestamp = asm.poolMethod(SqlUtil.class, "parseTimestamp", "(Ljava/lang/CharSequence;)J");
+        int castDateToTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
         int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
@@ -282,7 +288,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeStatic(dateToTimestamp);
+                            asm.invokeStatic(castDateToTimestamp);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
@@ -710,15 +716,39 @@ public class RecordToRowCopierUtils {
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr);
                     switch (toColumnTypeTag) {
+                        case ColumnType.BYTE:
+                            asm.invokeStatic(parseStrAsByte);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.invokeStatic(parseStrAsShort);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.INT:
+                            asm.invokeStatic(parseStrAsInt);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeStatic(parseStrAsLong);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
                         case ColumnType.FLOAT:
-                            asm.invokeStatic(parseFloat);
+                            asm.invokeStatic(parseStrAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.invokeStatic(parseStrAsDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(wPutSym, 2);
                             break;
+                        case ColumnType.DATE:
+                            asm.invokeStatic(parseStrAsDate);
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeStatic(parseTimestamp);
+                            asm.invokeStatic(parseStrAsTimestamp);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.GEOBYTE:
@@ -888,21 +918,21 @@ public class RecordToRowCopierUtils {
             int fromType,
             int toType,
             int toColumnIndex
-    ) throws SqlException {
+    ) {
         if (toType == ColumnType.FLOAT && Double.isInfinite(value)) {
             // infinity in double should be able to be cast to float, since they have the same mathematical meaning
             return;
         }
         if (value < min || value > max) {
-            throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
+            throw ImplicitCastException.inconvertibleValue(toColumnIndex, value, fromType, toType);
         }
     }
 
     //used by copier
     @SuppressWarnings("unused")
-    static void checkLongBounds(long value, long min, long max, int fromType, int toType, int toColumnIndex) throws SqlException {
+    static void checkLongBounds(long value, long min, long max, int fromType, int toType, int toColumnIndex) {
         if (value < min || value > max) {
-            throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
+            throw ImplicitCastException.inconvertibleValue(toColumnIndex, value, fromType, toType);
         }
     }
 

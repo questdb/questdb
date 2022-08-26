@@ -1178,10 +1178,9 @@ public class SqlCompiler implements Closeable {
             TableWriter writer,
             RecordMetadata metadata,
             RecordCursor cursor,
-            RecordToRowCopier
-                    copier,
+            RecordToRowCopier copier,
             int cursorTimestampIndex
-    ) throws SqlException {
+    ) {
         long rowCount;
 
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
@@ -1216,7 +1215,7 @@ public class SqlCompiler implements Closeable {
             int cursorTimestampIndex,
             long batchSize,
             long commitLag
-    ) throws SqlException {
+    ) {
         long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
             rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
@@ -1261,7 +1260,7 @@ public class SqlCompiler implements Closeable {
             int cursorTimestampIndex,
             long batchSize,
             long commitLag
-    ) throws SqlException {
+    ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -1286,7 +1285,7 @@ public class SqlCompiler implements Closeable {
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex
-    ) throws SqlException {
+    ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -2351,18 +2350,6 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.STRING:
                     switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.BYTE:
-                        case ColumnType.SHORT:
-                        case ColumnType.INT:
-                        case ColumnType.LONG:
-                        case ColumnType.DATE:
-                        case ColumnType.TIMESTAMP:
-                        case ColumnType.FLOAT:
-                        case ColumnType.DOUBLE:
-                            if (function.isConstant()) {
-                                function = SqlUtil.parseStr(function.getStr(null), tupleIndex, ColumnType.tagOf(columnType));
-                            }
-                            break;
                         case ColumnType.GEOBYTE:
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:

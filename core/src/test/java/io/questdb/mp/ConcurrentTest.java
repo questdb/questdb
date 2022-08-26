@@ -229,26 +229,6 @@ public class ConcurrentTest {
         Assert.assertEquals(threads + 1, doneCount.get());
     }
 
-
-    @Test
-    public void testFanOutPingPong222() {
-        MPSequence textImportPubSeq = new MPSequence(8);
-        MCSequence textImportSubSeq = new MCSequence(8);
-        SCSequence scSequence = new SCSequence();
-        final FanOut collectFanOut = new FanOut();
-        textImportPubSeq.then(textImportSubSeq).then(collectFanOut).then(textImportPubSeq);
-        collectFanOut.and(scSequence);
-
-        long seq = textImportPubSeq.next();
-        textImportPubSeq.done(seq);
-
-        final long cursor = textImportSubSeq.next();
-//        textImportSubSeq.done(cursor);
-
-        final long s = scSequence.next();
-        System.err.println("" + s);
-    }
-
     @Test
     public void testFanOutPingPong() {
         final int threads = 2;

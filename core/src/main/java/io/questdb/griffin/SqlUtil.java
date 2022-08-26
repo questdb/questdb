@@ -25,22 +25,27 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.engine.functions.constants.DateConstant;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
+    private static final DateFormat[] DATE_FORMATS;
+    private static final int DATE_FORMATS_SIZE;
+    private static final DateFormat[] TIMESTAMP_FORMATS;
+    private static final int TIMESTAMP_FORMATS_SIZE;
 
     public static void addSelectStar(
             QueryModel model,
@@ -49,6 +54,12 @@ public class SqlUtil {
     ) throws SqlException {
         model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
         model.setArtificialStar(true);
+    }
+
+    // used by Copier assembler
+    @SuppressWarnings("unused")
+    public static long dateToTimestamp(long millis) {
+        return millis != Numbers.LONG_NaN ? millis * 1000L : millis;
     }
 
     /**
@@ -92,32 +103,74 @@ public class SqlUtil {
         return null;
     }
 
-    public static byte parseChar(char value, int tupleIndex, int toType) throws SqlException {
+    public static byte parseByte(CharSequence value) {
+        if (value != null) {
+            try {
+                int res = Numbers.parseInt(value);
+                if (res >= Byte.MIN_VALUE && res <= Byte.MAX_VALUE) {
+                    return (byte) res;
+                }
+            } catch (NumericException ignore) {
+            }
+            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.BYTE);
+        }
+        return 0;
+    }
+
+    public static byte parseChar(char value, int tupleIndex, int toType) {
         byte v = (byte) (value - '0');
         if (v > -1 && v < 10) {
             return v;
         }
-        throw SqlException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
+        throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
     }
 
-    public static byte parseChar(char value, int toType) throws SqlException {
+    public static byte parseChar(char value, int toType) {
         byte v = (byte) (value - '0');
         if (v > -1 && v < 10) {
             return v;
         }
-        throw SqlException.inconvertibleValue(0, value, ColumnType.CHAR, toType);
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.CHAR, toType);
     }
 
-    public static float parseFloat(CharSequence value) throws SqlException {
-        try {
-            return Numbers.parseFloat(value);
-        } catch (NumericException e) {
-            throw SqlException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.FLOAT);
+    public static long parseDate(CharSequence value) {
+        if (value != null) {
+            final int hi = value.length();
+            for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
+                try {
+                    return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.enLocale);
+                } catch (NumericException ignore) {
+                }
+            }
+            try {
+                return Numbers.parseLong(value, 0, hi);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.DATE);
+            }
         }
+        return Numbers.LONG_NaN;
     }
 
-    public static long dateToTimestamp(long millis) {
-        return millis != Numbers.LONG_NaN ? millis * 1000L : millis;
+    public static double parseDouble(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseDouble(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.DOUBLE);
+            }
+        }
+        return Double.NaN;
+    }
+
+    public static float parseFloat(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseFloat(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.FLOAT);
+            }
+        }
+        return Float.NaN;
     }
 
     /**
@@ -127,36 +180,67 @@ public class SqlUtil {
      * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
      * @param columnType the target column type, which might be different from timestamp
      * @return epoch offset
-     * @throws SqlException inconvertible type error.
+     * @throws ImplicitCastException inconvertible type error.
      */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) throws SqlException {
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) {
         try {
             return IntervalUtils.parseFloorPartialTimestamp(value);
         } catch (NumericException e) {
-            throw SqlException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
         }
     }
 
-    public static Function parseStr(CharSequence value, int tupleIndex, int toType) throws SqlException {
-        try {
-            return LongConstant.newInstance(Numbers.parseLong(value));
-        } catch (NumericException e) {
-            // not a long, perhaps a double?
+    public static int parseInt(CharSequence value) {
+        if (value != null) {
             try {
-                return DoubleConstant.newInstance(Numbers.parseDouble(value));
-            } catch (NumericException ex) {
-                // could be date or timestamp
-                try {
-                    return DateConstant.getInstance(DateFormatUtils.parseUTCDate(value));
-                } catch (NumericException exc) {
-                    return TimestampConstant.newInstance(parseFloorPartialTimestamp(value, tupleIndex, toType));
-                }
+                return Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.INT);
             }
         }
+        return Numbers.INT_NaN;
     }
 
-    public static long parseTimestamp(CharSequence value) throws SqlException {
-        return parseFloorPartialTimestamp(value, 0, ColumnType.TIMESTAMP);
+    public static long parseLong(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.LONG);
+            }
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    public static short parseShort(@Nullable CharSequence value) {
+        try {
+            return value != null ? Numbers.parseShort(value) : 0;
+        } catch (NumericException ignore) {
+            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.SHORT);
+        }
+    }
+
+    public static long parseTimestamp(CharSequence value) throws NumericException {
+        // Parse as ISO with variable length.
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException ignore) {
+        }
+
+        final int hi = value.length();
+        for (int i = 0; i < TIMESTAMP_FORMATS_SIZE; i++) {
+            try {
+                return TIMESTAMP_FORMATS[i].parse(value, 0, hi, enLocale);
+            } catch (NumericException ignore) {
+            }
+        }
+
+        try {
+            return Numbers.parseLong(value);
+        } catch (NumericException ignore) {
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.TIMESTAMP);
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
@@ -300,5 +384,27 @@ public class SqlUtil {
         for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
             SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
         }
+
+        final DateFormatCompiler milliCompiler = new DateFormatCompiler();
+        final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
+
+        DATE_FORMATS = new DateFormat[]{
+                pgDateTimeFormat,
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                UTC_FORMAT
+        };
+
+        DATE_FORMATS_SIZE = DATE_FORMATS.length;
+
+        // we are using "millis" compiler deliberately because clients encode millis into strings
+        TIMESTAMP_FORMATS = new DateFormat[]{
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                pgDateTimeFormat
+        };
+
+        TIMESTAMP_FORMATS_SIZE = TIMESTAMP_FORMATS.length;
+
     }
 }

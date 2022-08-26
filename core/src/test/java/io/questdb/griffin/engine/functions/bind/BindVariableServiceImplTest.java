@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Long256Impl;
@@ -108,7 +109,7 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setChar(2, 'o');
             Assert.fail();
-        } catch (SqlException e) {
+        } catch (ImplicitCastException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }
@@ -119,7 +120,7 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setChar("a", 'k');
             Assert.fail();
-        } catch (SqlException e) {
+        } catch (ImplicitCastException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }

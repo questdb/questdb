@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -77,22 +78,6 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.007Z\n" +
                         "1970-01-01T00:00:00.000Z\n"
         );
-    }
-
-    @Test
-    public void testInsertNullDateIntoTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x(ts timestamp)", sqlExecutionContext);
-            executeInsert("insert into x values (cast(null as date))");
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "x",
-                    sink,
-                    "ts\n" +
-                            "\n"
-            );
-        });
     }
 
     @Test
@@ -384,6 +369,110 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastStrByteTab() throws Exception {
+        assertStrTab(
+                "byte",
+                "a\tb\n" +
+                        "76\t76\n" +
+                        "102\t102\n" +
+                        "27\t27\n" +
+                        "87\t87\n" +
+                        "79\t79\n"
+        );
+    }
+
+    @Test
+    public void testCastStrDoubleTab() throws Exception {
+        assertStrTab(
+                "double",
+                "a\tb\n" +
+                        "76.0\t76\n" +
+                        "102.0\t102\n" +
+                        "27.0\t27\n" +
+                        "87.0\t87\n" +
+                        "79.0\t79\n"
+        );
+    }
+
+    @Test
+    public void testCastStrFloatTab() throws Exception {
+        assertStrTab(
+                "float",
+                "a\tb\n" +
+                        "76.0000\t76\n" +
+                        "102.0000\t102\n" +
+                        "27.0000\t27\n" +
+                        "87.0000\t87\n" +
+                        "79.0000\t79\n"
+        );
+    }
+
+    @Test
+    public void testCastStrIntTab() throws Exception {
+        assertStrTab(
+                "int",
+                "a\tb\n" +
+                        "76\t76\n" +
+                        "102\t102\n" +
+                        "27\t27\n" +
+                        "87\t87\n" +
+                        "79\t79\n"
+        );
+    }
+
+    @Test
+    public void testCastStrLongTab() throws Exception {
+        assertStrTab(
+                "long",
+                "a\tb\n" +
+                        "76\t76\n" +
+                        "102\t102\n" +
+                        "27\t27\n" +
+                        "87\t87\n" +
+                        "79\t79\n"
+        );
+    }
+
+    @Test
+    public void testCastStrDateTab() throws Exception {
+        assertStrTab(
+                "date",
+                "a\tb\n" +
+                        "1970-01-01T00:00:00.076Z\t76\n" +
+                        "1970-01-01T00:00:00.102Z\t102\n" +
+                        "1970-01-01T00:00:00.027Z\t27\n" +
+                        "1970-01-01T00:00:00.087Z\t87\n" +
+                        "1970-01-01T00:00:00.079Z\t79\n"
+        );
+    }
+
+    @Test
+    public void testCastStrTimestampTab() throws Exception {
+        assertStrTab(
+                "timestamp",
+                "a\tb\n" +
+                        "1970-01-01T00:00:00.000076Z\t76\n" +
+                        "1970-01-01T00:00:00.000102Z\t102\n" +
+                        "1970-01-01T00:00:00.000027Z\t27\n" +
+                        "1970-01-01T00:00:00.000087Z\t87\n" +
+                        "1970-01-01T00:00:00.000079Z\t79\n"
+        );
+    }
+
+    @Test
+    public void testCastStrShortTab() throws Exception {
+        assertStrTab(
+                "short",
+                "a\tb\n" +
+                        "76\t76\n" +
+                        "102\t102\n" +
+                        "27\t27\n" +
+                        "87\t87\n" +
+                        "79\t79\n"
+        );
+    }
+
+    @Test
     public void testCastStrToByteLit() throws Exception {
         assertStrLit(
                 "byte",
@@ -416,7 +505,7 @@ public class InsertCastTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into y values ('c')");
                 Assert.fail();
-            } catch (SqlException e) {
+            } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             executeInsert("insert into y values ('2222-01-01T00:00:00.124Z');");
@@ -510,7 +599,7 @@ public class InsertCastTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into y values ('c')");
                 Assert.fail();
-            } catch (SqlException e) {
+            } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             executeInsert("insert into y values ('2222-01-01T00:00:00.000124Z');");
@@ -523,6 +612,22 @@ public class InsertCastTest extends AbstractGriffinTest {
                             "2022-01-01T00:00:00.000045Z\n" +
                             "2222-01-01T00:00:00.000076Z\n" +
                             "2222-01-01T00:00:00.000124Z\n"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertNullDateIntoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x(ts timestamp)", sqlExecutionContext);
+            executeInsert("insert into x values (cast(null as date))");
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "x",
+                    sink,
+                    "ts\n" +
+                            "\n"
             );
         });
     }
@@ -543,7 +648,7 @@ public class InsertCastTest extends AbstractGriffinTest {
                     bindVariableService.setChar(0, 'a');
                     insert.execute(sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
+                } catch (ImplicitCastException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
             }
@@ -592,7 +697,7 @@ public class InsertCastTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into y values ('c')");
                 Assert.fail();
-            } catch (SqlException e) {
+            } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             executeInsert("insert into y values ('1')");
@@ -631,12 +736,29 @@ public class InsertCastTest extends AbstractGriffinTest {
             executeInsert("insert into y values ('45')");
             executeInsert("insert into y values ('76')");
             try {
-                executeInsert("insert into y values ('c')");
+                executeInsert("insert into y values ('cc')");
                 Assert.fail();
-            } catch (SqlException e) {
+            } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
             executeInsert("insert into y values ('124')");
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    expected
+            );
+        });
+    }
+
+    private void assertStrTab(String toType, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + toType + ", b string);", sqlExecutionContext);
+            compiler.compile("create table x as (select cast(rnd_byte() as string) a from long_sequence(5));", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            compiler.compile("insert into y select a,a from x", sqlExecutionContext).getInsertOperation();
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -76,13 +77,33 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
-    public final int getInt(Record rec) {
+    public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getLong(Record rec) {
+    public int getGeoInt(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getInt(Record rec) {
+        return SqlUtil.parseInt(getStr(rec));
+    }
+
+    @Override
+    public final long getLong(Record rec) {
+        return SqlUtil.parseLong(getStr(rec));
     }
 
     @Override
@@ -133,27 +154,6 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 

@@ -763,7 +763,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInsertFloatTableExists() throws Exception {
-        assertType(ColumnType.FLOAT,
+        assertType(
+                ColumnType.FLOAT,
                 "value\ttimestamp\n" +
                         "0.4257\t1970-01-01T00:00:01.000000Z\n" +
                         "3.1416\t1970-01-01T00:00:02.000000Z\n" +
@@ -806,7 +807,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "true", // valid, true casts down to 1.0
                         "false", // valid, true casts down to 0.0
                 },
-                false);
+                false
+        );
     }
 
     @Test

@@ -1,5 +1,6 @@
 package io.questdb.griffin;
 
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -524,8 +525,8 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
             });
 
             Assert.fail("SqlException should be thrown!");
-        } catch (SqlException sqlE) {
-            TestUtils.assertContains(sqlE.getFlyweightMessage(), "inconvertible value");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }
 

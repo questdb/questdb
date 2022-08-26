@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -161,7 +158,7 @@ public class LineUdpParserSupport {
                         // unsupported types and null are ignored
                         break;
                 }
-            } catch (NumericException e) {
+            } catch (NumericException | ImplicitCastException e) {
                 LOG.info()
                         .$("cast error [value=")
                         .$(value).$(", toType=")
