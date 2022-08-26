@@ -1051,7 +1051,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            CharSequence lockedReason = engine.lockWriter(tok, "alterSystem");
+            CharSequence lockedReason = engine.lockWriter(executionContext.getCairoSecurityContext(), tok, "alterSystem");
             if (lockedReason != WriterPool.OWNERSHIP_REASON_NONE) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
@@ -1068,7 +1068,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            engine.unlockWriter(tok);
+            engine.unlockWriter(executionContext.getCairoSecurityContext(), tok);
             return compiledQuery.ofUnlock();
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
