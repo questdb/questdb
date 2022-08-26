@@ -50,7 +50,12 @@ az_trigger_pipeline:
 	@ echo "Build branch: $(GIT_BRANCH) - commit: $(GIT_ID)"
 	@ echo "link: $(DEVOPS_ORG)/$(DEVOPS_PROJECT)/_build/results?buildId=$(pipeline_id)"
 	@ $(MAKE) wait ID=$(pipeline_id)
-	@ $(MAKE) az_download_cbinaries ID=$(pipeline_id)
+	@ $(MAKE) s3_download_cbinaries ID=$(pipeline_id)
+
+s3_download_cbinaries: ID=$(ID)
+s3_download_cbinaries:
+	@ echo "Updating local binaries"
+	$(aws) s3 cp --recursive s3://$(BUCKET_NAME)/$(BUCKET_PATH)/$(ID) $(DEFAULT_BINARY_PATH)
 
 az_download_cbinaries: ID=$(ID)
 az_download_cbinaries:

@@ -117,20 +117,74 @@ stages:
             condition: eq(variables['Agent.OS'], 'Linux')
             displayName: "Check C++ runtime dependency"
 
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/$(OS_MAPPING)/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/$(OS_MAPPING)"
+              filesAcl: "bucket-owner-full-control"
+            displayName: "Upload binaries to S3 $(Agent.OS)"
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/windows/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/windows"
+              filesAcl: "bucket-owner-full-control"
+            displayName: "Upload binaries to S3 for cross-compiled windows"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/armlinux/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/armlinux"
+              filesAcl: "bucket-owner-full-control"
+            displayName: "Upload binaries to S3 for cross-compiled armlinux"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
           - task: PublishBuildArtifacts@1
             inputs:
-              pathToPublish: ./core/src/main/resources/io/questdb/bin/*linux
+              pathToPublish: ./core/src/main/resources/io/questdb/bin/armlinux
+              publishLocation: armlinux
+            condition: eq(variables['Agent.OS'], 'Linux')
+            displayName: "Publish armlinux c++ artifacts"
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: ./core/src/main/resources/io/questdb/bin/linux
+              publishLocation: linux
             condition: eq(variables['Agent.OS'], 'Linux')
             displayName: "Publish linux c++ artifacts"
 
           - task: PublishBuildArtifacts@1
             inputs:
               pathToPublish: ./core/src/main/resources/io/questdb/bin/windows
+              publishLocation: windows
             condition: eq(variables['Agent.OS'], 'Linux')
             displayName: "Publish windows c++ artifacts"
 
           - task: PublishBuildArtifacts@1
             inputs:
               pathToPublish: ./core/src/main/resources/io/questdb/bin/osx
+              publishLocation: osx
             condition: eq(variables['Agent.OS'], 'Darwin')
             displayName: "Publish mac c++ artifacts"
