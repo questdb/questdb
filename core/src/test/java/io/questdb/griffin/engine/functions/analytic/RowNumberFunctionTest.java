@@ -29,13 +29,17 @@ import org.junit.Test;
 
 public class RowNumberFunctionTest extends AbstractGriffinTest {
     @Test
-    public void testRowNumberSequence() throws Exception  {
+    public void testRowNumberSequence() throws Exception {
         assertSql("select row_number() from long_sequence(3)",
                 "row_number\n" +
                         "1\n" +
                         "2\n" +
                         "3\n"
         );
+    }
+
+    @Test
+    public void testRowNumberPartition() throws Exception {
         // a	b
         //false	315515118
         //false	-727724771
@@ -72,6 +76,26 @@ public class RowNumberFunctionTest extends AbstractGriffinTest {
                         "false\t0\n",
                "select a, row_number() over (partition by a order by b desc) from tmp",
                 "create table tmp as (select rnd_boolean() a, rnd_int() b from long_sequence(10))",
+                null
+        );
+    }
+
+    @Test
+    public void testRowNumberPartitionbySingle() throws Exception {
+        // even though this test works, testRowNumberSequence will fail!
+        assertQuery("row_number\n" +
+                        "1\n" +
+                        "2\n" +
+                        "3\n" +
+                        "2\n" +
+                        "3\n" +
+                        "5\n" +
+                        "4\n" +
+                        "1\n" +
+                        "0\n" +
+                        "0\n",
+                "select row_number() over (partition by a order by b desc) from tmp2",
+                "create table tmp2 as (select rnd_boolean() a, rnd_int() b from long_sequence(10))",
                 null
         );
     }
