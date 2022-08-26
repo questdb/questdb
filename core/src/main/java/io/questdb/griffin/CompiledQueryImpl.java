@@ -54,14 +54,14 @@ public class CompiledQueryImpl implements CompiledQuery {
     private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
+        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterFrontend writerFronted) throws SqlException {
                 return writerFronted.applyUpdate(operation);
             }
         };
 
-        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
+        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterFrontend writerFronted) throws SqlException {
                 return writerFronted.applyAlter(operation, true);
