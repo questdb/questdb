@@ -99,7 +99,7 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void clear() {
-            sink.clear();
+            sink.resetCapacity();
         }
 
         @Override
