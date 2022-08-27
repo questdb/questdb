@@ -50,6 +50,12 @@ public class CountLong256GroupByFunction extends LongFunction implements UnaryFu
     }
 
     @Override
+    public void clear() {
+        sets.clear();
+        setIndex = 0;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final Long256HashSet set;
         if (sets.size() <= setIndex) {

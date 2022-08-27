@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -105,6 +105,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void close() {
             this.baseCursor = Misc.free(baseCursor);
+            GroupByUtils.clear(groupByFunctions);
         }
 
         @Override
@@ -114,7 +115,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return ((SymbolFunction)groupByFunctions.getQuick(columnIndex)).newSymbolTable();
+            return ((SymbolFunction) groupByFunctions.getQuick(columnIndex)).newSymbolTable();
         }
 
         @Override

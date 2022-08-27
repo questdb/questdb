@@ -52,6 +52,12 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
+    public void clear() {
+        sets.clear();
+        setIndex = 0;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final IntHashSet set;
         if (sets.size() <= setIndex) {

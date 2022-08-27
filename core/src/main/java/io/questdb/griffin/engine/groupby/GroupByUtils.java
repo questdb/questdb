@@ -260,6 +260,15 @@ public class GroupByUtils {
         }
     }
 
+    public static void clear(ObjList<? extends GroupByFunction> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            GroupByFunction f = args.getQuick(i);
+            if (f != null) {
+                f.clear();
+            }
+        }
+    }
+
     public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeNext(value, record);
