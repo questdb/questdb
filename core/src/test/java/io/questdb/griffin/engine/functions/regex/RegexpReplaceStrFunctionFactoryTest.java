@@ -32,14 +32,16 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
+public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-            try {
-                compiler.compile("select * from x where name ~ null", sqlExecutionContext);
+            try (
+                    final RecordCursorFactory factory = compiler.compile("select regexp_replace('abc', null, 'def'))", sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
@@ -49,15 +51,32 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRegexSyntaxError() throws Exception {
+    public void testNullReplacement() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-            try {
-                compiler.compile("select * from x where name ~ 'XJ**'", sqlExecutionContext);
+            try (
+                    final RecordCursorFactory factory = compiler.compile("select regexp_replace('abc', 'a', null)", sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(33, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
+                Assert.assertEquals(34, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "NULL replacement");
+            }
+        });
+    }
+
+    @Test
+    public void testRegexSyntaxError() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final RecordCursorFactory factory = compiler.compile("select regexp_replace('a b c', 'XJ**', ' ')", sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "Dangling meta character");
             }
         });
     }
@@ -65,28 +84,15 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "HZTCQXJOQ\n" +
-                    "LXJNZ\n" +
-                    "TXJBQVYTY\n" +
-                    "XJSJ\n" +
-                    "YMUJXJ\n" +
-                    "MEJXJN\n" +
-                    "PRXJOPHLL\n" +
-                    "GYMXJ\n" +
-                    "XJKL\n" +
-                    "HQXVXJQ\n" +
-                    "UIXJO\n" +
-                    "VXJCPF\n" +
-                    "SVXJHXBY\n" +
-                    "ICFOQEVPXJ\n" +
-                    "XJWJJSRNZL\n" +
-                    "HXJULSPH\n" +
-                    "IPCBXJG\n" +
-                    "XJN\n";
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            final String expected = "regexp_replace\n" +
+                    "example1.com\n" +
+                    "example1.com\n" +
+                    "example2.com\n" +
+                    "example2.com\n" +
+                    "example2.com\n";
+            compiler.compile("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def') url from long_sequence(5))", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ~ 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);

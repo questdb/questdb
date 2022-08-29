@@ -31,17 +31,18 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import java.util.regex.Matcher;
 
-public class MatchStrFunctionFactory implements FunctionFactory {
+public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "~(SS)";
+        return "regexp_replace(SSS)";
     }
 
     @Override
@@ -54,51 +55,33 @@ public class MatchStrFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function value = args.getQuick(0);
         final Function pattern = args.getQuick(1);
-        final int patternPosition = argPositions.getQuick(1);
-        if (pattern.isConstant()) {
-            return new MatchConstPatternFunction(value, RegexUtils.createMatcher(pattern, patternPosition));
-        } else if (pattern.isRuntimeConstant()) {
-            return new MatchRuntimeConstPatternFunction(value, pattern, patternPosition);
+        final int patternPos = argPositions.getQuick(1);
+        final Function replacement = args.getQuick(2);
+        final int replacementPos = argPositions.getQuick(2);
+        if (!pattern.isConstant() && !pattern.isRuntimeConstant()) {
+            throw SqlException.$(patternPos, "not implemented: dynamic pattern would be very slow to execute");
         }
-        throw SqlException.$(patternPosition, "not implemented: dynamic pattern would be very slow to execute");
+        if (!replacement.isConstant() && !replacement.isRuntimeConstant()) {
+            throw SqlException.$(patternPos, "not implemented: dynamic replacement would be slow to execute");
+        }
+        return new Func(value, pattern, patternPos, replacement, replacementPos);
     }
 
-    private static class MatchConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
-        private final Matcher matcher;
-
-        public MatchConstPatternFunction(Function value, Matcher matcher) {
-            this.value = value;
-            this.matcher = matcher;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && matcher.reset(cs).find();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-    }
-
-    private static class MatchRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
+    private static class Func extends StrFunction implements UnaryFunction {
         private final Function value;
         private final Function pattern;
-        private final int patternPosition;
+        private final int patternPos;
+        private final Function replacement;
+        private final int replacementPos;
         private Matcher matcher;
+        private String replacementStr;
 
-        public MatchRuntimeConstPatternFunction(Function value, Function pattern, int patternPosition) {
+        public Func(Function value, Function pattern, int patternPos, Function replacement, int replacementPos) {
             this.value = value;
             this.pattern = pattern;
-            this.patternPosition = patternPosition;
+            this.patternPos = patternPos;
+            this.replacement = replacement;
+            this.replacementPos = replacementPos;
         }
 
         @Override
@@ -107,9 +90,14 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && matcher.reset(cs).find();
+        public CharSequence getStr(Record rec) {
+            CharSequence cs = value.getStr(rec);
+            return cs == null ? null : matcher.reset(cs).replaceAll(replacementStr);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr(rec);
         }
 
         @Override
@@ -131,7 +119,13 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
-            this.matcher = RegexUtils.createMatcher(pattern, patternPosition);
+            matcher = RegexUtils.createMatcher(pattern, patternPos);
+            replacement.init(symbolTableSource, executionContext);
+            CharSequence cs = replacement.getStr(null);
+            if (cs == null) {
+                throw SqlException.$(replacementPos, "NULL replacement");
+            }
+            replacementStr = cs.toString();
         }
     }
 }

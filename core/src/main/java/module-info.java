@@ -605,6 +605,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
             io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
+            // regexp_replace()
+            io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,

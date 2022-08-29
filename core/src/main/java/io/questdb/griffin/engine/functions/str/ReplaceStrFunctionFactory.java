@@ -121,7 +121,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        //if result is null then return null; otherwise return sink   
+        //if result is null then return null; otherwise return sink
         private CharSink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, CharSink sink) throws CairoException {
             int valueLen = value.length();
             if (valueLen < 1) {
