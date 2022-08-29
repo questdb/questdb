@@ -72,11 +72,11 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String expected = "regexp_replace\n" +
                     "example1.com\n" +
-                    "example1.com\n" +
+                    "http://example3.com\n" +
                     "example2.com\n" +
-                    "example2.com\n" +
+                    "\n" +
                     "example2.com\n";
-            compiler.compile("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def') url from long_sequence(5))", sqlExecutionContext);
+            compiler.compile("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))", sqlExecutionContext);
 
             try (RecordCursorFactory factory = compiler.compile("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
