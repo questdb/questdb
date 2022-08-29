@@ -1344,19 +1344,27 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void executeUpdate() throws SqlException {
-        try {
-            if (transactionState != ERROR_TRANSACTION) {
-                // when transaction is in error state, skip execution
-                executeUpdate0();
+    private void executeUpdate(SqlCompiler compiler) throws SqlException {
+        boolean recompileStale = true;
+        do {
+            try {
+                if (transactionState != ERROR_TRANSACTION) {
+                    // when transaction is in error state, skip execution
+                    executeUpdate0();
+                    recompileStale = false;
+                }
+                prepareCommandComplete(true);
+            } catch (ReaderOutOfDateException e) {
+                LOG.criticalW().$("error while updating").$(e).$();
+                typesAndUpdate = Misc.free(typesAndUpdate);
+                compileQuery(compiler);
+            } catch (Throwable e) {
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
+                throw e;
             }
-            prepareCommandComplete(true);
-        } catch (Throwable e) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
-            throw e;
-        }
+        } while (recompileStale);
     }
 
     private void executeUpdate0() throws SqlException {
@@ -2106,7 +2114,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             executeInsert();
         } else if (typesAndUpdate != null) {
             LOG.debug().$("executing update").$();
-            executeUpdate();
+            executeUpdate(compiler);
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
@@ -2639,7 +2647,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } else if (typesAndInsert != null) {
                 executeInsert();
             } else if (typesAndUpdate != null) {
-                executeUpdate();
+                executeUpdate(compiler);
             } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
                     cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                 prepareCommandComplete(true);

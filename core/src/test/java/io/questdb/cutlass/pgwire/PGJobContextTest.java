@@ -2996,6 +2996,35 @@ nodejs code:
     }
 
     @Test
+    public void testUpdateAfterDropAndRecreate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("drop table update_after_drop");
+                    stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         assertMemoryLeak(() -> {
             try (

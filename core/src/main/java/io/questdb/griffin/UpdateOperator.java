@@ -90,6 +90,7 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
 
             // Check that table structure hasn't changed between planning and executing the UPDATE
             if (writerMetadata.getId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
+                LOG.infoW().$("updating failure [writer-table-id=").$(writerMetadata.getId()).$(", compiler-table-id=").$(tableId).I$();
                 throw ReaderOutOfDateException.of(tableName);
             }
 
