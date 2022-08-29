@@ -37,19 +37,19 @@ public class RegexpReplaceStrBindVariableTest extends AbstractGriffinTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str('abc','def') s from long_sequence(3))", sqlExecutionContext);
+            compiler.compile("create table x as (select rnd_str('foobar','barbaz') s from long_sequence(3))", sqlExecutionContext);
 
             try (RecordCursorFactory factory = compiler.compile("select regexp_replace(s, $1, $2) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                bindVariableService.setStr(0, "abc");
-                bindVariableService.setStr(1, "def");
+                bindVariableService.setStr(0, "foo");
+                bindVariableService.setStr(1, "bar");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
                 }
 
                 TestUtils.assertEquals("regexp_replace\n" +
-                        "def\n" +
-                        "def\n" +
-                        "def\n", sink);
+                        "barbar\n" +
+                        "barbar\n" +
+                        "barbaz\n", sink);
 
                 bindVariableService.setStr(0, "def");
                 bindVariableService.setStr(1, "abc");
@@ -58,9 +58,9 @@ public class RegexpReplaceStrBindVariableTest extends AbstractGriffinTest {
                 }
 
                 TestUtils.assertEquals("regexp_replace\n" +
-                        "abc\n" +
-                        "abc\n" +
-                        "abc\n", sink);
+                        "foobar\n" +
+                        "foobar\n" +
+                        "barbaz\n", sink);
 
                 bindVariableService.setStr(0, null);
                 bindVariableService.setStr(1, "abc");

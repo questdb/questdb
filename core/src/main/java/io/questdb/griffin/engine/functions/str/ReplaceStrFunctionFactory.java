@@ -40,7 +40,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class ReplaceStrFunctionFactory implements FunctionFactory {
 
-    final static String SIGNATURE = "replace(SSS)";
+    private static final String SIGNATURE = "replace(SSS)";
 
     @Override
     public String getSignature() {
@@ -72,9 +72,8 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        int maxSize = configuration.getReplaceFunctionMaxBufferLength();
-
-        return new Func(value, term, withWhat, maxSize);
+        final int maxLength = configuration.getReplaceFunctionMaxBufferLength();
+        return new Func(value, term, withWhat, maxLength);
     }
 
     private static class Func extends StrFunction {
