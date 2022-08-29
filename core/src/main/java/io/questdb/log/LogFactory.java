@@ -156,7 +156,6 @@ public class LogFactory implements Closeable {
                     Properties properties = new Properties();
                     properties.load(fis);
                     configureFromProperties(factory, properties, workerPool, logDir);
-                    System.err.printf("Log configuration loaded from: %s%n", logPath);
                     initialized = true;
                 } catch (IOException e) {
                     throw new LogError("Cannot read " + logPath, e);

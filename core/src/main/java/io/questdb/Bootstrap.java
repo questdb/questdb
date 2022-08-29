@@ -1,0 +1,466 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableUtils;
+import io.questdb.jit.JitUtil;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
+import io.questdb.std.*;
+import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.Path;
+import sun.misc.Signal;
+
+import java.io.*;
+import java.net.URL;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+public class Bootstrap {
+
+    private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
+    private static final String VERSION_TXT = "version.txt";
+    private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
+    private static final String LOG_NAME = "server-main";
+    private static final String CONFIG_FILE = "/server.conf";
+    private static final AtomicInteger NODE_ID = new AtomicInteger(-1);
+
+    static {
+        if (Os.type == Os._32Bit) {
+            throw new Error("QuestDB requires 64-bit JVM");
+        }
+    }
+
+    public static class BootstrapException extends RuntimeException {
+        public BootstrapException(String message) {
+            super(message);
+        }
+
+        public BootstrapException(Throwable thr) {
+            super(thr);
+        }
+    }
+
+    public static Bootstrap withArgs(String... args) {
+        return new Bootstrap(args);
+    }
+
+    private final String rootDirectory;
+    private final Log log;
+    private final PropServerConfiguration config;
+    private final Metrics metrics;
+
+    private Bootstrap(String... args) {
+        if (args.length < 2) {
+            throw new BootstrapException("Root directory name expected (-d <root-path>)");
+        }
+
+        // non /server.conf properties
+        final CharSequenceObjHashMap<String> optHash = hashArgs(args);
+        rootDirectory = optHash.get("-d");
+        if (rootDirectory == null) {
+            throw new BootstrapException("Root directory name expected (-d <root-path>)");
+        }
+        if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
+            // suppress HUP signal
+            Signal.handle(new Signal("HUP"), signal -> { /* no-op */ });
+        }
+
+        // setup logger
+        LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
+        final int nodeId = NODE_ID.incrementAndGet();
+        String logName = nodeId > 0 ? String.format("%s-%d", LOG_NAME, nodeId) : LOG_NAME;
+        log = LogFactory.getLog(logName);
+        log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion())
+                .$(". Copyright (C) 2014-").$(buildInformation.getYear())
+                .$(", all rights reserved.")
+                .$();
+
+        // /server.conf properties
+        try {
+            final File configFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), CONFIG_FILE);
+            final Properties properties = new Properties();
+            try (InputStream is = new FileInputStream(configFile)) {
+                properties.load(is);
+            }
+            log.advisoryW().$("Server config: ").$(configFile.getAbsoluteFile()).$();
+            config = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
+            reportValidateConfig();
+        } catch (Throwable thr) {
+            log.errorW().$(thr.getMessage()).$();
+            throw new BootstrapException(thr);
+        }
+
+        // metrics
+        if (config.getMetricsConfiguration().isEnabled()) {
+            metrics = Metrics.enabled();
+        } else {
+            metrics = Metrics.disabled();
+            log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors.").$();
+        }
+    }
+
+    public Log getLog() {
+        return log;
+    }
+
+    public PropServerConfiguration getConfig() {
+        return config;
+    }
+
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    public void extractSite() throws IOException {
+        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
+        long thisVersion = Long.MIN_VALUE;
+        if (resource == null) {
+            log.errorW()
+                    .$("did not find Web Console build at '").$(PUBLIC_ZIP)
+                    .$("'. Proceeding without Web Console")
+                    .$();
+        } else {
+            thisVersion = resource.openConnection().getLastModified();
+        }
+
+        final String publicDir = rootDirectory + Files.SEPARATOR + "public";
+        final byte[] buffer = new byte[1024 * 1024];
+
+        boolean extracted = false;
+        final String oldVersionStr = getPublicVersion(publicDir);
+        final CharSequence dbVersion = buildInformation.getQuestDbVersion();
+        if (oldVersionStr == null) {
+            if (thisVersion != 0) {
+                extractSite0(publicDir, buffer, Long.toString(thisVersion));
+            } else {
+                extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+            }
+            extracted = true;
+        } else {
+            // This is a hack to deal with RT package problem
+            // in this package "thisVersion" is always 0, and we need to fall back
+            // to the database version.
+            if (thisVersion == 0) {
+                if (!Chars.equals(oldVersionStr, dbVersion)) {
+                    extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    extracted = true;
+                }
+            } else {
+                // it is possible that old version is the database version
+                // which means user might have switched from RT distribution to no-JVM on the same data dir
+                // in this case we might fail to parse the version string
+                try {
+                    final long oldVersion = Numbers.parseLong(oldVersionStr);
+                    if (thisVersion > oldVersion) {
+                        extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                        extracted = true;
+                    }
+                } catch (NumericException e) {
+                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                    extracted = true;
+                }
+            }
+        }
+        if (!extracted) {
+            log.infoW().$("web console is up to date").$();
+        }
+    }
+
+    private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
+        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+            if (is != null) {
+                try (ZipInputStream zip = new ZipInputStream(is)) {
+                    ZipEntry ze;
+                    while ((ze = zip.getNextEntry()) != null) {
+                        final File dest = new File(publicDir, ze.getName());
+                        if (!ze.isDirectory()) {
+                            copyInputStream(true, buffer, dest, zip, log);
+                        }
+                        zip.closeEntry();
+                    }
+                }
+            } else {
+                log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+            }
+        }
+        setPublicVersion(publicDir, thisVersion);
+        copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
+        try {
+            copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
+        } catch (IOException exception) {
+            // conf can be read-only, this is not critical
+            if (exception.getMessage() == null ||
+                    (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
+                throw exception;
+            }
+        }
+        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
+        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
+    }
+
+    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
+        File out = new File(dir, res);
+        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
+            if (is != null) {
+                copyInputStream(force, buffer, out, is, log);
+            }
+        }
+    }
+
+    private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
+        final boolean exists = out.exists();
+        if (force || !exists) {
+            File dir = out.getParentFile();
+            if (!dir.exists() && !dir.mkdirs()) {
+                log.errorW().$("could not create directory [path=").$(dir).I$();
+                return;
+            }
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                int n;
+                while ((n = is.read(buffer, 0, buffer.length)) > 0) {
+                    fos.write(buffer, 0, n);
+                }
+            }
+            log.infoW().$("extracted [path=").$(out).I$();
+            return;
+        }
+        log.debugW().$("skipped [path=").$(out).I$();
+    }
+
+    private static String getPublicVersion(String publicDir) throws IOException {
+        File f = new File(publicDir, VERSION_TXT);
+        if (f.exists()) {
+            try (FileInputStream fis = new FileInputStream(f)) {
+                byte[] buf = new byte[128];
+                int len = fis.read(buf);
+                return new String(buf, 0, len);
+            }
+        }
+        return null;
+    }
+
+    private static void setPublicVersion(String publicDir, String version) throws IOException {
+        File f = new File(publicDir, VERSION_TXT);
+        File publicFolder = f.getParentFile();
+        if (!publicFolder.exists()) {
+            publicFolder.mkdirs();
+        }
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            byte[] buf = version.getBytes();
+            fos.write(buf, 0, buf.length);
+        }
+    }
+
+    private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
+        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
+        String flag = null;
+        for (String arg : args) {
+            if (arg.startsWith("-")) {
+                if (flag != null) {
+                    optHash.put(flag, "");
+                }
+                flag = arg;
+            } else {
+                if (flag != null) {
+                    optHash.put(flag, arg);
+                    flag = null;
+                } else {
+                    System.err.printf("Ignoring unknown arg: %s%n", arg);
+                }
+            }
+        }
+        if (flag != null) {
+            optHash.put(flag, "");
+        }
+        return optHash;
+    }
+
+    private void reportValidateConfig() {
+        final boolean httpEnabled = config.getHttpServerConfiguration().isEnabled();
+        final boolean httpReadOnly = config.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();
+        final String httpReadOnlyHint = httpEnabled && httpReadOnly ? " [read-only]" : "";
+        final boolean pgEnabled = config.getPGWireConfiguration().isEnabled();
+        final boolean pgReadOnly = config.getPGWireConfiguration().readOnlySecurityContext();
+        final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
+        final CairoConfiguration cairoConfiguration = config.getCairoConfiguration();
+        log.advisoryW().$("Config changes applied:").$();
+        log.advisoryW().$("  http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
+        log.advisoryW().$("  tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
+        log.advisoryW().$("  pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
+        log.advisoryW().$("open database [id=").$(cairoConfiguration.getDatabaseIdLo()).$('.').$(cairoConfiguration.getDatabaseIdHi()).$(']').$();
+        log.advisoryW().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
+        switch (Os.type) {
+            case Os.WINDOWS:
+                log.advisoryW().$("OS/Arch: windows/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+            case Os.LINUX_AMD64:
+                log.advisoryW().$("OS/Arch: linux/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+            case Os.OSX_AMD64:
+                log.advisoryW().$("OS/Arch: apple/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+            case Os.OSX_ARM64:
+                log.advisoryW().$("OS/Arch: apple/apple-silicon").$();
+                break;
+            case Os.LINUX_ARM64:
+                log.advisoryW().$("OS/Arch: linux/arm64").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+            case Os.FREEBSD:
+                log.advisoryW().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+            default:
+                log.criticalW().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
+                break;
+        }
+        log.advisoryW().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
+        log.advisoryW().$("db root: ").$(cairoConfiguration.getRoot()).$();
+        log.advisoryW().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
+        log.advisoryW().$("partition detach root: ").$(cairoConfiguration.getDetachRoot()).$();
+        try (Path path = new Path()) {
+            verifyFileSystem(path, cairoConfiguration.getRoot(), "db");
+            verifyFileSystem(path, cairoConfiguration.getDetachRoot(), "partition detach");
+            verifyFileSystem(path, cairoConfiguration.getBackupRoot(), "backup");
+            verifyFileOpts(path, cairoConfiguration);
+        }
+        if (JitUtil.isJitSupported()) {
+            final int jitMode = cairoConfiguration.getSqlJitMode();
+            switch (jitMode) {
+                case SqlJitMode.JIT_MODE_ENABLED:
+                    log.advisoryW().$("SQL JIT compiler mode: on").$();
+                    break;
+                case SqlJitMode.JIT_MODE_FORCE_SCALAR:
+                    log.advisoryW().$("SQL JIT compiler mode: scalar").$();
+                    break;
+                case SqlJitMode.JIT_MODE_DISABLED:
+                    log.advisoryW().$("SQL JIT compiler mode: off").$();
+                    break;
+                default:
+                    log.errorW().$("Unknown SQL JIT compiler mode: ").$(jitMode).$();
+                    break;
+            }
+        }
+        reportCrashFiles(cairoConfiguration);
+    }
+
+    private void verifyFileSystem(Path path, CharSequence dir, String kind) {
+        if (dir != null) {
+            path.of(dir).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ();
+            LogRecord rec = log.advisoryW().$(kind).$(" file system magic: 0x");
+            if (fsStatus < 0) {
+                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+                log.advisoryW().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
+            }
+        }
+    }
+
+    private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
+        final FilesFacade ff = cairoConfiguration.getFilesFacade();
+        path.of(cairoConfiguration.getRoot())
+                .concat("_verify_")
+                .put(cairoConfiguration.getRandom().nextPositiveInt())
+                .put(".d")
+                .$();
+        long fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
+        try {
+            if (fd > -1) {
+                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    TableUtils.writeLongOrFail(
+                            ff,
+                            fd,
+                            0,
+                            123456789L,
+                            mem,
+                            path
+                    );
+                } finally {
+                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        } finally {
+            ff.close(fd);
+        }
+        ff.remove(path);
+    }
+
+    private void reportCrashFiles(CairoConfiguration configuration) {
+        final CharSequence dbRoot = configuration.getRoot();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int maxFiles = configuration.getMaxCrashFiles();
+        NativeLPSZ name = new NativeLPSZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.length();
+            AtomicInteger counter = new AtomicInteger(0);
+            FilesFacadeImpl.INSTANCE.iterateDir(
+                    path,
+                    (pUtf8NameZ, type) -> {
+                        if (Files.notDots(pUtf8NameZ)) {
+                            name.of(pUtf8NameZ);
+                            if (Chars.startsWith(name, configuration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                                path.trimTo(plen).concat(pUtf8NameZ).$();
+                                boolean shouldRename = false;
+                                do {
+                                    other.trimTo(plen)
+                                            .concat(configuration.getArchivedCrashFilePrefix())
+                                            .put(counter.getAndIncrement())
+                                            .put(".log")
+                                            .$();
+                                    if (!ff.exists(other)) {
+                                        shouldRename = counter.get() <= maxFiles;
+                                        break;
+                                    }
+                                } while (counter.get() < maxFiles);
+                                if (shouldRename && ff.rename(path, other) == 0) {
+                                    log.criticalW().$("found crash file [path=").$(other).I$();
+                                } else {
+                                    log.criticalW()
+                                            .$("could not rename crash file [path=").$(path)
+                                            .$(", errno=").$(ff.errno())
+                                            .$(", index=").$(counter.get())
+                                            .$(", max=").$(maxFiles)
+                                            .I$();
+                                }
+
+                            }
+                        }
+                    }
+            );
+        }
+    }
+}

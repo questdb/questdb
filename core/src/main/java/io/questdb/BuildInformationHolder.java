@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -41,6 +42,8 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     private final CharSequence questDbVersion;
     private final CharSequence commitHash;
     private final CharSequence jdkVersion;
+
+    private final int year = Dates.getYear(System.currentTimeMillis());
     private final String buildKey;
 
     public BuildInformationHolder() {
@@ -68,6 +71,11 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     @Override
     public CharSequence getCommitHash() {
         return commitHash;
+    }
+
+    @Override
+    public int getYear() {
+        return year;
     }
 
     @Override
