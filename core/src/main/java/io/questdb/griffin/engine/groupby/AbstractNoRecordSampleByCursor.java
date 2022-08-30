@@ -25,13 +25,14 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -70,6 +71,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     @Override
     public void close() {
         base.close();
+        Misc.clearObjList(groupByFunctions);
         circuitBreaker = null;
     }
 

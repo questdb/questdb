@@ -27,18 +27,21 @@ package io.questdb.std.str;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public class DirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
     private long ptr;
     private long capacity;
+    private final long initialCapacity;
     private long lo;
     private long hi;
 
     public DirectCharSink(long capacity) {
         ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
         this.capacity = capacity;
+        this.initialCapacity = capacity;
         this.lo = ptr;
         this.hi = ptr + capacity;
     }
@@ -53,9 +56,19 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DEFAULT);
     }
 
+    public void resetCapacity() {
+        resize(initialCapacity);
+        clear();
+    }
+
     @Override
     public int length() {
         return (int) (lo - ptr) / 2;
+    }
+
+    @TestOnly
+    long getCapacity() {
+        return capacity;
     }
 
     @Override

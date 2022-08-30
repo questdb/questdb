@@ -29,8 +29,8 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -158,6 +158,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 Misc.free(dataMap);
+                Misc.clearObjList(groupByFunctions);
                 super.close();
             }
         }
