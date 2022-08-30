@@ -30,7 +30,6 @@ steps:
       goals: "clean test"
       options:
         "--batch-mode --quiet
-        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$(ARCHIVED_HEAP_DUMP)
         -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
         -DfailIfNoTests=false"
@@ -69,14 +68,14 @@ steps:
     displayName: "Tests failed -- Upload crash logs"
     condition: failed()
     inputs:
-      pathToPublish: $(ARCHIVED_HEAP_DUMP)
-      artifactName: HeapDump
+      pathToPublish: $(ARCHIVED_CRASH_LOG)
+      artifactName: CrashDump
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload heap dump"
     condition: failed()
     inputs:
-      pathToPublish: $(ARCHIVED_CRASH_LOG)
-      artifactName: CrashDump
+      pathToPublish: $(ARCHIVED_HEAP_DUMP)
+      artifactName: HeapDump
   - task: ArchiveFiles@2
     displayName: "Tests failed -- Compress logs"
     condition: not(succeeded())
