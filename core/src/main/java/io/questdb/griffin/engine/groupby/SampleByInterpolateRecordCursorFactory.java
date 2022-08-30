@@ -514,6 +514,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 isOpen = false;
                 recordKeyMap.close();
                 dataMap.close();
+                Misc.clearObjList(groupByFunctions);
                 super.close();
             }
         }
