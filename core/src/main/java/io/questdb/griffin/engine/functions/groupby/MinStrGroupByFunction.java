@@ -55,8 +55,9 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public boolean isScalar() {
-        return false;
+    public void clear() {
+        sinks.clear();
+        sinkIndex = 0;
     }
 
     @Override
@@ -122,6 +123,11 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     @Override
     public CharSequence getStrB(Record rec) {
         return getStr(rec);
+    }
+
+    @Override
+    public boolean isScalar() {
+        return false;
     }
 
     @Override
