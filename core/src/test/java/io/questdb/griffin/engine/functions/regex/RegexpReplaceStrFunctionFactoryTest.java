@@ -52,9 +52,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertFailure(
-                "[35] Dangling meta character '*' near index 3\n" +
-                        "XJ**\n" +
-                        "   ^",
+                "[35] Dangling meta character '*'",
                 "select regexp_replace('a b c', 'XJ**', ' ')"
         );
     }
@@ -98,7 +96,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
                 printer.print(cursor, factory.getMetadata(), true, sink);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertEquals(expectedMsg, e.getMessage());
+                TestUtils.assertContains(e.getMessage(), expectedMsg);
             }
         });
     }
