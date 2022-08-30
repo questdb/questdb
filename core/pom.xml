@@ -203,6 +203,7 @@
                             <value>io.questdb.TestListener</value>
                         </property>
                     </properties>
+                    <argLine>-XX:+HeapDumpOnOutOfMemoryError</argLine>
                 </configuration>
             </plugin>
             <plugin>

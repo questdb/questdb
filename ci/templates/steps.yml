@@ -64,6 +64,11 @@ steps:
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/core/
     condition: failed()
+  - bash: |
+      find . -type f -name '*.hprof' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_HEAP_DUMP)"' \;
+    displayName: "Tests failed -- rename heap dump"
+    workingDirectory: $(Build.SourcesDirectory)/
+    condition: failed()
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
     condition: failed()
