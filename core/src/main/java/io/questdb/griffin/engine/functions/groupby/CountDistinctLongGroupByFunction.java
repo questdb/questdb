@@ -52,6 +52,12 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public void clear() {
+        sets.clear();
+        setIndex = 0;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final LongHashSet set;
         if (sets.size() <= setIndex) {

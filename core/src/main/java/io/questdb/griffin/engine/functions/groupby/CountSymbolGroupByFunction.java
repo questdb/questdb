@@ -54,6 +54,12 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
+    public void clear() {
+        lists.clear();
+        setIndex = 0;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final IntList list;
         if (lists.size() <= setIndex) {
