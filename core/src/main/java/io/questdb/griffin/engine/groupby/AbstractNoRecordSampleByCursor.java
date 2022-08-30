@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -70,7 +71,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     @Override
     public void close() {
         base.close();
-        GroupByUtils.clear(groupByFunctions);
+        Misc.clearObjList(groupByFunctions);
         circuitBreaker = null;
     }
 

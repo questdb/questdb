@@ -105,7 +105,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void close() {
             this.baseCursor = Misc.free(baseCursor);
-            GroupByUtils.clear(groupByFunctions);
+            Misc.clearObjList(groupByFunctions);
         }
 
         @Override

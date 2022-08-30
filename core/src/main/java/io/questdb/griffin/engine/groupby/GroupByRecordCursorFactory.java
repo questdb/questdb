@@ -158,7 +158,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 Misc.free(dataMap);
-                GroupByUtils.clear(groupByFunctions);
+                Misc.clearObjList(groupByFunctions);
                 super.close();
             }
         }
