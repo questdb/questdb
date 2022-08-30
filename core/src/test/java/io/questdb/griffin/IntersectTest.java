@@ -183,4 +183,26 @@ public class IntersectTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testIntersectDuplicateColumnException() throws Exception {
+        assertMemoryLeak(() -> {
+            final String sql1 = "create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))";
+            compiler.compile(sql1, sqlExecutionContext);
+            final String sql2 = "create table y as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(20))";
+            compiler.compile(sql2, sqlExecutionContext);
+
+            final String expected = "i\ts\n" +
+                    "4\tB\n" +
+                    "2\tC\n" +
+                    "2\tC\n" +
+                    "4\tB\n" +
+                    "5\tB\n" +
+                    "1\tA\n";
+
+            try (RecordCursorFactory factory = compiler.compile("(select i,s from x) intersect (select i,first(s) from y)", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected, factory, true, true, false);
+            }
+        });
+    }
 }

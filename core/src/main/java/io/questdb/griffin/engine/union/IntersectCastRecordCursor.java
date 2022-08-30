@@ -41,6 +41,7 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     private final UnionCastRecord castRecord;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
+    private boolean isOpen;
 
     public IntersectCastRecordCursor(
             Map map,
@@ -49,14 +50,18 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
             @NotNull ObjList<Function> castFunctionB
     ) {
         this.map = map;
+        this.isOpen = true;
         this.recordSink = recordSink;
         this.castRecord = new UnionCastRecord(castFunctionA, castFunctionB);
     }
 
     @Override
     public void close() {
-        super.close();
-        this.map.clear();
+        if (isOpen) {
+            isOpen = false;
+            map.close();
+            super.close();
+        }
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -64,7 +69,10 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
         this.cursorB = cursorB;
         this.circuitBreaker = circuitBreaker;
 
-        map.clear();
+        if (!isOpen) {
+            this.isOpen = true;
+            map.reallocate();
+        }
         castRecord.of(cursorA.getRecord(), cursorB.getRecord());
         castRecord.setAb(false);
         hashCursorB();

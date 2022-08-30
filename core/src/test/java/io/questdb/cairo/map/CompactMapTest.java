@@ -360,7 +360,7 @@ public class CompactMapTest extends AbstractCairoTest {
             ColumnTypes types = new SingleColumnType(ColumnType.INT);
             final int N = 10000;
             final Rnd rnd = new Rnd();
-            try (CompactMap map = new CompactMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1, Integer.MAX_VALUE)) {
+            try (CompactMap map = new CompactMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 8, Integer.MAX_VALUE)) {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();

@@ -183,6 +183,26 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testDisallowWriterLock() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            assertQueryDisallowed("alter system lock writer src");
+        });
+    }
+
+    @Test
+    public void testDisallowWriterUnlock() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            compiler.compile("alter system lock writer src", sqlExecutionContext);
+            assertQueryDisallowed("alter system unlock writer src");
+
+            // unlock so it's not leaking memory
+            compiler.compile("alter system unlock writer src", sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testDisallowsBackupDatabase() throws Exception {
         assertMemoryLeak(() -> {
             configureForBackups();
