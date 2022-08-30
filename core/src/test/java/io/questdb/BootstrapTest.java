@@ -89,7 +89,6 @@ public class BootstrapTest {
         assertFail("Root directory name expected (-d <root-path>)");
         assertFail("Root directory name expected (-d <root-path>)", "-d");
         assertFail("Root directory name expected (-d <root-path>)", "does not exist");
-        assertFail("java.nio.file.NoSuchFileException: does not exist/conf/server.conf", "-d", "does not exist");
     }
 
     @Test
@@ -99,7 +98,7 @@ public class BootstrapTest {
         File f = new File(configFolder);
         Assert.assertTrue(f.exists());
         Assert.assertTrue(f.isDirectory());
-        assertFail("/dbRoot/conf/server.conf", "-d", root.toString());
+        assertFail("java.nio.file.NoSuchFileException:", "-d", root.toString());
     }
 
     @Test
