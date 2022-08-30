@@ -29,7 +29,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --debug -Dtest=$(includeTests)
+        "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
         -DfailIfNoTests=false"
@@ -64,23 +64,12 @@ steps:
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/core/
     condition: failed()
-  - bash: |
-      find . -type f -name '*.hprof' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_HEAP_DUMP)"' \;
-    displayName: "Tests failed -- rename heap dump"
-    workingDirectory: $(Build.SourcesDirectory)/
-    condition: failed()
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
     condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_CRASH_LOG)
       artifactName: CrashDump
-  - task: PublishBuildArtifacts@1
-    displayName: "Tests failed -- Upload heap dump"
-    condition: failed()
-    inputs:
-      pathToPublish: $(ARCHIVED_HEAP_DUMP)
-      artifactName: HeapDump
   - task: ArchiveFiles@2
     displayName: "Tests failed -- Compress logs"
     condition: not(succeeded())
