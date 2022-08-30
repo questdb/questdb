@@ -34,23 +34,24 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 import sun.misc.Signal;
 
 import java.io.*;
-import java.net.URL;
+import java.net.*;
+import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class Bootstrap {
-
     private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
-    private static final String VERSION_TXT = "version.txt";
-    private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
+    private static final AtomicInteger NODE_ID = new AtomicInteger(-1);
     private static final String LOG_NAME = "server-main";
     private static final String CONFIG_FILE = "/server.conf";
-    private static final AtomicInteger NODE_ID = new AtomicInteger(-1);
+    private static final String PUBLIC_VERSION_TXT = "version.txt";
+    private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
 
     static {
         if (Os.type == Os._32Bit) {
@@ -68,29 +69,30 @@ public class Bootstrap {
         }
     }
 
-    public static Bootstrap withArgs(String... args) {
+    public static Bootstrap withArgs(String... args) throws IOException {
         return new Bootstrap(args);
     }
 
+
     private final String rootDirectory;
-    private final Log log;
     private final PropServerConfiguration config;
     private final Metrics metrics;
+    private final Log log;
 
-    private Bootstrap(String... args) {
+
+    private Bootstrap(String... args) throws IOException {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
 
         // non /server.conf properties
-        final CharSequenceObjHashMap<String> optHash = hashArgs(args);
-        rootDirectory = optHash.get("-d");
+        final CharSequenceObjHashMap<String> argsMap = processArgs(args);
+        rootDirectory = argsMap.get("-d");
         if (rootDirectory == null) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
-        if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
-            // suppress HUP signal
-            Signal.handle(new Signal("HUP"), signal -> { /* no-op */ });
+        if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
+            Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
         }
 
         // setup logger
@@ -105,14 +107,15 @@ public class Bootstrap {
 
         // /server.conf properties
         try {
-            final File configFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), CONFIG_FILE);
+            java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
             final Properties properties = new Properties();
-            try (InputStream is = new FileInputStream(configFile)) {
+            try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
                 properties.load(is);
             }
-            log.advisoryW().$("Server config: ").$(configFile.getAbsoluteFile()).$();
+            log.advisoryW().$("Server config: ").$(configFile).$();
             config = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
             reportValidateConfig();
+            reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (Throwable thr) {
             log.errorW().$(thr.getMessage()).$();
             throw new BootstrapException(thr);
@@ -123,12 +126,11 @@ public class Bootstrap {
             metrics = Metrics.enabled();
         } else {
             metrics = Metrics.disabled();
-            log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors.").$();
+            log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
-    }
 
-    public Log getLog() {
-        return log;
+        // site
+        extractSite();
     }
 
     public PropServerConfiguration getConfig() {
@@ -139,13 +141,17 @@ public class Bootstrap {
         return metrics;
     }
 
-    public void extractSite() throws IOException {
+    public Log getLog() {
+        return log;
+    }
+
+    @TestOnly
+    void extractSite() throws IOException {
         URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
         long thisVersion = Long.MIN_VALUE;
         if (resource == null) {
-            log.errorW()
-                    .$("did not find Web Console build at '").$(PUBLIC_ZIP)
-                    .$("'. Proceeding without Web Console")
+            log.infoW()
+                    .$("Web Console build [").$(PUBLIC_ZIP).$("] not found")
                     .$();
         } else {
             thisVersion = resource.openConnection().getLastModified();
@@ -190,7 +196,7 @@ public class Bootstrap {
             }
         }
         if (!extracted) {
-            log.infoW().$("web console is up to date").$();
+            log.infoW().$("Web console is up to date").$();
         }
     }
 
@@ -256,7 +262,7 @@ public class Bootstrap {
     }
 
     private static String getPublicVersion(String publicDir) throws IOException {
-        File f = new File(publicDir, VERSION_TXT);
+        File f = new File(publicDir, PUBLIC_VERSION_TXT);
         if (f.exists()) {
             try (FileInputStream fis = new FileInputStream(f)) {
                 byte[] buf = new byte[128];
@@ -268,7 +274,7 @@ public class Bootstrap {
     }
 
     private static void setPublicVersion(String publicDir, String version) throws IOException {
-        File f = new File(publicDir, VERSION_TXT);
+        File f = new File(publicDir, PUBLIC_VERSION_TXT);
         File publicFolder = f.getParentFile();
         if (!publicFolder.exists()) {
             publicFolder.mkdirs();
@@ -277,30 +283,6 @@ public class Bootstrap {
             byte[] buf = version.getBytes();
             fos.write(buf, 0, buf.length);
         }
-    }
-
-    private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
-        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
-        String flag = null;
-        for (String arg : args) {
-            if (arg.startsWith("-")) {
-                if (flag != null) {
-                    optHash.put(flag, "");
-                }
-                flag = arg;
-            } else {
-                if (flag != null) {
-                    optHash.put(flag, arg);
-                    flag = null;
-                } else {
-                    System.err.printf("Ignoring unknown arg: %s%n", arg);
-                }
-            }
-        }
-        if (flag != null) {
-            optHash.put(flag, "");
-        }
-        return optHash;
     }
 
     private void reportValidateConfig() {
@@ -367,7 +349,55 @@ public class Bootstrap {
                     break;
             }
         }
-        reportCrashFiles(cairoConfiguration);
+    }
+
+    @TestOnly
+    static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
+        final CharSequence dbRoot = cairoConfiguration.getRoot();
+        final FilesFacade ff = cairoConfiguration.getFilesFacade();
+        final int maxFiles = cairoConfiguration.getMaxCrashFiles();
+        NativeLPSZ name = new NativeLPSZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.length();
+            AtomicInteger counter = new AtomicInteger(0);
+            FilesFacadeImpl.INSTANCE.iterateDir(
+                    path,
+                    (pUtf8NameZ, type) -> {
+                        if (Files.notDots(pUtf8NameZ)) {
+                            name.of(pUtf8NameZ);
+                            if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                                path.trimTo(plen).concat(pUtf8NameZ).$();
+                                boolean shouldRename = false;
+                                do {
+                                    other.trimTo(plen)
+                                            .concat(cairoConfiguration.getArchivedCrashFilePrefix())
+                                            .put(counter.getAndIncrement())
+                                            .put(".log")
+                                            .$();
+                                    if (!ff.exists(other)) {
+                                        shouldRename = counter.get() <= maxFiles;
+                                        break;
+                                    }
+                                } while (counter.get() < maxFiles);
+                                if (shouldRename && ff.rename(path, other) == 0) {
+                                    log.criticalW().$("found crash file [path=").$(other).I$();
+                                } else {
+                                    log.criticalW()
+                                            .$("could not rename crash file [path=").$(path)
+                                            .$(", errno=").$(ff.errno())
+                                            .$(", index=").$(counter.get())
+                                            .$(", max=").$(maxFiles)
+                                            .I$();
+                                }
+
+                            }
+                        }
+                    }
+            );
+        }
     }
 
     private void verifyFileSystem(Path path, CharSequence dir, String kind) {
@@ -381,7 +411,7 @@ public class Bootstrap {
                 rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
             } else {
                 rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisoryW().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
+                log.advisoryW().$("\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n").$();
             }
         }
     }
@@ -416,51 +446,28 @@ public class Bootstrap {
         ff.remove(path);
     }
 
-    private void reportCrashFiles(CairoConfiguration configuration) {
-        final CharSequence dbRoot = configuration.getRoot();
-        final FilesFacade ff = configuration.getFilesFacade();
-        final int maxFiles = configuration.getMaxCrashFiles();
-        NativeLPSZ name = new NativeLPSZ();
-        try (
-                Path path = new Path().of(dbRoot).slash$();
-                Path other = new Path().of(dbRoot).slash$()
-        ) {
-            int plen = path.length();
-            AtomicInteger counter = new AtomicInteger(0);
-            FilesFacadeImpl.INSTANCE.iterateDir(
-                    path,
-                    (pUtf8NameZ, type) -> {
-                        if (Files.notDots(pUtf8NameZ)) {
-                            name.of(pUtf8NameZ);
-                            if (Chars.startsWith(name, configuration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
-                                path.trimTo(plen).concat(pUtf8NameZ).$();
-                                boolean shouldRename = false;
-                                do {
-                                    other.trimTo(plen)
-                                            .concat(configuration.getArchivedCrashFilePrefix())
-                                            .put(counter.getAndIncrement())
-                                            .put(".log")
-                                            .$();
-                                    if (!ff.exists(other)) {
-                                        shouldRename = counter.get() <= maxFiles;
-                                        break;
-                                    }
-                                } while (counter.get() < maxFiles);
-                                if (shouldRename && ff.rename(path, other) == 0) {
-                                    log.criticalW().$("found crash file [path=").$(other).I$();
-                                } else {
-                                    log.criticalW()
-                                            .$("could not rename crash file [path=").$(path)
-                                            .$(", errno=").$(ff.errno())
-                                            .$(", index=").$(counter.get())
-                                            .$(", max=").$(maxFiles)
-                                            .I$();
-                                }
-
-                            }
-                        }
-                    }
-            );
+    private static CharSequenceObjHashMap<String> processArgs(String[] args) {
+        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
+        String flag = null;
+        for (int i=0, n = args.length; i < n; i++) {
+            String arg = args[i];
+            if (arg.startsWith("-")) {
+                if (flag != null) {
+                    optHash.put(flag, "");
+                }
+                flag = arg;
+            } else {
+                if (flag != null) {
+                    optHash.put(flag, arg);
+                    flag = null;
+                } else {
+                    System.err.printf("Ignoring unknown arg: %s%n", arg);
+                }
+            }
         }
+        if (flag != null) {
+            optHash.put(flag, "");
+        }
+        return optHash;
     }
 }
