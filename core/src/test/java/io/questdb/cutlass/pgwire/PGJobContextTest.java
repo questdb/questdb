@@ -3016,9 +3016,9 @@ nodejs code:
                     stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
                 }
 
-                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    statement.setLong(1, 42);
-                    statement.executeUpdate();
+                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    stmt.setLong(1, 42);
+                    stmt.executeUpdate();
                 }
             }
         });

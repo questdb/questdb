@@ -1355,7 +1355,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
                 prepareCommandComplete(true);
             } catch (ReaderOutOfDateException e) {
-                LOG.criticalW().$("error while updating").$(e).$();
+                LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
                 compileQuery(compiler);
             } catch (Throwable e) {

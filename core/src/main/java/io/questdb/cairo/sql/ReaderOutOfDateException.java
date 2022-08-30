@@ -42,6 +42,20 @@ public class ReaderOutOfDateException extends RuntimeException implements Flywei
         return ex;
     }
 
+    public static ReaderOutOfDateException of(CharSequence tableName, int expectedTableId, int actualTableId,
+                                              long expectedTableVersion, long actualTableVersion) {
+        ReaderOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new ReaderOutOfDateException()) != null;
+        ex.message.clear(prefix.length());
+        ex.message.put(tableName)
+                .put("', expectedTableId=").put(expectedTableId)
+                .put(", actualTableId=").put(actualTableId)
+                .put(", expectedTableVersion=").put(expectedTableVersion)
+                .put(", actualTableVersion=").put(actualTableVersion).put(']');
+        return ex;
+    }
+
     @Override
     public CharSequence getFlyweightMessage() {
         return message;
