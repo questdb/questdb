@@ -50,7 +50,7 @@ import java.net.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ServerMain {
+public class ServerMain implements QuietClosable {
 
     private final PropServerConfiguration config;
     private final WorkerPool workerPool;
@@ -175,7 +175,7 @@ public class ServerMain {
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                     try {
                         System.err.println("QuestDB is shutting down...");
-                        shutdown();
+                        close();
                     } catch (Error ignore) {
                         // ignore
                     } finally {
@@ -191,7 +191,8 @@ public class ServerMain {
         }
     }
 
-    public void shutdown() {
+    @Override
+    public void close() {
         if (isWorking.compareAndSet(true, false)) {
             ShutdownFlag.INSTANCE.shutdown();
             workerPool.halt();

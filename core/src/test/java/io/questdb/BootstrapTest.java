@@ -104,27 +104,14 @@ public class BootstrapTest {
 
     @Test
     public void testExtractSite() throws Exception {
-        String config = root.toString() + Files.SEPARATOR + "conf";
-        TestUtils.createTestPath(config);
-        String file = config + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
-            writer.println("");
-        }
-        file = config + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
-            writer.println("");
-        }
-
+        createDummyConfiguration();
         try (Path path = new Path().of(root)) {
             int plen = path.length();
-
             Assert.assertFalse(Files.exists(path.concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
-
             Bootstrap bootstrap = Bootstrap.withArgs("-d", root.toString());
             Assert.assertNotNull(bootstrap.getLog());
             Assert.assertNotNull(bootstrap.getConfig());
             Assert.assertNotNull(bootstrap.getMetrics());
-
             bootstrap.extractSite();
             Assert.assertTrue(Files.exists(path.trimTo(plen).concat("public").concat("version.txt").$()));
             Assert.assertTrue(Files.exists(path.trimTo(plen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
@@ -184,12 +171,12 @@ public class BootstrapTest {
                         // make sure max files (1) limit is not exceeded
                         int index2 = Chars.indexOf(str, index1 + 1, len, configuration.getArchivedCrashFilePrefix() + "1.log");
                         Assert.assertEquals(-1, index2);
-                        index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix()+"2.log");
+                        index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + "2.log");
                         Assert.assertTrue(index2 > -1 && index2 > index1);
-                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix()+"2.log").$()));
-                        int index3 = Chars.indexOf(str, index2 + 1, len, configuration.getOGCrashFilePrefix()+"3");
+                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + "2.log").$()));
+                        int index3 = Chars.indexOf(str, index2 + 1, len, configuration.getOGCrashFilePrefix() + "3");
                         Assert.assertEquals(-1, index3);
-                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix()+"3").$()));
+                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + "3").$()));
                         break;
                     } else {
                         Os.pause();
@@ -199,6 +186,61 @@ public class BootstrapTest {
                 Files.close(fd);
                 Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
             }
+        }
+    }
+
+    @Test
+    public void testProcessArgsNoArgs() {
+        try {
+            Bootstrap.processArgs();
+            Assert.fail();
+        } catch (Bootstrap.BootstrapException thr) {
+            TestUtils.assertContains(thr.getMessage(), "Arguments expected, non provided");
+        }
+    }
+
+    @Test
+    public void testProcessArgs() {
+        CharSequenceObjHashMap<String> optHash = Bootstrap.processArgs("-d", "folder", "-n", "-f");
+        Assert.assertEquals("folder", optHash.get("-d"));
+        Assert.assertEquals("", optHash.get("-n"));
+        Assert.assertEquals("", optHash.get("-f"));
+        Assert.assertNull(optHash.get("-a"));
+        Assert.assertNull(optHash.get("a"));
+    }
+
+    @Test
+    public void testProcessArgsMissingKey() {
+        CharSequenceObjHashMap<String> optHash = Bootstrap.processArgs("d", "folder", "-f", "-t", "n", "m");
+        Assert.assertNull(optHash.get("d"));
+        Assert.assertNull(optHash.get("-d"));
+        Assert.assertEquals("d", optHash.get("$0"));
+        Assert.assertEquals("folder", optHash.get("$1"));
+        Assert.assertEquals("", optHash.get("-f"));
+        Assert.assertEquals("n", optHash.get("-t"));
+        Assert.assertEquals("m", optHash.get("$5"));
+        Assert.assertNull(optHash.get("-a"));
+        Assert.assertNull(optHash.get("a"));
+    }
+
+    @Test
+    public void testServerMain() throws Exception {
+        createDummyConfiguration();
+        try (ServerMain serverMain = new ServerMain(Bootstrap.withArgs("-d", root.toString()))) {
+            serverMain.start();
+        }
+    }
+
+    private static void createDummyConfiguration() throws Exception {
+        String config = root.toString() + Files.SEPARATOR + "conf";
+        TestUtils.createTestPath(config);
+        String file = config + Files.SEPARATOR + "server.conf";
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+            writer.println("");
+        }
+        file = config + Files.SEPARATOR + "mime.types";
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+            writer.println("");
         }
     }
 

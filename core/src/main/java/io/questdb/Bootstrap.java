@@ -79,7 +79,6 @@ public class Bootstrap {
     private final Metrics metrics;
     private final Log log;
 
-
     private Bootstrap(String... args) throws IOException {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
@@ -150,9 +149,7 @@ public class Bootstrap {
         URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
         long thisVersion = Long.MIN_VALUE;
         if (resource == null) {
-            log.infoW()
-                    .$("Web Console build [").$(PUBLIC_ZIP).$("] not found")
-                    .$();
+            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
         } else {
             thisVersion = resource.openConnection().getLastModified();
         }
@@ -277,7 +274,9 @@ public class Bootstrap {
         File f = new File(publicDir, PUBLIC_VERSION_TXT);
         File publicFolder = f.getParentFile();
         if (!publicFolder.exists()) {
-            publicFolder.mkdirs();
+            if (!publicFolder.mkdirs()) {
+                throw new BootstrapException("Cannot create folder: " + publicFolder);
+            }
         }
         try (FileOutputStream fos = new FileOutputStream(f)) {
             byte[] buf = version.getBytes();
@@ -446,27 +445,30 @@ public class Bootstrap {
         ff.remove(path);
     }
 
-    private static CharSequenceObjHashMap<String> processArgs(String[] args) {
-        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
-        String flag = null;
-        for (int i=0, n = args.length; i < n; i++) {
-            String arg = args[i];
-            if (arg.startsWith("-")) {
-                if (flag != null) {
-                    optHash.put(flag, "");
-                }
-                flag = arg;
-            } else {
-                if (flag != null) {
-                    optHash.put(flag, arg);
-                    flag = null;
-                } else {
-                    System.err.printf("Ignoring unknown arg: %s%n", arg);
-                }
-            }
+    @TestOnly
+    static CharSequenceObjHashMap<String> processArgs(String... args) {
+        final int n = args.length;
+        if (n == 0) {
+            throw new BootstrapException("Arguments expected, non provided");
         }
-        if (flag != null) {
-            optHash.put(flag, "");
+        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
+        for (int i = 0; i < n; i++) {
+            String arg = args[i];
+            if (arg.length() > 1 && arg.charAt(0) == '-') {
+                if (i + 1 < n) {
+                    String nextArg = args[i + 1];
+                    if (nextArg.length() > 1 && nextArg.charAt(0) == '-') {
+                        optHash.put(arg, "");
+                    } else {
+                        optHash.put(arg, nextArg);
+                        i++;
+                    }
+                } else {
+                    optHash.put(arg, "");
+                }
+            } else {
+                optHash.put("$" + i, arg);
+            }
         }
         return optHash;
     }
