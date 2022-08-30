@@ -35,5 +35,6 @@ jobs:
       MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
       MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
       ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      ARCHIVED_HEAP_DUMP: "$(Build.ArtifactStagingDirectory)/questdb-heapdump-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).hprof"
     steps:
       - template: steps.yml

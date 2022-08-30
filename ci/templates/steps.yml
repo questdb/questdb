@@ -29,8 +29,9 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest=$(includeTests)
-        -Dtest.exclude=$(excludeTests)
+        "--batch-mode --quiet
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$(ARCHIVED_HEAP_DUMP)
+        -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
         -DfailIfNoTests=false"
       jdkVersionOption: $(jdk)
@@ -66,6 +67,12 @@ steps:
     condition: failed()
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_HEAP_DUMP)
+      artifactName: HeapDump
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload heap dump"
     condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_CRASH_LOG)
