@@ -1128,16 +1128,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             AddColumn srcTransform,
             String dstTableName,
             AddColumn dstTransform,
-            String errorMessage
-    ) throws Exception {
-        assertSchemaMismatch(srcTableName, srcTransform, dstTableName, dstTransform, null, errorMessage);
-    }
-
-    private void assertSchemaMismatch(
-            String srcTableName,
-            AddColumn srcTransform,
-            String dstTableName,
-            AddColumn dstTransform,
             AddColumn afterCreateSrc,
             String errorMessage
     ) throws Exception {
@@ -1199,7 +1189,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         engine.clear();
         path.of(configuration.getRoot()).concat(src.getName());
         int pathLen = path.length();
-        other.of(configuration.getDetachRoot()).concat(dst.getName());
+        other.of(configuration.getRoot()).concat(dst.getName());
         int otherLen = other.length();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
@@ -1245,7 +1235,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 .concat(srcTableName)
                 .concat(srcPartitionName)
                 .slash$();
-        other.of(configuration.getDetachRoot())
+        other.of(configuration.getRoot())
                 .concat(dstTableName)
                 .concat(dstPartitionName)
                 .put(configuration.getAttachPartitionSuffix())

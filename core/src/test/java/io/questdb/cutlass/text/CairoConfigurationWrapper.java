@@ -78,11 +78,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getDetachRoot() {
-        return conf.getDetachRoot();
-    }
-
-    @Override
     public CharSequence getBackupTempDirName() {
         return conf.getBackupTempDirName();
     }

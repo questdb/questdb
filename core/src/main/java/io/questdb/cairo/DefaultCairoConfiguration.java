@@ -43,7 +43,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence root;
     private final CharSequence confRoot;
     private final CharSequence snapshotRoot;
-    private final CharSequence detachedRoot;
 
     private final TextConfiguration textConfiguration;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
@@ -59,7 +58,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
         this.snapshotRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.SNAPSHOT_DIRECTORY);
-        this.detachedRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.DETACHED_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -98,11 +96,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getBackupRoot() {
         return null;
-    }
-
-    @Override
-    public CharSequence getDetachRoot() {
-        return detachedRoot;
     }
 
     @Override
