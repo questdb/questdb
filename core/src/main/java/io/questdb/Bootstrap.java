@@ -324,13 +324,10 @@ public class Bootstrap {
         log.advisoryW().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
         log.advisoryW().$("db root: ").$(cairoConfiguration.getRoot()).$();
         log.advisoryW().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
-        log.advisoryW().$("partition detach root: ").$(cairoConfiguration.getDetachRoot()).$();
-        try (Path path = new Path()) {
-            verifyFileSystem(path, cairoConfiguration.getRoot(), "db");
-            verifyFileSystem(path, cairoConfiguration.getDetachRoot(), "partition detach");
-            verifyFileSystem(path, cairoConfiguration.getBackupRoot(), "backup");
-            verifyFileOpts(path, cairoConfiguration);
-        }
+        log.advisoryW().$("snapshot root: ").$(cairoConfiguration.getSnapshotRoot()).$();
+        log.advisoryW().$("sql copy input root: ").$(cairoConfiguration.getSqlCopyInputRoot()).$();
+        log.advisoryW().$("sql copy input worker root: ").$(cairoConfiguration.getSqlCopyInputWorkRoot()).$();
+        verifyFileSystem(cairoConfiguration);
         if (JitUtil.isJitSupported()) {
             final int jitMode = cairoConfiguration.getSqlJitMode();
             switch (jitMode) {
@@ -373,8 +370,7 @@ public class Bootstrap {
                                 do {
                                     other.trimTo(plen)
                                             .concat(cairoConfiguration.getArchivedCrashFilePrefix())
-                                            .put(counter.getAndIncrement())
-                                            .put(".log")
+                                            .put(counter.getAndIncrement()).put(".log")
                                             .$();
                                     if (!ff.exists(other)) {
                                         shouldRename = counter.get() <= maxFiles;
@@ -396,6 +392,17 @@ public class Bootstrap {
                         }
                     }
             );
+        }
+    }
+
+    void verifyFileSystem(CairoConfiguration cairoConfiguration) {
+        try (Path path = new Path()) {
+            verifyFileSystem(path, cairoConfiguration.getRoot(), "db");
+            verifyFileSystem(path, cairoConfiguration.getBackupRoot(), "backup");
+            verifyFileSystem(path, cairoConfiguration.getSnapshotRoot(), "snapshot");
+            verifyFileSystem(path, cairoConfiguration.getSqlCopyInputRoot(), "sql copy input root");
+            verifyFileSystem(path, cairoConfiguration.getSqlCopyInputWorkRoot(), "sql copy input worker root");
+            verifyFileOpts(path, cairoConfiguration);
         }
     }
 
