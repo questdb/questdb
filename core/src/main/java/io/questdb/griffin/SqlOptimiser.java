@@ -1220,6 +1220,16 @@ class SqlOptimiser {
                 innerModel.addBottomUpColumn(column);
             }
             return nextLiteral(alias, node.position);
+        } else {
+            // It might be the case that we previously added the column to
+            // the translating model, but not to the inner one.
+            CharSequence alias = map.valueAtQuick(index);
+            if (innerModel != null && !innerModel.getColumnNameToAliasMap().contains(alias)) {
+                QueryColumn column = translatingModel.getAliasToColumnMap().get(alias);
+                if (column != null) {
+                    innerModel.addBottomUpColumn(column);
+                }
+            }
         }
         return nextLiteral(map.valueAtQuick(index), node.position);
     }
