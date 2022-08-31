@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class WalTableSqlTest extends AbstractGriffinTest {
@@ -195,7 +194,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
     public void testAddColumnWalRollsWalSegment() throws Exception {
         assertMemoryLeak(() -> {
@@ -235,7 +233,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
     public void testRemoveColumnWalRollsWalSegment() throws Exception {
         assertMemoryLeak(() -> {

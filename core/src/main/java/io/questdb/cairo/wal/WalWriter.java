@@ -366,19 +366,19 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                         MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
                         String columnName = metadata.getColumnName(columnIndex);
 
-//                        CopySegmentFileJob.rollColumnToSegment(ff,
-//                                configuration.getWriterFileOpenOpts(),
-//                                primaryColumn,
-//                                secondaryColumn,
-//                                path,
-//                                newSegmentId,
-//                                columnName,
-//                                columnIndex == timestampIndex ? -columnType : columnType,
-//                                startRowCount,
-//                                uncommittedRows,
-//                                newColumnFiles,
-//                                columnIndex
-//                        );
+                        CopySegmentFileJob.rollColumnToSegment(ff,
+                                configuration.getWriterFileOpenOpts(),
+                                primaryColumn,
+                                secondaryColumn,
+                                path,
+                                newSegmentId,
+                                columnName,
+                                columnIndex == timestampIndex ? -columnType : columnType,
+                                startRowCount,
+                                uncommittedRows,
+                                newColumnFiles,
+                                columnIndex
+                        );
                     }
                 }
             } catch (Throwable e) {
