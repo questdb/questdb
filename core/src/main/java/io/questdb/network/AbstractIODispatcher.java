@@ -66,6 +66,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private final long queuedConnectionTimeoutMs;
     private long closeListenFdEpochMs;
     private final boolean peerNoLinger;
+    private int port;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -99,6 +100,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
+        this.port = 0;
 
         createListenFd();
         listening = true;
@@ -107,13 +109,24 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private void createListenFd() throws NetworkError {
         this.serverFd = nf.socketTcp(false);
         final int backlog = configuration.getListenBacklog();
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
+        if (this.port == 0) {
+            // Note that `configuration.getBindPort()` might also be 0.
+            // In such case, we will bind to an ephemeral port.
+            this.port = configuration.getBindPort();
+        }
+        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {
+            if (this.port == 0) {
+                // We resolve port 0 only once. In case we close and re-open the
+                // listening socket, we will reuse the previously resolved
+                // ephemeral port.
+                this.port = nf.resolvePort(this.serverFd);
+            }
             nf.listen(this.serverFd, backlog);
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket(
                     configuration.getDispatcherLogName(),
                     configuration.getBindIPv4Address(),
-                    configuration.getBindPort());
+                    this.port);
         }
         LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                 .$(" [fd=").$(serverFd)
@@ -311,6 +324,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     @Override
     public boolean isListening() {
         return listening;
+    }
+
+    @Override
+    public int getPort() {
+        return port;
     }
 
     static {
