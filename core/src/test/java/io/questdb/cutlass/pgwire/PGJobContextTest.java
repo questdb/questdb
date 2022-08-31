@@ -38,6 +38,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -51,6 +53,9 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
@@ -62,6 +67,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Properties;
@@ -80,6 +87,7 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
 
@@ -106,6 +114,18 @@ public class PGJobContextTest extends BasePGTest {
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
+
+    public PGJobContextTest(boolean useWal) {
+        super();
+        defaultTableWriteMode = useWal ? 1 : 0;
+    }
+
+    @Parameters
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {
+            { false }, { true },
+        });
+    }
 
     @BeforeClass
     public static void init() {
@@ -5716,6 +5736,21 @@ create table tab as (
                 @Override
                 public int getSendBufferSize() {
                     return 300;
+                }
+
+                @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public int getBindPort() {
+                            return 0;  // Bind to ANY port.
+                        }
+
+                        @Override
+                        public String getDispatcherLogName() {
+                            return "pg-server";
+                        }
+                    };
                 }
             };
 
