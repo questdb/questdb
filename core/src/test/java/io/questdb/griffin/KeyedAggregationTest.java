@@ -1099,6 +1099,8 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
     public void testStrFunctionKey() throws Exception {
+        // An important aspect of this test is that both replace() and count_distinct()
+        // functions use the same column as the input.
         assertQuery("replace\tcount\tcount_distinct\n" +
                         "foobaz\t63\t2\n" +
                         "bazbaz\t37\t1\n",
@@ -1110,6 +1112,8 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
     public void testStrFunctionKeyReverseOrder() throws Exception {
+        // An important aspect of this test is that both replace() and count_distinct()
+        // functions use the same column as the input.
         assertQuery("count_distinct\tcount\treplace\n" +
                         "2\t63\tfoobaz\n" +
                         "1\t37\tbazbaz\n",
