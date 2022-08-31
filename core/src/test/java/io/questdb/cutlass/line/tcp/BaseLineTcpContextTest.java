@@ -338,6 +338,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public int getPort() {
+                return 9009;
+            }
+
+            @Override
             public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
                 return false;
             }
