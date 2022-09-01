@@ -1174,6 +1174,7 @@ class SqlOptimiser {
 
         final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
         int index = map.keyIndex(node.token);
+        final CharSequence alias;
         if (index > -1) {
             // there is a possibility that column references join table, but in a different way
             // for example. main column could be tab1.y and the "missing" one just "y"
@@ -1212,16 +1213,24 @@ class SqlOptimiser {
             }
 
             // this is the first time we see this column and must create alias
-            CharSequence alias = createColumnAlias(node, translatingModel);
+            alias = createColumnAlias(node, translatingModel);
             QueryColumn column = queryColumnPool.next().of(alias, node);
             // add column to both models
             addColumnToTranslatingModel(column, translatingModel, validatingModel);
             if (innerModel != null) {
                 innerModel.addBottomUpColumn(column);
             }
-            return nextLiteral(alias, node.position);
+        } else {
+            // It might be the case that we previously added the column to
+            // the translating model, but not to the inner one.
+            alias = map.valueAtQuick(index);
+            if (innerModel != null && innerModel.getColumnNameToAliasMap().excludes(alias)) {
+                QueryColumn column = translatingModel.getAliasToColumnMap().get(alias);
+                assert column != null;
+                innerModel.addBottomUpColumn(column);
+            }
         }
-        return nextLiteral(map.valueAtQuick(index), node.position);
+        return nextLiteral(alias, node.position);
     }
 
     private void doRewriteOrderByPositionForUnionModels(QueryModel model, QueryModel parent, QueryModel next) throws SqlException {
