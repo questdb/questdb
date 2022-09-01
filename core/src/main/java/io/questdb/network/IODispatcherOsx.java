@@ -42,30 +42,12 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
         // bind socket
         this.kqueue = new Kqueue(capacity);
-        registerListenerFd();
     }
 
-    private void enqueuePending(int watermark) {
-        int index = 0;
-        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
-            kqueue.setWriteOffset(offset);
-            final int fd = (int) pending.get(i, M_FD);
-            if (initialBias == IODispatcherConfiguration.BIAS_READ) {
-                kqueue.readFD(fd, pending.get(i, M_ID));
-                LOG.debug().$("kq [op=1, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
-            } else {
-                kqueue.writeFD(fd, pending.get(i, M_ID));
-                LOG.debug().$("kq [op=2, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
-            }
-            if (++index > capacity - 1) {
-                registerWithKQueue(index);
-                index = 0;
-                offset = 0;
-            }
-        }
-        if (index > 0) {
-            registerWithKQueue(index);
-        }
+    @Override
+    public void start() {
+        super.start();
+        registerListenerFd();
     }
 
     @Override
@@ -73,76 +55,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         super.close();
         this.kqueue.close();
         LOG.info().$("closed").$();
-    }
-
-    @Override
-    protected void pendingAdded(int index) {
-        pending.set(index, M_ID, fdid++);
-    }
-
-    private int findPending(long ts) {
-        return pending.binarySearch(ts, M_ID);
-    }
-
-    private void processIdleConnections(long deadline) {
-        int count = 0;
-        for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
-        }
-        pending.zapTop(count);
-    }
-
-    private boolean processRegistrations(long timestamp) {
-        long cursor;
-        boolean useful = false;
-        int count = 0;
-        int offset = 0;
-        while ((cursor = interestSubSeq.next()) > -1) {
-            useful = true;
-            final IOEvent<C> evt = interestQueue.get(cursor);
-            C context = evt.context;
-            int operation = evt.operation;
-            interestSubSeq.done(cursor);
-
-            long id = fdid++;
-            final int fd = (int) context.getFd();
-            LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(']').$();
-            kqueue.setWriteOffset(offset);
-            if (operation == IOOperation.READ) {
-                kqueue.readFD(fd, id);
-            } else {
-                kqueue.writeFD(fd, id);
-            }
-
-            offset += KqueueAccessor.SIZEOF_KEVENT;
-            count++;
-
-            int r = pending.addRow();
-            pending.set(r, M_TIMESTAMP, timestamp);
-            pending.set(r, M_FD, fd);
-            pending.set(r, M_ID, id);
-            pending.set(r, context);
-
-
-            if (count > capacity - 1) {
-                registerWithKQueue(count);
-                count = 0;
-                offset = 0;
-            }
-        }
-
-        if (count > 0) {
-            registerWithKQueue(count);
-        }
-
-        return useful;
-    }
-
-    private void registerWithKQueue(int changeCount) {
-        if (kqueue.register(changeCount) != 0) {
-            throw NetworkError.instance(Os.errno()).put("could not register [changeCount=").put(changeCount).put(']');
-        }
-        LOG.debug().$("kqueued [count=").$(changeCount).$(']').$();
     }
 
     @Override
@@ -209,5 +121,98 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         if (this.kqueue.removeListen(serverFd) != 0) {
             throw NetworkError.instance(nf.errno(), "could not kqueue.removeListen()");
         }
+    }
+
+    @Override
+    protected void pendingAdded(int index) {
+        pending.set(index, M_ID, fdid++);
+    }
+
+    private void enqueuePending(int watermark) {
+        int index = 0;
+        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
+            kqueue.setWriteOffset(offset);
+            final int fd = (int) pending.get(i, M_FD);
+            if (initialBias == IODispatcherConfiguration.BIAS_READ) {
+                kqueue.readFD(fd, pending.get(i, M_ID));
+                LOG.debug().$("kq [op=1, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
+            } else {
+                kqueue.writeFD(fd, pending.get(i, M_ID));
+                LOG.debug().$("kq [op=2, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
+            }
+            if (++index > capacity - 1) {
+                registerWithKQueue(index);
+                index = 0;
+                offset = 0;
+            }
+        }
+        if (index > 0) {
+            registerWithKQueue(index);
+        }
+    }
+
+    private int findPending(long ts) {
+        return pending.binarySearch(ts, M_ID);
+    }
+
+    private void processIdleConnections(long deadline) {
+        int count = 0;
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
+            doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
+        }
+        pending.zapTop(count);
+    }
+
+    private boolean processRegistrations(long timestamp) {
+        long cursor;
+        boolean useful = false;
+        int count = 0;
+        int offset = 0;
+        while ((cursor = interestSubSeq.next()) > -1) {
+            useful = true;
+            final IOEvent<C> evt = interestQueue.get(cursor);
+            C context = evt.context;
+            int operation = evt.operation;
+            interestSubSeq.done(cursor);
+
+            long id = fdid++;
+            final int fd = (int) context.getFd();
+            LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(']').$();
+            kqueue.setWriteOffset(offset);
+            if (operation == IOOperation.READ) {
+                kqueue.readFD(fd, id);
+            } else {
+                kqueue.writeFD(fd, id);
+            }
+
+            offset += KqueueAccessor.SIZEOF_KEVENT;
+            count++;
+
+            int r = pending.addRow();
+            pending.set(r, M_TIMESTAMP, timestamp);
+            pending.set(r, M_FD, fd);
+            pending.set(r, M_ID, id);
+            pending.set(r, context);
+
+
+            if (count > capacity - 1) {
+                registerWithKQueue(count);
+                count = 0;
+                offset = 0;
+            }
+        }
+
+        if (count > 0) {
+            registerWithKQueue(count);
+        }
+
+        return useful;
+    }
+
+    private void registerWithKQueue(int changeCount) {
+        if (kqueue.register(changeCount) != 0) {
+            throw NetworkError.instance(Os.errno()).put("could not register [changeCount=").put(changeCount).put(']');
+        }
+        LOG.debug().$("kqueued [count=").$(changeCount).$(']').$();
     }
 }

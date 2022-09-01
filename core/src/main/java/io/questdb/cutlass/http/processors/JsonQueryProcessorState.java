@@ -93,7 +93,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
     private short queryType;
-    private QuietClosable asyncOperation;
+    private QuietCloseable asyncOperation;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -222,7 +222,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return statementTimeout;
     }
 
-    public void setOperationFuture(QuietClosable op, OperationFuture fut) {
+    public void setOperationFuture(QuietCloseable op, OperationFuture fut) {
         asyncOperation = op;
         operationFuture = fut;
     }

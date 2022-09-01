@@ -45,6 +45,11 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());
         this.sf = configuration.getSelectFacade();
+    }
+
+    @Override
+    public void start() {
+        super.start();
         readFdSet.add(serverFd);
         readFdSet.setCount(1);
         writeFdSet.setCount(0);

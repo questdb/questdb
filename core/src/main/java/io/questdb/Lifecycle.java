@@ -24,9 +24,9 @@
 
 package io.questdb;
 
-import io.questdb.std.QuietClosable;
+import io.questdb.std.QuietCloseable;
 
-public interface Lifecycle extends QuietClosable {
+public interface Lifecycle extends QuietCloseable {
 
     default void start() {
         /* no-op */

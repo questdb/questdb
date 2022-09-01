@@ -212,6 +212,7 @@ public class HttpServer implements Lifecycle {
         if (workerPool != null) {
             workerPool.start(LOG);
         }
+        dispatcher.start();
     }
 
     @Override

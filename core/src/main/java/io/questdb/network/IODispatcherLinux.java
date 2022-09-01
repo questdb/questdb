@@ -35,7 +35,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
-        registerListenerFd();
     }
 
     private void enqueuePending(int watermark) {
@@ -51,6 +50,12 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
             }
         }
+    }
+
+    @Override
+    public void start() {
+        super.start();
+        registerListenerFd();
     }
 
     @Override

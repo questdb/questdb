@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
+import io.questdb.Lifecycle;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,11 +37,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 
-import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
+public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Lifecycle {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
+
+
     protected final LineUdpLexer lexer;
     protected final LineUdpParserImpl parser;
     protected final NetworkFacade nf;
@@ -60,69 +62,19 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     ) {
         this.configuration = configuration;
         this.commitMode = configuration.getCommitMode();
+        this.commitRate = configuration.getCommitRate();
         nf = configuration.getNetworkFacade();
-        fd = nf.socketUdp();
-        if (fd < 0) {
-            int errno = nf.errno();
-            LOG.error().$("cannot open UDP socket [errno=").$(errno).$(']').$();
-            throw NetworkError.instance(errno, "Cannot open UDP socket");
-        }
-
-        try {
-            // when listening for multicast packets bind address must be 0
-            bind(configuration);
-            this.commitRate = configuration.getCommitRate();
-
-            if (configuration.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, configuration.getReceiveBufferSize()) != 0) {
-                LOG.error()
-                        .$("could not set receive buffer size [fd=").$(fd)
-                        .$(", size=").$(configuration.getReceiveBufferSize())
-                        .$(", errno=").$(configuration.getNetworkFacade().errno())
-                        .I$();
-            }
-
-            lexer = new LineUdpLexer(configuration.getMsgBufferSize());
-            parser = new LineUdpParserImpl(engine, configuration);
-            lexer.withParser(parser);
-
-            if (!configuration.ownThread()) {
-                workerPool.assign(this);
-                logStarted(configuration);
-            }
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-    }
-
-    @Override
-    public void close() {
-        if (fd > -1) {
-            halt();
-            if (nf.close(fd) != 0) {
-                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-            } else {
-                LOG.info().$("closed [fd=").$(fd).$(']').$();
-            }
-            if (parser != null) {
-                parser.commitAll(commitMode);
-                parser.close();
-            }
-            Misc.free(lexer);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
-            fd = -1;
-        }
-    }
-
-    protected void halt() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            halted.await();
+        lexer = new LineUdpLexer(configuration.getMsgBufferSize());
+        parser = new LineUdpParserImpl(engine, configuration);
+        lexer.withParser(parser);
+        if (!configuration.ownThread()) {
+            workerPool.assign(this);
         }
     }
 
     public void start() {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
+            bind();
             new Thread(() -> {
                 started.countDown();
                 if (configuration.ownThreadAffinity() != -1) {
@@ -136,6 +88,54 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                 Path.clearThreadLocals();
                 halted.countDown();
             }).start();
+        }
+    }
+
+    @Override
+    public void close() {
+        if (running.compareAndSet(true, false) && fd > -1) {
+            started.await();
+            halted.await();
+            if (nf.close(fd) != 0) {
+                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).I$();
+            } else {
+                LOG.info().$("closed [fd=").$(fd).I$();
+            }
+            if (parser != null) {
+                parser.commitAll(commitMode);
+                parser.close();
+            }
+            Misc.free(lexer);
+            LOG.info().$("closed [fd=").$(fd).I$();
+            fd = -1;
+        }
+    }
+
+    private void bind() {
+        fd = nf.socketUdp();
+        if (fd < 0) {
+            int errno = nf.errno();
+            LOG.error().$("cannot open UDP socket [errno=").$(errno).$(']').$();
+            throw NetworkError.instance(errno, "Cannot open UDP socket");
+        }
+
+        try {
+            // when listening for multicast packets bind address must be 0
+            bind(configuration);
+            if (configuration.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, configuration.getReceiveBufferSize()) != 0) {
+                LOG.error()
+                        .$("could not set receive buffer size [fd=").$(fd)
+                        .$(", size=").$(configuration.getReceiveBufferSize())
+                        .$(", errno=").$(configuration.getNetworkFacade().errno())
+                        .I$();
+            }
+
+            if (!configuration.ownThread()) {
+                logStarted(configuration);
+            }
+        } catch (Throwable e) {
+            close();
+            throw e;
         }
     }
 
@@ -163,7 +163,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$(configuration.getPort())
                     .$(" [fd=").$(fd)
                     .$(", commitRate=").$(commitRate)
-                    .$(']').$();
+                    .I$();
         } else {
             LOG.info()
                     .$("receiving multicast from ")
@@ -174,7 +174,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$ip(configuration.getBindIPv4Address())
                     .$(" [fd=").$(fd)
                     .$(", commitRate=").$(commitRate)
-                    .$(']').$();
+                    .I$();
         }
     }
 }

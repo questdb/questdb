@@ -24,11 +24,11 @@
 
 package io.questdb.network;
 
+import io.questdb.Lifecycle;
 import io.questdb.mp.Job;
 
-import java.io.Closeable;
 
-public interface IODispatcher<C extends IOContext> extends Closeable, Job {
+public interface IODispatcher<C extends IOContext> extends Lifecycle, Job {
     int DISCONNECT_REASON_UNKNOWN_OPERATION = 0;
     int DISCONNECT_REASON_KEEPALIVE_OFF = 1;
     int DISCONNECT_REASON_KICKED_OUT_AT_RERUN = 2;

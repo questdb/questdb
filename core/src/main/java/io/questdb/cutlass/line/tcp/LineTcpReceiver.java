@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Lifecycle;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -36,21 +37,49 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class LineTcpReceiver implements Closeable {
+public class LineTcpReceiver implements Lifecycle {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
+
+    @Nullable
+    public static LineTcpReceiver create(
+            LineTcpReceiverConfiguration lineConfiguration,
+            WorkerPool sharedPool,
+            CairoEngine cairoEngine,
+            Metrics metrics
+    ) {
+        if (!lineConfiguration.isEnabled()) {
+            return null;
+        }
+
+        final ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
+        final WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
+                lineConfiguration.getIOWorkerPoolConfiguration(), sharedPool, metrics
+        );
+        if (ioWorkerPool != sharedPool) {
+            dedicatedPools.add(ioWorkerPool);
+        }
+        final WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
+                lineConfiguration.getWriterWorkerPoolConfiguration(), sharedPool, metrics
+        );
+        if (writerWorkerPool != sharedPool) {
+            dedicatedPools.add(writerWorkerPool);
+        }
+        return new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
+    }
+
+
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
     private final ObjList<WorkerPool> dedicatedPools;
     private final Metrics metrics;
 
-    public LineTcpReceiver(
+    private LineTcpReceiver(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,
@@ -67,7 +96,7 @@ public class LineTcpReceiver implements Closeable {
         this.scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
         this.metrics = engine.getMetrics();
 
-        final Closeable cleaner = contextFactory::closeContextPool;
+        final QuietCloseable cleaner = contextFactory::closeContextPool;
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
@@ -75,37 +104,12 @@ public class LineTcpReceiver implements Closeable {
         }
     }
 
-    @Nullable
-    public static LineTcpReceiver create(
-            LineTcpReceiverConfiguration lineConfiguration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            Metrics metrics
-    ) {
-        if (!lineConfiguration.isEnabled()) {
-            return null;
+    @Override
+    public void start() {
+        for (int n = 0, sz = dedicatedPools.size(); n < sz; n++) {
+            dedicatedPools.get(n).start(LOG);
         }
-
-        ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool, metrics);
-        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool, metrics);
-        if (ioWorkerPool != sharedWorkerPool) {
-            dedicatedPools.add(ioWorkerPool);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            dedicatedPools.add(writerWorkerPool);
-        }
-        LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
-        if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.start(log);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.start(log);
-        }
-        return lineTcpReceiver;
+        dispatcher.start();
     }
 
     @Override
@@ -128,7 +132,7 @@ public class LineTcpReceiver implements Closeable {
         void onEvent(CharSequence tableName, int event);
     }
 
-    private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, Closeable, EagerThreadSetup {
+    private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, QuietCloseable, EagerThreadSetup {
         private final ThreadLocal<WeakMutableObjectPool<LineTcpConnectionContext>> contextPool;
         private boolean closed = false;
 

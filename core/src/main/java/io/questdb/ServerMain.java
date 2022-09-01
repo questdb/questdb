@@ -26,6 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.udp.LineUdpReceiver;
+import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -196,31 +199,30 @@ public class ServerMain implements Lifecycle {
 //            ));
 //        }
 
-//        // ilp/udp
-//        if (config.getLineUdpReceiverConfiguration().isEnabled()) {
-//            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-//                workers.add(new LinuxMMLineUdpReceiver(
-//                        config.getLineUdpReceiverConfiguration(),
-//                        cairoEngine,
-//                        pool
-//                ));
-//            } else {
-//                workers.add(new LineUdpReceiver(
-//                        config.getLineUdpReceiverConfiguration(),
-//                        cairoEngine,
-//                        pool
-//                ));
-//            }
-//        }
-//
-//        // ilp/tcp
-//        workers.add(LineTcpReceiver.create(
-//                config.getLineTcpReceiverConfiguration(),
-//                pool,
-//                log,
-//                cairoEngine,
-//                metrics
-//        ));
+        // ilp/udp
+        if (config.getLineUdpReceiverConfiguration().isEnabled()) {
+            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+                workers.add(new LinuxMMLineUdpReceiver(
+                        config.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        pool
+                ));
+            } else {
+                workers.add(new LineUdpReceiver(
+                        config.getLineUdpReceiverConfiguration(),
+                        cairoEngine,
+                        pool
+                ));
+            }
+        }
+
+        // ilp/tcp
+        workers.add(LineTcpReceiver.create(
+                config.getLineTcpReceiverConfiguration(),
+                pool,
+                cairoEngine,
+                metrics
+        ));
 
         // telemetry
         if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
