@@ -1400,6 +1400,7 @@ public class O3Test extends AbstractO3Test {
                         ts += 1;
                     }
                 }
+                // Setting the lag is important since we want some rows to remain pending after each commit.
                 w.commitWithLag(1_000L);
             }
             // Commit pending O3 rows.
