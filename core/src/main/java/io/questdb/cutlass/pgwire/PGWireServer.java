@@ -198,6 +198,10 @@ public class PGWireServer implements Closeable {
         Misc.free(dispatcher);
     }
 
+    public int getPort() {
+        return dispatcher.getPort();
+    }
+
     public static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakMutableObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;

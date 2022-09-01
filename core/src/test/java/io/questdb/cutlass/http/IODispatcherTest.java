@@ -5030,8 +5030,7 @@ public class IODispatcherTest {
         );
     }
 
-    @Test
-    public void testQueuedConnectionTimeout() throws Exception {
+    private void testQueuedConnectionTimeoutImpl(int port) throws Exception {
         LOG.info().$("started testQueuedConnectionTimeout").$();
         assertMemoryLeak(() -> {
             final int activeConnectionLimit = 5;
@@ -5046,6 +5045,11 @@ public class IODispatcherTest {
                 @Override
                 public long getQueueTimeout() {
                     return queuedConnectionTimeoutInMs;
+                }
+
+                @Override
+                public int getBindPort() {
+                    return port;
                 }
             };
 
@@ -5084,10 +5088,12 @@ public class IODispatcherTest {
             final String request = "\n";
             long mem = TestUtils.toMemory(request);
 
-            final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
             Thread serverThread;
+            long sockAddr = 0;
             final CountDownLatch serverLatch = new CountDownLatch(1);
             try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+                final int resolvedPort = dispatcher.getPort();
+                sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
                 serverThread = new Thread("test-io-dispatcher") {
                     @Override
                     public void run() {
@@ -5209,10 +5215,22 @@ public class IODispatcherTest {
                     Assert.fail("Timeout waiting for server to end");
                 }
             } finally {
-                Net.freeSockAddr(sockAddr);
+                if (sockAddr != 0) {
+                    Net.freeSockAddr(sockAddr);
+                }
                 Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testQueuedConnectionTimeout() throws Exception {
+        testQueuedConnectionTimeoutImpl(9001);
+    }
+
+    @Test
+    public void testQueuedConnectionTimeoutPort0() throws Exception {
+        testQueuedConnectionTimeoutImpl(0);
     }
 
     @Test
