@@ -180,7 +180,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         int tableId = (int) tableIdGenerator.getNextId();
-        if (struct.isWallEnabled()) {
+        if (struct.isWalEnabled()) {
             tableRegistry.registerTable(tableId, struct);
         }
 

@@ -49,13 +49,11 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
@@ -67,8 +65,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Properties;
@@ -87,9 +83,8 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.*;
 
-@RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
-public class PGJobContextTest extends BasePGTest {
+public abstract class BasePGJobContextTest extends BasePGTest {
 
     public static final int CONN_AWARE_SIMPLE_BINARY = 1;
     public static final int CONN_AWARE_SIMPLE_TEXT = 2;
@@ -109,26 +104,15 @@ public class PGJobContextTest extends BasePGTest {
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT;
 
-    private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
+    private static final Log LOG = LogFactory.getLog(BasePGJobContextTest.class);
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
 
-    public PGJobContextTest(boolean useWal) {
-        super();
-        defaultTableWriteMode = useWal ? 1 : 0;
-    }
-
-    @Parameters
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {
-            { false }, { true },
-        });
-    }
-
     @BeforeClass
-    public static void init() {
+    public static void setUpStatic() {
+        BasePGTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -136,6 +120,11 @@ public class PGJobContextTest extends BasePGTest {
                 .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        BasePGTest.tearDownStatic();
     }
 
     @Test
@@ -6123,7 +6112,7 @@ create table tab as (
             }
         });
     }
-    
+
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {

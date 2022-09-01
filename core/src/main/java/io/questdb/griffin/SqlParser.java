@@ -640,7 +640,7 @@ public final class SqlParser {
         model.setCommitLag(commitLag);
         final boolean isWalEnabled =
                 PartitionBy.isPartitioned(model.getPartitionBy()) && (
-                        (walSetting == walNotSet && configuration.getWallEnabledDefault()) || walSetting == walEnabled
+                        (walSetting == walNotSet && configuration.getWalEnabledDefault()) || walSetting == walEnabled
                 );
 
         model.setWalEnabled(isWalEnabled);

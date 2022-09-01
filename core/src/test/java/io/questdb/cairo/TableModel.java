@@ -197,9 +197,9 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public boolean isWallEnabled() {
+    public boolean isWalEnabled() {
         return walEnabled == -1
-                ? configuration.getWallEnabledDefault()
+                ? configuration.getWalEnabledDefault()
                 : walEnabled == 1;
     }
 

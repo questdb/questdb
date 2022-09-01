@@ -53,7 +53,7 @@ import org.junit.runner.Description;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
-public class AbstractCairoTest {
+public abstract class AbstractCairoTest {
 
     protected static final PlanSink planSink = new PlanSink();
     protected static final StringSink sink = new StringSink();
@@ -353,8 +353,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public boolean getWallEnabledDefault() {
-                return defaultTableWriteMode < 0 ? super.getWallEnabledDefault() : defaultTableWriteMode == 1;
+            public boolean getWalEnabledDefault() {
+                return defaultTableWriteMode < 0 ? super.getWalEnabledDefault() : defaultTableWriteMode == 1;
             }
 
             @Override

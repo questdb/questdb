@@ -461,8 +461,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isWallEnabled() {
-            return configuration.getWallEnabledDefault();
+        public boolean isWalEnabled() {
+            return configuration.getWalEnabledDefault();
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

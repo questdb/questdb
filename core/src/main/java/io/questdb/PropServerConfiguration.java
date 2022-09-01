@@ -2558,7 +2558,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getWallEnabledDefault() {
+        public boolean getWalEnabledDefault() {
             return walEnabledDefault;
         }
 

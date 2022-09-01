@@ -41,7 +41,7 @@ public interface TableStructure extends TableDescriptor {
 
     CharSequence getTableName();
 
-    boolean isWallEnabled();
+    boolean isWalEnabled();
 
     boolean isIndexed(int columnIndex);
 
