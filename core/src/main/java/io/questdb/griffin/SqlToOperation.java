@@ -38,8 +38,8 @@ public class SqlToOperation implements Closeable {
     private final SqlCompiler compiler;
     private final SqlExecutionContext sqlExecutionContext;
 
-    public SqlToOperation(CairoEngine engine, CairoConfiguration configuration) {
-        final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
+    public SqlToOperation(CairoEngine engine) {
+        final BindVariableService bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         bindVariableService.clear();
 
         compiler = new SqlCompiler(engine);

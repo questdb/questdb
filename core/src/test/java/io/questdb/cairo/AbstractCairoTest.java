@@ -497,12 +497,13 @@ public class AbstractCairoTest {
         while (job.run(0)) {
             // run until empty
         }
+        job.close();
     }
 
     protected static void clearWalQueue() {
-        MessageBus bus = engine.getMessageBus();
+        final MessageBus bus = engine.getMessageBus();
         long cursor;
-        while((cursor = bus.getWalTxnNotificationSubSequence().next()) > -1L) {
+        while ((cursor = bus.getWalTxnNotificationSubSequence().next()) > -1L) {
             bus.getWalTxnNotificationSubSequence().done(cursor);
         }
     }

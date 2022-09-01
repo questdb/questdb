@@ -37,6 +37,7 @@ import io.questdb.cairo.wal.*;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlToOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -84,7 +85,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.metrics = metrics;
         this.tableRegistry = new TableRegistry(this, configuration);
         this.messageBus = new MessageBusImpl(configuration);
-        this.writerPool = new WriterPool(configuration, messageBus, this);
+        this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
@@ -296,7 +297,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 // Steel the work!
                 if (steelingAttempts-- > 0) {
                     Sequence subSeq = messageBus.getWalTxnNotificationSubSequence();
-                    try {
+                    try (SqlToOperation sqlToOperation = new SqlToOperation(this)) {
                         while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
                             if (cursor > -1L) {
                                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
@@ -306,7 +307,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                                 // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
                                 subSeq.done(cursor);
 
-                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, null);
+                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation, null);
                             }
                         }
                     } catch (Throwable throwable) {

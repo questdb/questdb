@@ -33,6 +33,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlToOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
@@ -354,13 +355,14 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
+                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
                 final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 executeOperation("UPDATE " + tableName + " SET INT=12345678", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, null);
+                ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation, null);
 
                 executeOperation("UPDATE " + tableCopyName + " SET INT=12345678", CompiledQuery.UPDATE);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -382,13 +384,14 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
+                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
                 final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 executeOperation("UPDATE " + tableName + " SET INT=12345678 WHERE INT > 5", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, null);
+                ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation, null);
 
                 executeOperation("UPDATE " + tableCopyName + " SET INT=12345678 WHERE INT > 5", CompiledQuery.UPDATE);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -440,22 +443,23 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
+                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
                 final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                updateMaxUncommittedRows(tableName, 60, tableId);
+                updateMaxUncommittedRows(tableName, 60, tableId, sqlToOperation);
                 assertMaxUncommittedRows(tableName, 60);
                 updateMaxUncommittedRows(tableCopyName, 60);
                 assertMaxUncommittedRows(tableCopyName, 60);
-                updateMaxUncommittedRows(tableName, 55, tableId);
+                updateMaxUncommittedRows(tableName, 55, tableId, sqlToOperation);
                 assertMaxUncommittedRows(tableName, 55);
                 updateMaxUncommittedRows(tableCopyName, 55);
                 assertMaxUncommittedRows(tableCopyName, 55);
-                updateMaxUncommittedRows(tableName, 50, tableId);
+                updateMaxUncommittedRows(tableName, 50, tableId, sqlToOperation);
                 assertMaxUncommittedRows(tableName, 50);
-                updateMaxUncommittedRows(tableName, 77, tableId);
+                updateMaxUncommittedRows(tableName, 77, tableId, sqlToOperation);
                 assertMaxUncommittedRows(tableName, 77);
 
                 // assert that data is not changed
@@ -465,13 +469,13 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows) throws SqlException {
-        updateMaxUncommittedRows(tableName, maxUncommittedRows, -1);
+        updateMaxUncommittedRows(tableName, maxUncommittedRows, -1, null);
     }
 
-    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId) throws SqlException {
+    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId, SqlToOperation sqlToOperation) throws SqlException {
         executeOperation("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows, CompiledQuery.ALTER);
         if (tableId > 0) {
-            ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, null);
+            ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation, null);
         }
     }
 
@@ -538,7 +542,10 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             copyWriter.commit();
             walWriter.commit();
         }
-        ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, null);
+
+        try (SqlToOperation sqlToOperation = new SqlToOperation(engine)) {
+            ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation, null);
+        }
         return tableId;
     }
 

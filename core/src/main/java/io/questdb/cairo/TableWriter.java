@@ -216,7 +216,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private UpdateOperator updateOperator;
     private DropIndexOperator dropIndexOperator;
     private final WalEventReader walEventReader;
-    private SqlToOperation sqlToOperation;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -1145,10 +1144,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         return updateOperator;
     }
 
-    public void initSqlToOperation(CairoEngine engine) {
-        sqlToOperation = new SqlToOperation(engine, configuration);
-    }
-
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
     }
@@ -1326,7 +1321,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    public void processWalCommit(Path walPath, long segmentTxn) {
+    public void processWalCommit(Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
         final WalEventCursor walEventCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
         final byte walTxnType = walEventCursor.getType();
         switch (walTxnType) {
@@ -1344,14 +1339,14 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 break;
             case SQL:
                 final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                processWalSql(sqlInfo);
+                processWalSql(sqlInfo, sqlToOperation);
                 break;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
         }
     }
 
-    private void processWalSql(WalEventCursor.SqlInfo sqlInfo) {
+    private void processWalSql(WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
         try {
@@ -2814,7 +2809,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(walEventReader);
-        Misc.free(sqlToOperation);
         updateOperator = Misc.free(updateOperator);
         dropIndexOperator = Misc.free(dropIndexOperator);
         freeColumns(truncate & !distressed);

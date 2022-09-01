@@ -27,37 +27,42 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlToOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.Nullable;
+import java.io.Closeable;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
-public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> {
+public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
     public final static String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final CairoEngine engine;
+    private final SqlToOperation sqlToOperation;
     private SequencerStructureChangeCursor reusableStructureChangeCursor;
 
     public ApplyWal2TableJob(CairoEngine engine) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
+        this.sqlToOperation = new SqlToOperation(engine);
     }
 
     public static SequencerStructureChangeCursor processWalTxnNotification(
             CharSequence tableName,
             int tableId,
             CairoEngine engine,
+            SqlToOperation sqlToOperation,
             @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
     ) {
         // This is work steeling, security context is checked on writing to the WAL
         // and can be ignored here
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
             assert writer.getMetadata().getId() == tableId;
-            return applyOutstandingWalTransactions(writer, engine, reusableStructureChangeCursor);
+            return applyOutstandingWalTransactions(writer, engine, sqlToOperation, reusableStructureChangeCursor);
         } catch (EntryUnavailableException tableBusy) {
             // This is all good, someone else will apply the data
             if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
@@ -74,7 +79,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return null;
     }
 
-    private static SequencerStructureChangeCursor applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine, @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor) {
+    private static SequencerStructureChangeCursor applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine,
+                                SqlToOperation sqlToOperation, @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor) {
         TableRegistry tableRegistry = engine.getTableRegistry();
         long lastCommitted = writer.getTxn();
 
@@ -94,7 +100,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                 if (walId != TxnCatalog.METADATA_WALID) {
-                    writer.processWalCommit(tempPath, segmentTxn);
+                    writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
                 } else {
                     // This is metadata change
                     // to be taken from Sequencer directly
@@ -135,10 +141,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
             int tableId = walTxnNotificationTask.getTableId();
             CharSequence tableName = walTxnNotificationTask.getTableName();
-            reusableStructureChangeCursor = processWalTxnNotification(tableName, tableId, engine, reusableStructureChangeCursor);
+            reusableStructureChangeCursor = processWalTxnNotification(tableName, tableId, engine, sqlToOperation, reusableStructureChangeCursor);
         } finally {
             subSeq.done(cursor);
         }
         return true;
+    }
+
+    @Override
+    public void close() {
+        sqlToOperation.close();
     }
 }
