@@ -27,13 +27,11 @@ package io.questdb;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
 
 public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     WorkerPoolAwareConfiguration USE_SHARED_CONFIGURATION = new WorkerPoolAwareConfiguration() {
@@ -63,7 +61,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             WorkerPool sharedPool,
             Metrics metrics
     ) {
-        WorkerPool pool = configuration.getWorkerCount() > 0 ? new WorkerPool(configuration, metrics) : sharedPool;
+        WorkerPool pool = configuration.getWorkerCount() > 0 || sharedPool == null ? new WorkerPool(configuration, metrics) : sharedPool;
         pool.assignCleaner(Path.CLEANER);
         return pool;
     }
@@ -72,7 +70,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     static <T extends Lifecycle, C extends WorkerPoolAwareConfiguration> T create(
             C configuration,
             WorkerPool sharedPool,
-            Log log,
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
             FunctionFactoryCache functionFactoryCache,
@@ -82,7 +79,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
         final T server;
         if (configuration.isEnabled()) {
             final WorkerPool localPool = configureWorkerPool(configuration, sharedPool, metrics);
-            assert localPool != null;
             final boolean local = localPool != sharedPool;
             final int sharedWorkerCount = sharedPool == null ? localPool.getWorkerCount() : sharedPool.getWorkerCount();
             server = factory.create(
@@ -103,7 +99,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     boolean isEnabled();
 
     @FunctionalInterface
-    interface ServerFactory<T extends Closeable, C> {
+    interface ServerFactory<T extends Lifecycle, C> {
         T create(
                 C configuration,
                 CairoEngine engine,

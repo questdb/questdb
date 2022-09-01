@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Lifecycle {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
+    private static final long CLOSE_AWAIT_NANOS = (long) 2e8; // 200 millis
 
 
     protected final LineUdpLexer lexer;
@@ -93,21 +94,22 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
 
     @Override
     public void close() {
-        if (running.compareAndSet(true, false) && fd > -1) {
-            started.await();
-            halted.await();
-            if (nf.close(fd) != 0) {
-                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).I$();
-            } else {
-                LOG.info().$("closed [fd=").$(fd).I$();
+        if (running.compareAndSet(true, false)) {
+            if (fd > -1) {
+                started.await(CLOSE_AWAIT_NANOS);
+                halted.await(CLOSE_AWAIT_NANOS);
+                if (nf.close(fd) != 0) {
+                    LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).I$();
+                } else {
+                    LOG.info().$("closed [fd=").$(fd).I$();
+                }
+                fd = -1;
             }
             if (parser != null) {
                 parser.commitAll(commitMode);
                 parser.close();
             }
             Misc.free(lexer);
-            LOG.info().$("closed [fd=").$(fd).I$();
-            fd = -1;
         }
     }
 

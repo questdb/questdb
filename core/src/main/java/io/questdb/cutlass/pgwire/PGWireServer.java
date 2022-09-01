@@ -144,7 +144,6 @@ public class PGWireServer implements Lifecycle {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
-                log,
                 cairoEngine,
                 (conf, engine, workerPool, local, sharedWorkerCount, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
                         conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
@@ -159,7 +158,6 @@ public class PGWireServer implements Lifecycle {
     public static PGWireServer create(
             PGWireConfiguration configuration,
             WorkerPool sharedWorkerPool,
-            Log log,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
@@ -168,7 +166,6 @@ public class PGWireServer implements Lifecycle {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
-                log,
                 cairoEngine,
                 (conf, engine, workerPool, local, sharedWorkerCount, cache, agent, m) -> new PGWireServer(
                         conf,

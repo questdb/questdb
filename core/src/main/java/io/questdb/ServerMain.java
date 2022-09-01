@@ -168,7 +168,6 @@ public class ServerMain implements Lifecycle {
         workers.add(HttpServer.create(
                 config.getHttpServerConfiguration(),
                 pool,
-                log,
                 cairoEngine,
                 functionFactoryCache,
                 snapshotAgent,

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
+import io.questdb.Lifecycle;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -202,9 +203,12 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (
+                CairoEngine engine = new CairoEngine(configuration);
+                Lifecycle service = factory.create(receiverCfg, engine, null, true,  0, null, null, metrics)
+        ) {
             try {
-                factory.create(receiverCfg, engine, null, true,  0, null, null, metrics);
+                service.start();
                 Assert.fail();
             } catch (NetworkError ignore) {
             }

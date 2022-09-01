@@ -44,7 +44,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final RingQueue<IOEvent<C>> interestQueue;
     protected final MPSequence interestPubSeq;
     protected final SCSequence interestSubSeq;
-    protected long serverFd;
+    protected volatile long serverFd = -1L;
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final SPSequence ioEventPubSeq;
     protected final MCSequence ioEventSubSeq;

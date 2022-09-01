@@ -52,7 +52,6 @@ public class BasePGTest extends AbstractGriffinTest {
         return PGWireServer.create(
                 configuration,
                 null,
-                LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,

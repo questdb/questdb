@@ -54,7 +54,6 @@ public class HttpServer implements Lifecycle {
     public static HttpServer create(
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
             CairoEngine cairoEngine,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent,
@@ -63,7 +62,6 @@ public class HttpServer implements Lifecycle {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
-                workerPoolLog,
                 cairoEngine,
                 HttpServer::create0,
                 functionFactoryCache,
@@ -85,7 +83,6 @@ public class HttpServer implements Lifecycle {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
-                workerPoolLog,
                 cairoEngine,
                 HttpServer::createMin,
                 functionFactoryCache,
@@ -178,7 +175,6 @@ public class HttpServer implements Lifecycle {
         return create(
                 configuration,
                 sharedWorkerPool,
-                workerPoolLog,
                 cairoEngine,
                 null,
                 null,

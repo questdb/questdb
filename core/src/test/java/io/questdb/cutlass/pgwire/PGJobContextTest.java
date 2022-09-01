@@ -4176,7 +4176,6 @@ nodejs code:
             try (final PGWireServer server = PGWireServer.create(
                     conf,
                     null,
-                    LOG,
                     engine,
                     compiler.getFunctionFactoryCache(),
                     snapshotAgent,

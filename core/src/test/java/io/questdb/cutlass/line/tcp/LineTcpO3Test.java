@@ -37,10 +37,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -157,25 +154,28 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void test(String ilpResourceName) throws Exception {
         assertMemoryLeak(() -> {
+            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
+            sharedWorkerPool.assignCleaner(Path.CLEANER);
+            SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
+                    haltLatch.countDown();
+                }
+
+            });
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
-
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
-            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
+
             try (
-                    LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, engine, metrics);
+                    LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, engine, metrics);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
-                SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
-                        haltLatch.countDown();
-                    }
-                });
-
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
+                receiver.start();
                 sharedWorkerPool.start(LOG);
+                Os.sleep(2000L);
+
                 TestUtils.assertConnect(clientFd, ilpSockAddr);
                 readGzResource(ilpResourceName);
                 Net.send(clientFd, resourceAddress, resourceSize);

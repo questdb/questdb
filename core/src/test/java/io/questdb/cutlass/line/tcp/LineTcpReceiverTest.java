@@ -1051,7 +1051,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     ) throws Exception {
         test(authKeyId, msgBufferSize, nRows, expectDisconnect,
                 () -> {
-                    AbstractLineSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                    LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
                     if (authKeyId != null) {
                         sender.authenticate(authKeyId, authPrivateKey);
                     }
@@ -1092,9 +1092,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            try (LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, engine, metrics)) {
+            try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, engine, metrics)) {
                 long startEpochMs = System.currentTimeMillis();
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
+                receiver.start();
                 sharedWorkerPool.start(LOG);
 
                 try {
