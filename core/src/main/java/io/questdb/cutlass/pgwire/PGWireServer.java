@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.Lifecycle;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -43,7 +44,8 @@ import java.io.Closeable;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class PGWireServer implements Closeable {
+// TODO
+public class PGWireServer implements Lifecycle {
 
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
 

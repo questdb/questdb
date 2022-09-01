@@ -93,11 +93,9 @@ public class LineTcpReceiver implements Closeable {
         WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
                 lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool, metrics);
         if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(ioWorkerPool);
         }
         if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(writerWorkerPool);
         }
         LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);

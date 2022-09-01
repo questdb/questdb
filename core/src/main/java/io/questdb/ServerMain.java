@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
+import io.questdb.cutlass.http.HttpServer;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -158,27 +159,27 @@ public class ServerMain implements Lifecycle {
 //            pool.freeOnHalt(textImportRequestJob);
 //        }
 
-//        // http
-//        workers.add(HttpServer.create(
-//                config.getHttpServerConfiguration(),
-//                pool,
-//                log,
-//                cairoEngine,
-//                functionFactoryCache,
-//                snapshotAgent,
-//                metrics
-//        ));
-//
-//        // http min
-//        workers.add(HttpServer.createMin(
-//                config.getHttpMinServerConfiguration(),
-//                pool,
-//                log,
-//                cairoEngine,
-//                functionFactoryCache,
-//                snapshotAgent,
-//                metrics
-//        ));
+        // http
+        workers.add(HttpServer.create(
+                config.getHttpServerConfiguration(),
+                pool,
+                log,
+                cairoEngine,
+                functionFactoryCache,
+                snapshotAgent,
+                metrics
+        ));
+
+        // http min
+        workers.add(HttpServer.createMin(
+                config.getHttpMinServerConfiguration(),
+                pool,
+                log,
+                cairoEngine,
+                functionFactoryCache,
+                snapshotAgent,
+                metrics
+        ));
 
         // pg-wire
 //        if (config.getPGWireConfiguration().isEnabled()) {

@@ -119,20 +119,6 @@ public class WorkerPool implements Lifecycle {
     }
 
     @Override
-    public void close() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            for (int i = 0; i < workerCount; i++) {
-                workers.getQuick(i).halt();
-            }
-            halted.await();
-
-            Misc.freeObjList(workers);
-            Misc.freeObjList(freeOnHalt);
-        }
-    }
-
-    @Override
     public void start() {
         start(null);
     }
@@ -171,6 +157,20 @@ public class WorkerPool implements Lifecycle {
                 log.info().$("started").$();
             }
             started.countDown();
+        }
+    }
+
+    @Override
+    public void close() {
+        if (running.compareAndSet(true, false)) {
+            started.await();
+            for (int i = 0; i < workerCount; i++) {
+                workers.getQuick(i).halt();
+            }
+            halted.await();
+
+            Misc.freeObjList(workers);
+            Misc.freeObjList(freeOnHalt);
         }
     }
 }

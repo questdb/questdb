@@ -115,8 +115,7 @@ public class IODispatcherTest {
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
-            model
-                    .col("j", ColumnType.SYMBOL);
+            model.col("j", ColumnType.SYMBOL);
             CairoTestUtils.create(model);
         }
 
@@ -757,7 +756,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = HttpServer.create(
+                HttpServer httpServer = HttpServer.create(
                         new DefaultHttpServerConfiguration(
                                 new DefaultHttpContextConfiguration() {
                                     @Override
@@ -771,6 +770,8 @@ public class IODispatcherTest {
                         cairoEngine,
                         metrics
                 )) {
+
+            httpServer.start();
 
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
@@ -826,7 +827,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = HttpServer.create(
+                HttpServer httpServer = HttpServer.create(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
                             public MillisecondClock getClock() {
@@ -838,6 +839,8 @@ public class IODispatcherTest {
                         cairoEngine,
                         metrics
                 )) {
+
+            httpServer.start();
 
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);

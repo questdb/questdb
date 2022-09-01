@@ -63,13 +63,15 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             WorkerPool sharedPool,
             Metrics metrics
     ) {
-        return configuration.getWorkerCount() > 0 ? new WorkerPool(configuration, metrics) : sharedPool;
+        WorkerPool pool = configuration.getWorkerCount() > 0 ? new WorkerPool(configuration, metrics) : sharedPool;
+        pool.assignCleaner(Path.CLEANER);
+        return pool;
     }
 
     @Nullable
-    static <T extends Closeable, C extends WorkerPoolAwareConfiguration> T create(
+    static <T extends Lifecycle, C extends WorkerPoolAwareConfiguration> T create(
             C configuration,
-            WorkerPool sharedWorkerPool,
+            WorkerPool sharedPool,
             Log log,
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
@@ -79,10 +81,10 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     ) {
         final T server;
         if (configuration.isEnabled()) {
-            final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool, metrics);
+            final WorkerPool localPool = configureWorkerPool(configuration, sharedPool, metrics);
             assert localPool != null;
-            final boolean local = localPool != sharedWorkerPool;
-            final int sharedWorkerCount = sharedWorkerPool == null ? localPool.getWorkerCount() : sharedWorkerPool.getWorkerCount();
+            final boolean local = localPool != sharedPool;
+            final int sharedWorkerCount = sharedPool == null ? localPool.getWorkerCount() : sharedPool.getWorkerCount();
             server = factory.create(
                     configuration,
                     cairoEngine,
@@ -93,12 +95,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
                     snapshotAgent,
                     metrics
             );
-
-            if (local) {
-                localPool.assignCleaner(Path.CLEANER);
-                localPool.start(log);
-            }
-
             return server;
         }
         return null;
