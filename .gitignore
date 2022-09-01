@@ -7,6 +7,7 @@ out
 benchmarks/target
 core/target
 utils/target
+utils/dependency-reduced-pom.xml
 examples/target
 core/node
 core/src/main/resources/io/questdb/site/public.zip

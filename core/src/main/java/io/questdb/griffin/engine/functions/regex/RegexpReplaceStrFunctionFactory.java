@@ -170,7 +170,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
 
     // TODO(puzpuzpuz):
     //  Get rid of this class in favor of StringSink once we drop support for Java 8 where j.u.r.Matcher
-    //  has method overloads for StringBuilder.
+    //  has no method overloads for StringBuilder.
     private static class StringBufferSink implements CharSequence {
         private final StringBuffer buffer = new StringBuffer();
 
