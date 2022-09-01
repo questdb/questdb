@@ -244,6 +244,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int resolvePort(long fd) {
+        return Net.resolvePort(fd);
+    }
+
+    @Override
     public boolean setSndBuf(long fd, int size) {
         return Net.setSndBuf(fd, size) == 0;
     }

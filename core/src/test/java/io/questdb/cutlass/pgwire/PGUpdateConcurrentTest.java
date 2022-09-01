@@ -108,8 +108,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer ignore1 = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, true)) {
+            try (PGWireServer server1 = createPGServer(1)) {
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " 0 as x" +
@@ -125,7 +125,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         "testUpdateTimeout",
                         "test");
 
-                try (final Connection connection = getConnection(false, true)) {
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? WHERE x != 4");
                     update.setInt(1, 4);
 
@@ -157,8 +157,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         assertMemoryLeak(() -> {
             writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
             writerAsyncCommandMaxTimeout = 90_000L;
-            try (PGWireServer ignore1 = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, true)) {
+            try (PGWireServer server1 = createPGServer(1)) {
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
                             " (select timestamp_sequence(0, 60 * 1000000L) ts," +
                             " 0 as x" +
@@ -175,7 +175,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         "test");
 
                 // Non-simple connection
-                try (final Connection connection = getConnection(false, true, 1L)) {
+                try (final Connection connection = getConnection(server1.getPort(), false, true, 1L)) {
                     PreparedStatement update = connection.prepareStatement("" +
                             "UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
                     update.setQueryTimeout(1);
@@ -205,7 +205,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         "test");
 
                 // Simple connection
-                try (final Connection connection = getConnection(true, true, 1L)) {
+                try (final Connection connection = getConnection(server1.getPort(), true, true, 1L)) {
                     PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
                     update.setQueryTimeout(1);
                     update.setInt(1, 4);
@@ -229,7 +229,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 }
 
                 // Connection with default timeout
-                try (final Connection connection = getConnection(false, true)) {
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
                     update.setInt(1, 5);
                     update.executeUpdate();
@@ -279,7 +279,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
             final PGWireServer pgServer = createPGServer(2);
-            try (final Connection connection = getConnection(false, true)) {
+            try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
                 PreparedStatement create = connection.prepareStatement("create table up as" +
                         " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
                         " 0 as x" +
@@ -307,7 +307,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
-                    try (final Connection connection = getConnection(false, true)) {
+                    try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
                         barrier.await();
                         PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
                         for (int i = 0; i < numOfUpdates; i++) {
