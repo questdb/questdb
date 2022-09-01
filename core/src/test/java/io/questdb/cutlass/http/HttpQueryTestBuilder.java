@@ -229,7 +229,7 @@ public class HttpQueryTestBuilder {
                 try {
                     code.run(engine);
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
 
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);

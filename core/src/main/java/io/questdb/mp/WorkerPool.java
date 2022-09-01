@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.Lifecycle;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.std.Misc;
@@ -34,7 +35,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class WorkerPool {
+public class WorkerPool implements Lifecycle {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
     private final int[] workerAffinity;
@@ -117,7 +118,8 @@ public class WorkerPool {
         return workerCount;
     }
 
-    public void halt() {
+    @Override
+    public void close() {
         if (running.compareAndSet(true, false)) {
             started.await();
             for (int i = 0; i < workerCount; i++) {
@@ -128,6 +130,11 @@ public class WorkerPool {
             Misc.freeObjList(workers);
             Misc.freeObjList(freeOnHalt);
         }
+    }
+
+    @Override
+    public void start() {
+        start(null);
     }
 
     public void start(@Nullable Log log) {

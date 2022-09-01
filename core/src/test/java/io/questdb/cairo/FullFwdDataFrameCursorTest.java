@@ -1406,7 +1406,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 if (workerPool != null) {
-                    workerPool.halt();
+                    workerPool.close();
                 }
 
                 try (TableReader reader = createTableReader(configuration, "ABC")) {
@@ -1554,7 +1554,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                workerPool.halt();
+                workerPool.close();
 
                 // let's see what we can read after this catastrophe
                 try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {

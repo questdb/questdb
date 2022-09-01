@@ -192,7 +192,7 @@ public class PGWireServer implements Closeable {
     public void close() {
         // worker pool will only be set if it is "local"
         if (workerPool != null) {
-            workerPool.halt();
+            workerPool.close();
         }
         Misc.free(contextFactory);
         Misc.free(dispatcher);

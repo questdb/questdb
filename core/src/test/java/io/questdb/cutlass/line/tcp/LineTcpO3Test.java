@@ -193,7 +193,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 engine.setPoolListener(null);
                 Net.close(clientFd);
                 Net.freeSockAddr(ilpSockAddr);
-                sharedWorkerPool.halt();
+                sharedWorkerPool.close();
             }
         });
     }

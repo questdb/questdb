@@ -691,7 +691,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     null,
                     null
             );
-            sharedPool.start(null);
+            sharedPool.start();
 
             final WorkerPool stealingPool = new TestWorkerPool(stealingPoolWorkerCount);
 
@@ -730,14 +730,14 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 }
             });
 
-            stealingPool.start(null);
+            stealingPool.start();
 
             try {
                 doneLatch.await();
                 Assert.assertEquals(0, errorCounter.get());
             } finally {
-                sharedPool.halt();
-                stealingPool.halt();
+                sharedPool.close();
+                stealingPool.close();
             }
         });
     }
@@ -760,7 +760,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     null,
                     null
             );
-            pool.start(null);
+            pool.start();
 
             try {
                 runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
@@ -778,7 +778,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 e.printStackTrace();
                 throw e;
             } finally {
-                pool.halt();
+                pool.close();
             }
         });
     }

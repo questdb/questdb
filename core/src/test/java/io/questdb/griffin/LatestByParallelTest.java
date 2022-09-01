@@ -325,7 +325,7 @@ public class LatestByParallelTest {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                 } finally {
                     if (pool != null) {
-                        pool.halt();
+                        pool.close();
                     }
                 }
             }

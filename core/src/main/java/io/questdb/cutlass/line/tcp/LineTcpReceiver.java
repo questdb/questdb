@@ -113,7 +113,7 @@ public class LineTcpReceiver implements Closeable {
     @Override
     public void close() {
         for (int n = 0, sz = dedicatedPools.size(); n < sz; n++) {
-            dedicatedPools.get(n).halt();
+            dedicatedPools.get(n).close();
         }
         Misc.free(scheduler);
         Misc.free(contextFactory);

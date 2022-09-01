@@ -1305,7 +1305,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
                 } finally {
                     if (pool != null) {
-                        pool.halt();
+                        pool.close();
                     }
                 }
             }

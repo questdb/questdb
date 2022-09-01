@@ -1861,7 +1861,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });
@@ -2322,7 +2322,7 @@ public class IODispatcherTest {
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });
@@ -2905,7 +2905,7 @@ public class IODispatcherTest {
                         nf.close(fd);
                     }
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });
@@ -4067,7 +4067,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });
@@ -4243,7 +4243,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });
@@ -4321,7 +4321,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });
@@ -4470,7 +4470,7 @@ public class IODispatcherTest {
                     // number of rows before query is interrupted
                     Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });
@@ -5362,7 +5362,7 @@ public class IODispatcherTest {
                             Net.freeSockAddr(sockAddr);
                         }
                     } finally {
-                        workerPool.halt();
+                        workerPool.close();
                         Files.remove(path);
                     }
                 }
@@ -5507,7 +5507,7 @@ public class IODispatcherTest {
                             LOG.info().$("closed [fd=").$(fd).$(']').$();
                         }
                     } finally {
-                        workerPool.halt();
+                        workerPool.close();
                         Files.remove(path);
                     }
                 }
@@ -5700,7 +5700,7 @@ public class IODispatcherTest {
                             }
                         } finally {
                             Net.freeSockAddr(sockAddr);
-                            workerPool.halt();
+                            workerPool.close();
                         }
                     } finally {
                         Files.remove(path);

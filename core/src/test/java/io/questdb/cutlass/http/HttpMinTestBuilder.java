@@ -88,7 +88,7 @@ public class HttpMinTestBuilder {
                 try {
                     code.run(engine);
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });

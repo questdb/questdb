@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.Lifecycle;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
@@ -55,7 +56,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 
-public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
+public class CairoEngine implements Lifecycle, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final WriterPool writerPool;

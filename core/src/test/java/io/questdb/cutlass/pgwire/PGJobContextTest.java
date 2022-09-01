@@ -6650,7 +6650,7 @@ create table tab as (
                         }
                     }
                 } finally {
-                    pool.halt();
+                    pool.close();
                     engine.releaseAllWriters();
                 }
                 // Failure may not happen if we're lucky, even when they are expected

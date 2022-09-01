@@ -35,7 +35,6 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -147,7 +146,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void closeContext() {
         if (null != scheduler) {
-            workerPool.halt();
+            workerPool.close();
             Assert.assertFalse(context.invalid());
             Assert.assertEquals(FD, context.getFd());
             context.close();

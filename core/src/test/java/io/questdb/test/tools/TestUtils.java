@@ -852,7 +852,7 @@ public final class TestUtils {
                 runnable.run(engine, compiler, sqlExecutionContext);
             } finally {
                 if (pool != null) {
-                    pool.halt();
+                    pool.close();
                 }
             }
             Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -1184,10 +1184,10 @@ public final class TestUtils {
         try {
             pool.assign(processingJob);
             pool.freeOnHalt(processingJob);
-            pool.start(null);
+            pool.start();
             task.run();
         } finally {
-            pool.halt();
+            pool.close();
         }
     }
 

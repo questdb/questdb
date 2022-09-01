@@ -25,168 +25,63 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.line.udp.LineUdpReceiver;
-import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
-import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.cutlass.text.TextImportJob;
-import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
-import java.io.*;
-import java.net.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ServerMain implements QuietClosable {
+public class ServerMain implements Lifecycle {
 
     private final PropServerConfiguration config;
-    private final WorkerPool workerPool;
     private final Log log;
-    private final ObjList<Closeable> workers = new ObjList<>();
+    private final WorkerPool workerPool;
+    private final ObjList<Lifecycle> workers = new ObjList<>();
     private final AtomicBoolean isWorking = new AtomicBoolean();
 
-
-    public ServerMain(PropServerConfiguration config, Metrics metrics, Log log) throws Exception {
-        this.config = config;
-        this.log = log;
-        workerPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
-        workerPool.assignCleaner(Path.CLEANER);
-
-        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
-                config.getCairoConfiguration(),
-                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-        );
-
-        final CairoEngine cairoEngine = new CairoEngine(config.getCairoConfiguration(), metrics);
-        workerPool.assign(cairoEngine.getEngineMaintenanceJob());
-        workers.add(cairoEngine);
-
-        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
-        workers.add(snapshotAgent);
-
-        O3Utils.setupWorkerPool(
-                workerPool,
-                cairoEngine,
-                config.getCairoConfiguration().getCircuitBreakerConfiguration(),
-                functionFactoryCache
-        );
-
-        // Register jobs that help parallel execution of queries and column indexing.
-        workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
-        TextImportJob.assignToPool(cairoEngine.getMessageBus(), workerPool);
-        if (config.getCairoConfiguration().getSqlCopyInputRoot() != null) {
-            final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
-                    cairoEngine,
-                    // save CPU resources for collecting and processing jobs
-                    Math.max(1, workerPool.getWorkerCount() - 2),
-                    functionFactoryCache
-            );
-            workerPool.assign(textImportRequestJob);
-            workerPool.freeOnHalt(textImportRequestJob);
-        }
-        workers.add(HttpServer.create(
-                config.getHttpServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        ));
-        workers.add(HttpServer.createMin(
-                config.getHttpMinServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        ));
-        if (config.getPGWireConfiguration().isEnabled()) {
-            workers.add(PGWireServer.create(
-                    config.getPGWireConfiguration(),
-                    workerPool,
-                    log,
-                    cairoEngine,
-                    functionFactoryCache,
-                    snapshotAgent,
-                    metrics
-            ));
-        }
-        if (config.getLineUdpReceiverConfiguration().isEnabled()) {
-            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-                workers.add(new LinuxMMLineUdpReceiver(
-                        config.getLineUdpReceiverConfiguration(),
-                        cairoEngine,
-                        workerPool
-                ));
-            } else {
-                workers.add(new LineUdpReceiver(
-                        config.getLineUdpReceiverConfiguration(),
-                        cairoEngine,
-                        workerPool
-                ));
-            }
-        }
-        workers.add(LineTcpReceiver.create(
-                config.getLineTcpReceiverConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                metrics
-        ));
-        boolean enableTelemetry = !config.getCairoConfiguration().getTelemetryConfiguration().getDisableCompletely();
-        if (enableTelemetry) {
-            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
-            workers.add(telemetryJob);
-            if (config.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
-                workerPool.assign(telemetryJob);
-            }
-        }
-        System.gc(); // GC 1
+    public ServerMain(String... args) throws SqlException {
+        this(Bootstrap.withArgs(args));
     }
 
-    public ServerMain(Bootstrap bootstrap) throws Exception {
+    public ServerMain(Bootstrap bootstrap) throws SqlException {
         this(bootstrap.getConfig(), bootstrap.getMetrics(), bootstrap.getLog());
     }
 
-    public void start() throws SocketException {
+    public ServerMain(PropServerConfiguration config, Metrics metrics, Log log) throws SqlException {
+        this.config = config;
+        this.log = log;
+        this.workerPool = initWorkers(workers, config, metrics, log);
+        System.gc(); // GC 1
+        log.advisoryW().$("Bootstrap complete").$();
+    }
+
+    @Override
+    public void start() {
         start(false);
     }
 
     public void start(boolean addShutdownHook) {
         if (isWorking.compareAndSet(false, true)) {
             if (addShutdownHook) {
-                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    try {
-                        System.err.println("QuestDB is shutting down...");
-                        close();
-                    } catch (Error ignore) {
-                        // ignore
-                    } finally {
-                        LogFactory.INSTANCE.flushJobsAndClose();
-                        System.err.println("QuestDB is shutdown.");
-                    }
-                }));
+                addShutdownHook();
+            }
+            log.advisoryW().$("QuestDB is starting...").$();
+            for (int i = 0, limit = workers.size(); i < limit; i++) {
+                workers.getQuick(i).start();
             }
             workerPool.start(log); // starts QuestDB's workers
-            logWebConsoleUrls();
+            Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
+            log.advisoryW().$("QuestDB is running").$();
             log.advisoryW().$("enjoy").$();
         }
     }
@@ -194,50 +89,151 @@ public class ServerMain implements QuietClosable {
     @Override
     public void close() {
         if (isWorking.compareAndSet(true, false)) {
+            workerPool.close();
             ShutdownFlag.INSTANCE.shutdown();
-            workerPool.halt();
             Misc.freeObjList(workers);
             workers.clear();
         }
     }
 
-    private void logWebConsoleUrls() {
-        if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW()
-                    .$('\n')
-                    .$("     ___                  _   ____  ____\n")
-                    .$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n")
-                    .$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n")
-                    .$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n")
-                    .$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n")
-                    .$("web console URL(s):").$("\n\n");
-            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
-            final int bindIP = httpConf.getBindIPv4Address();
-            final int bindPort = httpConf.getBindPort();
-            if (bindIP == 0) {
-                try {
-                    for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
-                        for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
-                            InetAddress inetAddress = addr.nextElement();
-                            if (inetAddress instanceof Inet4Address) {
-                                r.$('\t').$("http://").$(inetAddress).$(':').$(bindPort).$('\n');
-                            }
-                        }
-                    }
-                } catch (SocketException se) {
-                    throw new Bootstrap.BootstrapException("Cannot access network interfaces");
-                }
-                r.$('\n').$();
-            } else {
-                r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
+    private void addShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                System.err.println("QuestDB is shutting down...");
+                close();
+            } catch (Error ignore) {
+                // ignore
+            } finally {
+                LogFactory.INSTANCE.flushJobsAndClose();
+                System.err.println("QuestDB is shutdown.");
             }
-        }
+        }));
+    }
+
+    private static WorkerPool initWorkers(
+            ObjList<Lifecycle> workers,
+            PropServerConfiguration config,
+            Metrics metrics,
+            Log log
+    ) throws SqlException {
+
+        WorkerPool pool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
+        pool.assignCleaner(Path.CLEANER);
+
+        final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+        final CairoEngine cairoEngine = new CairoEngine(cairoConfig, metrics);
+        pool.assign(cairoEngine.getEngineMaintenanceJob());
+        workers.add(cairoEngine);
+
+        // snapshots
+        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
+        workers.add(snapshotAgent);
+
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
+                cairoConfig,
+                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+        );
+        O3Utils.setupWorkerPool(
+                pool,
+                cairoEngine,
+                cairoConfig.getCircuitBreakerConfiguration(),
+                functionFactoryCache
+        );
+
+        // Register jobs that help parallel execution of queries and column indexing.
+        pool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
+        pool.assign(new GroupByJob(cairoEngine.getMessageBus()));
+        pool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
+
+        // text import
+//        TextImportJob.assignToPool(cairoEngine.getMessageBus(), pool);
+//        if (cairoConfig.getSqlCopyInputRoot() != null) {
+//            final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+//                    cairoEngine,
+//                    // save CPU resources for collecting and processing jobs
+//                    Math.max(1, pool.getWorkerCount() - 2),
+//                    functionFactoryCache
+//            );
+//            pool.assign(textImportRequestJob);
+//            pool.freeOnHalt(textImportRequestJob);
+//        }
+
+//        // http
+//        workers.add(HttpServer.create(
+//                config.getHttpServerConfiguration(),
+//                pool,
+//                log,
+//                cairoEngine,
+//                functionFactoryCache,
+//                snapshotAgent,
+//                metrics
+//        ));
+//
+//        // http min
+//        workers.add(HttpServer.createMin(
+//                config.getHttpMinServerConfiguration(),
+//                pool,
+//                log,
+//                cairoEngine,
+//                functionFactoryCache,
+//                snapshotAgent,
+//                metrics
+//        ));
+
+        // pg-wire
+//        if (config.getPGWireConfiguration().isEnabled()) {
+//            workers.add(PGWireServer.create(
+//                    config.getPGWireConfiguration(),
+//                    pool,
+//                    log,
+//                    cairoEngine,
+//                    functionFactoryCache,
+//                    snapshotAgent,
+//                    metrics
+//            ));
+//        }
+
+//        // ilp/udp
+//        if (config.getLineUdpReceiverConfiguration().isEnabled()) {
+//            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+//                workers.add(new LinuxMMLineUdpReceiver(
+//                        config.getLineUdpReceiverConfiguration(),
+//                        cairoEngine,
+//                        pool
+//                ));
+//            } else {
+//                workers.add(new LineUdpReceiver(
+//                        config.getLineUdpReceiverConfiguration(),
+//                        cairoEngine,
+//                        pool
+//                ));
+//            }
+//        }
+//
+//        // ilp/tcp
+//        workers.add(LineTcpReceiver.create(
+//                config.getLineTcpReceiverConfiguration(),
+//                pool,
+//                log,
+//                cairoEngine,
+//                metrics
+//        ));
+//
+//        // telemetry
+//        if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
+//            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
+//            workers.add(telemetryJob);
+//            if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
+//                pool.assign(telemetryJob);
+//            }
+//        }
+        return pool;
     }
 
     public static void main(String[] args) throws Exception {
         try {
-            new ServerMain(Bootstrap.withArgs(args)).start(true);
-        } catch (SocketException thr) {
+            new ServerMain(args).start(true);
+        } catch (Throwable thr) {
             System.err.println(thr.getMessage());
             LogFactory.INSTANCE.flushJobsAndClose();
             System.exit(55);

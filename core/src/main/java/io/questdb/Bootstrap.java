@@ -31,6 +31,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -40,6 +41,7 @@ import sun.misc.Signal;
 import java.io.*;
 import java.net.*;
 import java.nio.file.Paths;
+import java.util.Enumeration;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
@@ -69,8 +71,41 @@ public class Bootstrap {
         }
     }
 
-    public static Bootstrap withArgs(String... args) throws IOException {
+    public static Bootstrap withArgs(String... args) {
         return new Bootstrap(args);
+    }
+
+    public static void logWebConsoleUrls(PropServerConfiguration config, Log log) {
+        if (config.getHttpServerConfiguration().isEnabled()) {
+            final LogRecord r = log.infoW()
+                    .$('\n')
+                    .$("     ___                  _   ____  ____\n")
+                    .$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n")
+                    .$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n")
+                    .$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n")
+                    .$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n")
+                    .$("web console URL(s):").$("\n\n");
+            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
+            final int bindIP = httpConf.getBindIPv4Address();
+            final int bindPort = httpConf.getBindPort();
+            if (bindIP == 0) {
+                try {
+                    for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
+                        for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
+                            InetAddress inetAddress = addr.nextElement();
+                            if (inetAddress instanceof Inet4Address) {
+                                r.$('\t').$("http://").$(inetAddress).$(':').$(bindPort).$('\n');
+                            }
+                        }
+                    }
+                } catch (SocketException se) {
+                    throw new Bootstrap.BootstrapException("Cannot access network interfaces");
+                }
+                r.$('\n').$();
+            } else {
+                r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
+            }
+        }
     }
 
 
@@ -79,7 +114,7 @@ public class Bootstrap {
     private final Metrics metrics;
     private final Log log;
 
-    private Bootstrap(String... args) throws IOException {
+    private Bootstrap(String... args)  {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
@@ -99,10 +134,47 @@ public class Bootstrap {
         final int nodeId = NODE_ID.incrementAndGet();
         String logName = nodeId > 0 ? String.format("%s-%d", LOG_NAME, nodeId) : LOG_NAME;
         log = LogFactory.getLog(logName);
+
+        // report copyright and architecture
         log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion())
                 .$(". Copyright (C) 2014-").$(buildInformation.getYear())
                 .$(", all rights reserved.")
                 .$();
+        String archName;
+        boolean isOsSupported = true;
+        switch (Os.type) {
+            case Os.WINDOWS:
+                archName = "OS/Arch windows/amd64";
+                break;
+            case Os.LINUX_AMD64:
+                archName = "OS/Arch linux/amd64";
+                break;
+            case Os.OSX_AMD64:
+                archName = "OS/Arch apple/amd64";
+                break;
+            case Os.OSX_ARM64:
+                archName = "OS/Arch apple/apple-silicon";
+                break;
+            case Os.LINUX_ARM64:
+                archName = "OS/Arch linux/arm64";
+                break;
+            case Os.FREEBSD:
+                archName = "OS/ARCH freebsd/amd64";
+                break;
+            default:
+                isOsSupported = false;
+                archName = "Unsupported OS";
+                break;
+        }
+        StringBuilder sb = new StringBuilder(Vect.getSupportedInstructionSetName());
+        sb.setLength(sb.length() - 1); // remove ending ']'
+        sb.append(", ").append(System.getProperty("sun.arch.data.model")).append(" bits");
+        sb.append(", ").append(Runtime.getRuntime().availableProcessors()).append(" processors");
+        if (isOsSupported) {
+            log.advisoryW().$(archName).$(sb.toString()).I$();
+        } else {
+            log.criticalW().$(archName).$(sb.toString()).I$();
+        }
 
         // /server.conf properties
         try {
@@ -129,7 +201,11 @@ public class Bootstrap {
         }
 
         // site
-        extractSite();
+        try {
+            extractSite();
+        } catch (IOException ioe) {
+            throw new BootstrapException(ioe);
+        }
     }
 
     public PropServerConfiguration getConfig() {
@@ -291,57 +367,34 @@ public class Bootstrap {
         final boolean pgEnabled = config.getPGWireConfiguration().isEnabled();
         final boolean pgReadOnly = config.getPGWireConfiguration().readOnlySecurityContext();
         final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
-        final CairoConfiguration cairoConfiguration = config.getCairoConfiguration();
-        log.advisoryW().$("Config changes applied:").$();
-        log.advisoryW().$("  http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
-        log.advisoryW().$("  tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
-        log.advisoryW().$("  pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
-        log.advisoryW().$("open database [id=").$(cairoConfiguration.getDatabaseIdLo()).$('.').$(cairoConfiguration.getDatabaseIdHi()).$(']').$();
-        log.advisoryW().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
-        switch (Os.type) {
-            case Os.WINDOWS:
-                log.advisoryW().$("OS/Arch: windows/amd64").$(Vect.getSupportedInstructionSetName()).$();
-                break;
-            case Os.LINUX_AMD64:
-                log.advisoryW().$("OS/Arch: linux/amd64").$(Vect.getSupportedInstructionSetName()).$();
-                break;
-            case Os.OSX_AMD64:
-                log.advisoryW().$("OS/Arch: apple/amd64").$(Vect.getSupportedInstructionSetName()).$();
-                break;
-            case Os.OSX_ARM64:
-                log.advisoryW().$("OS/Arch: apple/apple-silicon").$();
-                break;
-            case Os.LINUX_ARM64:
-                log.advisoryW().$("OS/Arch: linux/arm64").$(Vect.getSupportedInstructionSetName()).$();
-                break;
-            case Os.FREEBSD:
-                log.advisoryW().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
-                break;
-            default:
-                log.criticalW().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
-                break;
+        final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+        log.advisoryW().$("Config:").$();
+        log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
+        log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
+        log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
+        log.advisoryW().$(" - open database [id=").$(cairoConfig.getDatabaseIdLo()).$('.').$(cairoConfig.getDatabaseIdHi()).I$();
+        try (Path path = new Path()) {
+            verifyFileSystem(path, cairoConfig.getRoot(), "db");
+            verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup");
+            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot");
+            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input root");
+            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker root");
+            verifyFileOpts(path, cairoConfig);
         }
-        log.advisoryW().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
-        log.advisoryW().$("db root: ").$(cairoConfiguration.getRoot()).$();
-        log.advisoryW().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
-        log.advisoryW().$("snapshot root: ").$(cairoConfiguration.getSnapshotRoot()).$();
-        log.advisoryW().$("sql copy input root: ").$(cairoConfiguration.getSqlCopyInputRoot()).$();
-        log.advisoryW().$("sql copy input worker root: ").$(cairoConfiguration.getSqlCopyInputWorkRoot()).$();
-        verifyFileSystem(cairoConfiguration);
         if (JitUtil.isJitSupported()) {
-            final int jitMode = cairoConfiguration.getSqlJitMode();
+            final int jitMode = cairoConfig.getSqlJitMode();
             switch (jitMode) {
                 case SqlJitMode.JIT_MODE_ENABLED:
-                    log.advisoryW().$("SQL JIT compiler mode: on").$();
+                    log.advisoryW().$(" - SQL JIT compiler mode: on").$();
                     break;
                 case SqlJitMode.JIT_MODE_FORCE_SCALAR:
-                    log.advisoryW().$("SQL JIT compiler mode: scalar").$();
+                    log.advisoryW().$(" - SQL JIT compiler mode: scalar").$();
                     break;
                 case SqlJitMode.JIT_MODE_DISABLED:
-                    log.advisoryW().$("SQL JIT compiler mode: off").$();
+                    log.advisoryW().$(" - SQL JIT compiler mode: off").$();
                     break;
                 default:
-                    log.errorW().$("Unknown SQL JIT compiler mode: ").$(jitMode).$();
+                    log.errorW().$(" - Unknown SQL JIT compiler mode: ").$(jitMode).$();
                     break;
             }
         }
@@ -395,30 +448,23 @@ public class Bootstrap {
         }
     }
 
-    void verifyFileSystem(CairoConfiguration cairoConfiguration) {
-        try (Path path = new Path()) {
-            verifyFileSystem(path, cairoConfiguration.getRoot(), "db");
-            verifyFileSystem(path, cairoConfiguration.getBackupRoot(), "backup");
-            verifyFileSystem(path, cairoConfiguration.getSnapshotRoot(), "snapshot");
-            verifyFileSystem(path, cairoConfiguration.getSqlCopyInputRoot(), "sql copy input root");
-            verifyFileSystem(path, cairoConfiguration.getSqlCopyInputWorkRoot(), "sql copy input worker root");
-            verifyFileOpts(path, cairoConfiguration);
+    private void verifyFileSystem(Path path, CharSequence rootDir, String kind) {
+        if (rootDir == null) {
+            log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
+            return;
         }
-    }
-
-    private void verifyFileSystem(Path path, CharSequence dir, String kind) {
-        if (dir != null) {
-            path.of(dir).$();
-            // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
-            path.seekZ();
-            LogRecord rec = log.advisoryW().$(kind).$(" file system magic: 0x");
-            if (fsStatus < 0) {
-                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisoryW().$("\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n").$();
-            }
+        path.of(rootDir).$();
+        // path will contain file system name
+        long fsStatus = Files.getFileSystemStatus(path);
+        path.seekZ();
+        LogRecord rec =  log.advisoryW()
+                .$(" - ").$(kind)
+                .$(" root: [path=").$(rootDir)
+                .$(", magic=0x");
+        if (fsStatus < 0) {
+            rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
+        } else {
+            rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
         }
     }
 

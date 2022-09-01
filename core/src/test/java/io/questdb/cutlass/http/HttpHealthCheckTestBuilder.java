@@ -33,9 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.BrokenBarrierException;
@@ -94,7 +92,7 @@ public class HttpHealthCheckTestBuilder {
                 try {
                     code.run(engine);
                 } finally {
-                    workerPool.halt();
+                    workerPool.close();
                 }
             }
         });

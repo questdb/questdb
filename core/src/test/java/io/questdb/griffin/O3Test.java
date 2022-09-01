@@ -1313,13 +1313,13 @@ public class O3Test extends AbstractO3Test {
 
             pool2.assignCleaner(Path.CLEANER);
 
-            pool1.start(null);
-            pool2.start(null);
+            pool1.start();
+            pool2.start();
 
             haltLatch.await();
 
-            pool1.halt();
-            pool2.halt();
+            pool1.close();
+            pool2.close();
 
             Assert.assertEquals(0, errorCount.get());
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);

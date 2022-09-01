@@ -285,7 +285,7 @@ public class HttpServer implements Closeable {
     @Override
     public void close() {
         if (workerPool != null) {
-            workerPool.halt();
+            workerPool.close();
         }
         Misc.free(httpContextFactory);
         Misc.free(dispatcher);

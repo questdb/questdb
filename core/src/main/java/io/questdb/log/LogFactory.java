@@ -375,7 +375,7 @@ public class LogFactory implements Closeable {
 
     public void haltThread() {
         if (workerPool != null) {
-            workerPool.halt();
+            workerPool.close();
             workerPool = null;
         }
     }
@@ -413,7 +413,7 @@ public class LogFactory implements Closeable {
             }
         }, Metrics.disabled());
         assign(workerPool);
-        workerPool.start(null);
+        workerPool.start();
     }
 
     private static String getProperty(final Properties properties, String key) {
