@@ -100,7 +100,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         while (doneLatch.getCount() == 0) {
             final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
-            if (PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker)) {
+            if (PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker, this)) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
                     // Discard collect items.
@@ -388,7 +388,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             PageAddressCacheRecord record,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker)) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
             Os.pause();
             return false;
         }
@@ -405,7 +405,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         try {
             if (isActive()) {
-                PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this);
+                PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this, this);
             }
         } catch (Throwable e) {
             cancel();

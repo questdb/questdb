@@ -165,7 +165,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         return base.hasDescendingOrder();
     }
 
-    private static void filter(int workerId, PageAddressCacheRecord record, PageFrameReduceTask task) {
+    private static void filter(
+            int workerId,
+            PageAddressCacheRecord record,
+            PageFrameReduceTask task,
+            PageFrameSequence<?> stealingFrameSequence
+    ) {
         final DirectLongList rows = task.getRows();
         final DirectLongList columns = task.getColumns();
         final long frameRowCount = task.getFrameRowCount();

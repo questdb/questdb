@@ -30,13 +30,10 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
+import io.questdb.mp.FixedThread;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
@@ -425,12 +422,11 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
     }
 
-    @Ignore
     @Test
     public void testEqStrFunctionFactory() throws Exception {
         final int threadCount = 4;
         final int workerCount = 4;
-        AbstractCairoTest.jitMode = SqlJitMode.JIT_MODE_ENABLED;
+        AbstractCairoTest.jitMode = SqlJitMode.JIT_MODE_DISABLED;
 
         WorkerPool pool = new WorkerPool(
                 new WorkerPoolAwareConfiguration() {
@@ -491,10 +487,9 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     final AtomicInteger errors = new AtomicInteger();
                     final CyclicBarrier barrier = new CyclicBarrier(threadCount);
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
-
                     for (int i = 0; i < threadCount; i++) {
                         final int finalI = i;
-                        new Thread(() -> {
+                        new FixedThread(i, () -> {
                             TestUtils.await(barrier);
 
                             final RecordCursorFactory factory = factories[finalI];
@@ -505,7 +500,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                                 int rowCount = 0;
                                 while (cursor.hasNext()) {
                                     rowCount++;
-                                    Assert.assertEquals("", record.getStr(0));
+                                    TestUtils.assertEquals("0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", record.getSym(0));
                                 }
                                 Assert.assertEquals(numOfRows, rowCount);
                             } catch (Throwable e) {

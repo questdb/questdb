@@ -22,17 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql.async;
+package io.questdb.mp;
 
-import io.questdb.cairo.sql.PageAddressCacheRecord;
-import org.jetbrains.annotations.Nullable;
+public class FixedThread extends Thread {
+    private final int workerId;
 
-@FunctionalInterface
-public interface PageFrameReducer {
-    void reduce(
-            int workerId,
-            PageAddressCacheRecord record,
-            PageFrameReduceTask task,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
-    );
+    public FixedThread(int workerId) {
+        this.workerId = workerId;
+    }
+
+    public FixedThread(int workerId, Runnable target) {
+        super(target);
+        this.workerId = workerId;
+    }
+
+    public int getWorkerId() {
+        return workerId;
+    }
 }

@@ -32,7 +32,7 @@ import io.questdb.std.Unsafe;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class Worker extends Thread {
+public class Worker extends FixedThread {
     private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final ObjHashSet<? extends Job> jobs;
@@ -41,7 +41,6 @@ public class Worker extends Thread {
     private final Log log;
     private final WorkerCleaner cleaner;
     private final boolean haltOnError;
-    private final int workerId;
     private final long sleepMs;
     private final long yieldThreshold;
     private final long sleepThreshold;
@@ -63,6 +62,7 @@ public class Worker extends Thread {
             long sleepMs,
             Metrics metrics
     ) {
+        super(workerId);
         this.log = log;
         this.jobs = jobs;
         this.haltLatch = haltLatch;
@@ -70,16 +70,11 @@ public class Worker extends Thread {
         this.affinity = affinity;
         this.cleaner = cleaner;
         this.haltOnError = haltOnError;
-        this.workerId = workerId;
         this.yieldThreshold = yieldThreshold;
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
         this.metrics = metrics;
         this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
-    }
-
-    public int getWorkerId() {
-        return workerId;
     }
 
     public void halt() {
@@ -115,7 +110,7 @@ public class Worker extends Thread {
                         Unsafe.getUnsafe().loadFence();
                         try {
                             try {
-                                useful |= jobs.get(i).run(workerId);
+                                useful |= jobs.get(i).run(getWorkerId());
                             } catch (Throwable e) {
                                 onError(i, e);
                             }
