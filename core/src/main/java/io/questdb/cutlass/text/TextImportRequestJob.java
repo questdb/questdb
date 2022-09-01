@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.Lifecycle;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -43,13 +44,10 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-import java.io.IOException;
-
 import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
 import static io.questdb.cutlass.text.TextImportTask.getStatusName;
 
-public class TextImportRequestJob extends SynchronizedJob implements Closeable {
+public class TextImportRequestJob extends SynchronizedJob implements Lifecycle {
     private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
 
     private final RingQueue<TextImportRequestTask> requestQueue;
@@ -111,7 +109,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         this.parallelImporter = Misc.free(parallelImporter);
         this.serialImporter = Misc.free(serialImporter);
         this.writer = Misc.free(this.writer);

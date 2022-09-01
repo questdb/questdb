@@ -49,7 +49,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class TelemetryJob extends SynchronizedJob implements Closeable {
+public class TelemetryJob extends SynchronizedJob implements Lifecycle {
     public final static CharSequence tableName = "telemetry";
     public final static CharSequence configTableName = "telemetry_config";
     static final String QDB_PACKAGE = "QDB_PACKAGE";

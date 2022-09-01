@@ -26,6 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.text.TextImportJob;
+import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -147,17 +149,17 @@ public class ServerMain implements Lifecycle {
         pool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
 
         // text import
-//        TextImportJob.assignToPool(cairoEngine.getMessageBus(), pool);
-//        if (cairoConfig.getSqlCopyInputRoot() != null) {
-//            final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
-//                    cairoEngine,
-//                    // save CPU resources for collecting and processing jobs
-//                    Math.max(1, pool.getWorkerCount() - 2),
-//                    functionFactoryCache
-//            );
-//            pool.assign(textImportRequestJob);
-//            pool.freeOnHalt(textImportRequestJob);
-//        }
+        TextImportJob.assignToPool(cairoEngine.getMessageBus(), pool);
+        if (cairoConfig.getSqlCopyInputRoot() != null) {
+            final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                    cairoEngine,
+                    // save CPU resources for collecting and processing jobs
+                    Math.max(1, pool.getWorkerCount() - 2),
+                    functionFactoryCache
+            );
+            pool.assign(textImportRequestJob);
+            pool.freeOnHalt(textImportRequestJob);
+        }
 
         // http
         workers.add(HttpServer.create(
@@ -219,15 +221,15 @@ public class ServerMain implements Lifecycle {
 //                cairoEngine,
 //                metrics
 //        ));
-//
-//        // telemetry
-//        if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-//            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
-//            workers.add(telemetryJob);
-//            if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-//                pool.assign(telemetryJob);
-//            }
-//        }
+
+        // telemetry
+        if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
+            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
+            workers.add(telemetryJob);
+            if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
+                pool.assign(telemetryJob);
+            }
+        }
         return pool;
     }
 
