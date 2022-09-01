@@ -5899,7 +5899,7 @@ public class TableWriter implements Closeable {
         ObjList<Runnable> tempNullSetters = o3NullSetters;
         o3NullSetters = o3NullSetters2;
         o3NullSetters2 = tempNullSetters;
-
+        activeNullSetters = o3NullSetters;
     }
 
     private void switchPartition(long timestamp) {
