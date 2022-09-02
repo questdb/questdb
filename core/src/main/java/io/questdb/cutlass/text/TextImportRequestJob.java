@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.Lifecycle;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -39,6 +38,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -47,7 +47,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
 import static io.questdb.cutlass.text.TextImportTask.getStatusName;
 
-public class TextImportRequestJob extends SynchronizedJob implements Lifecycle {
+public class TextImportRequestJob extends SynchronizedJob implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
 
     private final RingQueue<TextImportRequestTask> requestQueue;

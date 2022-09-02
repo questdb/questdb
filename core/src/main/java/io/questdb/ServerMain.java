@@ -42,17 +42,16 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ServerMain implements Lifecycle {
+public class ServerMain implements QuietCloseable {
 
     private final PropServerConfiguration config;
     private final Log log;
     private final WorkerPool workerPool;
-    private final ObjList<Lifecycle> workers = new ObjList<>();
+    private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
     private final AtomicBoolean isWorking = new AtomicBoolean();
 
     public ServerMain(String... args) throws SqlException {
@@ -66,12 +65,11 @@ public class ServerMain implements Lifecycle {
     public ServerMain(PropServerConfiguration config, Metrics metrics, Log log) throws SqlException {
         this.config = config;
         this.log = log;
-        this.workerPool = initWorkers(workers, config, metrics, log);
+        this.workerPool = initWorkers(toBeClosed, config, metrics, log);
         System.gc(); // GC 1
         log.advisoryW().$("Bootstrap complete").$();
     }
 
-    @Override
     public void start() {
         start(false);
     }
@@ -83,9 +81,6 @@ public class ServerMain implements Lifecycle {
             }
             log.advisoryW().$("QuestDB is starting...").$();
             workerPool.start(log); // starts QuestDB's workers
-            for (int i = 0, limit = workers.size(); i < limit; i++) {
-                workers.getQuick(i).start();
-            }
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
             log.advisoryW().$("QuestDB is running").$();
@@ -98,8 +93,8 @@ public class ServerMain implements Lifecycle {
         if (isWorking.compareAndSet(true, false)) {
             workerPool.close();
             ShutdownFlag.INSTANCE.shutdown();
-            Misc.freeObjList(workers);
-            workers.clear();
+            Misc.freeObjList(toBeClosed);
+            toBeClosed.clear();
         }
     }
 
@@ -118,24 +113,18 @@ public class ServerMain implements Lifecycle {
     }
 
     private static WorkerPool initWorkers(
-            ObjList<Lifecycle> workers,
+            ObjList<QuietCloseable> toBeClosed,
             PropServerConfiguration config,
             Metrics metrics,
             Log log
     ) throws SqlException {
 
+        // setup worker pool
         WorkerPool pool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
-        pool.assignCleaner(Path.CLEANER);
-
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         final CairoEngine cairoEngine = new CairoEngine(cairoConfig, metrics);
         pool.assign(cairoEngine.getEngineMaintenanceJob());
-        workers.add(cairoEngine);
-
-        // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
-        workers.add(snapshotAgent);
-
+        toBeClosed.add(cairoEngine);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
                 cairoConfig,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
@@ -146,6 +135,10 @@ public class ServerMain implements Lifecycle {
                 cairoConfig.getCircuitBreakerConfiguration(),
                 functionFactoryCache
         );
+
+        // snapshots
+        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
+        toBeClosed.add(snapshotAgent);
 
         // Register jobs that help parallel execution of queries and column indexing.
         pool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
@@ -166,9 +159,10 @@ public class ServerMain implements Lifecycle {
         }
 
         // http
-        workers.add(HttpServer.create(
+        toBeClosed.add(HttpServer.create(
                 config.getHttpServerConfiguration(),
                 pool,
+                log,
                 cairoEngine,
                 functionFactoryCache,
                 snapshotAgent,
@@ -176,7 +170,7 @@ public class ServerMain implements Lifecycle {
         ));
 
         // http min
-        workers.add(HttpServer.createMin(
+        toBeClosed.add(HttpServer.createMin(
                 config.getHttpMinServerConfiguration(),
                 pool,
                 log,
@@ -188,9 +182,10 @@ public class ServerMain implements Lifecycle {
 
         // pg-wire
         if (config.getPGWireConfiguration().isEnabled()) {
-            workers.add(PGWireServer.create(
+            toBeClosed.add(PGWireServer.create(
                     config.getPGWireConfiguration(),
                     pool,
+                    log,
                     cairoEngine,
                     functionFactoryCache,
                     snapshotAgent,
@@ -201,13 +196,13 @@ public class ServerMain implements Lifecycle {
         // ilp/udp
         if (config.getLineUdpReceiverConfiguration().isEnabled()) {
             if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-                workers.add(new LinuxMMLineUdpReceiver(
+                toBeClosed.add(new LinuxMMLineUdpReceiver(
                         config.getLineUdpReceiverConfiguration(),
                         cairoEngine,
                         pool
                 ));
             } else {
-                workers.add(new LineUdpReceiver(
+                toBeClosed.add(new LineUdpReceiver(
                         config.getLineUdpReceiverConfiguration(),
                         cairoEngine,
                         pool
@@ -216,9 +211,10 @@ public class ServerMain implements Lifecycle {
         }
 
         // ilp/tcp
-        workers.add(LineTcpReceiver.create(
+        toBeClosed.add(LineTcpReceiver.create(
                 config.getLineTcpReceiverConfiguration(),
                 pool,
+                log,
                 cairoEngine,
                 metrics
         ));
@@ -226,7 +222,7 @@ public class ServerMain implements Lifecycle {
         // telemetry
         if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
             final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
-            workers.add(telemetryJob);
+            toBeClosed.add(telemetryJob);
             if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                 pool.assign(telemetryJob);
             }

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Lifecycle;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,11 +36,10 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class DatabaseSnapshotAgent implements Lifecycle {
+public class DatabaseSnapshotAgent implements QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);
 

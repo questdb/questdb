@@ -42,11 +42,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
         // bind socket
         this.kqueue = new Kqueue(capacity);
-    }
-
-    @Override
-    public void start() {
-        super.start();
         registerListenerFd();
     }
 

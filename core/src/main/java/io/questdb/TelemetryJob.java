@@ -43,13 +43,12 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
-public class TelemetryJob extends SynchronizedJob implements Lifecycle {
+public class TelemetryJob extends SynchronizedJob implements QuietCloseable {
     public final static CharSequence tableName = "telemetry";
     public final static CharSequence configTableName = "telemetry_config";
     static final String QDB_PACKAGE = "QDB_PACKAGE";

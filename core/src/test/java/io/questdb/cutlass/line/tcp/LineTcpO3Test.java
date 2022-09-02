@@ -154,30 +154,27 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void test(String ilpResourceName) throws Exception {
         assertMemoryLeak(() -> {
-            readGzResource(ilpResourceName);
-
-            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
-            sharedWorkerPool.assignCleaner(Path.CLEANER);
-            SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
-                    haltLatch.countDown();
-                }
-
-            });
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
-            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
 
+            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
+            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
             try (
-                    LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, engine, metrics);
+                    LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
-                sharedWorkerPool.start(LOG);
-                receiver.start();
+                SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
+                        haltLatch.countDown();
+                    }
+                });
 
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
+                sharedWorkerPool.start(LOG);
                 TestUtils.assertConnect(clientFd, ilpSockAddr);
+                readGzResource(ilpResourceName);
                 Net.send(clientFd, resourceAddress, resourceSize);
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 

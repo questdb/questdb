@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.Lifecycle;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
@@ -44,9 +43,8 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 
-public class HttpServer implements Lifecycle {
+public class HttpServer implements QuietCloseable {
 
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
 
@@ -54,6 +52,7 @@ public class HttpServer implements Lifecycle {
     public static HttpServer create(
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
+            Log workerPoolLog,
             CairoEngine cairoEngine,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent,
@@ -62,6 +61,7 @@ public class HttpServer implements Lifecycle {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
+                workerPoolLog,
                 cairoEngine,
                 HttpServer::create0,
                 functionFactoryCache,
@@ -83,6 +83,7 @@ public class HttpServer implements Lifecycle {
         return WorkerPoolAwareConfiguration.create(
                 configuration,
                 sharedWorkerPool,
+                workerPoolLog,
                 cairoEngine,
                 HttpServer::createMin,
                 functionFactoryCache,
@@ -99,7 +100,6 @@ public class HttpServer implements Lifecycle {
     private final WorkerPool workerPool;
     private final WaitProcessor rescheduleContext;
 
-    @TestOnly
     HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
@@ -175,6 +175,7 @@ public class HttpServer implements Lifecycle {
         return create(
                 configuration,
                 sharedWorkerPool,
+                workerPoolLog,
                 cairoEngine,
                 null,
                 null,
@@ -201,14 +202,6 @@ public class HttpServer implements Lifecycle {
                 }
             }
         }
-    }
-
-    @Override
-    public void start() {
-        if (workerPool != null) {
-            workerPool.start(LOG);
-        }
-        dispatcher.start();
     }
 
     @Override
@@ -360,6 +353,7 @@ public class HttpServer implements Lifecycle {
         return s;
     }
 
+    @FunctionalInterface
     private interface HttpRequestProcessorBuilder {
         HttpRequestProcessor newInstance();
     }
@@ -389,7 +383,7 @@ public class HttpServer implements Lifecycle {
         }
     }
 
-    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable, EagerThreadSetup {
+    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, QuietCloseable, EagerThreadSetup {
         private final ThreadLocal<WeakMutableObjectPool<HttpConnectionContext>> contextPool;
         private boolean closed = false;
 

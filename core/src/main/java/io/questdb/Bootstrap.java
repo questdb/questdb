@@ -377,8 +377,8 @@ public class Bootstrap {
             verifyFileSystem(path, cairoConfig.getRoot(), "db");
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup");
             verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot");
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input root");
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker root");
+            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input");
+            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker");
             verifyFileOpts(path, cairoConfig);
         }
         if (JitUtil.isJitSupported()) {

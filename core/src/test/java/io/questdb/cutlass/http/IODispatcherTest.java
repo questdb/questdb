@@ -192,8 +192,6 @@ public class IODispatcherTest {
                         return new HelloContext(fd, contextClosedLatch, dispatcher1);
                     }
             )) {
-                dispatcher.start();
-
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
@@ -309,8 +307,6 @@ public class IODispatcherTest {
                     },
                     (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(fd, dispatcher1)
             )) {
-                dispatcher.start();
-
 
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -395,8 +391,6 @@ public class IODispatcherTest {
                         }
                     }
             )) {
-                dispatcher.start();
-
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
 
                     @Override
@@ -761,7 +755,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer httpServer = HttpServer.create(
+                HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration(
                                 new DefaultHttpContextConfiguration() {
                                     @Override
@@ -775,8 +769,6 @@ public class IODispatcherTest {
                         cairoEngine,
                         metrics
                 )) {
-
-            httpServer.start();
 
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
@@ -832,7 +824,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer httpServer = HttpServer.create(
+                HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
                             public MillisecondClock getClock() {
@@ -844,8 +836,6 @@ public class IODispatcherTest {
                         cairoEngine,
                         metrics
                 )) {
-
-            httpServer.start();
 
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
@@ -1757,7 +1747,6 @@ public class IODispatcherTest {
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -2217,7 +2206,6 @@ public class IODispatcherTest {
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -2825,7 +2813,6 @@ public class IODispatcherTest {
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4006,7 +3993,6 @@ public class IODispatcherTest {
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4196,9 +4182,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
-            ) {
-                httpServer.start();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4275,7 +4259,6 @@ public class IODispatcherTest {
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4374,7 +4357,6 @@ public class IODispatcherTest {
             }, metrics);
                  HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4769,8 +4751,6 @@ public class IODispatcherTest {
                         }
                     }
             )) {
-                dispatcher.start();
-
                 HttpRequestProcessorSelector selector =
                         new HttpRequestProcessorSelector() {
                             @Override
@@ -5110,8 +5090,6 @@ public class IODispatcherTest {
             long sockAddr = 0;
             final CountDownLatch serverLatch = new CountDownLatch(1);
             try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
-                dispatcher.start();
-
                 final int resolvedPort = dispatcher.getPort();
                 sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
                 serverThread = new Thread("test-io-dispatcher") {
@@ -5264,7 +5242,6 @@ public class IODispatcherTest {
                     MessageBus messageBus = new MessageBusImpl(configuration);
                     HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5420,7 +5397,6 @@ public class IODispatcherTest {
                     MessageBus messageBus = new MessageBusImpl(configuration);
                     HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5574,7 +5550,6 @@ public class IODispatcherTest {
                     MessageBus messageBus = new MessageBusImpl(configuration);
                     HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
             ) {
-                httpServer.start();
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5808,8 +5783,6 @@ public class IODispatcherTest {
                         }
                     }
             )) {
-                dispatcher.start();
-
                 StringSink sink = new StringSink();
 
                 final HttpRequestProcessorSelector selector =
@@ -5978,8 +5951,6 @@ public class IODispatcherTest {
                         }
                     }
             )) {
-                dispatcher.start();
-
                 StringSink sink = new StringSink();
 
                 final HttpRequestProcessorSelector selector =
@@ -6141,8 +6112,6 @@ public class IODispatcherTest {
                         }
                     }
             )) {
-                dispatcher.start();
-
                 StringSink sink = new StringSink();
 
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
@@ -6757,7 +6726,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration(),
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(fd, dispatcher1)
             )) {
-                dispatcher.start();
+
                 // server will publish status of each request to this queue
                 final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024);
                 final MPSequence pubSeq = new MPSequence(queue.getCycle());

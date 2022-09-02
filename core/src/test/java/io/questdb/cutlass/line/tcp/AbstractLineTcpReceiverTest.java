@@ -70,8 +70,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
-
-
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -214,12 +212,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
-            try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, engine, metrics)) {
+            try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
                 O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }
-                receiver.start();
                 sharedWorkerPool.start(LOG);
                 try {
                     r.run(receiver);

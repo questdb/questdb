@@ -24,18 +24,18 @@
 
 package io.questdb.mp;
 
-import io.questdb.Lifecycle;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class WorkerPool implements Lifecycle {
+public class WorkerPool implements QuietCloseable {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
     private final int[] workerAffinity;
@@ -118,7 +118,6 @@ public class WorkerPool implements Lifecycle {
         return workerCount;
     }
 
-    @Override
     public void start() {
         start(null);
     }

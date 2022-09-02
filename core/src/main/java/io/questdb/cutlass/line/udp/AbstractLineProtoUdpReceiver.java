@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.Lifecycle;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -35,15 +34,14 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Lifecycle {
+public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
-    private static final long CLOSE_AWAIT_NANOS = (long) 2e8; // 200 millis
-
-
+    private static final long CLOSE_AWAIT_LIMIT_NS = (long) 2e8; // 200 millis
     protected final LineUdpLexer lexer;
     protected final LineUdpParserImpl parser;
     protected final NetworkFacade nf;
@@ -63,19 +61,65 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     ) {
         this.configuration = configuration;
         this.commitMode = configuration.getCommitMode();
-        this.commitRate = configuration.getCommitRate();
         nf = configuration.getNetworkFacade();
-        lexer = new LineUdpLexer(configuration.getMsgBufferSize());
-        parser = new LineUdpParserImpl(engine, configuration);
-        lexer.withParser(parser);
-        if (!configuration.ownThread()) {
-            workerPool.assign(this);
+        fd = nf.socketUdp();
+        if (fd < 0) {
+            int errno = nf.errno();
+            LOG.error().$("cannot open UDP socket [errno=").$(errno).$(']').$();
+            throw NetworkError.instance(errno, "Cannot open UDP socket");
+        }
+
+        try {
+            // when listening for multicast packets bind address must be 0
+            bind(configuration);
+            this.commitRate = configuration.getCommitRate();
+
+            if (configuration.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, configuration.getReceiveBufferSize()) != 0) {
+                LOG.error()
+                        .$("could not set receive buffer size [fd=").$(fd)
+                        .$(", size=").$(configuration.getReceiveBufferSize())
+                        .$(", errno=").$(configuration.getNetworkFacade().errno())
+                        .I$();
+            }
+
+            lexer = new LineUdpLexer(configuration.getMsgBufferSize());
+            parser = new LineUdpParserImpl(engine, configuration);
+            lexer.withParser(parser);
+
+            if (!configuration.ownThread()) {
+                workerPool.assign(this);
+                logStarted(configuration);
+            }
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
+    @Override
+    public void close() {
+        if (fd > -1) {
+            if (running.compareAndSet(true, false)) {
+                started.await(CLOSE_AWAIT_LIMIT_NS);
+                halted.await(CLOSE_AWAIT_LIMIT_NS);
+            }
+            if (nf.close(fd) != 0) {
+                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            } else {
+                LOG.info().$("closed [fd=").$(fd).$(']').$();
+            }
+            if (parser != null) {
+                parser.commitAll(commitMode);
+                parser.close();
+            }
+            Misc.free(lexer);
+            LOG.info().$("closed [fd=").$(fd).$(']').$();
+            fd = -1;
         }
     }
 
     public void start() {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
-            bind();
             new Thread(() -> {
                 started.countDown();
                 if (configuration.ownThreadAffinity() != -1) {
@@ -89,55 +133,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                 Path.clearThreadLocals();
                 halted.countDown();
             }).start();
-        }
-    }
-
-    @Override
-    public void close() {
-        if (running.compareAndSet(true, false)) {
-            if (fd > -1) {
-                started.await(CLOSE_AWAIT_NANOS);
-                halted.await(CLOSE_AWAIT_NANOS);
-                if (nf.close(fd) != 0) {
-                    LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).I$();
-                } else {
-                    LOG.info().$("closed [fd=").$(fd).I$();
-                }
-                fd = -1;
-            }
-            if (parser != null) {
-                parser.commitAll(commitMode);
-                parser.close();
-            }
-            Misc.free(lexer);
-        }
-    }
-
-    private void bind() {
-        fd = nf.socketUdp();
-        if (fd < 0) {
-            int errno = nf.errno();
-            LOG.error().$("cannot open UDP socket [errno=").$(errno).$(']').$();
-            throw NetworkError.instance(errno, "Cannot open UDP socket");
-        }
-
-        try {
-            // when listening for multicast packets bind address must be 0
-            bind(configuration);
-            if (configuration.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, configuration.getReceiveBufferSize()) != 0) {
-                LOG.error()
-                        .$("could not set receive buffer size [fd=").$(fd)
-                        .$(", size=").$(configuration.getReceiveBufferSize())
-                        .$(", errno=").$(configuration.getNetworkFacade().errno())
-                        .I$();
-            }
-
-            if (!configuration.ownThread()) {
-                logStarted(configuration);
-            }
-        } catch (Throwable e) {
-            close();
-            throw e;
         }
     }
 

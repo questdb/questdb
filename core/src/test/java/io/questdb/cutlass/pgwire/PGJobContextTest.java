@@ -4176,12 +4176,12 @@ nodejs code:
             try (final PGWireServer server = PGWireServer.create(
                     conf,
                     null,
+                    LOG,
                     engine,
                     compiler.getFunctionFactoryCache(),
                     snapshotAgent,
                     metrics
             )) {
-                server.start();
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -6402,7 +6402,7 @@ create table tab as (
             }
         };
 
-        PGWireServer server = PGWireServer.create(
+        return PGWireServer.create(
                 conf,
                 null,
                 LOG,
@@ -6412,8 +6412,6 @@ create table tab as (
                 metrics,
                 createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount)
         );
-        server.start();
-        return server;
     }
 
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
@@ -6599,7 +6597,6 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
-            server.start();
             pool.start(LOG);
             int iteration = 0;
 

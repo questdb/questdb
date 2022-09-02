@@ -44,7 +44,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final RingQueue<IOEvent<C>> interestQueue;
     protected final MPSequence interestPubSeq;
     protected final SCSequence interestSubSeq;
-    protected volatile long serverFd = -1L;
+    protected long serverFd;
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final SPSequence ioEventPubSeq;
     protected final MCSequence ioEventSubSeq;
@@ -101,10 +101,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
-    }
 
-    @Override
-    public void start() {
         createListenFd();
         listening = true;
     }
@@ -316,7 +313,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                     port
             );
         }
-        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+        LOG.advisory().$("listening on ")
+                .$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                 .$(" [fd=").$(serverFd)
                 .$(" backlog=").$(backlog)
                 .I$();

@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.Lifecycle;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -37,18 +36,19 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 
-public class LineTcpReceiver implements Lifecycle {
+public class LineTcpReceiver implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
 
     @Nullable
     public static LineTcpReceiver create(
             LineTcpReceiverConfiguration lineConfiguration,
-            WorkerPool sharedPool,
+            WorkerPool sharedWorkerPool,
+            Log log,
             CairoEngine cairoEngine,
             Metrics metrics
     ) {
@@ -56,20 +56,27 @@ public class LineTcpReceiver implements Lifecycle {
             return null;
         }
 
-        final ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        final WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getIOWorkerPoolConfiguration(), sharedPool, metrics
-        );
-        if (ioWorkerPool != sharedPool) {
+        ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
+        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
+                lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool, metrics);
+        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
+                lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool, metrics);
+        if (ioWorkerPool != sharedWorkerPool) {
+            ioWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(ioWorkerPool);
         }
-        final WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getWriterWorkerPoolConfiguration(), sharedPool, metrics
-        );
-        if (writerWorkerPool != sharedPool) {
+        if (writerWorkerPool != sharedWorkerPool) {
+            writerWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(writerWorkerPool);
         }
-        return new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
+        LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
+        if (ioWorkerPool != sharedWorkerPool) {
+            ioWorkerPool.start(log);
+        }
+        if (writerWorkerPool != sharedWorkerPool) {
+            writerWorkerPool.start(log);
+        }
+        return lineTcpReceiver;
     }
 
 
@@ -102,14 +109,6 @@ public class LineTcpReceiver implements Lifecycle {
             // therefore we need each thread to clean their thread locals individually
             ioWorkerPool.assign(i, cleaner);
         }
-    }
-
-    @Override
-    public void start() {
-        for (int n = 0, sz = dedicatedPools.size(); n < sz; n++) {
-            dedicatedPools.get(n).start(LOG);
-        }
-        dispatcher.start();
     }
 
     @Override

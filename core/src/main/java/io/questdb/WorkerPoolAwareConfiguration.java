@@ -27,8 +27,10 @@ package io.questdb;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -67,9 +69,10 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     }
 
     @Nullable
-    static <T extends Lifecycle, C extends WorkerPoolAwareConfiguration> T create(
+    static <T extends QuietCloseable, C extends WorkerPoolAwareConfiguration> T create(
             C configuration,
             WorkerPool sharedPool,
+            Log log,
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
             FunctionFactoryCache functionFactoryCache,
@@ -91,6 +94,12 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
                     snapshotAgent,
                     metrics
             );
+
+            if (local) {
+                localPool.assignCleaner(Path.CLEANER);
+                localPool.start(log);
+            }
+
             return server;
         }
         return null;
@@ -99,7 +108,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     boolean isEnabled();
 
     @FunctionalInterface
-    interface ServerFactory<T extends Lifecycle, C> {
+    interface ServerFactory<T extends QuietCloseable, C> {
         T create(
                 C configuration,
                 CairoEngine engine,

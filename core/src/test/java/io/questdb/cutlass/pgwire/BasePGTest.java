@@ -49,16 +49,15 @@ import static io.questdb.std.Numbers.hexDigits;
 public class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {
-        PGWireServer server = PGWireServer.create(
+        return PGWireServer.create(
                 configuration,
                 null,
+                LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,
                 metrics
         );
-        server.start();
-        return server;
     }
 
     protected PGWireServer createPGServer(int workerCount) {
