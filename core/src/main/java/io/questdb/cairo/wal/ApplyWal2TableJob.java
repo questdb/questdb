@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlToOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.Nullable;
@@ -43,7 +44,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final CairoEngine engine;
     private final SqlToOperation sqlToOperation;
-    private SequencerStructureChangeCursor reusableStructureChangeCursor;
+    private static final ThreadLocal<SequencerStructureChangeCursor> reusableStructureChangeCursor = new ThreadLocal<>();
+    public static final Closeable CLEANER = ApplyWal2TableJob::clearThreadLocals;
+    public static void clearThreadLocals() {
+        Misc.free(reusableStructureChangeCursor);
+    }
 
     public ApplyWal2TableJob(CairoEngine engine) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -141,7 +146,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
             int tableId = walTxnNotificationTask.getTableId();
             CharSequence tableName = walTxnNotificationTask.getTableName();
-            reusableStructureChangeCursor = processWalTxnNotification(tableName, tableId, engine, sqlToOperation, reusableStructureChangeCursor);
+            reusableStructureChangeCursor.set(processWalTxnNotification(tableName, tableId, engine, sqlToOperation, reusableStructureChangeCursor.get()));
         } finally {
             subSeq.done(cursor);
         }
