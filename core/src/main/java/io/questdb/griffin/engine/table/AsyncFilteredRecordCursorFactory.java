@@ -39,8 +39,6 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -50,8 +48,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private final RecordCursorFactory base;
     private final AsyncFilteredRecordCursor cursor;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
-    private final FilterAtom filterAtom;
-    private final PageFrameSequence<FilterAtom> frameSequence;
+    private final AsyncFilterAtom filterAtom;
+    private final PageFrameSequence<AsyncFilterAtom> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -73,7 +71,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
-        this.filterAtom = new FilterAtom(filter, perWorkerFilters);
+        this.filterAtom = new AsyncFilterAtom(filter, perWorkerFilters);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -132,7 +130,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public PageFrameSequence<FilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
 
@@ -156,58 +154,31 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         return base.hasDescendingOrder();
     }
 
-    private static void filter(int workerId, PageAddressCacheRecord record, PageFrameReduceTask task) {
+    private static void filter(
+            int workerId,
+            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
         final DirectLongList rows = task.getRows();
         final long frameRowCount = task.getFrameRowCount();
-        final FilterAtom atom = task.getFrameSequence(FilterAtom.class).getAtom();
-        final Function filter = atom.getFilter(workerId);
+        final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
         rows.clear();
-        for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
-            if (filter.getBool(record)) {
-                rows.add(r);
-            }
-        }
-    }
 
-    private static class FilterAtom implements StatefulAtom, Closeable {
-
-        private final Function filter;
-        private final ObjList<Function> perWorkerFilters;
-
-        public FilterAtom(@NotNull Function filter, @Nullable ObjList<Function> perWorkerFilters) {
-            this.filter = filter;
-            this.perWorkerFilters = perWorkerFilters;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            filter.init(symbolTableSource, executionContext);
-            if (perWorkerFilters != null) {
-                final boolean current = executionContext.getCloneSymbolTables();
-                executionContext.setCloneSymbolTables(true);
-                try {
-                    for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
-                        perWorkerFilters.getQuick(i).init(symbolTableSource, executionContext);
-                    }
-                } finally {
-                    executionContext.setCloneSymbolTables(current);
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int filterId = atom.acquireFilter(workerId, owner, circuitBreaker);
+        final Function filter = atom.getFilter(filterId);
+        try {
+            for (long r = 0; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+                if (filter.getBool(record)) {
+                    rows.add(r);
                 }
             }
-        }
-
-        @Override
-        public void close() {
-            Misc.free(filter);
-            Misc.freeObjList(perWorkerFilters);
-        }
-
-        public Function getFilter(int workerId) {
-            if (workerId == -1 || perWorkerFilters == null) {
-                return filter;
-            }
-            return perWorkerFilters.getQuick(workerId);
+        } finally {
+            atom.releaseFilter(filterId);
         }
     }
 }
