@@ -426,7 +426,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     public void testEqStrFunctionFactory() throws Exception {
         final int threadCount = 4;
         final int workerCount = 4;
-        AbstractCairoTest.jitMode = SqlJitMode.JIT_MODE_DISABLED;
 
         WorkerPool pool = new WorkerPool(
                 new WorkerPoolAwareConfiguration() {

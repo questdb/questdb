@@ -89,8 +89,9 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     private static int getCallerThreadId() {
         final Thread th = Thread.currentThread();
-        return th instanceof FixedThread ? ((FixedThread)th).getWorkerId() : -1;
+        return th instanceof FixedThread ? ((FixedThread) th).getWorkerId() : -1;
     }
+
     /**
      * Reduces single queue item when item is available. Return value is inverted as in
      * true when queue item is not available, false otherwise. Item is reduced using the

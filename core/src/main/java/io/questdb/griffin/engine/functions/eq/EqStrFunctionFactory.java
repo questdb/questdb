@@ -149,10 +149,5 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
             return negated != Chars.equalsNc(a, b);
         }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
     }
 }
