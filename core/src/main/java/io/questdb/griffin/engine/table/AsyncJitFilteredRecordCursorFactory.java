@@ -53,8 +53,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final RecordCursorFactory base;
     private final AsyncFilteredRecordCursor cursor;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
-    private final FilterAtom filterAtom;
-    private final PageFrameSequence<FilterAtom> frameSequence;
+    private final AsyncJitFilterAtom filterAtom;
+    private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -81,7 +81,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
         MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
-        this.filterAtom = new FilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions);
+        this.filterAtom = new AsyncJitFilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -140,7 +140,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public PageFrameSequence<FilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
 
@@ -173,7 +173,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final DirectLongList rows = task.getRows();
         final DirectLongList columns = task.getColumns();
         final long frameRowCount = task.getFrameRowCount();
-        final FilterAtom atom = task.getFrameSequence(FilterAtom.class).getAtom();
+        final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();
         final PageAddressCache pageAddressCache = task.getPageAddressCache();
 
         rows.clear();
@@ -224,13 +224,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         rows.setPos(hi);
     }
 
-    private static class FilterAtom extends AsyncFilterAtom {
+    private static class AsyncJitFilterAtom extends AsyncFilterAtom {
 
         final CompiledFilter compiledFilter;
         final MemoryCARW bindVarMemory;
         final ObjList<Function> bindVarFunctions;
 
-        public FilterAtom(
+        public AsyncJitFilterAtom(
                 Function filter,
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
