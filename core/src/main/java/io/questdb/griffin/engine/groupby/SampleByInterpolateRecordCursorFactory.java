@@ -447,7 +447,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
+    private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) throws SqlException {
         computeYPoints(x1Value, x2value);
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
             final MapValue result = findDataMapValue3(mapRecord, x);
@@ -464,7 +464,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    private void interpolateBoundaryRange(long x1, long x2, Record record) {
+    private void interpolateBoundaryRange(long x1, long x2, Record record) throws SqlException {
         //interpolating boundary
         for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
             GroupByFunction function = groupByTwoPointFunctions.getQuick(i);

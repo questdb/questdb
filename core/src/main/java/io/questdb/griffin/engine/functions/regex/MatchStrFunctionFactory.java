@@ -33,14 +33,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 public class MatchStrFunctionFactory implements FunctionFactory {
     @Override
@@ -60,24 +56,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         final Function pattern = args.getQuick(1);
         final int patternPosition = argPositions.getQuick(1);
         if (pattern.isConstant()) {
-            return new MatchConstPatternFunction(value, createMatcher(pattern, patternPosition));
+            return new MatchConstPatternFunction(value, RegexUtils.createMatcher(pattern, patternPosition));
         } else if (pattern.isRuntimeConstant()) {
             return new MatchRuntimeConstPatternFunction(value, pattern, patternPosition);
         }
-        throw SqlException.$(patternPosition, "not implemented: dynamic patter would be very slow to execute");
-    }
-
-    @NotNull
-    private static Matcher createMatcher(Function pattern, int position) throws SqlException {
-        final CharSequence regex = pattern.getStr(null);
-        if (regex == null) {
-            throw SqlException.$(position, "NULL regex");
-        }
-        try {
-            return Pattern.compile(Chars.toString(regex)).matcher("");
-        } catch (PatternSyntaxException e) {
-            throw SqlException.$(position + e.getIndex() + 1, e.getMessage());
-        }
+        throw SqlException.$(patternPosition, "not implemented: dynamic pattern would be very slow to execute");
     }
 
     private static class MatchConstPatternFunction extends BooleanFunction implements UnaryFunction {
@@ -148,7 +131,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
-            this.matcher = createMatcher(pattern, patternPosition);
+            this.matcher = RegexUtils.createMatcher(pattern, patternPosition);
         }
     }
 }
