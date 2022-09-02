@@ -201,6 +201,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     @Override
     public void close() {
         if (isOpen()) {
+            clear();
             doClose(true);
         }
     }
