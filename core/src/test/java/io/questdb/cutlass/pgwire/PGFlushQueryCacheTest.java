@@ -57,8 +57,8 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     public void testFlushQueryCache() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer ignored = createPGServer(2);
-                    Connection connection = getConnection(false, true);
+                    PGWireServer server = createPGServer(2);
+                    Connection connection = getConnection(server.getPort(), false, true);
                     Statement statement = connection.createStatement()
             ) {
                 statement.executeUpdate("CREATE TABLE test\n" +
@@ -94,8 +94,8 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     public void testFlushUpdateCache() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer ignored = createPGServer(2);
-                    Connection connection = getConnection(false, true);
+                    PGWireServer server = createPGServer(2);
+                    Connection connection = getConnection(server.getPort(), false, true);
                     Statement statement = connection.createStatement()
             ) {
                 statement.executeUpdate("CREATE TABLE test\n" +

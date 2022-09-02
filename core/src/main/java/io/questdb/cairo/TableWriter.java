@@ -628,7 +628,7 @@ public class TableWriter implements Closeable {
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getDetachRoot()).concat(tableName);
+        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(tableName);
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachPartitionSuffix()).slash$();
         int detachedRootLen = detachedPath.length();
@@ -820,7 +820,7 @@ public class TableWriter implements Closeable {
                 return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION_DIR;
             }
 
-            detachedPath.of(configuration.getDetachRoot()).concat(tableName);
+            detachedPath.of(configuration.getRoot()).concat(tableName);
             int detachedRootLen = detachedPath.length();
             // detachedPath: detached partition folder
             if (!ff.exists(detachedPath.slash$())) {
@@ -5899,7 +5899,7 @@ public class TableWriter implements Closeable {
         ObjList<Runnable> tempNullSetters = o3NullSetters;
         o3NullSetters = o3NullSetters2;
         o3NullSetters2 = tempNullSetters;
-
+        activeNullSetters = o3NullSetters;
     }
 
     private void switchPartition(long timestamp) {
