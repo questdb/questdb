@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class WalTableSqlTest extends AbstractGriffinTest {
@@ -190,6 +191,42 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             assertSql(tableName, "x\tsym\tts\tsym2\tjjj\tcol_str\n" +
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\t\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\n");
+
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testAddWalColumnAfterCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "x long," +
+                    "sym symbol," +
+                    "ts timestamp," +
+                    "sym2 symbol" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
+                    " values (101, 'a1a1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
+            try (
+                    InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                    InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
+            ) {
+
+                insertMethod.execute();
+                insertMethod.commit();
+//                drainWalQueue();
+                compile("alter table " + tableName + " add column jjj int");
+            }
+
+//            drainWalQueue();
+            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234)");
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\tjjj\n" +
+                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n");
 
         });
     }
