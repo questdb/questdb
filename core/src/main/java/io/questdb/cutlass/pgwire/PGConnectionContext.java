@@ -1346,7 +1346,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void executeUpdate(SqlCompiler compiler) throws SqlException {
         boolean recompileStale = true;
-        do {
+        for (int retries = 0; recompileStale; retries++) {
             try {
                 if (transactionState != ERROR_TRANSACTION) {
                     // when transaction is in error state, skip execution
@@ -1355,16 +1355,23 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
                 prepareCommandComplete(true);
             } catch (ReaderOutOfDateException e) {
+                if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    if (transactionState == IN_TRANSACTION) {
+                        transactionState = ERROR_TRANSACTION;
+                    }
+                    throw e;
+                }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
-                compileQuery(compiler);
+                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+                processCompiledQuery(cc);
             } catch (Throwable e) {
                 if (transactionState == IN_TRANSACTION) {
                     transactionState = ERROR_TRANSACTION;
                 }
                 throw e;
             }
-        } while (recompileStale);
+        }
     }
 
     private void executeUpdate0() throws SqlException {
@@ -2533,7 +2540,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
-            do {
+            for (int retries = 0; recompileStale; retries++) {
                 currentFactory = typesAndSelect.getFactory();
                 try {
                     currentCursor = currentFactory.getCursor(sqlExecutionContext);
@@ -2541,6 +2548,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     // cache random if it was replaced
                     this.rnd = sqlExecutionContext.getRandom();
                 } catch (ReaderOutOfDateException e) {
+                    if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                        throw e;
+                    }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
                     compileQuery(compiler);
@@ -2550,7 +2560,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     freeFactory();
                     throw e;
                 }
-            } while (recompileStale);
+            }
         }
     }
 
