@@ -212,6 +212,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return circuitBreakerFd;
     }
 
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
     public int getFrameCount() {
         return frameCount;
     }

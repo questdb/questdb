@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FixedThread;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
@@ -87,11 +86,6 @@ public class PageFrameReduceJob implements Job, Closeable {
         }
     }
 
-    private static int getCallerThreadId() {
-        final Thread th = Thread.currentThread();
-        return th instanceof FixedThread ? ((FixedThread) th).getWorkerId() : -1;
-    }
-
     /**
      * Reduces single queue item when item is available. Return value is inverted as in
      * true when queue item is not available, false otherwise. Item is reduced using the
@@ -113,7 +107,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             PageFrameSequence<?> stealingFrameSequence
     ) {
         return consumeQueue(
-                getCallerThreadId(),
+                -1,
                 queue,
                 subSeq,
                 record,
@@ -174,7 +168,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             PageFrameSequence<?> stealingFrameSequence
     ) {
         reduce(
-                getCallerThreadId(),
+                -1,
                 record,
                 circuitBreaker,
                 task,
@@ -198,7 +192,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
             record.setFrameIndex(task.getFrameIndex());
             assert frameSequence.doneLatch.getCount() == 0;
-            frameSequence.getReducer().reduce(workerId, record, task, stealingFrameSequence);
+            frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel();
         }

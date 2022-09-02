@@ -33,7 +33,6 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
-import io.questdb.mp.FixedThread;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
@@ -488,7 +487,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
                     for (int i = 0; i < threadCount; i++) {
                         final int finalI = i;
-                        new FixedThread(i, () -> {
+                        new Thread(() -> {
                             TestUtils.await(barrier);
 
                             final RecordCursorFactory factory = factories[finalI];

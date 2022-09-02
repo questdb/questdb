@@ -25,14 +25,17 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 @FunctionalInterface
 public interface PageFrameReducer {
     void reduce(
             int workerId,
-            PageAddressCacheRecord record,
-            PageFrameReduceTask task,
+            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     );
 }

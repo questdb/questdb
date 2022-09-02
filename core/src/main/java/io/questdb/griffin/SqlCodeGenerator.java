@@ -1202,13 +1202,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factory.getMetadata(),
                             executionContext
                     ),
-                    compileWorkerFilterConditionally(
-                            !filter.isReadThreadSafe(),
-                            executionContext.getWorkerCount(),
-                            filterExpr,
-                            factory.getMetadata(),
-                            executionContext
-                    ),
                     limitLoFunction,
                     limitLoPos
             );
@@ -1453,13 +1446,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 compileWorkerFilterConditionally(
                                         !filter.isReadThreadSafe(),
                                         executionContext.getSharedWorkerCount(),
-                                        filterExpr,
-                                        master.getMetadata(),
-                                        executionContext
-                                ),
-                                compileWorkerFilterConditionally(
-                                        !filter.isReadThreadSafe(),
-                                        executionContext.getWorkerCount(),
                                         filterExpr,
                                         master.getMetadata(),
                                         executionContext
