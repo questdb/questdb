@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -1096,6 +1098,32 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrFunctionKey() throws Exception {
+        // An important aspect of this test is that both replace() and count_distinct()
+        // functions use the same column as the input.
+        assertQuery("replace\tcount\tcount_distinct\n" +
+                        "foobaz\t63\t2\n" +
+                        "bazbaz\t37\t1\n",
+                "select replace(s, 'bar', 'baz'), count(), count_distinct(s) from tab",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testStrFunctionKeyReverseOrder() throws Exception {
+        // An important aspect of this test is that both replace() and count_distinct()
+        // functions use the same column as the input.
+        assertQuery("count_distinct\tcount\treplace\n" +
+                        "2\t63\tfoobaz\n" +
+                        "1\t37\tbazbaz\n",
+                "select count_distinct(s), count(), replace(s, 'bar', 'baz') from tab",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
+                null, true, true, true
+        );
+    }
+
+    @Test
     public void testRostiReallocation() throws Exception {
         rostiAllocFacade = new RostiAllocFacadeImpl() {
             @Override
@@ -1227,7 +1255,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         public final String funcArg;
     }
 
-    protected void executeWithPool(
+    private void executeWithPool(
             int workerCount,
             int queueSize,
             CustomisableRunnable runnable
