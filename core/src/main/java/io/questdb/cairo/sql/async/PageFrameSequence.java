@@ -98,9 +98,19 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (doneLatch.getCount() == 0) {
-            final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
-            if (PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker, this)) {
+            final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
+            boolean nothingProcessed = true;
+            try {
+                nothingProcessed = PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker, this);
+            } catch (Throwable e) {
+                LOG.error()
+                        .$("await error [id=").$(id)
+                        .$(", ex=").$(e)
+                        .I$();
+            }
+
+            if (nothingProcessed) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
                     // Discard collect items.
@@ -210,10 +220,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public long getCircuitBreakerFd() {
         return circuitBreakerFd;
-    }
-
-    public SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return circuitBreaker;
     }
 
     public int getFrameCount() {
