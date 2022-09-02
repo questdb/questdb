@@ -378,7 +378,7 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    boolean getWallEnabledDefault();
+    boolean getWalEnabledDefault();
 
     int getWithClauseModelPoolCapacity();
 

@@ -1571,7 +1571,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isWallEnabled() {
+        public boolean isWalEnabled() {
             return false;
         }
 

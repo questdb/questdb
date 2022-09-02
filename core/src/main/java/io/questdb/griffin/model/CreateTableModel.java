@@ -184,7 +184,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public boolean isWallEnabled() {
+    public boolean isWalEnabled() {
         return walEnabled;
     }
 

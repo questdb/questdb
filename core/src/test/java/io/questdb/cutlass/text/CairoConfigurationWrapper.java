@@ -228,8 +228,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getWallEnabledDefault() {
-        return conf.getWallEnabledDefault();
+    public boolean getWalEnabledDefault() {
+        return conf.getWalEnabledDefault();
     }
 
     @Override

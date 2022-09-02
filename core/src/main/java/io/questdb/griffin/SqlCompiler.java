@@ -2121,7 +2121,7 @@ public class SqlCompiler implements Closeable {
                     path,
                     tableStructureAdapter.of(model, metadata, typeCast)
             );
-            boolean wallEnabled = model.isWallEnabled();
+            boolean wallEnabled = model.isWalEnabled();
             // TODO: if it's WAL enabled, table unlock can happen here, before the data is written
 
             try {
@@ -3185,8 +3185,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public boolean isWallEnabled() {
-            return model.isWallEnabled();
+        public boolean isWalEnabled() {
+            return model.isWalEnabled();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {

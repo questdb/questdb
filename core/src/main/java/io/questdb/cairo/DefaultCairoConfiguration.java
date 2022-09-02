@@ -274,7 +274,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getWallEnabledDefault() {
+    public boolean getWalEnabledDefault() {
         return false;
     }
 

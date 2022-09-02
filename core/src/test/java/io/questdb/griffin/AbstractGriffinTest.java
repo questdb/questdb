@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-public class AbstractGriffinTest extends AbstractCairoTest {
+public abstract class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
     private final static double EPSILON = 0.000001;
     protected static BindVariableService bindVariableService;
