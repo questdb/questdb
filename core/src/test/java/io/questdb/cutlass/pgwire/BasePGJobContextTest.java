@@ -127,6 +127,8 @@ public abstract class BasePGJobContextTest extends BasePGTest {
         BasePGTest.tearDownStatic();
     }
 
+    protected abstract void mayDrainWalQueue();
+
     @Test
     //this looks like the same script as the preparedStatementHex()
     public void testAllParamsHex() throws Exception {
@@ -5770,8 +5772,10 @@ create table tab as (
                         " rnd_str(5,16,2) l256" +
                         " from long_sequence(10000)" +
                         ") timestamp (ts) partition by DAY");
-                String sql = "SELECT * FROM x";
 
+                mayDrainWalQueue();
+
+                String sql = "SELECT * FROM x";
                 try {
                     statement.execute(sql);
                     Assert.fail();

@@ -17,4 +17,10 @@ public class TableWriterPGJobContextTest extends BasePGJobContextTest {
         BasePGJobContextTest.tearDownStatic();
         defaultTableWriteMode = prevDefaultTableWriteMode;
     }
+
+    protected void mayDrainWalQueue() {
+        // No-op.
+    }
+
+    // See base class for tests implementations.
 }

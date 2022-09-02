@@ -17,5 +17,11 @@ public class WalPGJobContextTest extends BasePGJobContextTest {
         BasePGJobContextTest.tearDownStatic();
         defaultTableWriteMode = prevDefaultTableWriteMode;
     }
+
+    protected void mayDrainWalQueue() {
+        drainWalQueue();
+    }
+
+    // See base class for tests implementations.
 }
 
