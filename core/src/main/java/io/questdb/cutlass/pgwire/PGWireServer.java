@@ -39,15 +39,74 @@ import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakMutableObjectPool;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 import static io.questdb.network.IODispatcher.*;
 
-// TODO
 public class PGWireServer implements Lifecycle {
 
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
+
+    @Nullable
+    public static PGWireServer create(
+            PGWireConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            CairoEngine cairoEngine,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        return WorkerPoolAwareConfiguration.create(
+                configuration,
+                sharedWorkerPool,
+                cairoEngine,
+                (conf, engine, workerPool, local, sharedWorkerCount, cache, agent, m) -> new PGWireServer(
+                        conf,
+                        engine,
+                        workerPool,
+                        local,
+                        cache,
+                        agent,
+                        new PGConnectionContextFactory(
+                                engine,
+                                conf,
+                                workerPool.getWorkerCount(),
+                                sharedWorkerCount
+                        )
+                ),
+                functionFactoryCache,
+                snapshotAgent,
+                metrics
+        );
+    }
+
+    @TestOnly
+    @Nullable
+    static PGWireServer create(
+            PGWireConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log log,
+            CairoEngine cairoEngine,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics,
+            PGConnectionContextFactory contextFactory
+    ) {
+        return WorkerPoolAwareConfiguration.create(
+                configuration,
+                sharedWorkerPool,
+                cairoEngine,
+                (conf, engine, workerPool, local, sharedWorkerCount, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
+                        conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
+                ),
+                functionFactoryCache,
+                snapshotAgent,
+                metrics
+        );
+    }
+
 
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
@@ -69,7 +128,6 @@ public class PGWireServer implements Lifecycle {
                 contextFactory
         );
         this.metrics = engine.getMetrics();
-
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
@@ -130,62 +188,15 @@ public class PGWireServer implements Lifecycle {
         }
     }
 
-    @Nullable
-    public static PGWireServer create(
-            PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics,
-            PGConnectionContextFactory contextFactory
-    ) {
-        return WorkerPoolAwareConfiguration.create(
-                configuration,
-                sharedWorkerPool,
-                cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
-                        conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
+    @Override
+    public void start() {
+        // worker pool will only be set if it is "local"
+        if (workerPool != null) {
+            workerPool.start(LOG);
+        }
+        dispatcher.start();
     }
 
-    @Nullable
-    public static PGWireServer create(
-            PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            CairoEngine cairoEngine,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        return WorkerPoolAwareConfiguration.create(
-                configuration,
-                sharedWorkerPool,
-                cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, cache, agent, m) -> new PGWireServer(
-                        conf,
-                        engine,
-                        workerPool,
-                        local,
-                        cache,
-                        agent,
-                        new PGConnectionContextFactory(
-                                engine,
-                                conf,
-                                workerPool.getWorkerCount(),
-                                sharedWorkerCount
-                        )
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
 
     @Override
     public void close() {

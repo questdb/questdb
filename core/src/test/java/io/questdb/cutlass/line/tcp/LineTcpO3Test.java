@@ -154,6 +154,8 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void test(String ilpResourceName) throws Exception {
         assertMemoryLeak(() -> {
+            readGzResource(ilpResourceName);
+
             WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
             sharedWorkerPool.assignCleaner(Path.CLEANER);
             SOCountDownLatch haltLatch = new SOCountDownLatch(1);
@@ -172,12 +174,10 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
-                receiver.start();
                 sharedWorkerPool.start(LOG);
-                Os.sleep(2000L);
+                receiver.start();
 
                 TestUtils.assertConnect(clientFd, ilpSockAddr);
-                readGzResource(ilpResourceName);
                 Net.send(clientFd, resourceAddress, resourceSize);
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 

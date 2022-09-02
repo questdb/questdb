@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
+import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -81,10 +82,10 @@ public class ServerMain implements Lifecycle {
                 addShutdownHook();
             }
             log.advisoryW().$("QuestDB is starting...").$();
+            workerPool.start(log); // starts QuestDB's workers
             for (int i = 0, limit = workers.size(); i < limit; i++) {
                 workers.getQuick(i).start();
             }
-            workerPool.start(log); // starts QuestDB's workers
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
             log.advisoryW().$("QuestDB is running").$();
@@ -186,17 +187,16 @@ public class ServerMain implements Lifecycle {
         ));
 
         // pg-wire
-//        if (config.getPGWireConfiguration().isEnabled()) {
-//            workers.add(PGWireServer.create(
-//                    config.getPGWireConfiguration(),
-//                    pool,
-//                    log,
-//                    cairoEngine,
-//                    functionFactoryCache,
-//                    snapshotAgent,
-//                    metrics
-//            ));
-//        }
+        if (config.getPGWireConfiguration().isEnabled()) {
+            workers.add(PGWireServer.create(
+                    config.getPGWireConfiguration(),
+                    pool,
+                    cairoEngine,
+                    functionFactoryCache,
+                    snapshotAgent,
+                    metrics
+            ));
+        }
 
         // ilp/udp
         if (config.getLineUdpReceiverConfiguration().isEnabled()) {

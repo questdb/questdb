@@ -111,7 +111,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
     @Override
     protected void registerListenerFd() {
-        assert serverFd != -1L;
         if (this.kqueue.listen(serverFd) != 0) {
             throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
         }

@@ -293,26 +293,28 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     private void createListenFd() throws NetworkError {
-        this.serverFd = nf.socketTcp(false);
+        serverFd = nf.socketTcp(false);
+        nf.configureNoLinger(serverFd);
         final int backlog = configuration.getListenBacklog();
-        if (this.port == 0) {
+        if (port == 0) {
             // Note that `configuration.getBindPort()` might also be 0.
             // In such case, we will bind to an ephemeral port.
-            this.port = configuration.getBindPort();
+            port = configuration.getBindPort();
         }
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {
-            if (this.port == 0) {
+        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), port)) {
+            if (port == 0) {
                 // We resolve port 0 only once. In case we close and re-open the
                 // listening socket, we will reuse the previously resolved
                 // ephemeral port.
-                this.port = nf.resolvePort(this.serverFd);
+                port = nf.resolvePort(serverFd);
             }
-            nf.listen(this.serverFd, backlog);
+            nf.listen(serverFd, backlog);
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket(
                     configuration.getDispatcherLogName(),
                     configuration.getBindIPv4Address(),
-                    this.port);
+                    port
+            );
         }
         LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                 .$(" [fd=").$(serverFd)

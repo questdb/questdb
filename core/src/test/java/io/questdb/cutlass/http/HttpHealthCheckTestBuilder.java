@@ -78,9 +78,8 @@ public class HttpHealthCheckTestBuilder {
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
                     HttpServer httpMinServer = HttpServer.createMin(httpConfiguration, workerPool, LOG, engine, null, null, metrics)
             ) {
-//                httpMinServer.start();
-
                 workerPool.start(LOG);
+                httpMinServer.start();
 
                 if (injectUnhandledError && metrics.isEnabled()) {
                     for (int i = 0; i < 40; i++) {

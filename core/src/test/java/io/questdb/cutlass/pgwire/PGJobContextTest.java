@@ -4181,6 +4181,7 @@ nodejs code:
                     snapshotAgent,
                     metrics
             )) {
+                server.start();
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -6087,7 +6088,7 @@ create table tab as (
             }
         });
     }
-    
+
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -6401,7 +6402,7 @@ create table tab as (
             }
         };
 
-        return PGWireServer.create(
+        PGWireServer server = PGWireServer.create(
                 conf,
                 null,
                 LOG,
@@ -6411,6 +6412,8 @@ create table tab as (
                 metrics,
                 createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount)
         );
+        server.start();
+        return server;
     }
 
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
@@ -6419,7 +6422,7 @@ create table tab as (
             assertWithPgServer(Mode.Simple, true, runnable, -1);
         }
 
-        if((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
+        if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
             assertWithPgServer(Mode.Simple, false, runnable, -2);
             assertWithPgServer(Mode.Simple, false, runnable, -1);
         }
@@ -6434,12 +6437,12 @@ create table tab as (
             assertWithPgServer(Mode.Extended, false, runnable, -1);
         }
 
-        if((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
+        if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
             assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2);
             assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1);
         }
 
-        if((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
+        if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
             assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2);
             assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1);
         }
@@ -6596,6 +6599,7 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
+            server.start();
             pool.start(LOG);
             int iteration = 0;
 
@@ -7873,18 +7877,18 @@ create table tab as (
                     ") timestamp (sample_time)", sqlExecutionContext);
             executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
 
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
-                    ps.setString(1, "ABC");
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
-                                        "ABC,1970-01-01 00:00:00.0,0\n",
-                                sink,
-                                rs
-                        );
-                    }
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
+                ps.setString(1, "ABC");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
+                                    "ABC,1970-01-01 00:00:00.0,0\n",
+                            sink,
+                            rs
+                    );
                 }
+            }
         });
     }
 
