@@ -40,6 +40,7 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
             try {
                 compiler.compile("select * from x where name ~ null", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
@@ -53,6 +54,7 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
             try {
                 compiler.compile("select * from x where name ~ 'XJ**'", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
