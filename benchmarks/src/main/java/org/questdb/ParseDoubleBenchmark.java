@@ -24,8 +24,8 @@
 
 package org.questdb;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -37,16 +37,17 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class Log4jBenchmark {
-
-    private static final Logger LOG = LogManager.getLogger(Log4jBenchmark.class);
-    private long counter = 0;
+public class ParseDoubleBenchmark {
+    private final static long memSize = 1024 * 16;
+    private final static String d = "78899.9";
+    private final static DirectByteCharSequence flyweight = new DirectByteCharSequence();
+    private long mem;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Log4jBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .include(ParseDoubleBenchmark.class.getSimpleName())
+                .warmupIterations(2)
+                .measurementIterations(2)
                 .addProfiler("gc")
                 .forks(1)
                 .build();
@@ -54,17 +55,29 @@ public class Log4jBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public void testLogOneInt() {
-        LOG.info("brown fox jumped over {} fence", counter++);
+    @Setup(Level.Iteration)
+    public void setup() {
+        Os.init();
+        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        Chars.asciiStrCpy(d, d.length(), mem);
+    }
+
+    @TearDown(Level.Iteration)
+    public void tearDown() {
+        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
-    public void testLogOneIntDisabled() {
-        LOG.debug("brown fox jumped over {} fence", counter++);
+    public double testCharSequenceParse() throws NumericException {
+        return Numbers.parseDouble(flyweight.of(mem, mem + d.length()));
     }
 
     @Benchmark
-    public void testBaseline() {
+    public double testStringParse() {
+        final byte[] b = new byte[d.length()];
+        for (int i = 0, n = b.length; i < n; i++) {
+            b[i] = Unsafe.getUnsafe().getByte(mem + i);
+        }
+        return Double.parseDouble(new String(b));
     }
 }

@@ -24,8 +24,7 @@
 
 package org.questdb;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import io.questdb.std.*;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -37,16 +36,17 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class Log4jBenchmark {
-
-    private static final Logger LOG = LogManager.getLogger(Log4jBenchmark.class);
-    private long counter = 0;
+public class SumDoubleBenchmark {
+    private final static long memSize = 1024 * 16;
+    private final static int doubleCount = (int) (memSize / Double.BYTES);
+    private long mem;
+    private double[] darr;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Log4jBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .include(SumDoubleBenchmark.class.getSimpleName())
+                .warmupIterations(2)
+                .measurementIterations(2)
                 .addProfiler("gc")
                 .forks(1)
                 .build();
@@ -54,17 +54,46 @@ public class Log4jBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public void testLogOneInt() {
-        LOG.info("brown fox jumped over {} fence", counter++);
+    @Setup(Level.Iteration)
+    public void setup() {
+        Os.init();
+        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        darr = new double[doubleCount];
+        final Rnd rnd = new Rnd();
+        long p = mem;
+        for (int i = 0; i < doubleCount; i++) {
+            double d = rnd.nextDouble();
+            Unsafe.getUnsafe().putDouble(p, d);
+            darr[i] = d;
+            p += Double.BYTES;
+        }
+    }
+
+    @TearDown(Level.Iteration)
+    public void tearDown() {
+        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
-    public void testLogOneIntDisabled() {
-        LOG.debug("brown fox jumped over {} fence", counter++);
+    public double testJavaNativeSum() {
+        double result = 0.0;
+        for (int i = 0; i < doubleCount; i++) {
+            result += Unsafe.getUnsafe().getDouble(mem + i*8);
+        }
+        return result;
     }
 
     @Benchmark
-    public void testBaseline() {
+    public double testJavaHeapSum() {
+        double result = 0.0;
+        for (int i = 0; i < doubleCount; i++) {
+            result += darr[i];
+        }
+        return result;
+    }
+
+    @Benchmark
+    public double testNativeSum() {
+        return Vect.sumDouble(mem, doubleCount);
     }
 }
