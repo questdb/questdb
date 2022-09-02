@@ -708,6 +708,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     }
 
     private int createSegmentDir(long segmentId) {
+        path.trimTo(rootLen);
         path.slash().put(segmentId);
         final int segmentPathLen = path.length();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
