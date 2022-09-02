@@ -856,7 +856,7 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    O3Utils.setupWorkerPool(pool, engine, null, null);
+                    WorkerPool.configureWorkerPool(pool, engine, null, null);
                     pool.start(LOG);
                 }
 

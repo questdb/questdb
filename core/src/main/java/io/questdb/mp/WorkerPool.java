@@ -24,18 +24,61 @@
 
 package io.questdb.mp;
 
+import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements QuietCloseable {
+
+    public static void configureWorkerPool(
+            WorkerPool workerPool,
+            CairoEngine cairoEngine,
+            @Nullable SqlExecutionCircuitBreakerConfiguration circuitBreakerConfig,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) throws SqlException {
+        final MessageBus messageBus = cairoEngine.getMessageBus();
+        final int workerCount = workerPool.getWorkerCount();
+        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
+        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
+
+        workerPool.assign(purgeDiscoveryJob);
+        workerPool.assign(columnPurgeJob);
+        workerPool.assign(new O3PartitionJob(messageBus));
+        workerPool.assign(new O3OpenColumnJob(messageBus));
+        workerPool.assign(new O3CopyJob(messageBus));
+        workerPool.assign(new O3CallbackJob(messageBus));
+        workerPool.freeOnHalt(purgeDiscoveryJob);
+        workerPool.freeOnHalt(columnPurgeJob);
+        workerPool.assignCleaner(Path.CLEANER);
+
+        final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
+        final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
+
+        for (int i = 0; i < workerCount; i++) {
+            // create job per worker to allow each worker to have
+            // own shard walk sequence
+            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+                    messageBus,
+                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
+                    circuitBreakerConfig
+            );
+            workerPool.assign(i, (Job) pageFrameReduceJob);
+            workerPool.freeOnHalt(pageFrameReduceJob);
+        }
+    }
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
     private final int[] workerAffinity;

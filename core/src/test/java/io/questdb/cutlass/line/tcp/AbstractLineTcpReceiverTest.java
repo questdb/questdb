@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
@@ -213,7 +212,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
-                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+                WorkerPool.configureWorkerPool(sharedWorkerPool, engine, null, null);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }

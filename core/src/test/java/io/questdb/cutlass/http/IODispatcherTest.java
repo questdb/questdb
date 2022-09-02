@@ -4408,7 +4408,7 @@ public class IODispatcherTest {
                     }
                 };
 
-                O3Utils.setupWorkerPool(
+                WorkerPool.configureWorkerPool(
                         workerPool,
                         engine,
                         null,

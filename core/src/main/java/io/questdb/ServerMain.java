@@ -120,17 +120,17 @@ public class ServerMain implements QuietCloseable {
     ) throws SqlException {
 
         // setup worker pool
-        WorkerPool pool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
+        final WorkerPool sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         final CairoEngine cairoEngine = new CairoEngine(cairoConfig, metrics);
-        pool.assign(cairoEngine.getEngineMaintenanceJob());
+        sharedPool.assign(cairoEngine.getEngineMaintenanceJob());
         toBeClosed.add(cairoEngine);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
                 cairoConfig,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
-        O3Utils.setupWorkerPool(
-                pool,
+        WorkerPool.configureWorkerPool(
+                sharedPool,
                 cairoEngine,
                 cairoConfig.getCircuitBreakerConfiguration(),
                 functionFactoryCache
@@ -141,27 +141,27 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(snapshotAgent);
 
         // Register jobs that help parallel execution of queries and column indexing.
-        pool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
-        pool.assign(new GroupByJob(cairoEngine.getMessageBus()));
-        pool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
+        sharedPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
+        sharedPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
+        sharedPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
 
         // text import
-        TextImportJob.assignToPool(cairoEngine.getMessageBus(), pool);
+        TextImportJob.assignToPool(cairoEngine.getMessageBus(), sharedPool);
         if (cairoConfig.getSqlCopyInputRoot() != null) {
             final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
                     cairoEngine,
                     // save CPU resources for collecting and processing jobs
-                    Math.max(1, pool.getWorkerCount() - 2),
+                    Math.max(1, sharedPool.getWorkerCount() - 2),
                     functionFactoryCache
             );
-            pool.assign(textImportRequestJob);
-            pool.freeOnHalt(textImportRequestJob);
+            sharedPool.assign(textImportRequestJob);
+            sharedPool.freeOnHalt(textImportRequestJob);
         }
 
         // http
         toBeClosed.add(HttpServer.create(
                 config.getHttpServerConfiguration(),
-                pool,
+                sharedPool,
                 log,
                 cairoEngine,
                 functionFactoryCache,
@@ -172,7 +172,7 @@ public class ServerMain implements QuietCloseable {
         // http min
         toBeClosed.add(HttpServer.createMin(
                 config.getHttpMinServerConfiguration(),
-                pool,
+                sharedPool,
                 log,
                 cairoEngine,
                 functionFactoryCache,
@@ -184,7 +184,7 @@ public class ServerMain implements QuietCloseable {
         if (config.getPGWireConfiguration().isEnabled()) {
             toBeClosed.add(PGWireServer.create(
                     config.getPGWireConfiguration(),
-                    pool,
+                    sharedPool,
                     log,
                     cairoEngine,
                     functionFactoryCache,
@@ -199,13 +199,13 @@ public class ServerMain implements QuietCloseable {
                 toBeClosed.add(new LinuxMMLineUdpReceiver(
                         config.getLineUdpReceiverConfiguration(),
                         cairoEngine,
-                        pool
+                        sharedPool
                 ));
             } else {
                 toBeClosed.add(new LineUdpReceiver(
                         config.getLineUdpReceiverConfiguration(),
                         cairoEngine,
-                        pool
+                        sharedPool
                 ));
             }
         }
@@ -213,7 +213,7 @@ public class ServerMain implements QuietCloseable {
         // ilp/tcp
         toBeClosed.add(LineTcpReceiver.create(
                 config.getLineTcpReceiverConfiguration(),
-                pool,
+                sharedPool,
                 log,
                 cairoEngine,
                 metrics
@@ -224,10 +224,10 @@ public class ServerMain implements QuietCloseable {
             final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
             toBeClosed.add(telemetryJob);
             if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                pool.assign(telemetryJob);
+                sharedPool.assign(telemetryJob);
             }
         }
-        return pool;
+        return sharedPool;
     }
 
     public static void main(String[] args) throws Exception {
