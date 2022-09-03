@@ -189,8 +189,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final boolean lineTcpEnabled;
-    private final WorkerPoolAwareConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
-    private final WorkerPoolAwareConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
+    private final WorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
+    private final WorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final Log log;
     private final PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
@@ -2807,7 +2807,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public int[] getWorkerAffinity() {
             return lineTcpWriterWorkerAffinity;
@@ -2844,7 +2844,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public int[] getWorkerAffinity() {
             return lineTcpIOWorkerAffinity;
@@ -2914,7 +2914,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration() {
+        public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
             return lineTcpIOWorkerPoolConfiguration;
         }
 
@@ -2984,7 +2984,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+        public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
             return lineTcpWriterWorkerPoolConfiguration;
         }
 

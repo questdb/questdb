@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -34,6 +33,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -242,7 +242,7 @@ public class AbstractO3Test {
         executeVanilla(() -> {
             if (workerCount > 0) {
                 WorkerPool pool = WorkerPoolFactory.getInstance(
-                        new WorkerPoolAwareConfiguration() {
+                        new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
                                 return TestUtils.getWorkerAffinity(getWorkerCount());

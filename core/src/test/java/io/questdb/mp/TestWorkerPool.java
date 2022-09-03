@@ -49,6 +49,11 @@ public class TestWorkerPool extends WorkerPool {
             public boolean haltOnError() {
                 return false;
             }
+
+            @Override
+            public String getPoolName() {
+                return "test-worker";
+            }
         }, metrics);
     }
 }

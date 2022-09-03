@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -34,6 +33,7 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
@@ -2709,7 +2709,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 }
 
                 WorkerPool pool = WorkerPoolFactory.getInstance(
-                        new WorkerPoolAwareConfiguration() {
+                        new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
                                 return affinity;

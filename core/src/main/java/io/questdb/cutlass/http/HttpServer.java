@@ -26,7 +26,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -41,58 +40,14 @@ import io.questdb.network.IORequestProcessor;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 
 public class HttpServer implements QuietCloseable {
 
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
 
-
-    public static HttpServer create(
-            HttpServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
-            CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        return WorkerPoolAwareConfiguration.create(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                HttpServer::create0,
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
-
-    @Nullable
-    public static HttpServer createMin(
-            HttpMinServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
-            CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        return WorkerPoolAwareConfiguration.create(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                HttpServer::createMin,
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
-
-
+    private static final WorkerPoolFactory.ServerFactory<HttpServer, HttpServerConfiguration> CREATE0 = HttpServer::create0;
+    private static final WorkerPoolFactory.ServerFactory<HttpServer, HttpMinServerConfiguration> CREATE_MIN = HttpServer::createMin;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
@@ -161,57 +116,6 @@ public class HttpServer implements QuietCloseable {
                 queryCacheEventSubSeq.clear();
             });
         }
-    }
-
-    @TestOnly
-    @Nullable
-    static HttpServer create(
-            HttpServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
-            CairoEngine cairoEngine,
-            Metrics metrics
-    ) {
-        return create(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                null,
-                null,
-                metrics
-        );
-    }
-
-    public void bind(HttpRequestProcessorFactory factory) {
-        bind(factory, false);
-    }
-
-    private void bind(HttpRequestProcessorFactory factory, boolean useAsDefault) {
-        final String url = factory.getUrl();
-        assert url != null;
-        for (int i = 0; i < workerCount; i++) {
-            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                selector.defaultRequestProcessor = factory.newInstance();
-            } else {
-                final HttpRequestProcessor processor = factory.newInstance();
-                selector.processorMap.put(url, processor);
-                if (useAsDefault) {
-                    selector.defaultRequestProcessor = processor;
-                }
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        if (workerPool != null) {
-            workerPool.close();
-        }
-        Misc.free(httpContextFactory);
-        Misc.free(dispatcher);
-        Misc.free(rescheduleContext);
     }
 
     private static void addDefaultEndpoints(
@@ -292,6 +196,100 @@ public class HttpServer implements QuietCloseable {
         });
     }
 
+    @Nullable
+    public static HttpServer create(
+            HttpServerConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log workerPoolLog,
+            CairoEngine cairoEngine,
+            Metrics metrics
+    ) {
+        return create(
+                configuration,
+                sharedWorkerPool,
+                workerPoolLog,
+                cairoEngine,
+                null,
+                null,
+                metrics
+        );
+    }
+
+    @Nullable
+    public static HttpServer create(
+            HttpServerConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log workerPoolLog,
+            CairoEngine cairoEngine,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        return WorkerPoolFactory.create(
+                configuration,
+                sharedWorkerPool,
+                workerPoolLog,
+                cairoEngine,
+                CREATE0,
+                functionFactoryCache,
+                snapshotAgent,
+                metrics
+        );
+    }
+
+    @Nullable
+    public static HttpServer createMin(
+            HttpMinServerConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log workerPoolLog,
+            CairoEngine cairoEngine,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        return WorkerPoolFactory.create(
+                configuration,
+                sharedWorkerPool,
+                workerPoolLog,
+                cairoEngine,
+                CREATE_MIN,
+                functionFactoryCache,
+                snapshotAgent,
+                metrics
+        );
+    }
+
+    public void bind(HttpRequestProcessorFactory factory) {
+        bind(factory, false);
+    }
+
+    public void bind(HttpRequestProcessorFactory factory, boolean useAsDefault) {
+        final String url = factory.getUrl();
+        assert url != null;
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                selector.defaultRequestProcessor = factory.newInstance();
+            } else {
+                final HttpRequestProcessor processor = factory.newInstance();
+                selector.processorMap.put(url, processor);
+                if (useAsDefault) {
+                    selector.defaultRequestProcessor = processor;
+                }
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        if (workerPool != null) {
+            workerPool.close();
+        }
+        Misc.free(httpContextFactory);
+        Misc.free(dispatcher);
+        Misc.free(rescheduleContext);
+    }
+
     private static HttpServer create0(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
@@ -315,7 +313,7 @@ public class HttpServer implements QuietCloseable {
         return s;
     }
 
-    private static HttpServer createMin(
+    public static HttpServer createMin(
             HttpMinServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,

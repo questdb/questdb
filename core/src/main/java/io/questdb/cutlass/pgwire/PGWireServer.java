@@ -25,7 +25,6 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -58,7 +57,7 @@ public class PGWireServer implements QuietCloseable {
             Metrics metrics,
             PGConnectionContextFactory contextFactory
     ) {
-        return WorkerPoolAwareConfiguration.create(
+        return WorkerPoolFactory.create(
                 configuration,
                 sharedWorkerPool,
                 log,
@@ -82,7 +81,7 @@ public class PGWireServer implements QuietCloseable {
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
-        return WorkerPoolAwareConfiguration.create(
+        return WorkerPoolFactory.create(
                 configuration,
                 sharedWorkerPool,
                 log,

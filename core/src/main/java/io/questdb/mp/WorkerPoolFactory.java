@@ -26,16 +26,42 @@ package io.questdb.mp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
+import io.questdb.log.Log;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 
 public class WorkerPoolFactory {
+
+    public static final WorkerPoolConfiguration USE_SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
+        @Override
+        public int[] getWorkerAffinity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+    };
 
     private static final AtomicReference<WorkerPool> SHARED = new AtomicReference<>();
     private static final CharSequenceObjHashMap<WorkerPool> DEDICATED = new CharSequenceObjHashMap<>(4);
@@ -81,5 +107,56 @@ public class WorkerPoolFactory {
             throw new IllegalStateException("shared pool has not been set");
         }
         return sharedPool;
+    }
+
+    @Nullable
+    public static <T extends QuietCloseable, C extends WorkerPoolConfiguration> T create(
+            C configuration,
+            WorkerPool sharedPool,
+            Log log,
+            CairoEngine cairoEngine,
+            ServerFactory<T, C> factory,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        final T server;
+        if (configuration.isEnabled()) {
+            final WorkerPool localPool = WorkerPoolFactory.getInstance(configuration, metrics);
+            final boolean local = localPool != sharedPool;
+            final int sharedWorkerCount = sharedPool == null ? localPool.getWorkerCount() : sharedPool.getWorkerCount();
+            server = factory.create(
+                    configuration,
+                    cairoEngine,
+                    localPool,
+                    local,
+                    sharedWorkerCount,
+                    functionFactoryCache,
+                    snapshotAgent,
+                    metrics
+            );
+
+            if (local) {
+                localPool.assignCleaner(Path.CLEANER);
+                localPool.start(log);
+            }
+
+            return server;
+        }
+        return null;
+    }
+
+    @FunctionalInterface
+    public interface ServerFactory<T extends QuietCloseable, C> {
+        T create(
+                C configuration,
+                CairoEngine engine,
+                WorkerPool workerPool,
+                boolean isWorkerPoolLocal,
+                int sharedWorkerCount,
+                @Nullable FunctionFactoryCache functionFactoryCache,
+                @Nullable DatabaseSnapshotAgent snapshotAgent,
+                Metrics metrics
+        );
     }
 }

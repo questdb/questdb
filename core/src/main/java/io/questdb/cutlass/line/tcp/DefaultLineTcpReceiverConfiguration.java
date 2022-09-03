@@ -24,13 +24,14 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -104,13 +105,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
-        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
+        return WorkerPoolFactory.USE_SHARED_CONFIGURATION;
     }
 
     @Override
-    public WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration() {
-        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+        return WorkerPoolFactory.USE_SHARED_CONFIGURATION;
     }
 
     @Override

@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -3568,7 +3567,7 @@ public class O3FailureTest extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = WorkerPoolFactory.getInstance(new WorkerPoolAwareConfiguration() {
+            WorkerPool pool1 = WorkerPoolFactory.getInstance(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
                     return TestUtils.getWorkerAffinity(getWorkerCount());

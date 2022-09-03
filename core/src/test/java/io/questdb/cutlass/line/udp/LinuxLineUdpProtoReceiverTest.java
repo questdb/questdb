@@ -24,10 +24,10 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineUdpSender;
+import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
@@ -281,6 +281,6 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         });
     }
 
-    private interface ReceiverFactory extends WorkerPoolAwareConfiguration.ServerFactory<AbstractLineProtoUdpReceiver, LineUdpReceiverConfiguration> {
+    private interface ReceiverFactory extends WorkerPoolFactory.ServerFactory<AbstractLineProtoUdpReceiver, LineUdpReceiverConfiguration> {
     }
 }

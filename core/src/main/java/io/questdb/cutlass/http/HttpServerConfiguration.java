@@ -24,11 +24,11 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.mp.WorkerPoolConfiguration;
 
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
+public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMinServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
 
     HttpContextConfiguration getHttpContextConfiguration();

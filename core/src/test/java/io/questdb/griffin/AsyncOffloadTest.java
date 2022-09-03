@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
@@ -37,6 +36,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -347,7 +347,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         AbstractCairoTest.jitMode = jitMode;
 
         WorkerPool pool = WorkerPoolFactory.getInstance(
-                new WorkerPoolAwareConfiguration() {
+                new WorkerPoolConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {
                         return TestUtils.getWorkerAffinity(getWorkerCount());
