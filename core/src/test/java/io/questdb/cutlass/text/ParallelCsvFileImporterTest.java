@@ -2730,7 +2730,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                                 return true;
                             }
                         },
-                        Metrics.disabled()
+                        Metrics.disabled(),
+                        true
                 );
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {

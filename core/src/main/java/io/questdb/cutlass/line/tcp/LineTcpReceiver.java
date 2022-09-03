@@ -43,45 +43,13 @@ import org.jetbrains.annotations.TestOnly;
 public class LineTcpReceiver implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
 
-    @Nullable
-    public static LineTcpReceiver create(
-            LineTcpReceiverConfiguration lineConfiguration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            Metrics metrics
-    ) {
-        if (!lineConfiguration.isEnabled()) {
-            return null;
-        }
-
-        ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolFactory.getInstance(lineConfiguration.getIOWorkerPoolConfiguration(), metrics);
-        WorkerPool writerWorkerPool = WorkerPoolFactory.getInstance(lineConfiguration.getWriterWorkerPoolConfiguration(), metrics);
-        if (ioWorkerPool != sharedWorkerPool) {
-            dedicatedPools.add(ioWorkerPool);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            dedicatedPools.add(writerWorkerPool);
-        }
-        LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
-        if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.start(log);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.start(log);
-        }
-        return lineTcpReceiver;
-    }
-
-
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
     private final ObjList<WorkerPool> dedicatedPools;
     private final Metrics metrics;
 
-    private LineTcpReceiver(
+    public LineTcpReceiver(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,

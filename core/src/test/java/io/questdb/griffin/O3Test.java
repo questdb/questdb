@@ -1268,7 +1268,7 @@ public class O3Test extends AbstractO3Test {
                 public boolean isEnabled() {
                     return true;
                 }
-            }, Metrics.disabled());
+            }, Metrics.disabled(),false);
 
             pool1.assign(new Job() {
                 private boolean toRun = true;

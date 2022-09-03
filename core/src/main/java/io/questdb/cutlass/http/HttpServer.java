@@ -39,15 +39,11 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import org.jetbrains.annotations.Nullable;
-
 
 public class HttpServer implements QuietCloseable {
 
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
 
-    private static final WorkerPoolFactory.ServerFactory<HttpServer, HttpServerConfiguration> CREATE0 = HttpServer::create0;
-    private static final WorkerPoolFactory.ServerFactory<HttpServer, HttpMinServerConfiguration> CREATE_MIN = HttpServer::createMin;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
@@ -116,6 +112,98 @@ public class HttpServer implements QuietCloseable {
                 queryCacheEventSubSeq.clear();
             });
         }
+    }
+
+    public void bind(HttpRequestProcessorFactory factory) {
+        bind(factory, false);
+    }
+
+    public void bind(HttpRequestProcessorFactory factory, boolean useAsDefault) {
+        final String url = factory.getUrl();
+        assert url != null;
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                selector.defaultRequestProcessor = factory.newInstance();
+            } else {
+                final HttpRequestProcessor processor = factory.newInstance();
+                selector.processorMap.put(url, processor);
+                if (useAsDefault) {
+                    selector.defaultRequestProcessor = processor;
+                }
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        if (workerPool != null) {
+            workerPool.close();
+        }
+        Misc.free(httpContextFactory);
+        Misc.free(dispatcher);
+        Misc.free(rescheduleContext);
+    }
+
+    public static HttpServer create0(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            boolean localPool,
+            int sharedWorkerCount,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
+        QueryCache.configure(configuration);
+        HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+                configuration.getJsonQueryProcessorConfiguration(),
+                cairoEngine,
+                workerPool.getWorkerCount(),
+                sharedWorkerCount,
+                functionFactoryCache,
+                snapshotAgent);
+        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, sharedWorkerCount, jsonQueryProcessorBuilder, functionFactoryCache, snapshotAgent);
+        return s;
+    }
+
+    public static HttpServer createMinHttpServer(
+            HttpMinServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            boolean localPool,
+            int sharedWorkerCount,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
+        s.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new HealthCheckProcessor();
+            }
+
+            @Override
+            public String getUrl() {
+                return metrics.isEnabled() ? "/status" : "*";
+            }
+        }, true);
+        if (metrics.isEnabled()) {
+            s.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new PrometheusMetricsProcessor(metrics);
+                }
+
+                @Override
+                public String getUrl() {
+                    return "/metrics";
+                }
+            });
+        }
+        return s;
     }
 
     private static void addDefaultEndpoints(
@@ -194,161 +282,6 @@ public class HttpServer implements QuietCloseable {
                 return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
             }
         });
-    }
-
-    @Nullable
-    public static HttpServer create(
-            HttpServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
-            CairoEngine cairoEngine,
-            Metrics metrics
-    ) {
-        return create(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                null,
-                null,
-                metrics
-        );
-    }
-
-    @Nullable
-    public static HttpServer create(
-            HttpServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
-            CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        return WorkerPoolFactory.create(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                CREATE0,
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
-
-    @Nullable
-    public static HttpServer createMin(
-            HttpMinServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
-            CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        return WorkerPoolFactory.create(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                CREATE_MIN,
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
-
-    public void bind(HttpRequestProcessorFactory factory) {
-        bind(factory, false);
-    }
-
-    public void bind(HttpRequestProcessorFactory factory, boolean useAsDefault) {
-        final String url = factory.getUrl();
-        assert url != null;
-        for (int i = 0; i < workerCount; i++) {
-            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                selector.defaultRequestProcessor = factory.newInstance();
-            } else {
-                final HttpRequestProcessor processor = factory.newInstance();
-                selector.processorMap.put(url, processor);
-                if (useAsDefault) {
-                    selector.defaultRequestProcessor = processor;
-                }
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        if (workerPool != null) {
-            workerPool.close();
-        }
-        Misc.free(httpContextFactory);
-        Misc.free(dispatcher);
-        Misc.free(rescheduleContext);
-    }
-
-    private static HttpServer create0(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            boolean localPool,
-            int sharedWorkerCount,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
-        QueryCache.configure(configuration);
-        HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
-                configuration.getJsonQueryProcessorConfiguration(),
-                cairoEngine,
-                workerPool.getWorkerCount(),
-                sharedWorkerCount,
-                functionFactoryCache,
-                snapshotAgent);
-        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, sharedWorkerCount, jsonQueryProcessorBuilder, functionFactoryCache, snapshotAgent);
-        return s;
-    }
-
-    public static HttpServer createMin(
-            HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            boolean localPool,
-            int sharedWorkerCount,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
-        s.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor();
-            }
-
-            @Override
-            public String getUrl() {
-                return metrics.isEnabled() ? "/status" : "*";
-            }
-        }, true);
-        if (metrics.isEnabled()) {
-            s.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics);
-                }
-
-                @Override
-                public String getUrl() {
-                    return "/metrics";
-                }
-            });
-        }
-        return s;
     }
 
     @FunctionalInterface

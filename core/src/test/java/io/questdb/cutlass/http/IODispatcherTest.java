@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -755,7 +756,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = HttpServer.create(
+                HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(
                                 new DefaultHttpContextConfiguration() {
                                     @Override
@@ -824,7 +825,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = HttpServer.create(
+                HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
                             public MillisecondClock getClock() {
@@ -7516,5 +7517,23 @@ public class IODispatcherTest {
             }
             return (char) bytes[index];
         }
+    }
+
+    private static HttpServer createHttpServer(
+            HttpServerConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log workerPoolLog,
+            CairoEngine cairoEngine,
+            Metrics metrics
+    ) {
+        return Services.createHttpServer(
+                configuration,
+                sharedWorkerPool,
+                workerPoolLog,
+                cairoEngine,
+                null,
+                null,
+                metrics
+        );
     }
 }

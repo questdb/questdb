@@ -411,7 +411,7 @@ public class LogFactory implements Closeable {
             public String getPoolName() {
                 return "logging";
             }
-        }, Metrics.disabled());
+        }, Metrics.disabled(), false);
         assign(workerPool);
         workerPool.start();
     }

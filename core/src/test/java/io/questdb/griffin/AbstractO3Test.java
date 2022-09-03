@@ -263,7 +263,8 @@ public class AbstractO3Test {
                                 return true;
                             }
                         },
-                        Metrics.disabled()
+                        Metrics.disabled(),
+                        false
                 );
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {

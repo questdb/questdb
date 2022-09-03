@@ -273,7 +273,8 @@ public class LatestByParallelTest {
                                 return true;
                             }
                         },
-                        Metrics.disabled()
+                        Metrics.disabled(),
+                        false
                 );
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {

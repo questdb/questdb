@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.Services;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -49,7 +50,7 @@ import static io.questdb.std.Numbers.hexDigits;
 public class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {
-        return PGWireServer.create(
+        return Services.createPGWireServer(
                 configuration,
                 null,
                 LOG,

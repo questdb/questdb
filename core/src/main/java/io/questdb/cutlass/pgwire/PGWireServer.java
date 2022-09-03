@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.Services;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -46,73 +47,12 @@ public class PGWireServer implements QuietCloseable {
 
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
 
-    @Nullable
-    public static PGWireServer create(
-            PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics,
-            PGConnectionContextFactory contextFactory
-    ) {
-        return WorkerPoolFactory.create(
-                configuration,
-                sharedWorkerPool,
-                log,
-                cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
-                        conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
-
-    @Nullable
-    public static PGWireServer create(
-            PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        return WorkerPoolFactory.create(
-                configuration,
-                sharedWorkerPool,
-                log,
-                cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, cache, agent, m) -> new PGWireServer(
-                        conf,
-                        engine,
-                        workerPool,
-                        local,
-                        cache,
-                        agent,
-                        new PGConnectionContextFactory(
-                                engine,
-                                conf,
-                                workerPool.getWorkerCount(),
-                                sharedWorkerCount
-                        )
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
-
-
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
     private final WorkerPool workerPool;
     private final Metrics metrics;
 
-    PGWireServer(
+    public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,

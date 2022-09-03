@@ -368,7 +368,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                         return true;
                     }
                 },
-                Metrics.disabled()
+                Metrics.disabled(), false
         );
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {

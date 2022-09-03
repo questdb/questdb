@@ -1178,7 +1178,7 @@ public final class TestUtils {
                 return true;
             }
         };
-        WorkerPool pool = WorkerPoolFactory.getInstance(config, Metrics.disabled());
+        WorkerPool pool = WorkerPoolFactory.getInstance(config, Metrics.disabled(), true);
         TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
         try {
             pool.assign(processingJob);

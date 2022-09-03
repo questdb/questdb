@@ -25,11 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.line.udp.LineUdpReceiver;
-import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -160,7 +156,7 @@ public class ServerMain implements QuietCloseable {
         }
 
         // http
-        toBeClosed.add(HttpServer.create(
+        toBeClosed.add(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 sharedPool,
                 log,
@@ -171,7 +167,7 @@ public class ServerMain implements QuietCloseable {
         ));
 
         // http min
-        toBeClosed.add(HttpServer.createMin(
+        toBeClosed.add(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 sharedPool,
                 log,
@@ -183,7 +179,7 @@ public class ServerMain implements QuietCloseable {
 
         // pg-wire
         if (config.getPGWireConfiguration().isEnabled()) {
-            toBeClosed.add(PGWireServer.create(
+            toBeClosed.add(Services.createPGWireServer(
                     config.getPGWireConfiguration(),
                     sharedPool,
                     log,
@@ -194,26 +190,18 @@ public class ServerMain implements QuietCloseable {
             ));
         }
 
-        // ilp/udp
-        if (config.getLineUdpReceiverConfiguration().isEnabled()) {
-            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-                toBeClosed.add(new LinuxMMLineUdpReceiver(
-                        config.getLineUdpReceiverConfiguration(),
-                        cairoEngine,
-                        sharedPool
-                ));
-            } else {
-                toBeClosed.add(new LineUdpReceiver(
-                        config.getLineUdpReceiverConfiguration(),
-                        cairoEngine,
-                        sharedPool
-                ));
-            }
-        }
-
         // ilp/tcp
-        toBeClosed.add(LineTcpReceiver.create(
+        toBeClosed.add(Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
+                sharedPool,
+                log,
+                cairoEngine,
+                metrics
+        ));
+
+        // ilp/udp
+        toBeClosed.add(Services.createLineUdpReceiver(
+                config.getLineUdpReceiverConfiguration(),
                 sharedPool,
                 log,
                 cairoEngine,
