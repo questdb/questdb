@@ -212,7 +212,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
-                sharedWorkerPool.configure(engine, null);
+                sharedWorkerPool.configure(engine, null, false);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }

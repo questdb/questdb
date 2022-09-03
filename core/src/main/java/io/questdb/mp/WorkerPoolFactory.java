@@ -41,28 +41,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class WorkerPoolFactory {
 
-    public static final WorkerPoolConfiguration USE_SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
-        @Override
-        public int[] getWorkerAffinity() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return 0;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
-        }
-    };
-
     private static final AtomicReference<WorkerPool> SHARED = new AtomicReference<>();
     private static final CharSequenceObjHashMap<WorkerPool> DEDICATED = new CharSequenceObjHashMap<>(4);
 
@@ -77,7 +55,7 @@ public class WorkerPoolFactory {
             throw new IllegalStateException("shared pool has already been set");
         }
         final WorkerPool sharedPool;
-        SHARED.set(sharedPool = new WorkerPool(config, metrics).configure(cairoEngine, functionFactoryCache));
+        SHARED.set(sharedPool = new WorkerPool(config, metrics).configure(cairoEngine, functionFactoryCache, true));
         return sharedPool;
     }
 

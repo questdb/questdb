@@ -80,7 +80,7 @@ public class WorkerPool implements QuietCloseable {
         }
     }
 
-    public WorkerPool configure(CairoEngine cairoEngine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
+    public WorkerPool configure(CairoEngine cairoEngine, @Nullable FunctionFactoryCache functionFactoryCache, boolean withCircuitBreaker) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerCount);
         final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
@@ -105,7 +105,7 @@ public class WorkerPool implements QuietCloseable {
             final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
                     messageBus,
                     new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                    cairoEngine.getConfiguration().getCircuitBreakerConfiguration()
+                    withCircuitBreaker ? cairoEngine.getConfiguration().getCircuitBreakerConfiguration() :  null
             );
             assign(i, (Job) pageFrameReduceJob);
             freeOnHalt(pageFrameReduceJob);

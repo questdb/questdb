@@ -91,18 +91,6 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(long fd, long sockAddr, int attempts, long waitMs) {
-        for (int i = 0; i < attempts; i++) {
-            long rc = connect(fd, sockAddr);
-            if (rc == 0) {
-                return;
-            }
-            System.out.printf("%d/%d failed connection attempts%n", i + 1, attempts);
-            Os.sleep(waitMs);
-        }
-        Assert.fail("could not connect, errno=" + Os.errno());
-    }
-
     public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
         long rc = connectAddrInfo(fd, sockAddrInfo);
         if (rc != 0) {
@@ -856,7 +844,7 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    pool.configure( engine, null);
+                    pool.configure( engine, null, false);
                     pool.start(LOG);
                 }
 

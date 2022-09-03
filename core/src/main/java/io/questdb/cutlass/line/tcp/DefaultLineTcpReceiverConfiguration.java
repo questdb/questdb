@@ -31,7 +31,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -106,12 +105,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
-        return WorkerPoolFactory.USE_SHARED_CONFIGURATION;
+        return SHARED_CONFIGURATION;
     }
 
     @Override
     public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return WorkerPoolFactory.USE_SHARED_CONFIGURATION;
+        return SHARED_CONFIGURATION;
     }
 
     @Override
@@ -188,4 +187,26 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public short getDefaultColumnTypeForInteger() {
         return ColumnType.LONG;
     }
+
+    private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
+        @Override
+        public int[] getWorkerAffinity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+    };
 }
