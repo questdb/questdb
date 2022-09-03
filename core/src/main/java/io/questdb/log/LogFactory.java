@@ -386,7 +386,7 @@ public class LogFactory implements Closeable {
             return;
         }
 
-        this.workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+        this.workerPool = WorkerPoolFactory.getInstance(new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
                 return new int[]{-1};
@@ -526,7 +526,7 @@ public class LogFactory implements Closeable {
      * Converts fully qualified class name into an abbreviated form:
      * com.questdb.mp.Sequence -> c.n.m.Sequence
      *
-     * @param key typically class name
+     * @param key     typically class name
      * @param builder used for producing the resulting form
      * @return abbreviated form of key
      */
@@ -559,7 +559,7 @@ public class LogFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL |LogLevel.ADVISORY;
+        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
         if (isForcedDebug()) {
             level = level | LogLevel.DEBUG;
         }

@@ -29,10 +29,7 @@ import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.TestWorkerPool;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -3571,7 +3568,7 @@ public class O3FailureTest extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
+            WorkerPool pool1 = WorkerPoolFactory.getInstance(new WorkerPoolAwareConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
                     return TestUtils.getWorkerAffinity(getWorkerCount());

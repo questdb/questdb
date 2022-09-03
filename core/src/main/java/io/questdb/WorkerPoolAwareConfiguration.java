@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -58,16 +59,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
         }
     };
 
-    static WorkerPool configureWorkerPool(
-            WorkerPoolAwareConfiguration configuration,
-            WorkerPool sharedPool,
-            Metrics metrics
-    ) {
-        WorkerPool pool = configuration.getWorkerCount() > 0 || sharedPool == null ? new WorkerPool(configuration, metrics) : sharedPool;
-        pool.assignCleaner(Path.CLEANER);
-        return pool;
-    }
-
     @Nullable
     static <T extends QuietCloseable, C extends WorkerPoolAwareConfiguration> T create(
             C configuration,
@@ -81,7 +72,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     ) {
         final T server;
         if (configuration.isEnabled()) {
-            final WorkerPool localPool = configureWorkerPool(configuration, sharedPool, metrics);
+            final WorkerPool localPool = WorkerPoolFactory.getInstance(configuration, metrics);
             final boolean local = localPool != sharedPool;
             final int sharedWorkerCount = sharedPool == null ? localPool.getWorkerCount() : sharedPool.getWorkerCount();
             server = factory.create(

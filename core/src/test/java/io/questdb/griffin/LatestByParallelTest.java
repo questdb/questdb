@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -250,7 +251,7 @@ public class LatestByParallelTest {
         executeVanilla(() -> {
             if (workerCount > 0) {
 
-                WorkerPool pool = new WorkerPool(
+                WorkerPool pool = WorkerPoolFactory.getInstance(
                         new WorkerPoolAwareConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {

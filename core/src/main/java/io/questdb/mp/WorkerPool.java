@@ -40,44 +40,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class WorkerPool implements QuietCloseable {
-
-    public static void configureWorkerPool(
-            WorkerPool workerPool,
-            CairoEngine cairoEngine,
-            @Nullable SqlExecutionCircuitBreakerConfiguration circuitBreakerConfig,
-            @Nullable FunctionFactoryCache functionFactoryCache
-    ) throws SqlException {
-        final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = workerPool.getWorkerCount();
-        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
-        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-
-        workerPool.assign(purgeDiscoveryJob);
-        workerPool.assign(columnPurgeJob);
-        workerPool.assign(new O3PartitionJob(messageBus));
-        workerPool.assign(new O3OpenColumnJob(messageBus));
-        workerPool.assign(new O3CopyJob(messageBus));
-        workerPool.assign(new O3CallbackJob(messageBus));
-        workerPool.freeOnHalt(purgeDiscoveryJob);
-        workerPool.freeOnHalt(columnPurgeJob);
-        workerPool.assignCleaner(Path.CLEANER);
-
-        final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
-        final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
-
-        for (int i = 0; i < workerCount; i++) {
-            // create job per worker to allow each worker to have
-            // own shard walk sequence
-            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                    messageBus,
-                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                    circuitBreakerConfig
-            );
-            workerPool.assign(i, (Job) pageFrameReduceJob);
-            workerPool.freeOnHalt(pageFrameReduceJob);
-        }
-    }
+public class WorkerPool implements Lifecycle {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
@@ -95,8 +58,9 @@ public class WorkerPool implements QuietCloseable {
     private final long sleepMs;
     private final ObjList<Closeable> freeOnHalt = new ObjList<>();
     private final Metrics metrics;
+    private FunctionFactoryCache functionFactoryCache;
 
-    public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
+    WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         this.workerAffinity = configuration.getWorkerAffinity();
         this.halted = new SOCountDownLatch(workerCount);
@@ -116,6 +80,41 @@ public class WorkerPool implements QuietCloseable {
             workerJobs.add(new ObjHashSet<>());
             cleaners.add(new ObjList<>());
         }
+    }
+
+    public WorkerPool configure(CairoEngine cairoEngine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
+        this.functionFactoryCache = functionFactoryCache;
+
+        final MessageBus messageBus = cairoEngine.getMessageBus();
+        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerCount);
+        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
+
+        assign(purgeDiscoveryJob);
+        assign(columnPurgeJob);
+        assign(new O3PartitionJob(messageBus));
+        assign(new O3OpenColumnJob(messageBus));
+        assign(new O3CopyJob(messageBus));
+        assign(new O3CallbackJob(messageBus));
+        freeOnHalt(purgeDiscoveryJob);
+        freeOnHalt(columnPurgeJob);
+        assign(cairoEngine.getEngineMaintenanceJob());
+        assignCleaner(Path.CLEANER);
+
+        final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
+        final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
+
+        for (int i = 0; i < workerCount; i++) {
+            // create job per worker to allow each worker to have
+            // own shard walk sequence
+            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+                    messageBus,
+                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
+                    cairoEngine.getConfiguration().getCircuitBreakerConfiguration()
+            );
+            assign(i, (Job) pageFrameReduceJob);
+            freeOnHalt(pageFrameReduceJob);
+        }
+        return this;
     }
 
     /**
@@ -161,6 +160,7 @@ public class WorkerPool implements QuietCloseable {
         return workerCount;
     }
 
+    @Override
     public void start() {
         start(null);
     }

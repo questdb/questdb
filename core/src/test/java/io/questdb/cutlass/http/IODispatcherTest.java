@@ -4408,13 +4408,7 @@ public class IODispatcherTest {
                     }
                 };
 
-                WorkerPool.configureWorkerPool(
-                        workerPool,
-                        engine,
-                        null,
-                        null
-                );
-
+                workerPool.configure(engine,null);
                 workerPool.start(LOG);
 
                 try {

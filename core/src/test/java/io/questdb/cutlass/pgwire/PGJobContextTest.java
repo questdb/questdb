@@ -38,6 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -6583,7 +6584,7 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics);
+        WorkerPool pool = WorkerPoolFactory.getInstance(conf, metrics);
         pool.assign(engine.getEngineMaintenanceJob());
         try (
                 final PGWireServer server = PGWireServer.create(

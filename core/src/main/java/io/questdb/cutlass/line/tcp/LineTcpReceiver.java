@@ -25,18 +25,17 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -57,16 +56,12 @@ public class LineTcpReceiver implements QuietCloseable {
         }
 
         ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool, metrics);
-        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool, metrics);
+        WorkerPool ioWorkerPool = WorkerPoolFactory.getInstance(lineConfiguration.getIOWorkerPoolConfiguration(), metrics);
+        WorkerPool writerWorkerPool = WorkerPoolFactory.getInstance(lineConfiguration.getWriterWorkerPoolConfiguration(), metrics);
         if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(ioWorkerPool);
         }
         if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(writerWorkerPool);
         }
         LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
