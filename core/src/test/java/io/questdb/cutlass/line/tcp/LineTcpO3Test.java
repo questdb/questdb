@@ -37,7 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUnboundedByteSink;
@@ -160,7 +160,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             Assert.assertTrue(clientFd >= 0);
 
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
-            WorkerPool sharedWorkerPool = WorkerPoolFactory.getInstance(sharedWorkerPoolConfiguration, metrics,false);
+            WorkerPool sharedWorkerPool = WorkerPoolManager.getInstance(sharedWorkerPoolConfiguration, metrics,false);
             try (
                     LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, sharedWorkerPool, LOG, engine, metrics);
                     SqlCompiler compiler = new SqlCompiler(engine);

@@ -34,7 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
@@ -241,7 +241,7 @@ public class AbstractO3Test {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = WorkerPoolFactory.getInstance(
+                WorkerPool pool = WorkerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {

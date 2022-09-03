@@ -42,7 +42,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -170,8 +170,8 @@ public final class Services {
         }
 
         ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolFactory.getInstance(lineConfiguration.getIOWorkerPoolConfiguration(), metrics, true);
-        WorkerPool writerWorkerPool = WorkerPoolFactory.getInstance(lineConfiguration.getWriterWorkerPoolConfiguration(), metrics, true);
+        WorkerPool ioWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getIOWorkerPoolConfiguration(), metrics, true);
+        WorkerPool writerWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getWriterWorkerPoolConfiguration(), metrics, true);
         if (ioWorkerPool != sharedWorkerPool) {
             dedicatedPools.add(ioWorkerPool);
         }
@@ -231,7 +231,7 @@ public final class Services {
     ) {
         final T server;
         if (configuration.isEnabled()) {
-            final WorkerPool localPool = WorkerPoolFactory.getInstance(configuration, metrics, true);
+            final WorkerPool localPool = WorkerPoolManager.getInstance(configuration, metrics, true);
             final boolean local = localPool != sharedPool;
             final int sharedWorkerCount = sharedPool == null ? localPool.getWorkerCount() : sharedPool.getWorkerCount();
             server = factory.create(

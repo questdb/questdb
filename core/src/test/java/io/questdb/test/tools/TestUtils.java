@@ -36,7 +36,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -1178,7 +1178,7 @@ public final class TestUtils {
                 return true;
             }
         };
-        WorkerPool pool = WorkerPoolFactory.getInstance(config, Metrics.disabled(), true);
+        WorkerPool pool = WorkerPoolManager.getInstance(config, Metrics.disabled(), true);
         TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
         try {
             pool.assign(processingJob);

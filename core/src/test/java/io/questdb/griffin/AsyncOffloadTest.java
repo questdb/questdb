@@ -37,7 +37,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -346,7 +346,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        WorkerPool pool = WorkerPoolFactory.getInstance(
+        WorkerPool pool = WorkerPoolManager.getInstance(
                 new WorkerPoolConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {

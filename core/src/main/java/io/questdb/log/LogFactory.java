@@ -386,7 +386,7 @@ public class LogFactory implements Closeable {
             return;
         }
 
-        this.workerPool = WorkerPoolFactory.getInstance(new WorkerPoolConfiguration() {
+        this.workerPool = WorkerPoolManager.getInstance(new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
                 return new int[]{-1};

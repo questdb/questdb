@@ -36,9 +36,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicReference;
 
-public class WorkerPoolFactory {
+public class WorkerPoolManager {
 
-    private static final Log LOG = LogFactory.getLog(WorkerPoolFactory.class);
+    private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
     private static final AtomicReference<WorkerPool> SHARED = new AtomicReference<>();
     private static final CharSequenceObjHashMap<WorkerPool> DEDICATED = new CharSequenceObjHashMap<>(4);
 

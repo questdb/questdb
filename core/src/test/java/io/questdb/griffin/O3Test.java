@@ -1248,7 +1248,7 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = WorkerPoolFactory.getInstance(new WorkerPoolConfiguration() {
+            WorkerPool pool1 = WorkerPoolManager.getInstance(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
                     return TestUtils.getWorkerAffinity(getWorkerCount());

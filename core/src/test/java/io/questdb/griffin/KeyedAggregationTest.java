@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.RostiAllocFacadeImpl;
@@ -1270,7 +1270,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     affinity[i] = -1;
                 }
 
-                WorkerPool pool = WorkerPoolFactory.getInstance(
+                WorkerPool pool = WorkerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {

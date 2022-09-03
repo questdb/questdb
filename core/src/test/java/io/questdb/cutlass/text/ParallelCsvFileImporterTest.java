@@ -34,7 +34,7 @@ import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2708,7 +2708,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     affinity[i] = -1;
                 }
 
-                WorkerPool pool = WorkerPoolFactory.getInstance(
+                WorkerPool pool = WorkerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {

@@ -30,13 +30,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolFactory;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 

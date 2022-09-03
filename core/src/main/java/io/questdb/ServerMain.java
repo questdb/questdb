@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolFactory;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 
 import java.util.*;
@@ -126,7 +126,7 @@ public class ServerMain implements QuietCloseable {
                 cairoEngine.getConfiguration(),
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
-        final WorkerPool sharedPool = WorkerPoolFactory.initSharedInstance(
+        final WorkerPool sharedPool = WorkerPoolManager.initSharedInstance(
                 cairoEngine,
                 config.getWorkerPoolConfiguration(),
                 functionFactoryCache,
