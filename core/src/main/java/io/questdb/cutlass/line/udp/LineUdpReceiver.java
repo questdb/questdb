@@ -40,6 +40,7 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
     ) {
         super(configuration, engine, workerPool);
         this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
+        start();
     }
 
     @Override

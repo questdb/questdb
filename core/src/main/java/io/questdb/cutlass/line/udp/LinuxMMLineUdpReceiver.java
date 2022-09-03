@@ -40,6 +40,7 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
         super(configuration, engine, workerPool);
         this.msgCount = configuration.getMsgCount();
         msgVec = nf.msgHeaders(configuration.getMsgBufferSize(), msgCount);
+        start();
     }
 
     @Override

@@ -27,7 +27,6 @@ package io.questdb.mp;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
@@ -40,7 +39,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class WorkerPool implements Lifecycle {
+public class WorkerPool implements QuietCloseable {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
@@ -58,7 +57,6 @@ public class WorkerPool implements Lifecycle {
     private final long sleepMs;
     private final ObjList<Closeable> freeOnHalt = new ObjList<>();
     private final Metrics metrics;
-    private FunctionFactoryCache functionFactoryCache;
 
     WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
@@ -83,8 +81,6 @@ public class WorkerPool implements Lifecycle {
     }
 
     public WorkerPool configure(CairoEngine cairoEngine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
-        this.functionFactoryCache = functionFactoryCache;
-
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerCount);
         final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
@@ -126,7 +122,6 @@ public class WorkerPool implements Lifecycle {
      */
     public void assign(Job job) {
         assert !running.get();
-
         for (int i = 0; i < workerCount; i++) {
             workerJobs.getQuick(i).add(job);
         }
@@ -144,7 +139,6 @@ public class WorkerPool implements Lifecycle {
 
     public void assignCleaner(Closeable cleaner) {
         assert !running.get();
-
         for (int i = 0; i < workerCount; i++) {
             cleaners.getQuick(i).add(cleaner);
         }
@@ -152,7 +146,6 @@ public class WorkerPool implements Lifecycle {
 
     public void freeOnHalt(Closeable closeable) {
         assert !running.get();
-
         freeOnHalt.add(closeable);
     }
 
@@ -160,7 +153,6 @@ public class WorkerPool implements Lifecycle {
         return workerCount;
     }
 
-    @Override
     public void start() {
         start(null);
     }

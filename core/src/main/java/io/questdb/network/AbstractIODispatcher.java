@@ -106,6 +106,34 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         listening = true;
     }
 
+    private void createListenFd() throws NetworkError {
+        this.serverFd = nf.socketTcp(false);
+        final int backlog = configuration.getListenBacklog();
+        if (this.port == 0) {
+            // Note that `configuration.getBindPort()` might also be 0.
+            // In such case, we will bind to an ephemeral port.
+            this.port = configuration.getBindPort();
+        }
+        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {
+            if (this.port == 0) {
+                // We resolve port 0 only once. In case we close and re-open the
+                // listening socket, we will reuse the previously resolved
+                // ephemeral port.
+                this.port = nf.resolvePort(this.serverFd);
+            }
+            nf.listen(this.serverFd, backlog);
+        } else {
+            throw NetworkError.instance(nf.errno()).couldNotBindSocket(
+                    configuration.getDispatcherLogName(),
+                    configuration.getBindIPv4Address(),
+                    this.port);
+        }
+        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+                .$(" [fd=").$(serverFd)
+                .$(" backlog=").$(backlog)
+                .I$();
+    }
+
     @Override
     public void close() {
         processDisconnects(Long.MAX_VALUE);
@@ -174,17 +202,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         }
     }
 
-    @Override
-    public boolean isListening() {
-        return listening;
-    }
-
-    @Override
-    public int getPort() {
-        return port;
-    }
-
-
     protected void accept(long timestamp) {
         int tlConCount = this.connectionCount.get();
         while (tlConCount < activeConnectionLimit) {
@@ -240,6 +257,21 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         }
     }
 
+    private void addPending(long fd, long timestamp) {
+        // append to pending
+        // all rows below watermark will be registered with kqueue
+        int r = pending.addRow();
+        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
+        pending.set(r, M_TIMESTAMP, timestamp);
+        pending.set(r, M_FD, fd);
+        pending.set(r, ioContextFactory.newInstance(fd, this));
+        pendingAdded(r);
+    }
+
+    private void disconnectContext(IOEvent<C> event) {
+        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
+    }
+
     protected void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
             return;
@@ -289,50 +321,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(operation).$(", pos=").$(cursor).$(']').$();
     }
 
-    private void createListenFd() throws NetworkError {
-        serverFd = nf.socketTcp(false);
-        nf.configureNoLinger(serverFd);
-        final int backlog = configuration.getListenBacklog();
-        if (port == 0) {
-            // Note that `configuration.getBindPort()` might also be 0.
-            // In such case, we will bind to an ephemeral port.
-            port = configuration.getBindPort();
-        }
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), port)) {
-            if (port == 0) {
-                // We resolve port 0 only once. In case we close and re-open the
-                // listening socket, we will reuse the previously resolved
-                // ephemeral port.
-                port = nf.resolvePort(serverFd);
-            }
-            nf.listen(serverFd, backlog);
-        } else {
-            throw NetworkError.instance(nf.errno()).couldNotBindSocket(
-                    configuration.getDispatcherLogName(),
-                    configuration.getBindIPv4Address(),
-                    port
-            );
-        }
-        LOG.advisory().$("listening on ")
-                .$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
-                .$(" [fd=").$(serverFd)
-                .$(" backlog=").$(backlog)
-                .I$();
+    @Override
+    public boolean isListening() {
+        return listening;
     }
 
-    private void addPending(long fd, long timestamp) {
-        // append to pending
-        // all rows below watermark will be registered with kqueue
-        int r = pending.addRow();
-        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
-        pending.set(r, M_TIMESTAMP, timestamp);
-        pending.set(r, M_FD, fd);
-        pending.set(r, ioContextFactory.newInstance(fd, this));
-        pendingAdded(r);
-    }
-
-    private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
+    @Override
+    public int getPort() {
+        return port;
     }
 
     static {
