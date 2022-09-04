@@ -681,11 +681,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         final Rnd rnd = new Rnd();
 
         assertMemoryLeak(() -> {
-            final WorkerPool sharedPool = new TestWorkerPool(sharedPoolWorkerCount);
-            sharedPool.configure(engine,null, false);
+            final WorkerPool sharedPool = new TestWorkerPool(engine, sharedPoolWorkerCount);
             sharedPool.start();
 
-            final WorkerPool stealingPool = new TestWorkerPool(stealingPoolWorkerCount);
+            final WorkerPool stealingPool = new TestWorkerPool(engine, stealingPoolWorkerCount);
 
             stealingPool.assignCleaner(Path.CLEANER);
 
@@ -742,7 +741,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
         assertMemoryLeak(() -> {
 
-            WorkerPool pool = new TestWorkerPool(workerCount);
+            WorkerPool pool = new TestWorkerPool(engine, workerCount);
             pool.configure(engine, null, false);
             pool.start();
 

@@ -136,6 +136,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
+
+            @Override
+            public String getPoolName() {
+                return "testing";
+            }
         }, metrics, false);
     }
 

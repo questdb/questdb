@@ -46,10 +46,8 @@ import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
-
 
 public final class Services {
 
@@ -178,14 +176,7 @@ public final class Services {
         if (writerWorkerPool != sharedWorkerPool) {
             dedicatedPools.add(writerWorkerPool);
         }
-        LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
-        if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.start(log);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.start(log);
-        }
-        return lineTcpReceiver;
+        return new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
     }
 
     @Nullable
@@ -244,12 +235,6 @@ public final class Services {
                     snapshotAgent,
                     metrics
             );
-
-            if (local) {
-                localPool.assignCleaner(Path.CLEANER);
-                localPool.start(log);
-            }
-
             return server;
         }
         return null;

@@ -35,9 +35,7 @@ public interface WorkerPoolConfiguration {
         return false;
     }
 
-    default String getPoolName() {
-        return "worker";
-    }
+    String getPoolName();
 
     default long getYieldThreshold() {
         return 10;

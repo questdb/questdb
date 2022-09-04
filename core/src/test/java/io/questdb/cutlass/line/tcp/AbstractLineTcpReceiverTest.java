@@ -32,11 +32,13 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.Services;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -44,6 +46,8 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
 
 import java.lang.ThreadLocal;
 import java.net.URL;
@@ -69,7 +73,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
+    protected WorkerPool sharedWorkerPool;
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -165,6 +169,17 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     };
 
+    @Before
+    public void setUp() {
+        super.setUp();
+        try {
+            sharedWorkerPool = new TestWorkerPool(engine, getWorkerCount(), metrics);
+            sharedWorkerPool.configure(engine, null, false);
+        } catch (SqlException e) {
+            Assert.fail("could not create test worker pool");
+        }
+    }
+
     @After
     public void cleanup() {
         maxMeasurementSize = 256;
@@ -213,7 +228,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
-                sharedWorkerPool.configure(engine, null, false);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }
@@ -224,7 +238,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
                     throw err;
                 } finally {
-                    sharedWorkerPool.close();
                     Path.clearThreadLocals();
                 }
             } catch (Throwable err) {

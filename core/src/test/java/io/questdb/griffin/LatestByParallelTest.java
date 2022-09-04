@@ -269,6 +269,11 @@ public class LatestByParallelTest {
                             }
 
                             @Override
+                            public String getPoolName() {
+                                return "testing";
+                            }
+
+                            @Override
                             public boolean isEnabled() {
                                 return true;
                             }

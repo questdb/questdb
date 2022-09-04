@@ -2726,6 +2726,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             }
 
                             @Override
+                            public String getPoolName() {
+                                return "testing";
+                            }
+
+                            @Override
                             public boolean isEnabled() {
                                 return true;
                             }

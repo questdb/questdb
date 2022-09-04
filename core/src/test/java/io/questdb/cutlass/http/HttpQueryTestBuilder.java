@@ -43,7 +43,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.BrokenBarrierException;
@@ -86,9 +85,6 @@ public class HttpQueryTestBuilder {
                 metrics = Metrics.enabled();
             }
 
-            final WorkerPool workerPool = new TestWorkerPool(workerCount, metrics);
-            workerPool.assignCleaner(Path.CLEANER);
-
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
                 cairoConfiguration = new DefaultCairoConfiguration(baseDir) {
@@ -124,6 +120,7 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    WorkerPool workerPool = new TestWorkerPool(engine, workerCount, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 TelemetryJob telemetryJob = null;
@@ -229,8 +226,6 @@ public class HttpQueryTestBuilder {
                 try {
                     code.run(engine);
                 } finally {
-                    workerPool.close();
-
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }

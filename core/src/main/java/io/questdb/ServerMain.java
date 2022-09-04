@@ -29,7 +29,6 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
@@ -40,14 +39,12 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 
-import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements QuietCloseable {
 
     private final PropServerConfiguration config;
     private final Log log;
-    private final WorkerPool workerPool;
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
     private final AtomicBoolean isWorking = new AtomicBoolean();
 
@@ -62,59 +59,6 @@ public class ServerMain implements QuietCloseable {
     public ServerMain(PropServerConfiguration config, Metrics metrics, Log log) throws SqlException {
         this.config = config;
         this.log = log;
-        this.workerPool = initWorkers(toBeClosed, config, metrics, log);
-        System.gc(); // GC 1
-        log.advisoryW().$("Bootstrap complete").$();
-    }
-
-    public void start() {
-        start(false);
-    }
-
-    public void start(boolean addShutdownHook) {
-        if (isWorking.compareAndSet(false, true)) {
-            if (addShutdownHook) {
-                addShutdownHook();
-            }
-            log.advisoryW().$("QuestDB is starting...").$();
-            workerPool.start(log); // starts QuestDB's workers
-            Bootstrap.logWebConsoleUrls(config, log);
-            System.gc(); // final GC
-            log.advisoryW().$("QuestDB is running").$();
-            log.advisoryW().$("enjoy").$();
-        }
-    }
-
-    @Override
-    public void close() {
-        if (isWorking.compareAndSet(true, false)) {
-            workerPool.close();
-            ShutdownFlag.INSTANCE.shutdown();
-            Misc.freeObjList(toBeClosed);
-            toBeClosed.clear();
-        }
-    }
-
-    private void addShutdownHook() {
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                System.err.println("QuestDB is shutting down...");
-                close();
-            } catch (Error ignore) {
-                // ignore
-            } finally {
-                LogFactory.INSTANCE.flushJobsAndClose();
-                System.err.println("QuestDB is shutdown.");
-            }
-        }));
-    }
-
-    private static WorkerPool initWorkers(
-            ObjList<QuietCloseable> toBeClosed,
-            PropServerConfiguration config,
-            Metrics metrics,
-            Log log
-    ) throws SqlException {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
@@ -122,16 +66,12 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(cairoEngine);
 
         // setup shared worker pool
-        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
-                cairoEngine.getConfiguration(),
-                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-        );
         final WorkerPool sharedPool = WorkerPoolManager.initSharedInstance(
                 cairoEngine,
                 config.getWorkerPoolConfiguration(),
-                functionFactoryCache,
                 metrics
         );
+        final FunctionFactoryCache ffCache = WorkerPoolManager.getFunctionFactoryCache();
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
@@ -149,7 +89,7 @@ public class ServerMain implements QuietCloseable {
                     cairoEngine,
                     // save CPU resources for collecting and processing jobs
                     Math.max(1, sharedPool.getWorkerCount() - 2),
-                    functionFactoryCache
+                    ffCache
             );
             sharedPool.assign(textImportRequestJob);
             sharedPool.freeOnHalt(textImportRequestJob);
@@ -161,7 +101,7 @@ public class ServerMain implements QuietCloseable {
                 sharedPool,
                 log,
                 cairoEngine,
-                functionFactoryCache,
+                ffCache,
                 snapshotAgent,
                 metrics
         ));
@@ -172,7 +112,7 @@ public class ServerMain implements QuietCloseable {
                 sharedPool,
                 log,
                 cairoEngine,
-                functionFactoryCache,
+                ffCache,
                 snapshotAgent,
                 metrics
         ));
@@ -184,7 +124,7 @@ public class ServerMain implements QuietCloseable {
                     sharedPool,
                     log,
                     cairoEngine,
-                    functionFactoryCache,
+                    ffCache,
                     snapshotAgent,
                     metrics
             ));
@@ -210,13 +150,57 @@ public class ServerMain implements QuietCloseable {
 
         // telemetry
         if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
+            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, ffCache);
             toBeClosed.add(telemetryJob);
             if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                 sharedPool.assign(telemetryJob);
             }
         }
-        return sharedPool;
+
+        System.gc(); // GC 1
+        log.advisoryW().$("Bootstrap complete").$();
+    }
+
+    public void start() {
+        start(false);
+    }
+
+    public void start(boolean addShutdownHook) {
+        if (isWorking.compareAndSet(false, true)) {
+            if (addShutdownHook) {
+                addShutdownHook();
+            }
+            log.advisoryW().$("QuestDB is starting...").$();
+            WorkerPoolManager.startAll(log); // starts QuestDB's workers
+            Bootstrap.logWebConsoleUrls(config, log);
+            System.gc(); // final GC
+            log.advisoryW().$("QuestDB is running").$();
+            log.advisoryW().$("enjoy").$();
+        }
+    }
+
+    @Override
+    public void close() {
+        if (isWorking.compareAndSet(true, false)) {
+            WorkerPoolManager.closeAll();
+            ShutdownFlag.INSTANCE.shutdown();
+            Misc.freeObjList(toBeClosed);
+            toBeClosed.clear();
+        }
+    }
+
+    private void addShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                System.err.println("QuestDB is shutting down...");
+                close();
+            } catch (Error ignore) {
+                // ignore
+            } finally {
+                LogFactory.INSTANCE.flushJobsAndClose();
+                System.err.println("QuestDB is shutdown.");
+            }
+        }));
     }
 
     public static void main(String[] args) throws Exception {
@@ -225,6 +209,7 @@ public class ServerMain implements QuietCloseable {
         } catch (Throwable thr) {
             System.err.println(thr.getMessage());
             LogFactory.INSTANCE.flushJobsAndClose();
+            thr.printStackTrace();
             System.exit(55);
         }
     }

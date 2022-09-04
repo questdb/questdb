@@ -1268,6 +1268,11 @@ public class O3Test extends AbstractO3Test {
                 public boolean isEnabled() {
                     return true;
                 }
+
+                @Override
+                public String getPoolName() {
+                    return "pool1";
+                }
             }, Metrics.disabled(),false);
 
             pool1.assign(new Job() {
@@ -1292,7 +1297,8 @@ public class O3Test extends AbstractO3Test {
             });
             pool1.assignCleaner(Path.CLEANER);
 
-            final WorkerPool pool2 = new TestWorkerPool(1);
+
+            final WorkerPool pool2 = new TestWorkerPool(engine, 1);
 
             pool2.assign(new Job() {
                 private boolean toRun = true;

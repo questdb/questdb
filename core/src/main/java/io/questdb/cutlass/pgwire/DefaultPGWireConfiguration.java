@@ -208,6 +208,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public String getPoolName() {
+        return "pg-wire";
+    }
+
+    @Override
     public boolean isEnabled() {
         return true;
     }

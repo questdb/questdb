@@ -205,6 +205,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
         }
 
         @Override
+        public String getPoolName() {
+            return "line-tcp";
+        }
+
+        @Override
         public boolean isEnabled() {
             return true;
         }

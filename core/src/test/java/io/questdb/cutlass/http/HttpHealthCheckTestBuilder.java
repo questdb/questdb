@@ -62,23 +62,21 @@ public class HttpHealthCheckTestBuilder {
                 metrics = Metrics.enabled();
             }
 
-            WorkerPool workerPool = new TestWorkerPool(1, metrics);
-
-            if (injectUnhandledError) {
-                final AtomicBoolean alreadyErrored = new AtomicBoolean();
-                workerPool.assign(workerId -> {
-                    if (!alreadyErrored.getAndSet(true)) {
-                        throw new NullPointerException("you'd better not handle me");
-                    }
-                    return false;
-                });
-            }
-
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    WorkerPool workerPool = new TestWorkerPool(engine, 1, metrics);
                     HttpServer ignored = Services.createMinHttpServer(httpConfiguration, workerPool, LOG, engine, null, null, metrics)
             ) {
+                if (injectUnhandledError) {
+                    final AtomicBoolean alreadyErrored = new AtomicBoolean();
+                    workerPool.assign(workerId -> {
+                        if (!alreadyErrored.getAndSet(true)) {
+                            throw new NullPointerException("you'd better not handle me");
+                        }
+                        return false;
+                    });
+                }
                 workerPool.start(LOG);
 
                 if (injectUnhandledError && metrics.isEnabled()) {
@@ -90,11 +88,7 @@ public class HttpHealthCheckTestBuilder {
                     }
                 }
 
-                try {
-                    code.run(engine);
-                } finally {
-                    workerPool.close();
-                }
+                code.run(engine);
             }
         });
     }

@@ -1841,6 +1841,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getPoolName() {
+            return "http";
+        }
+
+        @Override
         public long getYieldThreshold() {
             return httpWorkerYieldThreshold;
         }
@@ -3084,6 +3089,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getPoolName() {
+            return "worker";
+        }
+
+        @Override
         public long getYieldThreshold() {
             return sharedWorkerYieldThreshold;
         }
@@ -3361,6 +3371,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getPoolName() {
+            return "pg-wire";
+        }
+
+        @Override
         public long getYieldThreshold() {
             return pgWorkerYieldThreshold;
         }
@@ -3429,6 +3444,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return httpMinWorkerHaltOnError;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "min-http";
         }
 
         @Override

@@ -364,6 +364,11 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     }
 
                     @Override
+                    public String getPoolName() {
+                        return "testing";
+                    }
+
+                    @Override
                     public boolean isEnabled() {
                         return true;
                     }

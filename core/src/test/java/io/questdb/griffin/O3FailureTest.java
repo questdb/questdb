@@ -3584,6 +3584,11 @@ public class O3FailureTest extends AbstractO3Test {
                 }
 
                 @Override
+                public String getPoolName() {
+                    return "testing";
+                }
+
+                @Override
                 public boolean isEnabled() {
                     return true;
                 }
@@ -3611,7 +3616,7 @@ public class O3FailureTest extends AbstractO3Test {
             });
             pool1.assignCleaner(Path.CLEANER);
 
-            final WorkerPool pool2 = new TestWorkerPool(1);
+            final WorkerPool pool2 = new TestWorkerPool(engine, 1);
 
             pool2.assign(new Job() {
                 private boolean toRun = true;

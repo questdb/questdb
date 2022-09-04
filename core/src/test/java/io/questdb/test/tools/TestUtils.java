@@ -1174,6 +1174,11 @@ public final class TestUtils {
             }
 
             @Override
+            public String getPoolName() {
+                return "testing";
+            }
+
+            @Override
             public boolean isEnabled() {
                 return true;
             }

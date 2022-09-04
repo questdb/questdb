@@ -25,15 +25,17 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 
 public class TestWorkerPool extends WorkerPool {
 
-    public TestWorkerPool(int workerCount) {
-        this(workerCount, Metrics.disabled());
+    public TestWorkerPool(CairoEngine cairoEngine, int workerCount) throws SqlException {
+        this(cairoEngine, workerCount, Metrics.disabled());
     }
 
-    public TestWorkerPool(int workerCount, Metrics metrics) {
+    public TestWorkerPool(CairoEngine cairoEngine, int workerCount, Metrics metrics) throws SqlException {
         super(new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
@@ -55,5 +57,6 @@ public class TestWorkerPool extends WorkerPool {
                 return "test-worker";
             }
         }, metrics);
+        configure(cairoEngine, null, false);
     }
 }

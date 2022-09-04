@@ -1385,7 +1385,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
                 final WorkerPool workerPool;
                 if (subSeq != null) {
-                    workerPool = new TestWorkerPool(2, metrics);
+                    workerPool = new TestWorkerPool(engine, 2, metrics);
                     workerPool.assign(new ColumnIndexerJob(workScheduler));
                     workerPool.start(LOG);
                 } else {
@@ -1508,7 +1508,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
-                WorkerPool workerPool = new TestWorkerPool(2, metrics);
+                WorkerPool workerPool = new TestWorkerPool(engine, 2, metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
                 try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {

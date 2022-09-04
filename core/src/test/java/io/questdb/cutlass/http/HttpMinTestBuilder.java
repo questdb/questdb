@@ -61,12 +61,11 @@ public class HttpMinTestBuilder {
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .build();
 
-            final WorkerPool workerPool = new TestWorkerPool(1);
-
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
+                    WorkerPool workerPool = new TestWorkerPool(engine, 1);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -84,12 +83,7 @@ public class HttpMinTestBuilder {
                 QueryCache.configure(httpConfiguration);
 
                 workerPool.start(LOG);
-
-                try {
-                    code.run(engine);
-                } finally {
-                    workerPool.close();
-                }
+                code.run(engine);
             }
         });
     }

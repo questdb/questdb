@@ -210,4 +210,9 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     public boolean haltOnError() {
         return false;
     }
+
+    @Override
+    public String getPoolName() {
+        return "http";
+    }
 }
