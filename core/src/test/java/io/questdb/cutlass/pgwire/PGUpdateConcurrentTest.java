@@ -110,7 +110,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     public void testUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server1 = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
@@ -151,7 +151,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         "1970-01-01T00:00:03.000000Z\t5\n" +
                         "1970-01-01T00:00:04.000000Z\t5\n");
             }
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
         });
     }
 
@@ -161,7 +161,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
             writerAsyncCommandMaxTimeout = 90_000L;
             try (PGWireServer server1 = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
                             " (select timestamp_sequence(0, 60 * 1000000L) ts," +
@@ -242,7 +242,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 assertSql("select count() from testUpdateTimeout where x = 5",
                         "count\n" +
                                 "2000\n");
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -284,7 +284,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
             final PGWireServer pgServer = createPGServer(2);
-            WorkerPoolManager.startAll(LOG);
+            workerPoolManager.startAll(LOG);
             try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
                 PreparedStatement create = connection.prepareStatement("create table up as" +
                         " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
@@ -375,7 +375,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             for (int i = 0; i < threads.size(); i++) {
                 threads.get(i).join();
             }
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
             pgServer.close();
 
             if (exceptions.size() != 0) {

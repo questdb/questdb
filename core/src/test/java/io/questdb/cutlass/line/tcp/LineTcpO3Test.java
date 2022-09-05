@@ -161,12 +161,13 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
             try (
-                    WorkerPool sharedWorkerPool = WorkerPoolManager.getInstance(sharedWorkerPoolConfiguration, null, metrics);
-                    LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, sharedWorkerPool, engine, metrics);
+                    WorkerPool sharedWorkerPool = workerPoolManager.getInstance(sharedWorkerPoolConfiguration, null, metrics);
+                    // TODO
+                    LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
@@ -191,7 +192,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 engine.setPoolListener(null);
                 Net.close(clientFd);
                 Net.freeSockAddr(ilpSockAddr);
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }

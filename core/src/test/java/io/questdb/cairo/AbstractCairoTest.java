@@ -28,11 +28,15 @@ import io.questdb.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -48,6 +52,7 @@ import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 
 import java.io.IOException;
+import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
@@ -67,6 +72,7 @@ public class AbstractCairoTest {
     protected static long currentMicros = -1;
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
+    protected static WorkerPoolManager workerPoolManager = new WorkerPoolManager( /* no shared pool */ );
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;

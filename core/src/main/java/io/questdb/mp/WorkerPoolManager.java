@@ -34,20 +34,38 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
-public final class WorkerPoolManager {
-
+public class WorkerPoolManager {
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
-    private static final AtomicReference<WorkerPool> SHARED_POOL = new AtomicReference<>(); // init'ed by ServerMain
-    private static final AtomicBoolean HAS_STARTED = new AtomicBoolean();
-    private static final CharSequenceObjHashMap<WorkerPool> DEDICATED_POOLS = new CharSequenceObjHashMap<>(4);
+    private WorkerPool sharedPool;
+    private final AtomicBoolean hasStarted = new AtomicBoolean();
+    private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
 
-    public static void setSharedInstance(WorkerPool sharedInstance) {
-        SHARED_POOL.set(sharedInstance);
+    public WorkerPoolManager() {
+        this.sharedPool = null;
     }
 
-    public static WorkerPool getInstance(
+    public WorkerPoolManager(WorkerPool sharedPool) {
+        this.sharedPool = sharedPool;
+    }
+
+    public void setSharedPool(WorkerPool sharedPool) {
+        this.sharedPool = sharedPool;
+    }
+
+    public boolean hasSharedPool() {
+        return sharedPool != null;
+    }
+
+    public int getSharedWorkerCount() {
+        return sharedPool != null ? sharedPool.getWorkerCount() : -1;
+    }
+
+    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {
+        return getInstance(config, sharedPool, metrics);
+    }
+
+    public WorkerPool getInstance(
             @NotNull WorkerPoolConfiguration config,
             @Nullable WorkerPool sharedPool,
             @NotNull Metrics metrics
@@ -58,58 +76,55 @@ public final class WorkerPoolManager {
         }
 
         if (config.getWorkerCount() < 1) {
-            WorkerPool pool = SHARED_POOL.get();
+            WorkerPool pool = sharedPool;
             if (pool != null) {
                 LOG.info().$("Accessing pool [").$(config.getPoolName()).$("] -> SHARED").$();
                 return pool;
             }
         }
         String poolName = config.getPoolName();
-        WorkerPool pool = DEDICATED_POOLS.get(poolName);
+        WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
             pool = new WorkerPool(config, metrics);
             pool.assignCleaner(Path.CLEANER);
-            DEDICATED_POOLS.put(poolName, pool);
+            dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("Accessing pool [").$(poolName).$(", workers=").$(config.getWorkerCount()).$("] -> DEDICATED").$();
         return pool;
     }
 
-    public static void startAll() {
+    public void startAll() {
         startAll(null);
     }
 
-    public static void startAll(Log sharedPoolLog) {
-        if (HAS_STARTED.compareAndSet(false, true)) {
-            WorkerPool sharedPool = SHARED_POOL.get();
+    public void startAll(Log sharedPoolLog) {
+        if (hasStarted.compareAndSet(false, true)) {
             if (sharedPool != null) {
                 sharedPool.start(sharedPoolLog);
             }
             LOG.info().$("Started shared pool").$();
-            ObjList<CharSequence> poolNames = DEDICATED_POOLS.keys();
+            ObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.get(i);
-                WorkerPool pool = DEDICATED_POOLS.get(name);
-                pool.start();
+                WorkerPool pool = dedicatedPools.get(name);
+                pool.start(sharedPoolLog);
                 LOG.info().$("Started dedicated pool [").$(name).I$();
             }
         }
     }
 
-    public static void closeAll() {
-        if (HAS_STARTED.compareAndSet(true, false)) {
-            ObjList<CharSequence> poolNames = DEDICATED_POOLS.keys();
+    public void closeAll() {
+        if (hasStarted.compareAndSet(true, false)) {
+            ObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.getQuick(i);
-                WorkerPool pool = DEDICATED_POOLS.get(name);
+                WorkerPool pool = dedicatedPools.get(name);
                 pool.close();
                 LOG.info().$("Closed dedicated pool [").$(name).I$();
             }
-            DEDICATED_POOLS.clear();
-            WorkerPool sharedPool = SHARED_POOL.get();
+            dedicatedPools.clear();
             if (sharedPool != null) {
                 sharedPool.close();
-                SHARED_POOL.set(null);
                 LOG.info().$("Closed shared pool").$();
             }
         }
@@ -146,9 +161,5 @@ public final class WorkerPoolManager {
 
     public static WorkerPool createUnmanaged(WorkerPoolConfiguration config, Metrics metrics) {
         return new WorkerPool(config, metrics);
-    }
-
-    private WorkerPoolManager() {
-        throw new UnsupportedOperationException("not instantiatable");
     }
 }

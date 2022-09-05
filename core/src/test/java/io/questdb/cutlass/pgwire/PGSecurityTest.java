@@ -256,7 +256,7 @@ public class PGSecurityTest extends BasePGTest {
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         // Postgres JDBC clients ignores unknown properties and does not send them to a server
                         // so have to use a property which actually exists
@@ -265,7 +265,7 @@ public class PGSecurityTest extends BasePGTest {
                 ) {
                     // no need to assert anything, if we manage to create a connection then it's already a success!
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -295,8 +295,8 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     private void executeWithPg(String query) throws Exception {
-        try (final PGWireServer server = createPGServer(READ_ONLY_CONF)) {
-            WorkerPoolManager.startAll();
+        try (final PGWireServer server = createPGServer(READ_ONLY_CONF, workerPoolManager)) {
+            workerPoolManager.startAll();
             try (
                     final Connection connection = getConnection(server.getPort(), false, true);
                     final Statement statement = connection.createStatement()
@@ -304,7 +304,7 @@ public class PGSecurityTest extends BasePGTest {
                 statement.execute(query);
             }
         } finally {
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
         }
     }
 }

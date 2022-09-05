@@ -1385,9 +1385,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
                 final WorkerPool workerPool;
                 if (subSeq != null) {
-                    workerPool = TestWorkerPool.create(2, metrics);
+                    workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), metrics);
                     workerPool.assign(new ColumnIndexerJob(workScheduler));
-                    WorkerPoolManager.startAll();
+                    workerPoolManager.startAll();
                 }
                 else {
                     workerPool = null;
@@ -1407,7 +1407,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 if (workerPool != null) {
-                    WorkerPoolManager.closeAll();
+                    workerPoolManager.closeAll();
                 }
 
                 try (TableReader reader = createTableReader(configuration, "ABC")) {
@@ -1509,9 +1509,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try (MyWorkScheduler workScheduler = new MyWorkScheduler()) {
-                WorkerPool workerPool = TestWorkerPool.create(2, metrics);
+                WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
 
                 try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {
                     try {
@@ -1556,7 +1556,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
 
                 // let's see what we can read after this catastrophe
                 try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {

@@ -1397,8 +1397,8 @@ public class PGJobContextTest extends BasePGTest {
         };
 
         TestUtils.assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(configuration)) {
-                WorkerPoolManager.startAll();
+            try (PGWireServer server = createPGServer(configuration, workerPoolManager)) {
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -1425,7 +1425,7 @@ public class PGJobContextTest extends BasePGTest {
                     Assert.assertNotNull(e.getServerErrorMessage());
                     TestUtils.assertContains(e.getServerErrorMessage().getMessage(), "blob is too large");
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -1450,7 +1450,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testCairoException() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -1464,7 +1464,7 @@ public class PGJobContextTest extends BasePGTest {
                         Assert.assertEquals("00000", e.getSQLState());
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -1658,7 +1658,7 @@ public class PGJobContextTest extends BasePGTest {
     @Ignore
     public void testCopyIn() throws SQLException {
         try (PGWireServer server = createPGServer(2)) {
-            WorkerPoolManager.startAll();
+            workerPoolManager.startAll();
             try (
                     final Connection connection = getConnection(server.getPort(), false, true)
             ) {
@@ -1676,7 +1676,7 @@ public class PGJobContextTest extends BasePGTest {
                 copyIn.writeToCopy(bytes, 0, bytes.length);
                 copyIn.endCopy();
             }
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
         }
     }
 
@@ -1918,7 +1918,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     connection.setAutoCommit(false);
 
@@ -1944,7 +1944,7 @@ public class PGJobContextTest extends BasePGTest {
                     }
                 }
                 Thread.sleep(100); // Give connection some time to close before closing the server.
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
             // Assertion that no open readers left will be performed in assertMemoryLeak
         });
@@ -1996,7 +1996,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testGetRow() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -2016,7 +2016,7 @@ public class PGJobContextTest extends BasePGTest {
                     }
                     assertEquals(totalRows, count);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2239,7 +2239,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -2301,7 +2301,7 @@ public class PGJobContextTest extends BasePGTest {
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2310,7 +2310,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testIndexedSymbolBindVariableNotMultipleValuesMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     connection.prepareStatement("create table x as " +
                             "(" +
@@ -2362,7 +2362,7 @@ public class PGJobContextTest extends BasePGTest {
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2372,7 +2372,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -2387,7 +2387,7 @@ public class PGJobContextTest extends BasePGTest {
                         insert.execute();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2435,7 +2435,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsertBooleans() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(4)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection conn = getConnection(server.getPort(), true, true)
                 ) {
@@ -2495,7 +2495,7 @@ public class PGJobContextTest extends BasePGTest {
                                 resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2526,7 +2526,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsertDoubleTableWithTypeSuffix() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), true, false)
                 ) {
@@ -2559,7 +2559,7 @@ public class PGJobContextTest extends BasePGTest {
                         assertResultSet(expectedInsertWithoutLosingPrecision, sink, resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2575,7 +2575,7 @@ public class PGJobContextTest extends BasePGTest {
             String expectedAll = "count[BIGINT]\n" +
                     "10000\n";
             try (PGWireServer server = createPGServer(3)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -2643,7 +2643,7 @@ public class PGJobContextTest extends BasePGTest {
                     TestUtils.assertEquals("11\n", sink);
 
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2657,7 +2657,7 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsertFloatTableWithTypeSuffix() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), true, false)
                 ) {
@@ -2690,7 +2690,7 @@ public class PGJobContextTest extends BasePGTest {
                         assertResultSet(expectedInsertWithLosingPrecision, sink, resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2814,7 +2814,7 @@ nodejs code:
             String expectedAll = "count[BIGINT]\n" +
                     "10\n";
             try (PGWireServer server = createPGServer(3)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -2854,7 +2854,7 @@ nodejs code:
                     execSelectWithParam(select, 9);
                     TestUtils.assertEquals("9\n", sink);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2863,7 +2863,7 @@ nodejs code:
     public void testInsertTimestampWithTypeSuffix() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), true, false)) {
                     final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp) timestamp(ts)");
                     statement.execute();
@@ -2882,7 +2882,7 @@ nodejs code:
                         assertResultSet(expected, sink, resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -2959,7 +2959,7 @@ nodejs code:
     public void testInvalidateWriterBetweenInserts() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -3028,7 +3028,7 @@ nodejs code:
                         assertResultSet(expected, sink, rs);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3037,7 +3037,7 @@ nodejs code:
     public void testLargeBatchCairoExceptionResume() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(4)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -3086,7 +3086,7 @@ nodejs code:
                     ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
                     assertResultSet(expected, sink, rs);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3095,7 +3095,7 @@ nodejs code:
     public void testLargeBatchInsertMethod() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(4)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -3131,7 +3131,7 @@ nodejs code:
                     ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
                     assertResultSet(expected, sink, rs);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3198,8 +3198,8 @@ nodejs code:
                     return 512;
                 }
             };
-            try (PGWireServer server = createPGServer(configuration)) {
-                WorkerPoolManager.startAll();
+            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false)
                 ) {
@@ -3216,7 +3216,7 @@ nodejs code:
                         rs.close();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3314,7 +3314,7 @@ nodejs code:
     public void testLargeSelect() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(4)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -3406,7 +3406,7 @@ nodejs code:
                     Assert.assertEquals(50_000, count);
                     Assert.assertEquals(24963.57352782434, sum, 0.00000001);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3480,7 +3480,7 @@ nodejs code:
     public void testLoginBadPassword() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "dunno");
@@ -3491,7 +3491,7 @@ nodejs code:
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3500,7 +3500,7 @@ nodejs code:
     public void testLoginBadUsername() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 Properties properties = new Properties();
                 properties.setProperty("user", "joe");
                 properties.setProperty("password", "quest");
@@ -3511,7 +3511,7 @@ nodejs code:
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3557,7 +3557,7 @@ nodejs code:
     public void testMicroTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -3597,7 +3597,7 @@ nodejs code:
                     ResultSet res = sel.executeQuery();
                     assertResultSet(expected, sink, res);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3606,7 +3606,7 @@ nodejs code:
     public void testMiscExtendedPrepared() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, -1)
                 ) {
@@ -3624,7 +3624,7 @@ nodejs code:
                         pstmt.execute();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3633,7 +3633,7 @@ nodejs code:
     public void testMultiplePreparedStatements() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false)
                 ) {
@@ -3664,7 +3664,7 @@ nodejs code:
                         statement1.executeQuery("select 1 from long_sequence(2)");
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3674,7 +3674,7 @@ nodejs code:
     public void testMultistatement() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -3699,7 +3699,7 @@ nodejs code:
                     }
                     assertEquals(totalRows + 1, count);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3735,7 +3735,7 @@ nodejs code:
     public void testNoCursorWithAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -3756,7 +3756,7 @@ nodejs code:
                     }
                     assertEquals(totalRows, count);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3782,7 +3782,7 @@ nodejs code:
     public void testNullTypeSerialization() throws Exception {
         assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     sink.clear();
                     try (
@@ -3795,7 +3795,7 @@ nodejs code:
                 testNullTypeSerialization0(server.getPort(), true, false);
                 testNullTypeSerialization0(server.getPort(), false, false);
                 testNullTypeSerialization0(server.getPort(), false, true);
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3847,10 +3847,10 @@ nodejs code:
                             ") timestamp (timestamp)",
                     sqlExecutionContext
             );
-            try (PGWireServer server = createPGServer(new Port0PGWireConfiguration())) {
-                WorkerPoolManager.startAll();
+            try (PGWireServer server = createPGServer(new Port0PGWireConfiguration(), workerPoolManager)) {
+                workerPoolManager.startAll();
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptx00, "127.0.0.1", server.getPort());
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3877,7 +3877,7 @@ nodejs code:
     public void testParseErrorDoesNotCorruptConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
 
                     try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
@@ -3898,7 +3898,7 @@ nodejs code:
                         assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3908,7 +3908,7 @@ nodejs code:
     public void testParseErrorDoesntCorruptConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
 
                     try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
@@ -3929,7 +3929,7 @@ nodejs code:
                         assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4026,7 +4026,7 @@ nodejs code:
     public void testPreparedStatement() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false)
                 ) {
@@ -4046,7 +4046,7 @@ nodejs code:
                         rs.close();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4112,7 +4112,7 @@ nodejs code:
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false);
                         final Statement statement = connection.createStatement();
@@ -4140,7 +4140,7 @@ nodejs code:
                     }
                     statement.execute("drop table tab");
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4149,7 +4149,7 @@ nodejs code:
     public void testPreparedStatementInsertSelectNullNoDesignatedColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false);
                         final Statement statement = connection.createStatement()
@@ -4168,7 +4168,7 @@ nodejs code:
                     }
                     statement.execute("drop table tab");
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4268,7 +4268,7 @@ nodejs code:
                     snapshotAgent,
                     metrics
             )) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -4323,7 +4323,7 @@ nodejs code:
                     rs.close();
                 }
                 connection.close();
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4332,7 +4332,7 @@ nodejs code:
     public void testPreparedStatementSelectNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false);
                         final PreparedStatement statement = connection.prepareStatement("select ? from long_sequence(1)")
@@ -4348,7 +4348,7 @@ nodejs code:
                         assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4357,7 +4357,7 @@ nodejs code:
     public void testPreparedStatementTextParams() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false)
                 ) {
@@ -4412,7 +4412,7 @@ nodejs code:
                         rs.close();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4421,7 +4421,7 @@ nodejs code:
     public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
@@ -4435,7 +4435,7 @@ nodejs code:
                         statement.execute();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4444,7 +4444,7 @@ nodejs code:
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
@@ -4470,7 +4470,7 @@ nodejs code:
                     statement.execute();
                 }
                 Assert.assertTrue("Exception is not thrown", caught);
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4497,7 +4497,7 @@ nodejs code:
     public void testPreparedStatementWithNowFunction() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement(
                             "create table xts (ts timestamp) timestamp(ts)")) {
@@ -4517,7 +4517,7 @@ nodejs code:
                     }
                 } finally {
                     currentMicros = -1;
-                    WorkerPoolManager.closeAll();
+                    workerPoolManager.closeAll();
                 }
             }
         });
@@ -4620,8 +4620,8 @@ nodejs code:
     public void testQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
-            try (PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS)) {
-                WorkerPoolManager.startAll();
+            try (PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS, workerPoolManager)) {
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true);
                         final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")
@@ -4633,7 +4633,7 @@ nodejs code:
                         TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4642,7 +4642,7 @@ nodejs code:
     public void testRegProcedure() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
@@ -4656,7 +4656,7 @@ nodejs code:
                             "OR t.typelem != 0 ");
                     stmt.execute();
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4843,7 +4843,7 @@ nodejs code:
     public void testRollbackDataOnStaleTransaction() throws Exception {
         assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     connection.setAutoCommit(false);
                     connection.prepareStatement("create table xyz(a int)").execute();
@@ -4885,7 +4885,7 @@ nodejs code:
                         );
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -4894,7 +4894,7 @@ nodejs code:
     public void testRowLimitNotResumed() throws Exception {
         assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false
                         , true)) {
                     try (CallableStatement st1 = connection.prepareCall("create table y as (" +
@@ -4905,11 +4905,11 @@ nodejs code:
                         st1.execute();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
 
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 for (int i = 0; i < 3; i++) {
                     try (final Connection connection = getConnection(server.getPort(), false, true)) {
                         try (PreparedStatement select1 = connection.prepareStatement("select version()")) {
@@ -4927,7 +4927,7 @@ nodejs code:
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5077,7 +5077,7 @@ nodejs code:
 
             sink.clear();
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
                     try (Statement statement = connection.createStatement()) {
@@ -5145,7 +5145,7 @@ nodejs code:
                 }
                 */
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5429,7 +5429,7 @@ create table tab as (
     public void testSimpleModeNoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 for (int i = 0; i < 50; i++) {
                     try (final Connection connection = getConnection(server.getPort(), true, true)) {
 
@@ -5462,7 +5462,7 @@ create table tab as (
                         connection.prepareStatement("select 1").execute();
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5754,8 +5754,8 @@ create table tab as (
                     return 1024;
                 }
             };
-            try(PGWireServer server = createPGServer(configuration)) {
-                WorkerPoolManager.startAll();
+            try(PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+                workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
@@ -5769,7 +5769,7 @@ create table tab as (
                     LOG.info().$("hasResultSet=").$(hasResultSet).$();
                     Assert.assertTrue(hasResultSet);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5785,8 +5785,8 @@ create table tab as (
                 }
             };
 
-            try(PGWireServer server = createPGServer(configuration)) {
-                WorkerPoolManager.startAll();
+            try(PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+                workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
@@ -5823,7 +5823,7 @@ create table tab as (
                     LOG.info().$("hasResultSet=").$(hasResultSet).$();
                     Assert.assertTrue(hasResultSet);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5839,8 +5839,8 @@ create table tab as (
                 }
             };
 
-            try (PGWireServer server = createPGServer(configuration)) {
-                WorkerPoolManager.startAll();
+            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+                workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
@@ -5876,7 +5876,7 @@ create table tab as (
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row data");
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5892,8 +5892,8 @@ create table tab as (
                 }
             };
 
-            try (PGWireServer server = createPGServer(configuration)) {
-                WorkerPoolManager.startAll();
+            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+                workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
@@ -5929,7 +5929,7 @@ create table tab as (
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row description");
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5938,7 +5938,7 @@ create table tab as (
     public void testSyntaxErrorSimple() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(4)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     // column does not exits
                     connection.prepareStatement("select x2 from long_sequence(5)").execute();
@@ -5947,7 +5947,7 @@ create table tab as (
                     TestUtils.assertContains(e.getMessage(), "Invalid column: x2");
                     TestUtils.assertEquals("00000", e.getSQLState());
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5959,7 +5959,7 @@ create table tab as (
     public void testThatTableOidIsSetToZero() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false);
                         final PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
@@ -5967,7 +5967,7 @@ create table tab as (
                 ) {
                     assertTrue(((PGResultSetMetaData) rs.getMetaData()).getBaseColumnName(1).isEmpty()); // getBaseColumnName returns "" if tableOid is zero
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -5976,7 +5976,7 @@ create table tab as (
     public void testTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     connection.setAutoCommit(false);
                     connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
@@ -6093,7 +6093,7 @@ create table tab as (
                     }
                     connection.prepareStatement("drop table ts").execute();
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6107,7 +6107,7 @@ create table tab as (
             assertEquals(202000000, expectedTs.getNanos());
 
             try (final PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection conn = getConnection(server.getPort(), false, true)) {
                     conn.setAutoCommit(false);
                     conn.prepareStatement("CREATE TABLE ts (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
@@ -6138,7 +6138,7 @@ create table tab as (
                     // cleanup
                     conn.prepareStatement("drop table ts").execute();
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6147,7 +6147,7 @@ create table tab as (
     public void testUnsupportedParameterType() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false);
                         final PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)")
@@ -6172,7 +6172,7 @@ create table tab as (
                         );
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6180,7 +6180,7 @@ create table tab as (
     private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(queryScheduledCount)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), true, false)) {
                     final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
                     statement.execute();
@@ -6221,7 +6221,7 @@ create table tab as (
                         assertResultSet(expected, sink, resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6230,7 +6230,7 @@ create table tab as (
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), true, false)) {
                     final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
                     statement.execute();
@@ -6265,7 +6265,7 @@ create table tab as (
                         assertResultSet(expected, sink, resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6308,7 +6308,7 @@ create table tab as (
     public void testUpdateBatch() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), true, false)) {
                     final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
                     statement.execute();
@@ -6343,7 +6343,7 @@ create table tab as (
                         assertResultSet(expected, sink, resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6356,7 +6356,7 @@ create table tab as (
     public void testUpdateNoAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     connection.setAutoCommit(false);
 
@@ -6424,7 +6424,7 @@ create table tab as (
                         assertResultSet(expected, sink, resultSet);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6453,10 +6453,10 @@ create table tab as (
             PGWireConfiguration configuration
     ) throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(configuration)) {
-                WorkerPoolManager.startAll();
+            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+                workerPoolManager.startAll();
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6606,11 +6606,11 @@ create table tab as (
         try {
             assertMemoryLeak(() -> {
                 try (PGWireServer server = createPGServer(2)) {
-                    WorkerPoolManager.startAll();
+                    workerPoolManager.startAll();
                     try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
                         runnable.run(connection, binary);
                     }
-                    WorkerPoolManager.closeAll();
+                    workerPoolManager.closeAll();
                 }
             });
         } finally {
@@ -6632,7 +6632,7 @@ create table tab as (
                     sqlExecutionContext
             );
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, binary);
                         final PreparedStatement insert = connection.prepareStatement(
@@ -6680,7 +6680,7 @@ create table tab as (
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6732,7 +6732,7 @@ create table tab as (
         try (
                 final PGWireServer server = Services.createPGWireServer(
                         conf,
-                        pool,
+                        workerPoolManager,
                         engine,
                         compiler.getFunctionFactoryCache(),
                         snapshotAgent,
@@ -6740,7 +6740,7 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
-            WorkerPoolManager.startAll();
+            workerPoolManager.startAll();
             pool.start(LOG);
             int iteration = 0;
 
@@ -6803,14 +6803,14 @@ create table tab as (
                 // Failure may not happen if we're lucky, even when they are expected
                 // When alterRequestReturnSuccess if false and errors are 0, repeat
             } while (!alterRequestReturnSuccess && errors.get() == 0);
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
         }
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), simple, true)) {
                     CallableStatement stmt = connection.prepareCall(
                             "create table x as (select" +
@@ -6901,7 +6901,7 @@ create table tab as (
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6914,7 +6914,7 @@ create table tab as (
                     sqlExecutionContext
             );
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, binaryProtocol);
                         final PreparedStatement insert = connection.prepareStatement(
@@ -6959,7 +6959,7 @@ create table tab as (
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -6967,7 +6967,7 @@ create table tab as (
     private void testBindVariableIsNotNull(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, binary)) {
                     connection.setAutoCommit(false);
                     connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
@@ -7123,7 +7123,7 @@ create table tab as (
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -7286,7 +7286,7 @@ create table tab as (
     private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, binary)) {
                     connection.setAutoCommit(false);
                     connection.prepareStatement("create table x (device_id symbol" + (indexed ? " index," : ",") + " column_name symbol, value double, timestamp timestamp) timestamp(timestamp) partition by day").execute();
@@ -7366,7 +7366,7 @@ create table tab as (
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -7374,7 +7374,7 @@ create table tab as (
     private void testGeoHashSelect(boolean simple, boolean binary) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), simple, binary)) {
                     Statement statement = connection.createStatement();
                     ResultSet rs = statement.executeQuery(
@@ -7403,7 +7403,7 @@ create table tab as (
                     // dump metadata
                     assertResultSet(expected, sink, rs);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -7503,7 +7503,7 @@ create table tab as (
                     "88,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.086,2011-04-11 14:39:50.4,2011-04-11 14:40:55.086821\n" +
                     "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.087,2011-04-11 14:39:50.4,2011-04-11 14:40:55.087821\n";
             try (PGWireServer server = createPGServer(4)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), simpleQueryMode, binary)) {
                     //
                     // test methods of inserting QuestDB's DATA and TIMESTAMP values
@@ -7558,7 +7558,7 @@ create table tab as (
                     TestUtils.assertEquals("11\n", sink);
 
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -7581,7 +7581,7 @@ create table tab as (
                     sqlExecutionContext
             );
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, binary);
                         final PreparedStatement insert = connection.prepareStatement(
@@ -7743,7 +7743,7 @@ create table tab as (
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -7756,7 +7756,7 @@ create table tab as (
                     sqlExecutionContext
             );
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, binaryProtocol);
                         final PreparedStatement insert = connection.prepareStatement(
@@ -7784,7 +7784,7 @@ create table tab as (
                         }
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -7797,7 +7797,7 @@ create table tab as (
         // 4. attempt to insert a record (should fail)
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), simple, true)
                 ) {
@@ -7823,7 +7823,7 @@ create table tab as (
                         TestUtils.assertContains(e.getMessage(), expectedError);
                     }
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -7971,14 +7971,14 @@ create table tab as (
     private void testSemicolon(boolean simpleQueryMode) throws Exception {
         assertMemoryLeak(() -> {
             try(PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), simpleQueryMode, true);
                         final PreparedStatement statement = connection.prepareStatement(";;")
                 ) {
                     statement.execute();
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }

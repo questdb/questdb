@@ -24,36 +24,32 @@
 
 package io.questdb.mp;
 
-import io.questdb.Metrics;
 import io.questdb.test.tools.TestUtils;
 
-public class TestWorkerPool {
+public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private final int workerCount;
 
-    public static WorkerPool create(final int workerCount) {
-        return create(workerCount, Metrics.disabled());
+    public TestWorkerPoolConfiguration(int workerCount) {
+        this.workerCount = workerCount;
     }
 
-    public static WorkerPool create(final int workerCount, Metrics metrics) {
-        return WorkerPoolManager.getInstance(new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(workerCount);
-            }
+    @Override
+    public int[] getWorkerAffinity() {
+        return TestUtils.getWorkerAffinity(workerCount);
+    }
 
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
+    @Override
+    public int getWorkerCount() {
+        return workerCount;
+    }
 
-            @Override
-            public boolean haltOnError() {
-                return false;
-            }
+    @Override
+    public boolean haltOnError() {
+        return false;
+    }
 
-            @Override
-            public String getPoolName() {
-                return "test-worker";
-            }
-        }, null , metrics);
+    @Override
+    public String getPoolName() {
+        return "test-worker";
     }
 }

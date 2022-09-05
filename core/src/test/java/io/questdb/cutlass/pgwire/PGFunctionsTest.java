@@ -19,7 +19,7 @@ public class PGFunctionsTest extends BasePGTest {
     public void testListTablesDoesntLeakMetaFds() throws Exception {
         assertMemoryLeak(() -> {
             try(final PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), true, true)
                 ) {
@@ -38,7 +38,7 @@ public class PGFunctionsTest extends BasePGTest {
 
                     Assert.assertEquals(openFilesBefore, openFilesAfter);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }

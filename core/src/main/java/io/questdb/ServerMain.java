@@ -49,6 +49,7 @@ public class ServerMain implements QuietCloseable {
     private final Log log;
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
     private final AtomicBoolean isWorking = new AtomicBoolean();
+    private final WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) throws SqlException {
         this(Bootstrap.withArgs(args));
@@ -77,7 +78,7 @@ public class ServerMain implements QuietCloseable {
         final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(
                 config.getWorkerPoolConfiguration(), metrics
         ).configure(cairoEngine, ffCache, true, true, true);
-        WorkerPoolManager.setSharedInstance(sharedPool);
+        workerPoolManager = new WorkerPoolManager(sharedPool);
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
@@ -104,7 +105,7 @@ public class ServerMain implements QuietCloseable {
         // http
         toBeClosed.add(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
-                sharedPool,
+                workerPoolManager,
                 cairoEngine,
                 ffCache,
                 snapshotAgent,
@@ -114,7 +115,7 @@ public class ServerMain implements QuietCloseable {
         // http min
         toBeClosed.add(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                sharedPool,
+                workerPoolManager,
                 cairoEngine,
                 metrics
         ));
@@ -123,7 +124,7 @@ public class ServerMain implements QuietCloseable {
         if (config.getPGWireConfiguration().isEnabled()) {
             toBeClosed.add(Services.createPGWireServer(
                     config.getPGWireConfiguration(),
-                    sharedPool,
+                    workerPoolManager,
                     cairoEngine,
                     ffCache,
                     snapshotAgent,
@@ -134,7 +135,7 @@ public class ServerMain implements QuietCloseable {
         // ilp/tcp
         toBeClosed.add(Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
-                sharedPool,
+                workerPoolManager,
                 cairoEngine,
                 metrics
         ));
@@ -169,7 +170,7 @@ public class ServerMain implements QuietCloseable {
                 addShutdownHook();
             }
             log.advisoryW().$("QuestDB is starting...").$();
-            WorkerPoolManager.startAll(log); // starts QuestDB's workers
+            workerPoolManager.startAll(log); // starts QuestDB's workers
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
             log.advisoryW().$("QuestDB is running").$();
@@ -180,7 +181,7 @@ public class ServerMain implements QuietCloseable {
     @Override
     public void close() {
         if (isWorking.compareAndSet(true, false)) {
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
             ShutdownFlag.INSTANCE.shutdown();
             Misc.freeObjList(toBeClosed);
             toBeClosed.clear();

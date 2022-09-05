@@ -58,7 +58,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     public void testFlushQueryCache() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
@@ -89,7 +89,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                     checkQueryCacheFlushed(memInitial, memAfterJoin);
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -98,12 +98,11 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     public void testFlushUpdateCache() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
                 ) {
-                    WorkerPoolManager.startAll();
                     statement.executeUpdate("CREATE TABLE test\n" +
                             "AS(\n" +
                             "    SELECT\n" +
@@ -132,9 +131,8 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     statement.execute("SELECT flush_query_cache()");
 
                     checkQueryCacheFlushed(memInitial, memAfterJoin);
-                    WorkerPoolManager.closeAll();
                 }
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }

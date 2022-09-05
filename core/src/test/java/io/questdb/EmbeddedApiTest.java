@@ -34,9 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
@@ -55,15 +53,17 @@ public class EmbeddedApiTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
+    private final WorkerPoolManager workerPoolManager = new WorkerPoolManager();
+
     @Test
     public void testConcurrentSQLExec() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            final WorkerPool workerPool = TestWorkerPool.create(2);
+            final WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
             try (final CairoEngine engine = new CairoEngine(configuration)) {
                 workerPool.assign(new GroupByJob(engine.getMessageBus()));
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 // number of cores is current thread + workers in the pool
                 final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
@@ -92,7 +92,7 @@ public class EmbeddedApiTest {
                     }
                 }
             } finally {
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }

@@ -37,7 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
@@ -68,6 +68,8 @@ public class HttpQueryTestBuilder {
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private String copyInputRoot;
     private MicrosecondClock microsecondClock;
+
+    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -122,7 +124,7 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    WorkerPool workerPool = TestWorkerPool.create(workerCount, metrics);
+                    WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(workerCount), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 workerPool.assignCleaner(Path.CLEANER);
@@ -224,7 +226,7 @@ public class HttpQueryTestBuilder {
 
                 QueryCache.configure(httpConfiguration);
 
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll(LOG);
 
                 try {
                     code.run(engine);
@@ -232,7 +234,7 @@ public class HttpQueryTestBuilder {
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }
-                    WorkerPoolManager.closeAll();
+                    workerPoolManager.closeAll();
                 }
             }
         });

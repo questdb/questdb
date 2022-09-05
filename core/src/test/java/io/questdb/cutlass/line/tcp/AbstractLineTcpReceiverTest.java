@@ -35,9 +35,8 @@ import io.questdb.cutlass.Services;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -45,13 +44,11 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 
 import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
@@ -214,11 +211,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
             try (
-                 WorkerPool sharedWorkerPool = TestWorkerPool.create(getWorkerCount(), metrics)
+                 WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(getWorkerCount()), metrics)
             ) {
                 sharedWorkerPool.configure(engine, null, false, needMaintenanceJob, true);
-                try (LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, sharedWorkerPool, engine, metrics)) {
-                    WorkerPoolManager.startAll();
+                workerPoolManager.setSharedPool(sharedWorkerPool);
+                try (LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics)) {
+                    workerPoolManager.startAll();
                     try {
                         r.run(receiver);
                     } catch (Throwable err) {
@@ -232,7 +230,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     throw err;
                 }
             } finally {
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }

@@ -51,7 +51,7 @@ public final class Services {
     @Nullable
     public static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
-            WorkerPool sharedPool,
+            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent,
@@ -61,8 +61,8 @@ public final class Services {
             return null;
         }
 
-        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
-        final int sharedWorkerCount = sharedPool == null ? workerPool.getWorkerCount() : sharedPool.getWorkerCount();
+        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
+        final int sharedWorkerCount = workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount();
         final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
         QueryCache.configure(configuration);
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
@@ -88,11 +88,11 @@ public final class Services {
     @Nullable
     public static HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
-            WorkerPool sharedPool,
+            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
             Metrics metrics
     ) {
-        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
+        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
         final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
         server.bind(new HttpRequestProcessorFactory() {
             @Override
@@ -124,7 +124,7 @@ public final class Services {
     @Nullable
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
-            WorkerPool sharedPool,
+            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
@@ -135,14 +135,14 @@ public final class Services {
             return null;
         }
 
-        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
+        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
         return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
     }
 
     @Nullable
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
-            WorkerPool sharedPool,
+            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
@@ -152,19 +152,19 @@ public final class Services {
             return null;
         }
 
-        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
+        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
         return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, new PGWireServer.PGConnectionContextFactory(
                 cairoEngine,
                 configuration,
                 workerPool.getWorkerCount(),
-                sharedPool == null ? workerPool.getWorkerCount() : sharedPool.getWorkerCount()
+                workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount()
         ));
     }
 
     @Nullable
     public static LineTcpReceiver createLineTcpReceiver(
             LineTcpReceiverConfiguration configuration,
-            WorkerPool sharedPool,
+            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
             Metrics metrics
     ) {
@@ -172,8 +172,8 @@ public final class Services {
             return null;
         }
 
-        final WorkerPool ioPool = WorkerPoolManager.getInstance(configuration.getIOWorkerPoolConfiguration(), sharedPool, metrics);
-        final WorkerPool writerPool = WorkerPoolManager.getInstance(configuration.getWriterWorkerPoolConfiguration(), sharedPool, metrics);
+        final WorkerPool ioPool = workerPoolManager.getInstance(configuration.getIOWorkerPoolConfiguration(), metrics);
+        final WorkerPool writerPool = workerPoolManager.getInstance(configuration.getWriterWorkerPoolConfiguration(), metrics);
         return new LineTcpReceiver(configuration, cairoEngine, ioPool, writerPool);
     }
 

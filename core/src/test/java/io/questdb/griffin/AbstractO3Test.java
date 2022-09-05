@@ -61,6 +61,7 @@ public class AbstractO3Test {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static int dataAppendPageSize = -1;
+    protected static WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     @Rule
     public Timeout timeout = Timeout.builder()

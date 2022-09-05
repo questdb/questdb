@@ -1093,11 +1093,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             minIdleMsBeforeWriterRelease = 100;
             try (
-                    WorkerPool sharedWorkerPool = TestWorkerPool.create(getWorkerCount(), metrics).configure(engine, null, true, false, false);
-                    LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, sharedWorkerPool, engine, metrics
+                    WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(getWorkerCount()), metrics).configure(engine, null, true, false, false);
+                    // TODO
+                    LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics
                     )) {
                 long startEpochMs = System.currentTimeMillis();
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
 
                 final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
                 for (int n = 0; n < senders.length; n++) {
@@ -1185,7 +1186,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 LOG.info().$("checking table ").$(tableName).$();
                 assertTable(expectedSbs[n], tableName);
             }
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
         });
     }
 

@@ -29,10 +29,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
-import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import org.junit.rules.TemporaryFolder;
@@ -41,9 +39,10 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class HttpMinTestBuilder {
 
-    private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private TemporaryFolder temp;
     private Scrapable scrapable;
+
+    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
         this.temp = temp;
@@ -66,7 +65,7 @@ public class HttpMinTestBuilder {
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    WorkerPool workerPool = TestWorkerPool.create(1);
+                    WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -83,10 +82,10 @@ public class HttpMinTestBuilder {
 
                 QueryCache.configure(httpConfiguration);
 
-                WorkerPoolManager.startAll();
+                workerPoolManager.startAll();
                 code.run(engine);
             } finally {
-                WorkerPoolManager.closeAll();
+                workerPoolManager.closeAll();
             }
         });
     }

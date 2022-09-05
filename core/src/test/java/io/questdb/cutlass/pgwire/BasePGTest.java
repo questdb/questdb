@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.Services;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -50,21 +50,10 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public class BasePGTest extends AbstractGriffinTest {
 
-    protected PGWireServer createPGServer(PGWireConfiguration configuration) {
+    protected PGWireServer createPGServer(PGWireConfiguration configuration, WorkerPoolManager workerPoolManager) {
         return Services.createPGWireServer(
                 configuration,
-                null,
-                engine,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent,
-                metrics
-        );
-    }
-
-    protected PGWireServer createPGServer(PGWireConfiguration configuration, WorkerPool workerPool) {
-        return Services.createPGWireServer(
-                configuration,
-                workerPool,
+                workerPoolManager,
                 engine,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,
@@ -73,10 +62,10 @@ public class BasePGTest extends AbstractGriffinTest {
     }
 
     protected PGWireServer createPGServer(int workerCount) {
-        return createPGServer(workerCount, Long.MAX_VALUE);
+        return createPGServer(workerCount, Long.MAX_VALUE, workerPoolManager);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) {
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, WorkerPoolManager workerPoolManager) {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
@@ -107,7 +96,7 @@ public class BasePGTest extends AbstractGriffinTest {
             }
         };
 
-        return createPGServer(conf);
+        return createPGServer(conf, workerPoolManager);
     }
 
     protected void execSelectWithParam(PreparedStatement select, int value) throws SQLException {

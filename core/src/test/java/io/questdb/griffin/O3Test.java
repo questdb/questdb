@@ -1248,7 +1248,7 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = TestWorkerPool.create(1);
+            WorkerPool pool1 = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1273,7 +1273,7 @@ public class O3Test extends AbstractO3Test {
             pool1.assignCleaner(Path.CLEANER);
 
 
-            final WorkerPool pool2 = TestWorkerPool.create(1);
+            final WorkerPool pool2 = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
 
             pool2.assign(new Job() {
                 private boolean toRun = true;
@@ -1298,9 +1298,9 @@ public class O3Test extends AbstractO3Test {
 
             pool2.assignCleaner(Path.CLEANER);
 
-            WorkerPoolManager.startAll();
+            workerPoolManager.startAll();
             haltLatch.await();
-            WorkerPoolManager.closeAll();
+            workerPoolManager.closeAll();
 
             Assert.assertEquals(0, errorCount.get());
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
