@@ -29,6 +29,7 @@ import org.apache.logging.log4j.Logger;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.ChainedOptionsBuilder;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
@@ -40,17 +41,22 @@ import java.util.concurrent.TimeUnit;
 public class Log4jBenchmark {
 
     private static final Logger LOG = LogManager.getLogger(Log4jBenchmark.class);
+    private static final boolean USE_ASYNC_LOGGER = false;
     private long counter = 0;
 
     public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
+        ChainedOptionsBuilder builder = new OptionsBuilder()
                 .include(Log4jBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
                 .addProfiler("gc")
-                .forks(1)
-                .build();
+                .forks(1);
 
+        if (USE_ASYNC_LOGGER) {
+            builder = builder.jvmArgsAppend("-Dlog4j2.contextSelector=org.apache.logging.log4j.core.async.AsyncLoggerContextSelector", "-Dlog4j2.asyncLoggerWaitStrategy=Yield");
+        }
+
+        Options opt = builder.build();
         new Runner(opt).run();
     }
 
