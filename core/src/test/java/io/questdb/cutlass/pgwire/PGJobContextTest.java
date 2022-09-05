@@ -69,6 +69,7 @@ import java.util.TimeZone;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -5831,7 +5832,6 @@ create table tab as (
     @Test
     public void testSmallSendBufferForRowData() throws Exception {
         assertMemoryLeak(() -> {
-
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public int getSendBufferSize() {
@@ -5839,7 +5839,7 @@ create table tab as (
                 }
             };
 
-            try (PGWireServer server = createPGServer(configuration);) {
+            try (PGWireServer server = createPGServer(configuration)) {
                 workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
@@ -5876,6 +5876,7 @@ create table tab as (
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row data");
                     }
                 }
+            } finally {
                 workerPoolManager.closeAll();
             }
         });
@@ -6424,6 +6425,7 @@ create table tab as (
                         assertResultSet(expected, sink, resultSet);
                     }
                 }
+            } finally {
                 workerPoolManager.closeAll();
             }
         });
@@ -6456,6 +6458,8 @@ create table tab as (
             try (PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
+            } finally {
+                TimeUnit.MILLISECONDS.sleep(500L);
                 workerPoolManager.closeAll();
             }
         });

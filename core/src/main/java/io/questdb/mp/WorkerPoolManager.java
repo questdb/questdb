@@ -125,6 +125,7 @@ public class WorkerPoolManager {
             dedicatedPools.clear();
             if (sharedPool != null) {
                 sharedPool.close();
+                sharedPool = null;
                 LOG.info().$("Closed shared pool").$();
             }
         }

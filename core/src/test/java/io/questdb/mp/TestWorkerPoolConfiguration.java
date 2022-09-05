@@ -27,9 +27,15 @@ package io.questdb.mp;
 import io.questdb.test.tools.TestUtils;
 
 public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private final String poolName;
     private final int workerCount;
 
     public TestWorkerPoolConfiguration(int workerCount) {
+        this("test-worker", workerCount);
+    }
+
+    public TestWorkerPoolConfiguration(String poolName, int workerCount) {
+        this.poolName = poolName;
         this.workerCount = workerCount;
     }
 
@@ -50,6 +56,6 @@ public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
 
     @Override
     public String getPoolName() {
-        return "test-worker";
+        return poolName;
     }
 }

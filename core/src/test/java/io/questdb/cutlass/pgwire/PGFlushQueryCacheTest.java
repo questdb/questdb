@@ -35,6 +35,7 @@ import org.junit.Test;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
@@ -89,6 +90,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                     checkQueryCacheFlushed(memInitial, memAfterJoin);
                 }
+            } finally {
                 workerPoolManager.closeAll();
             }
         });
@@ -132,6 +134,8 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                     checkQueryCacheFlushed(memInitial, memAfterJoin);
                 }
+            } finally {
+                TimeUnit.MILLISECONDS.sleep(500L);
                 workerPoolManager.closeAll();
             }
         });

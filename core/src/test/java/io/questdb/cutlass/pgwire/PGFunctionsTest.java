@@ -38,6 +38,7 @@ public class PGFunctionsTest extends BasePGTest {
 
                     Assert.assertEquals(openFilesBefore, openFilesAfter);
                 }
+            } finally {
                 workerPoolManager.closeAll();
             }
         });

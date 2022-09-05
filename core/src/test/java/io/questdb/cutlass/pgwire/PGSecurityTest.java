@@ -38,6 +38,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 import java.util.TimeZone;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.fail;
@@ -304,6 +305,7 @@ public class PGSecurityTest extends BasePGTest {
                 statement.execute(query);
             }
         } finally {
+            TimeUnit.MILLISECONDS.sleep(200L);
             workerPoolManager.closeAll();
         }
     }

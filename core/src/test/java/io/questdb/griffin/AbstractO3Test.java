@@ -32,6 +32,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolManager;
@@ -241,9 +242,11 @@ public class AbstractO3Test {
             FilesFacade ff
     ) throws Exception {
         executeVanilla(() -> {
-            WorkerPool pool = null;
+            WorkerPool pool;
             final CairoConfiguration cairoConfiguration;
+            int wc = 2;
             if (workerCount > 0) {
+                wc = workerCount;
                 pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
@@ -338,13 +341,11 @@ public class AbstractO3Test {
                         return 0;
                     }
                 };
-
+                pool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("default-pool", wc), Metrics.disabled());
             }
 
-            workerPoolManager.startAll();
             workerPoolManager.setSharedPool(pool);
-            TestUtils.execute(runnable, cairoConfiguration, workerCount);
-            workerPoolManager.closeAll();
+            TestUtils.execute(runnable, cairoConfiguration, wc);
         });
     }
 
