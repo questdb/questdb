@@ -3035,6 +3035,94 @@ nodejs code:
     }
 
     @Test
+    public void testUpdateAfterDropAndRecreate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("drop table update_after_drop");
+                    stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    stmt.setLong(1, 42);
+                    stmt.executeUpdate();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("alter table update_after_drop drop column val");
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    stmt.setLong(1, 42);
+                    stmt.executeUpdate();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("alter table update_after_drop drop column id");
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    stmt.setLong(1, 42);
+                    stmt.executeUpdate();
+                    fail("id column was dropped, the UPDATE should have failed");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(4)) {

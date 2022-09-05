@@ -151,11 +151,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             if (state.recordCursorFactory != null) {
                 try {
                     boolean runQuery = true;
-                    do {
+                    for (int retries = 0; runQuery; retries++) {
                         try {
                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             runQuery = false;
                         } catch (ReaderOutOfDateException e) {
+                            if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                                throw e;
+                            }
                             info(state).$(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
@@ -165,7 +168,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
                             state.recordCursorFactory = cc.getRecordCursorFactory();
                         }
-                    } while (runQuery);
+                    }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), state, 200);
                     resumeSend(context);
