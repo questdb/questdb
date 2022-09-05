@@ -932,7 +932,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     walSymbolCounts.add(walWriter.getSymbolMapReader(25).getSymbolCount());
 
                     assertEquals(rowsToInsertTotal, walWriter.size());
-                    assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
+                    assertEquals("WalWriter{name=" + walName + ", table=" + tableName + "}", walWriter.toString());
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, rowsToInsertTotal)) {
@@ -2199,7 +2199,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     }
                 }
 
-                assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
+                assertEquals("WalWriter{name=" + walName + ", table=" + tableName + "}", walWriter.toString());
             }
 
             assertEquals(expectedRowCounts, rowCounts);
