@@ -499,7 +499,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
                 } catch (ReaderOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }
         });
@@ -555,7 +555,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
                 } catch (ReaderOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }
         });
