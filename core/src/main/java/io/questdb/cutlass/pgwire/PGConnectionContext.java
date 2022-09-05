@@ -111,12 +111,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private static final String WRITER_LOCK_REASON = "pgConnection";
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
-    private final long recvBuffer;
-    private final long sendBuffer;
+    private long recvBuffer;
+    private long sendBuffer;
     private final int recvBufferSize;
     private final CharacterStore characterStore;
     private BindVariableService bindVariableService;
-    private final long sendBufferLimit;
+    private long sendBufferLimit;
     private final int sendBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
@@ -207,11 +207,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.nf = configuration.getNetworkFacade();
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-        this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        this.sendBufferPtr = sendBuffer;
-        this.sendBufferLimit = sendBuffer + sendBufferSize;
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
@@ -333,20 +329,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     @Override
     public void close() {
-        // we're about to close the context, so no need to return pending factory to cache
+        // We're about to close the context, so no need to return pending factory to cache.
         typesAndSelectIsCached = false;
         typesAndUpdateIsCached = false;
         clear();
-        // fd == -1 is only when context is closed
-        // when context is initialized fd == 0
-        if (this.fd != -1) {
-            this.fd = -1;
-            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
-            Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        this.fd = -1;
+        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+        Misc.free(path);
+        Misc.free(utf8Sink);
+        Misc.free(circuitBreaker);
+        if (recvBuffer > 0) {
             Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            Misc.free(path);
-            Misc.free(utf8Sink);
-            Misc.free(circuitBreaker);
+            this.recvBuffer = 0;
+        }
+        if (sendBuffer > 0) {
+            Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = 0;
         }
     }
 
@@ -453,6 +451,27 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sqlExecutionContext.with(clientFd);
         this.dispatcher = dispatcher;
         clear();
+        if (fd == -1) {
+            // The context is about to be returned to the pool, so we should release the memory.
+            if (recvBuffer > 0) {
+                Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                this.recvBuffer = 0;
+            }
+            if (sendBuffer > 0) {
+                Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = 0;
+            }
+        } else {
+            // The context is obtained from the pool, so we should initialize the memory.
+            if (recvBuffer == 0) {
+                this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            }
+            if (sendBuffer == 0) {
+                this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+                this.sendBufferPtr = sendBuffer;
+                this.sendBufferLimit = sendBuffer + sendBufferSize;
+            }
+        }
         return this;
     }
 

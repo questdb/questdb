@@ -236,6 +236,7 @@ public class PGWireServer implements Closeable {
             if (closed) {
                 Misc.free(context);
             } else {
+                context.of(-1, null);
                 contextPool.get().push(context);
                 LOG.debug().$("pushed").$();
             }

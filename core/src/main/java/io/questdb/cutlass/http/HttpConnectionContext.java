@@ -40,7 +40,7 @@ import static io.questdb.network.IODispatcher.*;
 public class HttpConnectionContext implements IOContext, Locality, Mutable, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpHeaderParser headerParser;
-    private final long recvBuffer;
+    private long recvBuffer;
     private final int recvBufferSize;
     private final HttpMultipartContentParser multipartContentParser;
     private final HttpHeaderParser multipartContentHeaderParser;
@@ -75,9 +75,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
-        this.recvBufferSize = configuration.getRecvBufferSize();
-        this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink = new HttpResponseSink(configuration);
+        this.recvBufferSize = configuration.getRecvBufferSize();
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
@@ -90,15 +89,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     @Override
     public void clear() {
         LOG.debug().$("clear [fd=").$(fd).$(']').$();
-        totalBytesSent += responseSink.getTotalBytesSent();
-        nCompletedRequests++;
+        this.totalBytesSent += responseSink.getTotalBytesSent();
+        this.responseSink.clear();
+        this.nCompletedRequests++;
         this.resumeProcessor = null;
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentHeaderParser.clear();
         this.csPool.clear();
         this.localValueMap.clear();
-        this.responseSink.clear();
         if (this.pendingRetry) {
             LOG.error().$("Reused context with retry pending.").$();
         }
@@ -121,15 +120,19 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             }
         }
         this.fd = -1;
-        nCompletedRequests = 0;
-        totalBytesSent = 0;
-        csPool.clear();
-        multipartContentParser.close();
-        multipartContentHeaderParser.close();
-        responseSink.close();
-        headerParser.close();
-        localValueMap.close();
-        Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        this.dispatcher = null;
+        this.nCompletedRequests = 0;
+        this.totalBytesSent = 0;
+        this.csPool.clear();
+        this.multipartContentParser.close();
+        this.multipartContentHeaderParser.close();
+        this.headerParser.close();
+        this.localValueMap.close();
+        if (recvBuffer > 0) {
+            Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.recvBuffer = 0;
+        }
+        this.responseSink.close();
         this.receivedBytes = 0;
         LOG.debug().$("closed").$();
     }
@@ -275,7 +278,20 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     public HttpConnectionContext of(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
         this.fd = fd;
         this.dispatcher = dispatcher;
-        this.responseSink.of(fd);
+        if (fd == -1) {
+            // The context is about to be returned to the pool, so we should release the memory.
+            if (recvBuffer > 0) {
+                Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                this.recvBuffer = 0;
+            }
+            this.responseSink.close();
+        } else {
+            // The context is obtained from the pool, so we should initialize the memory.
+            if (recvBuffer == 0) {
+                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            }
+            this.responseSink.of(fd);
+        }
         return this;
     }
 
