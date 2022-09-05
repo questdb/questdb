@@ -934,7 +934,7 @@ public class SqlCompiler implements Closeable {
             }
 
             boolean recompileStale = true;
-            do {
+            for (int retries = 0; recompileStale; retries++) {
                 try {
                     batchCallback.preCompile(this);
                     clear();//we don't use normal compile here because we can't reset existing lexer
@@ -945,11 +945,14 @@ public class SqlCompiler implements Closeable {
                     batchCallback.postCompile(this, current, currentQuery);
                     recompileStale = false;
                 } catch (ReaderOutOfDateException e) {
+                    if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                        throw e;
+                    }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     // will recompile
                     lexer.restart();
                 }
-            } while (recompileStale);
+            }
         }
     }
 

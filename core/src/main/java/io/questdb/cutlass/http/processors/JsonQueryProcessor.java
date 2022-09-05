@@ -329,7 +329,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         boolean recompileStale = true;
-        do {
+        for (int retries = 0; recompileStale; retries++) {
             try {
                 final long nanos = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
@@ -343,10 +343,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 );
                 recompileStale = false;
             } catch (ReaderOutOfDateException e) {
+                if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    throw e;
+                }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 // will recompile
             }
-        } while (recompileStale);
+        }
     }
 
     static void sendException(
