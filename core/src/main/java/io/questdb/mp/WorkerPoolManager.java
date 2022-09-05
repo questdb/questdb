@@ -31,7 +31,6 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -62,19 +61,6 @@ public class WorkerPoolManager {
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {
-        return getInstance(config, sharedPool, metrics);
-    }
-
-    public WorkerPool getInstance(
-            @NotNull WorkerPoolConfiguration config,
-            @Nullable WorkerPool sharedPool,
-            @NotNull Metrics metrics
-    ) {
-        int workerCount = config.getWorkerCount();
-        if (workerCount < 1 && sharedPool != null) {
-            return sharedPool;
-        }
-
         if (config.getWorkerCount() < 1) {
             WorkerPool pool = sharedPool;
             if (pool != null) {

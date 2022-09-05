@@ -327,7 +327,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler, metrics);
         }
         Assert.assertNull(context.getDispatcher());
-        context.of(FD, new IODispatcher<>() {
+        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
             @Override
             public void close() {
             }
