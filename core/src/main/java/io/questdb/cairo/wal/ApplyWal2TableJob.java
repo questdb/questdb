@@ -40,7 +40,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
-    public final static String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
+    private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final CairoEngine engine;
     private final SqlToOperation sqlToOperation;

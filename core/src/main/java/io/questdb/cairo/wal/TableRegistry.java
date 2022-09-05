@@ -126,12 +126,12 @@ public class TableRegistry extends AbstractPool {
     private @NotNull SequencerImpl createSequencer(int tableId, final TableStructure tableStructure) {
         throwIfClosed();
         final String tableName = Chars.toString(tableStructure.getTableName());
-        return seqRegistry.compute(tableName, (key, val) -> {
+        return seqRegistry.compute(tableName, (key, value) -> {
             Entry sequencer = new Entry(this, this.engine, tableName);
             sequencer.create(tableId, tableStructure);
             sequencer.open();
-            if (val != null) {
-                val.close();
+            if (value != null) {
+                value.close();
             }
             return sequencer;
         });
@@ -156,23 +156,17 @@ public class TableRegistry extends AbstractPool {
             return null;
         });
 
-        if (entry == null) throw new CairoError("Unknown table [name=`" + tableNameStr + "`]");
+        if (entry == null) {
+            throw new CairoError("Unknown table [name=`" + tableNameStr + "`]");
+        }
         return entry;
     }
 
     private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
         throwIfClosed();
         final String tableNameStr = Chars.toString(tableName);
-
-        WalWriterPool pool = walRegistry.get(tableNameStr);
-        if (pool != null) {
-            return pool;
-        }
-
-        pool = walRegistry.computeIfAbsent(tableNameStr, (key)
+        return walRegistry.computeIfAbsent(tableNameStr, key
                 -> new WalWriterPool(tableNameStr, this, engine.getConfiguration()));
-
-        return pool;
     }
 
     @Override
@@ -258,6 +252,7 @@ public class TableRegistry extends AbstractPool {
         private final TableRegistry tableRegistry;
         private final CairoConfiguration configuration;
         private volatile boolean closed;
+
         public WalWriterPool(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
             this.tableName = tableName;
             this.tableRegistry = tableRegistry;

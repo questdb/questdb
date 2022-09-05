@@ -712,21 +712,19 @@ public class WalWriterTest extends AbstractGriffinTest {
             final ConcurrentMap<Integer, AtomicInteger> counters = new ConcurrentHashMap<>(numOfThreads);
             for (int i = 0; i < numOfThreads; i++) {
                 new Thread(() -> {
-                    try {
-                        TableWriter.Row row;
-                        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                            final Integer walId = walWriter.getWalId();
-                            final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
-                            counter.incrementAndGet();
-                            walWriter.setRollStrategy(rollStrategy);
-                            assertEquals(0, walWriter.size());
-                            for (int n = 0; n < numOfRows; n++) {
-                                row = walWriter.newRow();
-                                row.putInt(0, n);
-                                row.putSym(1, "test" + n);
-                                row.append();
-                                walWriter.rollSegmentIfLimitReached();
-                            }
+                    TableWriter.Row row;
+                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                        final Integer walId = walWriter.getWalId();
+                        final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
+                        counter.incrementAndGet();
+                        walWriter.setRollStrategy(rollStrategy);
+                        assertEquals(0, walWriter.size());
+                        for (int n = 0; n < numOfRows; n++) {
+                            row = walWriter.newRow();
+                            row.putInt(0, n);
+                            row.putSym(1, "test" + n);
+                            row.append();
+                            walWriter.rollSegmentIfLimitReached();
                         }
                     } catch (Exception e) {
                         e.printStackTrace();

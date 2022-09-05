@@ -412,7 +412,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
     @Override
     public String toString() {
         return "WalWriter{" +
-                "name=" + tableName +
+                "name=" + walName +
+                ", table=" + tableName +
                 '}';
     }
 
@@ -1174,7 +1175,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         public void addColumn(CharSequence columnName, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
-
                 long uncommittedRows = rowCount - startRowCount;
                 if (startRowCount > 0) {
                     // Roll last transaction to new segment

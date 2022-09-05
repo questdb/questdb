@@ -195,7 +195,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
 
     private void addColumn0(CharSequence columnName, int columnType) {
         final String name = columnName.toString();
-        columnNameIndexMap.put(name, columnNameIndexMap.size());
+        columnNameIndexMap.put(name, columnMetadata.size());
         columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
         columnCount++;
     }
