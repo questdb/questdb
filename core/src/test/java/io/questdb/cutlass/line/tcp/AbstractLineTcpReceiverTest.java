@@ -49,6 +49,7 @@ import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
@@ -210,27 +211,20 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
-            try (
-                 WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(getWorkerCount()), metrics)
-            ) {
-                sharedWorkerPool.configure(engine, null, false, needMaintenanceJob, true);
-                workerPoolManager.setSharedPool(sharedWorkerPool);
-                try (LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics)) {
-                    workerPoolManager.startAll();
-                    try {
-                        r.run(receiver);
-                    } catch (Throwable err) {
-                        LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
-                        throw err;
-                    } finally {
-                        Path.clearThreadLocals();
-                    }
-                } catch (Throwable err) {
-                    LOG.error().$("Stopping ILP receiver because of an error").$(err).$();
-                    throw err;
-                }
+            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(getWorkerCount()), metrics);
+            sharedWorkerPool.configure(engine, null, false, needMaintenanceJob, true);
+            workerPoolManager.setSharedPool(sharedWorkerPool);
+            LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics);
+            workerPoolManager.startAll();
+            try {
+                r.run(receiver);
+            } catch (Throwable err) {
+                LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
+                throw err;
             } finally {
+                TimeUnit.MILLISECONDS.sleep(400L);
                 workerPoolManager.closeAll();
+                receiver.close();
             }
         });
     }

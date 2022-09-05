@@ -25,17 +25,13 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.RecordCursorPrinter;
-import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -344,86 +340,89 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        try (WorkerPool pool = WorkerPoolManager.createUnmanaged(
-                new WorkerPoolConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return TestUtils.getWorkerAffinity(getWorkerCount());
+        WorkerPool pool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return TestUtils.getWorkerAffinity(getWorkerCount());
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return false;
+            }
+
+            @Override
+            public String getPoolName() {
+                return "testing";
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return true;
+            }
+        }, Metrics.disabled());
+
+        workerPoolManager.setSharedPool(pool);
+        workerPoolManager.startAll();
+        TestUtils.execute(
+                (engine, compiler, sqlExecutionContext) -> {
+                    compiler.compile("create table x ( " +
+                                    "v long, " +
+                                    "s symbol capacity 4 cache " +
+                                    ")",
+                            sqlExecutionContext
+                    );
+                    compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
+
+                    SqlCompiler[] compilers = new SqlCompiler[threadCount];
+                    RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+
+                    for (int i = 0; i < threadCount; i++) {
+                        // Each factory should use a dedicated compiler instance, so that they don't
+                        // share the same reduce task local pool in the SqlCodeGenerator.
+                        compilers[i] = new SqlCompiler(engine);
+                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
                     }
 
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
+                    final AtomicInteger errors = new AtomicInteger();
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+
+                    for (int i = 0; i < threadCount; i++) {
+                        int finalI = i;
+                        new Thread(() -> {
+                            TestUtils.await(barrier);
+                            try {
+                                RecordCursorFactory factory = factories[finalI];
+                                assertQuery(expected, factory, sqlExecutionContext);
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                haltLatch.countDown();
+                            }
+                        }).start();
                     }
 
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
+                    haltLatch.await();
 
-                    @Override
-                    public String getPoolName() {
-                        return "testing";
-                    }
+                    Misc.free(compilers);
+                    Misc.free(factories);
 
-                    @Override
-                    public boolean isEnabled() {
-                        return true;
-                    }
-                }, Metrics.disabled()
-        )){
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                        compiler.compile("create table x ( " +
-                                        "v long, " +
-                                        "s symbol capacity 4 cache " +
-                                        ")",
-                                sqlExecutionContext
-                        );
-                        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
-                                sqlExecutionContext
-                        );
-
-                        SqlCompiler[] compilers = new SqlCompiler[threadCount];
-                        RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
-
-                        for (int i = 0; i < threadCount; i++) {
-                            // Each factory should use a dedicated compiler instance, so that they don't
-                            // share the same reduce task local pool in the SqlCodeGenerator.
-                            compilers[i] = new SqlCompiler(engine);
-                            factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
-                            Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
-                        }
-
-                        final AtomicInteger errors = new AtomicInteger();
-                        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-                        final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
-
-                        for (int i = 0; i < threadCount; i++) {
-                            int finalI = i;
-                            new Thread(() -> {
-                                TestUtils.await(barrier);
-                                try {
-                                    RecordCursorFactory factory = factories[finalI];
-                                    assertQuery(expected, factory, sqlExecutionContext);
-                                } catch (Throwable e) {
-                                    e.printStackTrace();
-                                    errors.incrementAndGet();
-                                } finally {
-                                    haltLatch.countDown();
-                                }
-                            }).start();
-                        }
-
-                        haltLatch.await();
-
-                        Misc.free(compilers);
-                        Misc.free(factories);
-
-                        Assert.assertEquals(0, errors.get());
-                    },
-                    configuration
-            );
-        }
+                    Assert.assertEquals(0, errors.get());
+                },
+                configuration,
+                workerCount
+        );
+        workerPoolManager.closeAll();
     }
 
     @Test
@@ -431,7 +430,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = WorkerPoolManager.createUnmanaged(
+        workerPoolManager.getInstance(
                 new WorkerPoolConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {
@@ -461,7 +460,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 Metrics.disabled()
         );
 
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+        workerPoolManager.startAll();
+        TestUtils.execute((engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
                                     "timestamp (timestamp) PARTITION BY HOUR",
@@ -527,7 +527,9 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, errors.get());
                 },
-                configuration
+                configuration,
+                workerCount
         );
+        workerPoolManager.closeAll();
     }
 }

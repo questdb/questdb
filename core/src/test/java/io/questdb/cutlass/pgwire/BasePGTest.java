@@ -50,7 +50,7 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public class BasePGTest extends AbstractGriffinTest {
 
-    protected PGWireServer createPGServer(PGWireConfiguration configuration, WorkerPoolManager workerPoolManager) {
+    protected PGWireServer createPGServer(PGWireConfiguration configuration) {
         return Services.createPGWireServer(
                 configuration,
                 workerPoolManager,
@@ -62,10 +62,10 @@ public class BasePGTest extends AbstractGriffinTest {
     }
 
     protected PGWireServer createPGServer(int workerCount) {
-        return createPGServer(workerCount, Long.MAX_VALUE, workerPoolManager);
+        return createPGServer(workerCount, Long.MAX_VALUE);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, WorkerPoolManager workerPoolManager) {
+    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
@@ -96,7 +96,7 @@ public class BasePGTest extends AbstractGriffinTest {
             }
         };
 
-        return createPGServer(conf, workerPoolManager);
+        return createPGServer(conf);
     }
 
     protected void execSelectWithParam(PreparedStatement select, int value) throws SQLException {

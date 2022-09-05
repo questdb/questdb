@@ -1397,7 +1397,7 @@ public class PGJobContextTest extends BasePGTest {
         };
 
         TestUtils.assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(configuration, workerPoolManager)) {
+            try (PGWireServer server = createPGServer(configuration)) {
                 workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true)
@@ -3198,7 +3198,7 @@ nodejs code:
                     return 512;
                 }
             };
-            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+            try (PGWireServer server = createPGServer(configuration)) {
                 workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, false)
@@ -3847,7 +3847,7 @@ nodejs code:
                             ") timestamp (timestamp)",
                     sqlExecutionContext
             );
-            try (PGWireServer server = createPGServer(new Port0PGWireConfiguration(), workerPoolManager)) {
+            try (PGWireServer server = createPGServer(new Port0PGWireConfiguration())) {
                 workerPoolManager.startAll();
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptx00, "127.0.0.1", server.getPort());
                 workerPoolManager.closeAll();
@@ -4262,7 +4262,7 @@ nodejs code:
 
             try (final PGWireServer server = Services.createPGWireServer(
                     conf,
-                    null,
+                    workerPoolManager,
                     engine,
                     compiler.getFunctionFactoryCache(),
                     snapshotAgent,
@@ -4620,7 +4620,7 @@ nodejs code:
     public void testQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
-            try (PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS, workerPoolManager)) {
+            try (PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS)) {
                 workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), false, true);
@@ -5754,7 +5754,7 @@ create table tab as (
                     return 1024;
                 }
             };
-            try(PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+            try(PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
@@ -5785,7 +5785,7 @@ create table tab as (
                 }
             };
 
-            try(PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+            try(PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
@@ -5839,7 +5839,7 @@ create table tab as (
                 }
             };
 
-            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+            try (PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
@@ -5892,7 +5892,7 @@ create table tab as (
                 }
             };
 
-            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+            try (PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
@@ -6179,7 +6179,7 @@ create table tab as (
 
     private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(queryScheduledCount)) {
+            try (PGWireServer server = createPGServer(queryScheduledCount, workerPoolManager)) {
                 workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), true, false)) {
                     final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
@@ -6453,7 +6453,7 @@ create table tab as (
             PGWireConfiguration configuration
     ) throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(configuration, workerPoolManager);) {
+            try (PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
                 workerPoolManager.closeAll();
@@ -6524,7 +6524,7 @@ create table tab as (
         };
     }
 
-    private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
+    private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount, WorkerPoolManager workerPoolManager) {
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
@@ -6546,7 +6546,7 @@ create table tab as (
 
         return Services.createPGWireServer(
                 conf,
-                null,
+                workerPoolManager,
                 engine,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,

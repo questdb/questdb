@@ -66,34 +66,31 @@ public class HttpHealthCheckTestBuilder {
             }
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-            try (CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);) {
-                try (
-                        WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), metrics);
-                ) {
-                    if (injectUnhandledError) {
-                        final AtomicBoolean alreadyErrored = new AtomicBoolean();
-                        workerPool.assign(workerId -> {
-                            if (!alreadyErrored.getAndSet(true)) {
-                                throw new NullPointerException("you'd better not handle me");
-                            }
-                            return false;
-                        });
-                    }
-                    try (HttpServer ignored = Services.createMinHttpServer(httpConfiguration, workerPoolManager, engine, metrics)) {
-                        workerPoolManager.startAll();
-                        if (injectUnhandledError && metrics.isEnabled()) {
-                            for (int i = 0; i < 40; i++) {
-                                if (metrics.healthCheck().unhandledErrorsCount() > 0) {
-                                    break;
-                                }
-                                Os.sleep(50);
-                            }
+            try (CairoEngine engine = new CairoEngine(cairoConfiguration, metrics)) {
+                WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), metrics);
+                if (injectUnhandledError) {
+                    final AtomicBoolean alreadyErrored = new AtomicBoolean();
+                    workerPool.assign(workerId -> {
+                        if (!alreadyErrored.getAndSet(true)) {
+                            throw new NullPointerException("you'd better not handle me");
                         }
-
-                        code.run(engine);
-                    } finally {
-                        workerPoolManager.closeAll();
+                        return false;
+                    });
+                }
+                try (HttpServer ignored = Services.createMinHttpServer(httpConfiguration, workerPoolManager, engine, metrics)) {
+                    workerPoolManager.startAll();
+                    if (injectUnhandledError && metrics.isEnabled()) {
+                        for (int i = 0; i < 40; i++) {
+                            if (metrics.healthCheck().unhandledErrorsCount() > 0) {
+                                break;
+                            }
+                            Os.sleep(50);
+                        }
                     }
+
+                    code.run(engine);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
             }
         });

@@ -1711,8 +1711,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 e.printStackTrace();
             }
 
-            server.close();
             workerPoolManager.closeAll();
+            server.close();
         }
     }
 }

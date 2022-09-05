@@ -122,9 +122,9 @@ public class HttpQueryTestBuilder {
                     }
                 };
             }
+            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(workerCount), metrics);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(workerCount), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 workerPool.assignCleaner(Path.CLEANER);
@@ -225,9 +225,7 @@ public class HttpQueryTestBuilder {
                 });
 
                 QueryCache.configure(httpConfiguration);
-
                 workerPoolManager.startAll(LOG);
-
                 try {
                     code.run(engine);
                 } finally {

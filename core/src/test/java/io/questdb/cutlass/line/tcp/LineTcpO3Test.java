@@ -158,11 +158,10 @@ public class LineTcpO3Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
-
+            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(sharedWorkerPoolConfiguration, null, metrics);
+            workerPoolManager.setSharedPool(sharedWorkerPool);
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
             try (
-                    WorkerPool sharedWorkerPool = workerPoolManager.getInstance(sharedWorkerPoolConfiguration, null, metrics);
-                    // TODO
                     LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)

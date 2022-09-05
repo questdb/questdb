@@ -295,7 +295,7 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     private void executeWithPg(String query) throws Exception {
-        try (final PGWireServer server = createPGServer(READ_ONLY_CONF, workerPoolManager)) {
+        try (final PGWireServer server = createPGServer(READ_ONLY_CONF)) {
             workerPoolManager.startAll();
             try (
                     final Connection connection = getConnection(server.getPort(), false, true);
