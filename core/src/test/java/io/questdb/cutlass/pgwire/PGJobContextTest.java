@@ -3037,28 +3037,30 @@ nodejs code:
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final Connection connection = getConnection(server.getPort(), false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+            try(final PGWireServer server = createPGServer(1)) {
+                workerPoolManager.startAll();
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                    try (Statement statement = connection.createStatement()) {
+                        statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
 
-                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    statement.setLong(1, 42);
-                    statement.executeUpdate();
-                }
+                    try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        statement.setLong(1, 42);
+                        statement.executeUpdate();
+                    }
 
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.executeUpdate("drop table update_after_drop");
-                    stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+                    try (Statement stmt = connection.createStatement()) {
+                        stmt.executeUpdate("drop table update_after_drop");
+                        stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
 
-                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    stmt.setLong(1, 42);
-                    stmt.executeUpdate();
+                    try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        stmt.setLong(1, 42);
+                        stmt.executeUpdate();
+                    }
                 }
+            } finally {
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3066,27 +3068,29 @@ nodejs code:
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final Connection connection = getConnection(server.getPort(), false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+            try (final PGWireServer server = createPGServer(1)) {
+                workerPoolManager.startAll();
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                    try (Statement statement = connection.createStatement()) {
+                        statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
 
-                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    statement.setLong(1, 42);
-                    statement.executeUpdate();
-                }
+                    try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        statement.setLong(1, 42);
+                        statement.executeUpdate();
+                    }
 
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.executeUpdate("alter table update_after_drop drop column val");
-                }
+                    try (Statement stmt = connection.createStatement()) {
+                        stmt.executeUpdate("alter table update_after_drop drop column val");
+                    }
 
-                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    stmt.setLong(1, 42);
-                    stmt.executeUpdate();
+                    try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        stmt.setLong(1, 42);
+                        stmt.executeUpdate();
+                    }
                 }
+            } finally {
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3094,30 +3098,32 @@ nodejs code:
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final Connection connection = getConnection(server.getPort(), false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+            try(final PGWireServer server = createPGServer(1)) {
+                workerPoolManager.startAll();
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                    try (Statement statement = connection.createStatement()) {
+                        statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
 
-                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    statement.setLong(1, 42);
-                    statement.executeUpdate();
-                }
+                    try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        statement.setLong(1, 42);
+                        statement.executeUpdate();
+                    }
 
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.executeUpdate("alter table update_after_drop drop column id");
-                }
+                    try (Statement stmt = connection.createStatement()) {
+                        stmt.executeUpdate("alter table update_after_drop drop column id");
+                    }
 
-                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    stmt.setLong(1, 42);
-                    stmt.executeUpdate();
-                    fail("id column was dropped, the UPDATE should have failed");
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                    try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        stmt.setLong(1, 42);
+                        stmt.executeUpdate();
+                        fail("id column was dropped, the UPDATE should have failed");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                    }
                 }
+            } finally {
+                workerPoolManager.closeAll();
             }
         });
     }
@@ -3127,9 +3133,7 @@ nodejs code:
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(4)) {
                 workerPoolManager.startAll();
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, true)
-                ) {
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate("create table test_large_batch(id long, val int, ts timestamp) timestamp(ts)");
                     }
@@ -5964,7 +5968,6 @@ create table tab as (
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row data");
                     }
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });
@@ -6543,10 +6546,9 @@ create table tab as (
             PGWireConfiguration configuration
     ) throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(configuration);) {
+            try (PGWireServer server = createPGServer(configuration)) {
                 workerPoolManager.startAll();
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
-            } finally {
                 TimeUnit.MILLISECONDS.sleep(500L);
                 workerPoolManager.closeAll();
             }
