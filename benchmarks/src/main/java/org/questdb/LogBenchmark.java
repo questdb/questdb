@@ -44,8 +44,8 @@ public class LogBenchmark {
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(LogBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .warmupIterations(2)
+                .measurementIterations(2)
                 .addProfiler("gc")
                 .forks(1)
                 .build();
@@ -55,12 +55,17 @@ public class LogBenchmark {
 
     @Benchmark
     public void testLogOneInt() {
-        LOG.info().$("brown fox jumped over ").$(counter).$(" fence").$();
+        LOG.info().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    }
+
+    @Benchmark
+    public void testLogOneIntBlocking() {
+        LOG.infoW().$("brown fox jumped over ").$(counter++).$(" fence").$();
     }
 
     @Benchmark
     public void testLogOneIntDisabled() {
-        LOG.debug().$("brown fox jumped over ").$(counter).$(" fence").$();
+        LOG.debug().$("brown fox jumped over ").$(counter++).$(" fence").$();
     }
 
     @Benchmark

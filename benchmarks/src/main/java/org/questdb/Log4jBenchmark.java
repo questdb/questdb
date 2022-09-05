@@ -45,8 +45,8 @@ public class Log4jBenchmark {
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(Log4jBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .warmupIterations(2)
+                .measurementIterations(2)
                 .addProfiler("gc")
                 .forks(1)
                 .build();
