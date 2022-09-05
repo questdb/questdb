@@ -59,7 +59,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path(int capacity) {
         this.capacity = capacity;
         this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
-//        new Exception("cap " + (capacity + 1)).printStackTrace();
     }
 
     public static void clearThreadLocals() {

@@ -27,7 +27,6 @@ package io.questdb.tasks;
 public class WalTxnNotificationTask {
     private CharSequence tableName;
     private int tableId;
-    private long txn;
 
     public int getTableId() {
         return tableId;
@@ -37,13 +36,8 @@ public class WalTxnNotificationTask {
         return tableName;
     }
 
-    public long getTxn() {
-        return txn;
-    }
-
     public void of(CharSequence tableName, int tableId, long txn) {
         this.tableName = tableName;
         this.tableId = tableId;
-        this.txn = txn;
     }
 }
