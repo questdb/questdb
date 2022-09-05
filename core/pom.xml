@@ -38,7 +38,7 @@
         <web.console.version>0.0.3</web.console.version>
     </properties>
 
-    <version>6.5.2</version>
+    <version>6.5.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
