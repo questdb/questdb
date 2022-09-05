@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.Metrics;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -381,37 +380,10 @@ public class LogFactory implements Closeable {
     }
 
     public void startThread() {
-
         if (this.workerPool != null) {
             return;
         }
-
-        this.workerPool = WorkerPoolManager.getInstance(new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return new int[]{-1};
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return false;
-            }
-
-            @Override
-            public boolean isDaemonPool() {
-                return true;
-            }
-
-            @Override
-            public String getPoolName() {
-                return "logging";
-            }
-        }, Metrics.disabled(), false);
+        this.workerPool = WorkerPoolManager.createLoggerWorkerPool();
         assign(workerPool);
         workerPool.start();
     }

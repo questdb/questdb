@@ -199,10 +199,12 @@ public class WorkerPool implements QuietCloseable {
         if (running.compareAndSet(true, false)) {
             started.await();
             for (int i = 0; i < workerCount; i++) {
-                workers.getQuick(i).halt();
+                Worker worker = workers.getQuick(i);
+                if (worker != null) {
+                    worker.halt();
+                }
             }
             halted.await();
-
             Misc.freeObjList(workers);
             Misc.freeObjList(freeOnHalt);
         }

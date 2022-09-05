@@ -346,7 +346,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        WorkerPool pool = WorkerPoolManager.getInstance(
+        try (WorkerPool pool = WorkerPoolManager.getInstance(
                 new WorkerPoolConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {
@@ -372,60 +372,59 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     public boolean isEnabled() {
                         return true;
                     }
-                },
-                Metrics.disabled(), false
-        );
+                }, Metrics.disabled(), false
+        )){
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                        compiler.compile("create table x ( " +
+                                        "v long, " +
+                                        "s symbol capacity 4 cache " +
+                                        ")",
+                                sqlExecutionContext
+                        );
+                        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
 
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("create table x ( " +
-                                    "v long, " +
-                                    "s symbol capacity 4 cache " +
-                                    ")",
-                            sqlExecutionContext
-                    );
-                    compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
-                            sqlExecutionContext
-                    );
+                        SqlCompiler[] compilers = new SqlCompiler[threadCount];
+                        RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
 
-                    SqlCompiler[] compilers = new SqlCompiler[threadCount];
-                    RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+                        for (int i = 0; i < threadCount; i++) {
+                            // Each factory should use a dedicated compiler instance, so that they don't
+                            // share the same reduce task local pool in the SqlCodeGenerator.
+                            compilers[i] = new SqlCompiler(engine);
+                            factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                            Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
+                        }
 
-                    for (int i = 0; i < threadCount; i++) {
-                        // Each factory should use a dedicated compiler instance, so that they don't
-                        // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = new SqlCompiler(engine);
-                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
-                        Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
-                    }
+                        final AtomicInteger errors = new AtomicInteger();
+                        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                        final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
 
-                    final AtomicInteger errors = new AtomicInteger();
-                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+                        for (int i = 0; i < threadCount; i++) {
+                            int finalI = i;
+                            new Thread(() -> {
+                                TestUtils.await(barrier);
+                                try {
+                                    RecordCursorFactory factory = factories[finalI];
+                                    assertQuery(expected, factory, sqlExecutionContext);
+                                } catch (Throwable e) {
+                                    e.printStackTrace();
+                                    errors.incrementAndGet();
+                                } finally {
+                                    haltLatch.countDown();
+                                }
+                            }).start();
+                        }
 
-                    for (int i = 0; i < threadCount; i++) {
-                        int finalI = i;
-                        new Thread(() -> {
-                            TestUtils.await(barrier);
-                            try {
-                                RecordCursorFactory factory = factories[finalI];
-                                assertQuery(expected, factory, sqlExecutionContext);
-                            } catch (Throwable e) {
-                                e.printStackTrace();
-                                errors.incrementAndGet();
-                            } finally {
-                                haltLatch.countDown();
-                            }
-                        }).start();
-                    }
+                        haltLatch.await();
 
-                    haltLatch.await();
+                        Misc.free(compilers);
+                        Misc.free(factories);
 
-                    Misc.free(compilers);
-                    Misc.free(factories);
-
-                    Assert.assertEquals(0, errors.get());
-                },
-                configuration
-        );
+                        Assert.assertEquals(0, errors.get());
+                    },
+                    configuration
+            );
+        }
     }
 }

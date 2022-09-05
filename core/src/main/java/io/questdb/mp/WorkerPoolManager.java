@@ -117,10 +117,6 @@ public final class WorkerPoolManager {
     }
 
     public static void closeAll() {
-        WorkerPool sharedPool = SHARED_POOL.get();
-        if (sharedPool == null) {
-            throw new IllegalStateException("shared pool has already been initialized");
-        }
         if (HAS_STARTED.compareAndSet(true, false)) {
             ObjList<CharSequence> poolNames = DEDICATED_POOLS.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
@@ -129,9 +125,41 @@ public final class WorkerPoolManager {
                 pool.close();
                 LOG.info().$("Closed dedicated pool [").$(name).I$();
             }
-            sharedPool.close();
-            LOG.info().$("Closed shared pool").$();
+            WorkerPool sharedPool = SHARED_POOL.get();
+            if (sharedPool != null) {
+                sharedPool.close();
+                LOG.info().$("Closed shared pool").$();
+            }
         }
+    }
+
+    public static WorkerPool createLoggerWorkerPool() {
+        return new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return new int[]{-1};
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return false;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
+
+            @Override
+            public String getPoolName() {
+                return "logging";
+            }
+        }, Metrics.disabled());
     }
 
     private WorkerPoolManager() {
