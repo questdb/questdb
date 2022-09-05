@@ -32,7 +32,9 @@ public interface IOContext extends Closeable {
 
     long getFd();
 
-    boolean invalid();
+    default boolean invalid() {
+        return getFd() == -1;
+    }
 
      IODispatcher<?> getDispatcher();
 }

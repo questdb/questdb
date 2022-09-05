@@ -30,9 +30,10 @@ import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.AbstractMutableIOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -78,21 +79,6 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         this.fd = -1;
         Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
         recvBufStart = recvBufEnd = recvBufPos = 0;
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public boolean invalid() {
-        return fd == -1;
-    }
-
-    @Override
-    public IODispatcher<LineTcpConnectionContext> getDispatcher() {
-        return dispatcher;
     }
 
     private boolean checkQueueFullLogHysteresis() {

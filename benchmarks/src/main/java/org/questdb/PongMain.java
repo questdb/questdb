@@ -24,28 +24,127 @@
 
 package org.questdb;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectByteCharSequence;
+
+import static io.questdb.network.IODispatcher.*;
 
 public class PongMain {
+
+    private static final Log LOG = LogFactory.getLog(PongMain.class);
+
     public static void main(String[] args) {
-        final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration();
-        int workerCount = 0;
-
-
-        IODispatcher<PongContext> dispatcher = IODispatchers.create(
-                configuration,
-                new MutableIOContextFactory<>(PongContext::new, 16)
-        );
+        // configuration defines bind address and port
+        final IODispatcherConfiguration dispatcherConf = new DefaultIODispatcherConfiguration();
+        // worker pool, which would handle jobs
+        final WorkerPool workerPool = new WorkerPool(() -> 1);
+        // event loop that accepts connections and publishes network events to event queue
+        final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new MutableIOContextFactory<>(PongConnectionContext::new, 8));
+        // event queue processor
+        final PongRequestProcessor processor = new PongRequestProcessor();
+        // event loop job
+        workerPool.assign(dispatcher);
+        // queue processor job
+        workerPool.assign(workerId -> dispatcher.processIOQueue(processor));
+        // lets go!
+        workerPool.start();
     }
 
-    private static class PongContext extends AbstractMutableIOContext<PongContext> {
+    private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {
         @Override
-        public void close() {
+        public void onRequest(int operation, PongConnectionContext context) {
+            switch (operation) {
+                case IOOperation.READ:
+                    context.receivePing();
+                    break;
+                case IOOperation.WRITE:
+                    context.sendPong();
+                    break;
+                default:
+                    context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
+                    break;
+            }
+        }
+    }
+
+    private static class PongConnectionContext extends AbstractMutableIOContext<PongConnectionContext> {
+        private final static String PING = "PING";
+        private final static String PONG = "PONG";
+        private final DirectByteCharSequence flyweight = new DirectByteCharSequence();
+        private final int bufSize = 1024;
+        private final long bufStart = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        private long buf = bufStart;
+        private int writtenLen;
+
+        @Override
+        public void clear() {
+            buf = bufStart;
+            writtenLen = 0;
+            LOG.info().$("cleared").$();
         }
 
         @Override
-        public boolean invalid() {
-            return fd == -1;
+        public void close() {
+            Unsafe.free(bufStart, bufSize, MemoryTag.NATIVE_DEFAULT);
+            LOG.info().$("closed").$();
+        }
+
+        public void receivePing() {
+            // expect "PING"
+            int n = Net.recv(getFd(), buf, (int) (bufSize - (buf - bufStart)));
+            if (n > 0) {
+                flyweight.of(bufStart, buf + n);
+                if (Chars.startsWith(PING, flyweight)) {
+                    if (flyweight.length() < PING.length()) {
+                        // accrue protocol artefacts while they still make sense
+                        buf += n;
+                        // fair resource use
+                        getDispatcher().registerChannel(this, IOOperation.READ);
+                    } else {
+                        // reset buffer
+                        this.buf = bufStart;
+                        // send PONG by preparing the buffer and asking client to receive
+                        LOG.info().$(flyweight).$();
+                        Chars.asciiStrCpy(PONG, bufStart);
+                        writtenLen = PONG.length();
+                        getDispatcher().registerChannel(this, IOOperation.WRITE);
+                    }
+                } else {
+                    getDispatcher().disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+                }
+            } else {
+                // handle peer disconnect
+                getDispatcher().disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
+            }
+        }
+
+        public void sendPong() {
+            int n = Net.send(getFd(), buf, (int) (writtenLen - (buf - bufStart)));
+            if (n > -1) {
+                if (n > 0) {
+                    buf += n;
+                    if (buf - bufStart < writtenLen) {
+                        getDispatcher().registerChannel(this, IOOperation.WRITE);
+                    } else {
+                        flyweight.of(bufStart, bufStart + writtenLen);
+                        LOG.info().$(flyweight).$();
+                        buf = bufStart;
+                        writtenLen = 0;
+                        getDispatcher().registerChannel(this, IOOperation.READ);
+                    }
+                } else {
+                    getDispatcher().registerChannel(this, IOOperation.WRITE);
+                }
+            } else {
+                // handle peer disconnect
+                getDispatcher().disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+            }
         }
     }
 }

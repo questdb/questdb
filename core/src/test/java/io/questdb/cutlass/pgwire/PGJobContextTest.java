@@ -4163,11 +4163,6 @@ nodejs code:
         assertMemoryLeak(() -> {
             final PGWireConfiguration conf = new Port0PGWireConfiguration() {
                 @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
                 public int getWorkerCount() {
                     return 4;
                 }
@@ -4182,6 +4177,7 @@ nodejs code:
                     snapshotAgent,
                     metrics
             )) {
+                Assert.assertNotNull(server);
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -6391,11 +6387,6 @@ create table tab as (
             }
 
             @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
             public int getWorkerCount() {
                 return workerCount;
             }
@@ -6572,11 +6563,6 @@ create table tab as (
             }
 
             @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
             public int getWorkerCount() {
                 return workerCount;
             }
@@ -6596,6 +6582,7 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
+            Assert.assertNotNull(server);
             pool.start(LOG);
             int iteration = 0;
 

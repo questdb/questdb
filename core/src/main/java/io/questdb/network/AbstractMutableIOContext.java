@@ -47,7 +47,6 @@ public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContex
     @SuppressWarnings("unchecked")
     @Override
     public T of(long fd, IODispatcher<T> dispatcher) {
-        clear();
         this.fd = fd;
         this.dispatcher = dispatcher;
         return (T) this;

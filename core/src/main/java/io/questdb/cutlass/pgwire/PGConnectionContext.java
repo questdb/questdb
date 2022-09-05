@@ -155,7 +155,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
-    private boolean requireInitialMessage = false;
+    private boolean requireInitialMessage = true;
     private long recvBufferWriteOffset = 0;
     private long totalReceived = 0;
     private long recvBufferReadOffset = 0;
@@ -235,6 +235,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
+        this.queryTag = TAG_OK;
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -342,16 +343,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         Misc.free(path);
         Misc.free(utf8Sink);
         Misc.free(circuitBreaker);
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public boolean invalid() {
-        return fd == -1;
     }
 
     @Override
