@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFac
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -68,7 +67,6 @@ public class AbstractCairoTest {
     protected static long currentMicros = -1;
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
-    protected static WorkerPoolManager workerPoolManager;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;

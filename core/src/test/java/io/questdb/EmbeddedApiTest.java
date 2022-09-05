@@ -67,36 +67,32 @@ public class EmbeddedApiTest {
             ) {
                 workerPool.assign(new GroupByJob(engine.getMessageBus()));
                 workerPool.start(log);
-                try {
-                    // number of cores is current thread + workers in the pool
-                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                // number of cores is current thread + workers in the pool
+                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
+                try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
-                        compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
+                    compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
 
-                        long timestamp = 0;
-                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
-                            for (int i = 0; i < 10_000_000; i++) {
-                                TableWriter.Row row = writer.newRow(timestamp);
-                                row.putDouble(0, rnd.nextDouble());
-                                row.append();
-                                timestamp += 1_000_000;
-                            }
-                            writer.commit();
+                    long timestamp = 0;
+                    try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
+                        for (int i = 0; i < 10_000_000; i++) {
+                            TableWriter.Row row = writer.newRow(timestamp);
+                            row.putDouble(0, rnd.nextDouble());
+                            row.append();
+                            timestamp += 1_000_000;
                         }
+                        writer.commit();
+                    }
 
-                        try (RecordCursorFactory factory = compiler.compile("select sum(g) from abc", ctx).getRecordCursorFactory()) {
-                            try (RecordCursor cursor = factory.getCursor(ctx)) {
-                                final Record ignored = cursor.getRecord();
-                                //noinspection StatementWithEmptyBody
-                                while (cursor.hasNext()) {
-                                    // access 'record' instance for field values
-                                }
+                    try (RecordCursorFactory factory = compiler.compile("select sum(g) from abc", ctx).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            final Record ignored = cursor.getRecord();
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                                // access 'record' instance for field values
                             }
                         }
                     }
-                } finally {
-                    workerPool.close();
                 }
             }
         });

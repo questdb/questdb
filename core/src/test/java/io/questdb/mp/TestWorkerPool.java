@@ -57,6 +57,5 @@ public class TestWorkerPool extends WorkerPool {
                 return "test-worker";
             }
         }, metrics);
-        configure(cairoEngine, null, false);
     }
 }

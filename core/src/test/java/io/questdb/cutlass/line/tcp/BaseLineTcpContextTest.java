@@ -121,7 +121,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
-        return WorkerPoolManager.getInstance(new WorkerPoolConfiguration() {
+        return WorkerPoolManager.createUnmanaged(new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
                 return TestUtils.getWorkerAffinity(workerCount);
@@ -141,7 +141,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public String getPoolName() {
                 return "testing";
             }
-        }, metrics, false);
+        }, metrics);
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {

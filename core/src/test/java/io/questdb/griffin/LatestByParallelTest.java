@@ -251,7 +251,7 @@ public class LatestByParallelTest {
         executeVanilla(() -> {
             if (workerCount > 0) {
 
-                WorkerPool pool = WorkerPoolManager.getInstance(
+                WorkerPool pool = WorkerPoolManager.createUnmanaged(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
@@ -278,8 +278,7 @@ public class LatestByParallelTest {
                                 return true;
                             }
                         },
-                        Metrics.disabled(),
-                        false
+                        Metrics.disabled()
                 );
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {

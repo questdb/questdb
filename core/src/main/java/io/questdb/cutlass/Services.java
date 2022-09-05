@@ -168,8 +168,8 @@ public final class Services {
         }
 
         ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getIOWorkerPoolConfiguration(), metrics, true);
-        WorkerPool writerWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getWriterWorkerPoolConfiguration(), metrics, true);
+        WorkerPool ioWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getIOWorkerPoolConfiguration(), metrics);
+        WorkerPool writerWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getWriterWorkerPoolConfiguration(), metrics);
         if (ioWorkerPool != sharedWorkerPool) {
             dedicatedPools.add(ioWorkerPool);
         }
@@ -205,13 +205,12 @@ public final class Services {
     }
 
 
-
     public interface UdpReceiverFactory extends Services.ServerFactory<AbstractLineProtoUdpReceiver, LineUdpReceiverConfiguration> {
     }
 
     @Nullable
     private static <T extends QuietCloseable, C extends WorkerPoolConfiguration> T createService(
-            C configuration,
+            C config,
             WorkerPool sharedPool,
             Log log,
             CairoEngine cairoEngine,
@@ -221,12 +220,20 @@ public final class Services {
             Metrics metrics
     ) {
         final T server;
-        if (configuration.isEnabled()) {
-            final WorkerPool localPool = WorkerPoolManager.getInstance(configuration, metrics, true);
-            final boolean local = localPool != sharedPool;
+        if (config.isEnabled()) {
+            boolean local = false;
+            WorkerPool localPool;
+            int workerCount = config.getWorkerCount();
+            if (workerCount < 1 && sharedPool != null) {
+                localPool = sharedPool;
+            } else {
+                localPool = WorkerPoolManager.getInstance(config, metrics);
+                local = true;
+            }
+
             final int sharedWorkerCount = sharedPool == null ? localPool.getWorkerCount() : sharedPool.getWorkerCount();
             server = factory.create(
-                    configuration,
+                    config,
                     cairoEngine,
                     localPool,
                     local,

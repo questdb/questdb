@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -771,6 +769,8 @@ public class IODispatcherTest {
                         metrics
                 )) {
 
+            WorkerPoolManager.startAll();
+
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
@@ -799,6 +799,7 @@ public class IODispatcherTest {
 
             // download select * from 'sample.csv' as csv
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, downloadAsCsvScript, "127.0.0.1", 9001);
+            WorkerPoolManager.closeAll();
         }
     }
 
@@ -838,6 +839,8 @@ public class IODispatcherTest {
                         metrics
                 )) {
 
+            WorkerPoolManager.startAll();
+
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
@@ -853,6 +856,8 @@ public class IODispatcherTest {
 
             // select * from 'sample.csv' and limit columns to f0,f1
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
+
+            WorkerPoolManager.closeAll();
         }
     }
 
@@ -1773,84 +1778,83 @@ public class IODispatcherTest {
                 });
                 workerPool.assignCleaner(Path.CLEANER);
                 workerPool.start(LOG);
-
-                // send multipart request to server
-                final String request = "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d--";
-
-
-                NetworkFacade nf = new NetworkFacadeImpl() {
-                    int totalSent = 0;
-
-                    @Override
-                    public int send(long fd, long buffer, int bufferLen) {
-                        if (bufferLen > 0) {
-                            int result = super.send(fd, buffer, 1);
-                            totalSent += result;
-
-                            // start delaying after 800 bytes
-
-                            if (totalSent > 20) {
-                                LockSupport.parkNanos(10000);
-                                totalSent = 0;
-                            }
-                            return result;
-                        }
-                        return 0;
-                    }
-                };
-
                 try {
+                    // send multipart request to server
+                    final String request = "POST /upload HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "User-Agent: curl/7.64.0\r\n" +
+                            "Accept: */*\r\n" +
+                            "Content-Length: 437760673\r\n" +
+                            "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                            "Expect: 100-continue\r\n" +
+                            "\r\n" +
+                            "--------------------------27d997ca93d2689d\r\n" +
+                            "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                            "Content-Type: application/octet-stream\r\n" +
+                            "\r\n" +
+                            "[\r\n" +
+                            "  {\r\n" +
+                            "    \"name\": \"date\",\r\n" +
+                            "    \"type\": \"DATE\",\r\n" +
+                            "    \"pattern\": \"d MMMM y.\",\r\n" +
+                            "    \"locale\": \"ru-RU\"\r\n" +
+                            "  }\r\n" +
+                            "]\r\n" +
+                            "\r\n" +
+                            "--------------------------27d997ca93d2689d\r\n" +
+                            "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                            "Content-Type: application/octet-stream\r\n" +
+                            "\r\n" +
+                            "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                            "B00008,2017-02-01 00:30:00,,,\r\n" +
+                            "B00008,2017-02-01 00:40:00,,,\r\n" +
+                            "B00009,2017-02-01 00:30:00,,,\r\n" +
+                            "B00013,2017-02-01 00:11:00,,,\r\n" +
+                            "B00013,2017-02-01 00:41:00,,,\r\n" +
+                            "B00013,2017-02-01 00:00:00,,,\r\n" +
+                            "B00013,2017-02-01 00:53:00,,,\r\n" +
+                            "B00013,2017-02-01 00:44:00,,,\r\n" +
+                            "B00013,2017-02-01 00:05:00,,,\r\n" +
+                            "B00013,2017-02-01 00:54:00,,,\r\n" +
+                            "B00014,2017-02-01 00:45:00,,,\r\n" +
+                            "B00014,2017-02-01 00:45:00,,,\r\n" +
+                            "B00014,2017-02-01 00:46:00,,,\r\n" +
+                            "B00014,2017-02-01 00:54:00,,,\r\n" +
+                            "B00014,2017-02-01 00:45:00,,,\r\n" +
+                            "B00014,2017-02-01 00:45:00,,,\r\n" +
+                            "B00014,2017-02-01 00:45:00,,,\r\n" +
+                            "B00014,2017-02-01 00:26:00,,,\r\n" +
+                            "B00014,2017-02-01 00:55:00,,,\r\n" +
+                            "B00014,2017-02-01 00:47:00,,,\r\n" +
+                            "B00014,2017-02-01 00:05:00,,,\r\n" +
+                            "B00014,2017-02-01 00:58:00,,,\r\n" +
+                            "B00014,2017-02-01 00:33:00,,,\r\n" +
+                            "B00014,2017-02-01 00:45:00,,,\r\n" +
+                            "\r\n" +
+                            "--------------------------27d997ca93d2689d--";
+
+
+                    NetworkFacade nf = new NetworkFacadeImpl() {
+                        int totalSent = 0;
+
+                        @Override
+                        public int send(long fd, long buffer, int bufferLen) {
+                            if (bufferLen > 0) {
+                                int result = super.send(fd, buffer, 1);
+                                totalSent += result;
+
+                                // start delaying after 800 bytes
+
+                                if (totalSent > 20) {
+                                    LockSupport.parkNanos(10000);
+                                    totalSent = 0;
+                                }
+                                return result;
+                            }
+                            return 0;
+                        }
+                    };
+
                     sendAndReceive(
                             nf,
                             request,
@@ -2245,79 +2249,79 @@ public class IODispatcherTest {
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
 
-                    // send multipart request to server
-                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
+                // send multipart request to server
+                final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
 
-                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" + "f7\r\n" +
-                            "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"}\r\n"
-                            +
-                            "fd\r\n" +
-                            ",{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\"\r\n"
-                            +
-                            "fe\r\n" +
-                            ",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null,\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\"\r\n"
-                            +
-                            "f5\r\n" +
-                            ",null,0.05384400312338511,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\"\r\n"
-                            +
-                            "fe\r\n" +
-                            ",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[\r\n"
-                            +
-                            "ff\r\n" +
-                            "-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null\r\n"
-                            +
-                            "f6\r\n" +
-                            ",0.7215959171612961,\"KWZLU\",\"GXH\",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261203552,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\"\r\n"
-                            +
-                            "f2\r\n" +
-                            ",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",false,[]],[17,23522,-861621212\r\n"
-                            +
-                            "0100\r\n" +
-                            ",-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.11296257318851766,\"CGFNW\",null,true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null,0.5764439692141042,\"BQQEM\",null\r\n"
-                            +
-                            "fd\r\n" +
-                            ",false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836401674938,null,\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\",0.7806183,null,\"CLNXF\"\r\n"
-                            +
-                            "fa\r\n" +
-                            ",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null,\"-248236-04-27T14:06:03.509521Z\",0.77833515\r\n"
-                            +
-                            "ff\r\n" +
-                            ",0.533524384058538,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\",\"201101-10-20T07:35:25.133598Z\",null,0.7430101994511517,\"DXCBJ\"\r\n"
-                            +
-                            "f8\r\n" +
-                            ",null,true,[]],[-11,-23214,1210163254,-7888017038009650608,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[]],[-69,-29912,217564476,null,\"-102483035-11-11T09:07:30.782Z\",\"-196714-09-04T03:57:56.227221Z\"\r\n"
-                            +
-                            "ed\r\n" +
-                            ",0.08039439,0.18684267640195917,\"EUKWM\",\"NZZ\",true,[]],[4,19590,-1505690678,6904166490726350488,\"-218006330-04-21T14:18:39.081Z\",\"283032-05-21T12:20:14.632027Z\",0.23285526,0.22122747948030208,\"NSSTC\",\"ZUP\",false,[]],[-111,-6531,342159453\r\n"
-                            +
-                            "0100\r\n" +
-                            ",8456443351018554474,\"197601854-07-22T06:29:36.718Z\",\"-180434-06-04T17:16:49.501207Z\",0.7910659,0.7128505998532723,\"YQPZG\",\"ZNY\",true,[]],[106,32411,-1426419269,-2990992799558673548,\"261692520-06-19T20:19:43.556Z\",null,0.8377384,0.02633639777833019,\"GENFE\"\r\n"
-                            +
-                            "f4\r\n" +
-                            ",\"WWR\",false,[]],[-125,25715,null,null,\"-113894547-06-20T07:24:13.689Z\",null,0.7417434,0.6288088087840823,\"IJZZY\",null,true,[]],[96,-13602,1350628163,null,\"257134407-03-20T11:25:44.819Z\",null,0.7360581,null,\"LGYDO\",\"NLI\",true,[]],[-64,8270,null\r\n"
-                            +
-                            "fd\r\n" +
-                            ",-5695137753964242205,\"289246073-05-28T15:10:38.644Z\",\"-220112-01-30T11:56:06.194709Z\",0.938019,null,\"GHLXG\",\"MDJ\",true,[]],[-76,12479,null,-4034810129069646757,\"123619904-08-31T19:44:11.844Z\",\"267826-03-17T13:36:32.811014Z\",0.8463546,null,\"PFOYM\",\"WDS\"\r\n"
-                            +
-                            "ba\r\n" +
-                            ",true,[]],[100,24045,-2102123220,-7175695171900374773,\"-242871073-08-17T14:45:16.399Z\",\"125517-01-13T08:03:16.581566Z\",0.20179749,0.42934437054513563,\"USIMY\",\"XUU\",false,[]]],\"count\":30}\r\n"
-                            +
-                            "00\r\n\r\n";
+                String expectedResponse = "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" + "f7\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"}\r\n"
+                        +
+                        "fd\r\n" +
+                        ",{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\"\r\n"
+                        +
+                        "fe\r\n" +
+                        ",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null,\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\"\r\n"
+                        +
+                        "f5\r\n" +
+                        ",null,0.05384400312338511,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\"\r\n"
+                        +
+                        "fe\r\n" +
+                        ",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[\r\n"
+                        +
+                        "ff\r\n" +
+                        "-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null\r\n"
+                        +
+                        "f6\r\n" +
+                        ",0.7215959171612961,\"KWZLU\",\"GXH\",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261203552,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\"\r\n"
+                        +
+                        "f2\r\n" +
+                        ",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",false,[]],[17,23522,-861621212\r\n"
+                        +
+                        "0100\r\n" +
+                        ",-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.11296257318851766,\"CGFNW\",null,true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null,0.5764439692141042,\"BQQEM\",null\r\n"
+                        +
+                        "fd\r\n" +
+                        ",false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836401674938,null,\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\",0.7806183,null,\"CLNXF\"\r\n"
+                        +
+                        "fa\r\n" +
+                        ",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null,\"-248236-04-27T14:06:03.509521Z\",0.77833515\r\n"
+                        +
+                        "ff\r\n" +
+                        ",0.533524384058538,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\",\"201101-10-20T07:35:25.133598Z\",null,0.7430101994511517,\"DXCBJ\"\r\n"
+                        +
+                        "f8\r\n" +
+                        ",null,true,[]],[-11,-23214,1210163254,-7888017038009650608,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[]],[-69,-29912,217564476,null,\"-102483035-11-11T09:07:30.782Z\",\"-196714-09-04T03:57:56.227221Z\"\r\n"
+                        +
+                        "ed\r\n" +
+                        ",0.08039439,0.18684267640195917,\"EUKWM\",\"NZZ\",true,[]],[4,19590,-1505690678,6904166490726350488,\"-218006330-04-21T14:18:39.081Z\",\"283032-05-21T12:20:14.632027Z\",0.23285526,0.22122747948030208,\"NSSTC\",\"ZUP\",false,[]],[-111,-6531,342159453\r\n"
+                        +
+                        "0100\r\n" +
+                        ",8456443351018554474,\"197601854-07-22T06:29:36.718Z\",\"-180434-06-04T17:16:49.501207Z\",0.7910659,0.7128505998532723,\"YQPZG\",\"ZNY\",true,[]],[106,32411,-1426419269,-2990992799558673548,\"261692520-06-19T20:19:43.556Z\",null,0.8377384,0.02633639777833019,\"GENFE\"\r\n"
+                        +
+                        "f4\r\n" +
+                        ",\"WWR\",false,[]],[-125,25715,null,null,\"-113894547-06-20T07:24:13.689Z\",null,0.7417434,0.6288088087840823,\"IJZZY\",null,true,[]],[96,-13602,1350628163,null,\"257134407-03-20T11:25:44.819Z\",null,0.7360581,null,\"LGYDO\",\"NLI\",true,[]],[-64,8270,null\r\n"
+                        +
+                        "fd\r\n" +
+                        ",-5695137753964242205,\"289246073-05-28T15:10:38.644Z\",\"-220112-01-30T11:56:06.194709Z\",0.938019,null,\"GHLXG\",\"MDJ\",true,[]],[-76,12479,null,-4034810129069646757,\"123619904-08-31T19:44:11.844Z\",\"267826-03-17T13:36:32.811014Z\",0.8463546,null,\"PFOYM\",\"WDS\"\r\n"
+                        +
+                        "ba\r\n" +
+                        ",true,[]],[100,24045,-2102123220,-7175695171900374773,\"-242871073-08-17T14:45:16.399Z\",\"125517-01-13T08:03:16.581566Z\",0.20179749,0.42934437054513563,\"USIMY\",\"XUU\",false,[]]],\"count\":30}\r\n"
+                        +
+                        "00\r\n\r\n";
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
@@ -4348,7 +4352,6 @@ public class IODispatcherTest {
             QueryCache.configure(httpConfiguration);
 
 
-
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
                 @Override
                 public int getSqlPageFrameMaxRows() {
@@ -4409,8 +4412,8 @@ public class IODispatcherTest {
                         }
                     }
                 };
+                workerPool.configure(engine, null, false, true);
                 workerPool.start(LOG);
-
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
@@ -5372,7 +5375,6 @@ public class IODispatcherTest {
                             Net.freeSockAddr(sockAddr);
                         }
                     } finally {
-                        workerPool.close();
                         Files.remove(path);
                     }
                 }

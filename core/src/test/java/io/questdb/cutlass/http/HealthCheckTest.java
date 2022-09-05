@@ -136,7 +136,7 @@ public class HealthCheckTest {
         testUnhealthy(Metrics.disabled(), expectedResponse);
     }
 
-    public void testUnhealthy(Metrics metrics, String expectedResponse) throws Exception {
+    private void testUnhealthy(Metrics metrics, String expectedResponse) throws Exception {
         new HttpHealthCheckTestBuilder()
                 .withTempFolder(temp)
                 .withMetrics(metrics)

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.mp.MPSequence;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Before;
@@ -56,36 +57,39 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     @Test
     public void testFlushQueryCache() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    PGWireServer server = createPGServer(2);
-                    Connection connection = getConnection(server.getPort(), false, true);
-                    Statement statement = connection.createStatement()
-            ) {
-                statement.executeUpdate("CREATE TABLE test\n" +
-                        "AS(\n" +
-                        "    SELECT\n" +
-                        "        x id,\n" +
-                        "        timestamp_sequence(0L, 100000L) ts\n" +
-                        "    FROM long_sequence(1000) x)\n" +
-                        "TIMESTAMP(ts)\n" +
-                        "PARTITION BY DAY");
+            try (PGWireServer server = createPGServer(2)) {
+                WorkerPoolManager.startAll();
+                try (
+                        Connection connection = getConnection(server.getPort(), false, true);
+                        Statement statement = connection.createStatement()
+                ) {
+                    statement.executeUpdate("CREATE TABLE test\n" +
+                            "AS(\n" +
+                            "    SELECT\n" +
+                            "        x id,\n" +
+                            "        timestamp_sequence(0L, 100000L) ts\n" +
+                            "    FROM long_sequence(1000) x)\n" +
+                            "TIMESTAMP(ts)\n" +
+                            "PARTITION BY DAY");
 
-                engine.releaseInactive();
-                long memInitial = Unsafe.getMemUsed();
+                    engine.releaseInactive();
+                    long memInitial = Unsafe.getMemUsed();
 
-                String sql = "SELECT *\n" +
-                        "FROM test t1 JOIN test t2 \n" +
-                        "ON t1.id = t2.id\n" +
-                        "LIMIT 1";
-                statement.execute(sql);
+                    String sql = "SELECT *\n" +
+                            "FROM test t1 JOIN test t2 \n" +
+                            "ON t1.id = t2.id\n" +
+                            "LIMIT 1";
+                    statement.execute(sql);
 
-                engine.releaseInactive();
-                long memAfterJoin = Unsafe.getMemUsed();
-                Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+                    engine.releaseInactive();
+                    long memAfterJoin = Unsafe.getMemUsed();
+                    Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
 
-                statement.execute("SELECT flush_query_cache()");
+                    statement.execute("SELECT flush_query_cache()");
 
-                checkQueryCacheFlushed(memInitial, memAfterJoin);
+                    checkQueryCacheFlushed(memInitial, memAfterJoin);
+                }
+                WorkerPoolManager.closeAll();
             }
         });
     }
@@ -93,39 +97,44 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     @Test
     public void testFlushUpdateCache() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    PGWireServer server = createPGServer(2);
-                    Connection connection = getConnection(server.getPort(), false, true);
-                    Statement statement = connection.createStatement()
-            ) {
-                statement.executeUpdate("CREATE TABLE test\n" +
-                        "AS(\n" +
-                        "    SELECT\n" +
-                        "        x id,\n" +
-                        "        timestamp_sequence(0L, 100000L) ts\n" +
-                        "    FROM long_sequence(1000) x)\n" +
-                        "TIMESTAMP(ts)\n" +
-                        "PARTITION BY DAY");
+            try (PGWireServer server = createPGServer(2)) {
+                WorkerPoolManager.startAll();
+                try (
+                        Connection connection = getConnection(server.getPort(), false, true);
+                        Statement statement = connection.createStatement()
+                ) {
+                    WorkerPoolManager.startAll();
+                    statement.executeUpdate("CREATE TABLE test\n" +
+                            "AS(\n" +
+                            "    SELECT\n" +
+                            "        x id,\n" +
+                            "        timestamp_sequence(0L, 100000L) ts\n" +
+                            "    FROM long_sequence(1000) x)\n" +
+                            "TIMESTAMP(ts)\n" +
+                            "PARTITION BY DAY");
 
-                engine.releaseInactive();
-                long memInitial = Unsafe.getMemUsed();
+                    engine.releaseInactive();
+                    long memInitial = Unsafe.getMemUsed();
 
-                String sql = "UPDATE test t1 set id = ? \n" +
-                        "FROM test t2 \n" +
-                        "WHERE t1.id = t2.id";
+                    String sql = "UPDATE test t1 set id = ? \n" +
+                            "FROM test t2 \n" +
+                            "WHERE t1.id = t2.id";
 
-                try (PreparedStatement updateSt = connection.prepareStatement(sql)) {
-                    updateSt.setLong(1, 1L);
-                    updateSt.execute();
+                    try (PreparedStatement updateSt = connection.prepareStatement(sql)) {
+                        updateSt.setLong(1, 1L);
+                        updateSt.execute();
+                    }
+
+                    engine.releaseInactive();
+                    long memAfterJoin = Unsafe.getMemUsed();
+                    Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+
+                    statement.execute("SELECT flush_query_cache()");
+
+                    checkQueryCacheFlushed(memInitial, memAfterJoin);
+                    WorkerPoolManager.closeAll();
                 }
-
-                engine.releaseInactive();
-                long memAfterJoin = Unsafe.getMemUsed();
-                Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
-
-                statement.execute("SELECT flush_query_cache()");
-
-                checkQueryCacheFlushed(memInitial, memAfterJoin);
+                WorkerPoolManager.closeAll();
             }
         });
     }

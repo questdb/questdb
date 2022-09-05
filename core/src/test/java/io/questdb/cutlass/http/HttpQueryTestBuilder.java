@@ -43,6 +43,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.BrokenBarrierException;
@@ -123,6 +124,7 @@ public class HttpQueryTestBuilder {
                     WorkerPool workerPool = new TestWorkerPool(engine, workerCount, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
+                workerPool.assignCleaner(Path.CLEANER);
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
                     telemetryJob = new TelemetryJob(engine);
@@ -229,6 +231,7 @@ public class HttpQueryTestBuilder {
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }
+                    workerPool.close();
                 }
             }
         });

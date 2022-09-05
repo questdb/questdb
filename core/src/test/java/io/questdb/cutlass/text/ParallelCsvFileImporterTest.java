@@ -2708,7 +2708,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     affinity[i] = -1;
                 }
 
-                WorkerPool pool = WorkerPoolManager.getInstance(
+                WorkerPool pool = WorkerPoolManager.createUnmanaged(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
@@ -2735,8 +2735,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                                 return true;
                             }
                         },
-                        Metrics.disabled(),
-                        true
+                        Metrics.disabled()
                 );
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {

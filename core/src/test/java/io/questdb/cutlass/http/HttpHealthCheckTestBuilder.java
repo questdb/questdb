@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import org.junit.rules.TemporaryFolder;
 
@@ -77,18 +78,22 @@ public class HttpHealthCheckTestBuilder {
                         return false;
                     });
                 }
-                workerPool.start(LOG);
-
-                if (injectUnhandledError && metrics.isEnabled()) {
-                    for (int i = 0; i < 40; i++) {
-                        if (metrics.healthCheck().unhandledErrorsCount() > 0) {
-                            break;
+                try {
+                    WorkerPoolManager.startAll();
+                    workerPool.start(LOG);
+                    if (injectUnhandledError && metrics.isEnabled()) {
+                        for (int i = 0; i < 40; i++) {
+                            if (metrics.healthCheck().unhandledErrorsCount() > 0) {
+                                break;
+                            }
+                            Os.sleep(50);
                         }
-                        Os.sleep(50);
                     }
-                }
 
-                code.run(engine);
+                    code.run(engine);
+                } finally {
+                    WorkerPoolManager.closeAll();
+                }
             }
         });
     }

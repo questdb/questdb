@@ -344,7 +344,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        try (WorkerPool pool = WorkerPoolManager.getInstance(
+        try (WorkerPool pool = WorkerPoolManager.createUnmanaged(
                 new WorkerPoolConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {
@@ -370,7 +370,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     public boolean isEnabled() {
                         return true;
                     }
-                }, Metrics.disabled(), false
+                }, Metrics.disabled()
         )){
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                         compiler.compile("create table x ( " +
@@ -431,8 +431,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new WorkerPool(
-                new WorkerPoolAwareConfiguration() {
+        WorkerPool pool = WorkerPoolManager.createUnmanaged(
+                new WorkerPoolConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {
                         return TestUtils.getWorkerAffinity(getWorkerCount());
@@ -446,6 +446,11 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     @Override
                     public boolean haltOnError() {
                         return false;
+                    }
+
+                    @Override
+                    public String getPoolName() {
+                        return "testing";
                     }
 
                     @Override

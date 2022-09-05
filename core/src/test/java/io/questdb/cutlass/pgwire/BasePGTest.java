@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.Services;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -53,6 +54,18 @@ public class BasePGTest extends AbstractGriffinTest {
         return Services.createPGWireServer(
                 configuration,
                 null,
+                LOG,
+                engine,
+                compiler.getFunctionFactoryCache(),
+                snapshotAgent,
+                metrics
+        );
+    }
+
+    protected PGWireServer createPGServer(PGWireConfiguration configuration, WorkerPool workerPool) {
+        return Services.createPGWireServer(
+                configuration,
+                workerPool,
                 LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),

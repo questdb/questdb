@@ -844,7 +844,7 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    pool.configure( engine, null, false);
+                    pool.configure( engine, null, false, false);
                     pool.start(LOG);
                 }
 
@@ -1183,7 +1183,7 @@ public final class TestUtils {
                 return true;
             }
         };
-        WorkerPool pool = WorkerPoolManager.getInstance(config, Metrics.disabled(), true);
+        WorkerPool pool = WorkerPoolManager.createUnmanaged(config, Metrics.disabled());
         TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
         try {
             pool.assign(processingJob);

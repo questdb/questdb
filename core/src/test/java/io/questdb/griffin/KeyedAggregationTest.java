@@ -1270,7 +1270,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     affinity[i] = -1;
                 }
 
-                WorkerPool pool = WorkerPoolManager.getInstance(
+                WorkerPool pool = WorkerPoolManager.createUnmanaged(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
@@ -1297,7 +1297,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                                 return true;
                             }
                         },
-                        Metrics.disabled(), false
+                        Metrics.disabled()
                 );
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {

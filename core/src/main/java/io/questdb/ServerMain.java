@@ -29,6 +29,7 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
@@ -39,6 +40,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 
+import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements QuietCloseable {
@@ -66,12 +68,16 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(cairoEngine);
 
         // setup shared worker pool
-        final WorkerPool sharedPool = WorkerPoolManager.initSharedInstance(
-                cairoEngine,
-                config.getWorkerPoolConfiguration(),
-                metrics
+        final FunctionFactoryCache ffCache = new FunctionFactoryCache(
+                cairoConfig,
+                ServiceLoader.load(
+                        FunctionFactory.class, FunctionFactory.class.getClassLoader()
+                )
         );
-        final FunctionFactoryCache ffCache = WorkerPoolManager.getFunctionFactoryCache();
+        final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(
+                config.getWorkerPoolConfiguration(), metrics
+        ).configure(cairoEngine, ffCache, true, true);
+        WorkerPoolManager.setSharedInstance(sharedPool);
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
