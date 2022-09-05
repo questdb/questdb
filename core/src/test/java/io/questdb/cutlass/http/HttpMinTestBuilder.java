@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolManager;
 import org.junit.rules.TemporaryFolder;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -65,8 +66,8 @@ public class HttpMinTestBuilder {
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    WorkerPool workerPool = new TestWorkerPool(engine, 1);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(1);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -82,8 +83,10 @@ public class HttpMinTestBuilder {
 
                 QueryCache.configure(httpConfiguration);
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
                 code.run(engine);
+            } finally {
+                WorkerPoolManager.closeAll();
             }
         });
     }

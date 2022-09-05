@@ -44,22 +44,19 @@ public class LineTcpReceiver implements QuietCloseable {
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
-    private final ObjList<WorkerPool> dedicatedPools;
     private final Metrics metrics;
 
     public LineTcpReceiver(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,
-            WorkerPool writerWorkerPool,
-            ObjList<WorkerPool> dedicatedPools
+            WorkerPool writerWorkerPool
     ) {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration.getDispatcherConfiguration(),
                 contextFactory
         );
-        this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
         this.scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
         this.metrics = engine.getMetrics();
@@ -74,9 +71,6 @@ public class LineTcpReceiver implements QuietCloseable {
 
     @Override
     public void close() {
-        for (int n = 0, sz = dedicatedPools.size(); n < sz; n++) {
-            dedicatedPools.get(n).close();
-        }
         Misc.free(scheduler);
         Misc.free(contextFactory);
         Misc.free(dispatcher);

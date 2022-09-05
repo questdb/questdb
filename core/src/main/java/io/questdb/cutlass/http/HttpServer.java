@@ -48,18 +48,12 @@ public class HttpServer implements QuietCloseable {
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
-    private final WorkerPool workerPool;
     private final WaitProcessor rescheduleContext;
 
-    HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool, boolean localPool) {
+    public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
-        if (localPool) {
-            workerPool = pool;
-        } else {
-            workerPool = null;
-        }
         for (int i = 0; i < workerCount; i++) {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
@@ -137,76 +131,17 @@ public class HttpServer implements QuietCloseable {
 
     @Override
     public void close() {
-        if (workerPool != null) {
-            workerPool.close();
-        }
         Misc.free(httpContextFactory);
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
     }
 
-    public static HttpServer create0(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            boolean localPool,
-            int sharedWorkerCount,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
-        QueryCache.configure(configuration);
-        HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
-                configuration.getJsonQueryProcessorConfiguration(),
-                cairoEngine,
-                workerPool.getWorkerCount(),
-                sharedWorkerCount,
-                functionFactoryCache,
-                snapshotAgent);
-        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, sharedWorkerCount, jsonQueryProcessorBuilder, functionFactoryCache, snapshotAgent);
-        return s;
+    @FunctionalInterface
+    public interface HttpRequestProcessorBuilder {
+        HttpRequestProcessor newInstance();
     }
 
-    public static HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            boolean localPool,
-            int sharedWorkerCount,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
-        s.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor();
-            }
-
-            @Override
-            public String getUrl() {
-                return metrics.isEnabled() ? "/status" : "*";
-            }
-        }, true);
-        if (metrics.isEnabled()) {
-            s.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics);
-                }
-
-                @Override
-                public String getUrl() {
-                    return "/metrics";
-                }
-            });
-        }
-        return s;
-    }
-
-    private static void addDefaultEndpoints(
+    public static void addDefaultEndpoints(
             HttpServer server,
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
@@ -282,11 +217,6 @@ public class HttpServer implements QuietCloseable {
                 return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
             }
         });
-    }
-
-    @FunctionalInterface
-    private interface HttpRequestProcessorBuilder {
-        HttpRequestProcessor newInstance();
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {

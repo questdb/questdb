@@ -38,6 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -57,16 +58,12 @@ public class EmbeddedApiTest {
     @Test
     public void testConcurrentSQLExec() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
-        final Log log = LogFactory.getLog("testConcurrentSQLExec");
-
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            try (
-                    final CairoEngine engine = new CairoEngine(configuration);
-                    final WorkerPool workerPool = new TestWorkerPool(engine, 2);
-            ) {
+            final WorkerPool workerPool = TestWorkerPool.create(2);
+            try (final CairoEngine engine = new CairoEngine(configuration)) {
                 workerPool.assign(new GroupByJob(engine.getMessageBus()));
-                workerPool.start(log);
+                WorkerPoolManager.startAll();
                 // number of cores is current thread + workers in the pool
                 final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
@@ -94,6 +91,8 @@ public class EmbeddedApiTest {
                         }
                     }
                 }
+            } finally {
+                WorkerPoolManager.closeAll();
             }
         });
     }

@@ -4263,7 +4263,6 @@ nodejs code:
             try (final PGWireServer server = Services.createPGWireServer(
                     conf,
                     null,
-                    LOG,
                     engine,
                     compiler.getFunctionFactoryCache(),
                     snapshotAgent,
@@ -6548,7 +6547,6 @@ create table tab as (
         return Services.createPGWireServer(
                 conf,
                 null,
-                LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,
@@ -6735,7 +6733,6 @@ create table tab as (
                 final PGWireServer server = Services.createPGWireServer(
                         conf,
                         pool,
-                        LOG,
                         engine,
                         compiler.getFunctionFactoryCache(),
                         snapshotAgent,

@@ -1750,8 +1750,8 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 3, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(3, metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -1777,7 +1777,7 @@ public class IODispatcherTest {
                     }
                 });
                 workerPool.assignCleaner(Path.CLEANER);
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
                 try {
                     // send multipart request to server
                     final String request = "POST /upload HTTP/1.1\r\n" +
@@ -1864,7 +1864,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });
@@ -2208,8 +2208,8 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 2);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(2);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2239,7 +2239,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 try {
                     // create table with all column types
@@ -2325,7 +2325,7 @@ public class IODispatcherTest {
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });
@@ -2815,8 +2815,8 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 1);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(1);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2846,7 +2846,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 try {
 
@@ -2908,7 +2908,7 @@ public class IODispatcherTest {
                         nf.close(fd);
                     }
                 } finally {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });
@@ -3995,8 +3995,8 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 1);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(1);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4026,7 +4026,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 try {
 
@@ -4070,7 +4070,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });
@@ -4186,8 +4186,8 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 2);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)) {
+                    WorkerPool workerPool = TestWorkerPool.create(2);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4215,7 +4215,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 try {
                     // create table with all column types
@@ -4246,7 +4246,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });
@@ -4261,8 +4261,8 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 2);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(2);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4291,7 +4291,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 try {
                     // create table with all column types
@@ -4324,7 +4324,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });
@@ -4359,8 +4359,8 @@ public class IODispatcherTest {
                     return 10_000;
                 }
             }, metrics);
-                 WorkerPool workerPool = new TestWorkerPool(engine, 1);
-                 HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                 WorkerPool workerPool = TestWorkerPool.create(1);
+                 HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4412,8 +4412,8 @@ public class IODispatcherTest {
                         }
                     }
                 };
-                workerPool.configure(engine, null, false, true);
-                workerPool.start(LOG);
+                workerPool.configure(engine, null, false, true, true);
+                WorkerPoolManager.startAll();
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
@@ -4465,7 +4465,7 @@ public class IODispatcherTest {
                     // number of rows before query is interrupted
                     Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
                 } finally {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });
@@ -5232,12 +5232,11 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 2);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(2);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5251,7 +5250,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
@@ -5378,6 +5377,8 @@ public class IODispatcherTest {
                         Files.remove(path);
                     }
                 }
+
+                WorkerPoolManager.closeAll();
             }
         });
     }
@@ -5390,8 +5391,8 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 2);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(2);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5405,7 +5406,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
@@ -5523,6 +5524,8 @@ public class IODispatcherTest {
                         Files.remove(path);
                     }
                 }
+
+                WorkerPoolManager.closeAll();
             }
         });
     }
@@ -5543,8 +5546,8 @@ public class IODispatcherTest {
             );
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 2);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(2);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5558,7 +5561,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
@@ -5718,6 +5721,8 @@ public class IODispatcherTest {
                         Files.remove(path);
                     }
                 }
+
+                WorkerPoolManager.closeAll();
             }
         });
     }
@@ -7530,7 +7535,6 @@ public class IODispatcherTest {
         return Services.createHttpServer(
                 configuration,
                 sharedWorkerPool,
-                workerPoolLog,
                 cairoEngine,
                 null,
                 null,

@@ -681,12 +681,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         final Rnd rnd = new Rnd();
 
         assertMemoryLeak(() -> {
-            final WorkerPool sharedPool = new TestWorkerPool(engine, sharedPoolWorkerCount);
-            sharedPool.configure(engine, null, false, false);
-            sharedPool.start();
+            final WorkerPool sharedPool = TestWorkerPool.create(sharedPoolWorkerCount);
+            sharedPool.configure(engine, null, true, false, false);
 
-            final WorkerPool stealingPool = new TestWorkerPool(engine, stealingPoolWorkerCount);
-
+            final WorkerPool stealingPool = TestWorkerPool.create(stealingPoolWorkerCount);
             stealingPool.assignCleaner(Path.CLEANER);
 
             SOCountDownLatch doneLatch = new SOCountDownLatch(1);
@@ -722,14 +720,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 }
             });
 
-            stealingPool.start();
+            WorkerPoolManager.startAll();
 
             try {
                 doneLatch.await();
                 Assert.assertEquals(0, errorCounter.get());
             } finally {
-                sharedPool.close();
-                stealingPool.close();
+                WorkerPoolManager.closeAll();
             }
         });
     }
@@ -742,9 +739,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
         assertMemoryLeak(() -> {
 
-            WorkerPool pool = new TestWorkerPool(engine, workerCount);
-            pool.configure(engine, null, false, false);
-            pool.start();
+            WorkerPool pool = TestWorkerPool.create(workerCount);
+            pool.configure(engine, null, false, false, true);
+            WorkerPoolManager.startAll();
 
             try {
                 runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
@@ -762,7 +759,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 e.printStackTrace();
                 throw e;
             } finally {
-                pool.close();
+                WorkerPoolManager.closeAll();
             }
         });
     }

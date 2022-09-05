@@ -1385,10 +1385,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
                 final WorkerPool workerPool;
                 if (subSeq != null) {
-                    workerPool = new TestWorkerPool(engine, 2, metrics);
+                    workerPool = TestWorkerPool.create(2, metrics);
                     workerPool.assign(new ColumnIndexerJob(workScheduler));
-                    workerPool.start(LOG);
-                } else {
+                    WorkerPoolManager.startAll();
+                }
+                else {
                     workerPool = null;
                 }
 
@@ -1406,7 +1407,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 if (workerPool != null) {
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
 
                 try (TableReader reader = createTableReader(configuration, "ABC")) {
@@ -1507,9 +1508,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
 
-            try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
-                WorkerPool workerPool = new TestWorkerPool(engine, 2, metrics);
+            try (MyWorkScheduler workScheduler = new MyWorkScheduler()) {
+                WorkerPool workerPool = TestWorkerPool.create(2, metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
+                WorkerPoolManager.startAll();
 
                 try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {
                     try {
@@ -1554,7 +1556,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                workerPool.close();
+                WorkerPoolManager.closeAll();
 
                 // let's see what we can read after this catastrophe
                 try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {

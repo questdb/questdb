@@ -54,7 +54,6 @@ public class BasePGTest extends AbstractGriffinTest {
         return Services.createPGWireServer(
                 configuration,
                 null,
-                LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,
@@ -66,7 +65,6 @@ public class BasePGTest extends AbstractGriffinTest {
         return Services.createPGWireServer(
                 configuration,
                 workerPool,
-                LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,

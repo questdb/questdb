@@ -42,8 +42,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.*;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -1093,91 +1092,90 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            try (LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
+            try (
+                    WorkerPool sharedWorkerPool = TestWorkerPool.create(getWorkerCount(), metrics).configure(engine, null, true, false, false);
+                    LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, sharedWorkerPool, engine, metrics
+                    )) {
                 long startEpochMs = System.currentTimeMillis();
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
-                sharedWorkerPool.start(LOG);
+                WorkerPoolManager.startAll();
+
+                final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
+                for (int n = 0; n < senders.length; n++) {
+                    senders[n] = senderSupplier.get();
+                    ;
+                    StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
+                    sb.append("location\ttemp\ttimestamp\n");
+                    expectedSbs[n] = sb;
+                }
 
                 try {
-                    final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
-                    for (int n = 0; n < senders.length; n++) {
-                        senders[n] = senderSupplier.get();;
-                        StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
-                        sb.append("location\ttemp\ttimestamp\n");
-                        expectedSbs[n] = sb;
+                    long ts = Os.currentTimeMicros();
+                    StringSink tsSink = new StringSink();
+                    for (int nRow = 0; nRow < nRows; nRow++) {
+                        int nTable = nRow < tables.size() ? nRow : rand.nextInt(tables.size());
+                        AbstractLineSender sender = senders[nTable];
+                        StringBuilder sb = expectedSbs[nTable];
+                        CharSequence tableName = tables.get(nTable);
+                        sender.metric(tableName);
+                        String location = locations[rand.nextInt(locations.length)];
+                        sb.append(location);
+                        sb.append('\t');
+                        sender.tag("location", location);
+                        int temp = rand.nextInt(100);
+                        sb.append(temp);
+                        sb.append('\t');
+                        sender.field("temp", temp);
+                        tsSink.clear();
+                        TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
+                        sb.append(tsSink);
+                        sb.append('\n');
+                        sender.$(ts * 1000);
+                        sender.flush();
+                        if (expectDisconnect) {
+                            // To prevent all data being buffered before the expected disconnect slow sending
+                            Os.sleep(100);
+                        }
+                        ts += rand.nextInt(1000);
                     }
-
-                    try {
-                        long ts = Os.currentTimeMicros();
-                        StringSink tsSink = new StringSink();
-                        for (int nRow = 0; nRow < nRows; nRow++) {
-                            int nTable = nRow < tables.size() ? nRow : rand.nextInt(tables.size());
-                            AbstractLineSender sender = senders[nTable];
-                            StringBuilder sb = expectedSbs[nTable];
-                            CharSequence tableName = tables.get(nTable);
-                            sender.metric(tableName);
-                            String location = locations[rand.nextInt(locations.length)];
-                            sb.append(location);
-                            sb.append('\t');
-                            sender.tag("location", location);
-                            int temp = rand.nextInt(100);
-                            sb.append(temp);
-                            sb.append('\t');
-                            sender.field("temp", temp);
-                            tsSink.clear();
-                            TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
-                            sb.append(tsSink);
-                            sb.append('\n');
-                            sender.$(ts * 1000);
-                            sender.flush();
-                            if (expectDisconnect) {
-                                // To prevent all data being buffered before the expected disconnect slow sending
-                                Os.sleep(100);
-                            }
-                            ts += rand.nextInt(1000);
-                        }
-                    } finally {
-                        for (int n = 0; n < senders.length; n++) {
-                            AbstractLineSender sender = senders[n];
-                            sender.close();
-                        }
-                    }
-
-                    Assert.assertFalse(expectDisconnect);
-                    boolean ready = tablesCreated.await(TimeUnit.MINUTES.toNanos(1));
-                    if (!ready) {
-                        throw new IllegalStateException("Timeout waiting for tables to be created");
-                    }
-
-                    int nRowsWritten;
-                    do {
-                        nRowsWritten = 0;
-                        long timeTakenMs = System.currentTimeMillis() - startEpochMs;
-                        if (timeTakenMs > TEST_TIMEOUT_IN_MS) {
-                            LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
-                            break;
-                        }
-                        Thread.yield();
-                        for (int n = 0; n < tables.size(); n++) {
-                            CharSequence tableName = tables.get(n);
-                            while (true) {
-                                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                                    TableReaderRecordCursor cursor = reader.getCursor();
-                                    while (cursor.hasNext()) {
-                                        nRowsWritten++;
-                                    }
-                                    break;
-                                } catch (EntryLockedException ex) {
-                                    LOG.info().$("retrying read for ").$(tableName).$();
-                                    Os.pause();
-                                }
-                            }
-                        }
-                    } while (nRowsWritten < nRows);
-                    LOG.info().$(nRowsWritten).$(" rows written").$();
                 } finally {
-                    sharedWorkerPool.close();
+                    for (int n = 0; n < senders.length; n++) {
+                        AbstractLineSender sender = senders[n];
+                        sender.close();
+                    }
                 }
+
+                Assert.assertFalse(expectDisconnect);
+                boolean ready = tablesCreated.await(TimeUnit.MINUTES.toNanos(1));
+                if (!ready) {
+                    throw new IllegalStateException("Timeout waiting for tables to be created");
+                }
+
+                int nRowsWritten;
+                do {
+                    nRowsWritten = 0;
+                    long timeTakenMs = System.currentTimeMillis() - startEpochMs;
+                    if (timeTakenMs > TEST_TIMEOUT_IN_MS) {
+                        LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
+                        break;
+                    }
+                    Thread.yield();
+                    for (int n = 0; n < tables.size(); n++) {
+                        CharSequence tableName = tables.get(n);
+                        while (true) {
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                                TableReaderRecordCursor cursor = reader.getCursor();
+                                while (cursor.hasNext()) {
+                                    nRowsWritten++;
+                                }
+                                break;
+                            } catch (EntryLockedException ex) {
+                                LOG.info().$("retrying read for ").$(tableName).$();
+                                Os.pause();
+                            }
+                        }
+                    }
+                } while (nRowsWritten < nRows);
+                LOG.info().$(nRowsWritten).$(" rows written").$();
             } finally {
                 engine.setPoolListener(null);
             }
@@ -1187,6 +1185,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 LOG.info().$("checking table ").$(tableName).$();
                 assertTable(expectedSbs[n], tableName);
             }
+            WorkerPoolManager.closeAll();
         });
     }
 

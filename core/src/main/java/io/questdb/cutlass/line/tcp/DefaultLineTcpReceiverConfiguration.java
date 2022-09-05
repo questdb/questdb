@@ -188,10 +188,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
         return ColumnType.LONG;
     }
 
+    private static final int[] WORKER_AFFINITY = new int[]{};
     private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
+
         @Override
         public int[] getWorkerAffinity() {
-            throw new UnsupportedOperationException();
+            return WORKER_AFFINITY;
         }
 
         @Override
@@ -201,7 +203,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
         @Override
         public boolean haltOnError() {
-            throw new UnsupportedOperationException();
+            return false;
         }
 
         @Override

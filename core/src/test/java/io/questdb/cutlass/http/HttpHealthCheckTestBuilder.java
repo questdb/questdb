@@ -66,8 +66,8 @@ public class HttpHealthCheckTestBuilder {
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, 1, metrics);
-                    HttpServer ignored = Services.createMinHttpServer(httpConfiguration, workerPool, LOG, engine, null, null, metrics)
+                    WorkerPool workerPool = TestWorkerPool.create(1, metrics);
+                    HttpServer ignored = Services.createMinHttpServer(httpConfiguration, workerPool, engine, metrics)
             ) {
                 if (injectUnhandledError) {
                     final AtomicBoolean alreadyErrored = new AtomicBoolean();
@@ -80,7 +80,6 @@ public class HttpHealthCheckTestBuilder {
                 }
                 try {
                     WorkerPoolManager.startAll();
-                    workerPool.start(LOG);
                     if (injectUnhandledError && metrics.isEnabled()) {
                         for (int i = 0; i < 40; i++) {
                             if (metrics.healthCheck().unhandledErrorsCount() > 0) {

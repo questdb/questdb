@@ -24,16 +24,20 @@
 
 package io.questdb.cutlass.line.udp;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.Services;
 import io.questdb.cutlass.line.LineUdpSender;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -281,6 +285,17 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         });
     }
 
-    private interface ReceiverFactory extends Services.ServerFactory<AbstractLineProtoUdpReceiver, LineUdpReceiverConfiguration> {
+    @FunctionalInterface
+    private interface ReceiverFactory {
+        AbstractLineProtoUdpReceiver create(
+                io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration configuration,
+                CairoEngine engine,
+                WorkerPool workerPool,
+                boolean isWorkerPoolLocal,
+                int sharedWorkerCount,
+                @Nullable FunctionFactoryCache functionFactoryCache,
+                @Nullable DatabaseSnapshotAgent snapshotAgent,
+                Metrics metrics
+        );
     }
 }

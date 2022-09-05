@@ -26,9 +26,11 @@ package io.questdb.cutlass;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
+import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -39,153 +41,147 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolManager;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 public final class Services {
 
     @Nullable
     public static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
+            WorkerPool sharedPool,
             CairoEngine cairoEngine,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
-        return Services.createService(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
+        final int sharedWorkerCount = sharedPool == null ? workerPool.getWorkerCount() : sharedPool.getWorkerCount();
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
+        QueryCache.configure(configuration);
+        HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+                configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                HttpServer::create0,
+                workerPool.getWorkerCount(),
+                sharedWorkerCount,
                 functionFactoryCache,
-                snapshotAgent,
-                metrics
+                snapshotAgent);
+        server.addDefaultEndpoints(
+                server,
+                configuration,
+                cairoEngine,
+                workerPool,
+                sharedWorkerCount,
+                jsonQueryProcessorBuilder,
+                functionFactoryCache,
+                snapshotAgent
         );
+        return server;
     }
 
     @Nullable
     public static HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log workerPoolLog,
+            WorkerPool sharedPool,
             CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
-        return Services.createService(
-                configuration,
-                sharedWorkerPool,
-                workerPoolLog,
-                cairoEngine,
-                HttpServer::createMinHttpServer,
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
+        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new HealthCheckProcessor();
+            }
+
+            @Override
+            public String getUrl() {
+                return metrics.isEnabled() ? "/status" : "*";
+            }
+        }, true);
+        if (metrics.isEnabled()) {
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new PrometheusMetricsProcessor(metrics);
+                }
+
+                @Override
+                public String getUrl() {
+                    return "/metrics";
+                }
+            });
+        }
+        return server;
     }
 
     @Nullable
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log log,
+            WorkerPool sharedPool,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics,
             PGWireServer.PGConnectionContextFactory contextFactory
     ) {
-        return Services.createService(
-                configuration,
-                sharedWorkerPool,
-                log,
-                cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
-                        conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
+        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
     }
 
     @Nullable
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log log,
+            WorkerPool sharedPool,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
-        return Services.createService(
-                configuration,
-                sharedWorkerPool,
-                log,
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        final WorkerPool workerPool = WorkerPoolManager.getInstance(configuration, sharedPool, metrics);
+        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, new PGWireServer.PGConnectionContextFactory(
                 cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, cache, agent, m) -> new PGWireServer(
-                        conf,
-                        engine,
-                        workerPool,
-                        local,
-                        cache,
-                        agent,
-                        new PGWireServer.PGConnectionContextFactory(
-                                engine,
-                                conf,
-                                workerPool.getWorkerCount(),
-                                sharedWorkerCount
-                        )
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
+                configuration,
+                workerPool.getWorkerCount(),
+                sharedPool == null ? workerPool.getWorkerCount() : sharedPool.getWorkerCount()
+        ));
     }
 
     @Nullable
     public static LineTcpReceiver createLineTcpReceiver(
-            LineTcpReceiverConfiguration lineConfiguration,
-            WorkerPool sharedWorkerPool,
-            Log log,
+            LineTcpReceiverConfiguration configuration,
+            WorkerPool sharedPool,
             CairoEngine cairoEngine,
             Metrics metrics
     ) {
-        if (!lineConfiguration.isEnabled()) {
+        if (!configuration.isEnabled()) {
             return null;
         }
 
-        ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getIOWorkerPoolConfiguration(), metrics);
-        WorkerPool writerWorkerPool = WorkerPoolManager.getInstance(lineConfiguration.getWriterWorkerPoolConfiguration(), metrics);
-        if (ioWorkerPool != sharedWorkerPool) {
-            dedicatedPools.add(ioWorkerPool);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            dedicatedPools.add(writerWorkerPool);
-        }
-        return new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
+        final WorkerPool ioPool = WorkerPoolManager.getInstance(configuration.getIOWorkerPoolConfiguration(), sharedPool, metrics);
+        final WorkerPool writerPool = WorkerPoolManager.getInstance(configuration.getWriterWorkerPoolConfiguration(), sharedPool, metrics);
+        return new LineTcpReceiver(configuration, cairoEngine, ioPool, writerPool);
     }
 
     @Nullable
     public static AbstractLineProtoUdpReceiver createLineUdpReceiver(
             LineUdpReceiverConfiguration lineConfiguration,
             WorkerPool sharedPool,
-            Log log,
-            CairoEngine cairoEngine,
-            Metrics metrics
+            CairoEngine cairoEngine
     ) {
         if (!lineConfiguration.isEnabled()) {
             return null;
@@ -201,64 +197,6 @@ public final class Services {
                 lineConfiguration,
                 cairoEngine,
                 sharedPool
-        );
-    }
-
-
-    public interface UdpReceiverFactory extends Services.ServerFactory<AbstractLineProtoUdpReceiver, LineUdpReceiverConfiguration> {
-    }
-
-    @Nullable
-    private static <T extends QuietCloseable, C extends WorkerPoolConfiguration> T createService(
-            C config,
-            WorkerPool sharedPool,
-            Log log,
-            CairoEngine cairoEngine,
-            ServerFactory<T, C> factory,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        final T server;
-        if (config.isEnabled()) {
-            boolean local = false;
-            WorkerPool localPool;
-            int workerCount = config.getWorkerCount();
-            if (workerCount < 1 && sharedPool != null) {
-                localPool = sharedPool;
-            } else {
-                localPool = WorkerPoolManager.getInstance(config, metrics);
-                local = true;
-            }
-
-            final int sharedWorkerCount = sharedPool == null ? localPool.getWorkerCount() : sharedPool.getWorkerCount();
-            server = factory.create(
-                    config,
-                    cairoEngine,
-                    localPool,
-                    local,
-                    sharedWorkerCount,
-                    functionFactoryCache,
-                    snapshotAgent,
-                    metrics
-            );
-            return server;
-        }
-        return null;
-    }
-
-    @TestOnly
-    @FunctionalInterface
-    public interface ServerFactory<T extends QuietCloseable, C> {
-        T create(
-                C configuration,
-                CairoEngine engine,
-                WorkerPool workerPool,
-                boolean isWorkerPoolLocal,
-                int sharedWorkerCount,
-                @Nullable FunctionFactoryCache functionFactoryCache,
-                @Nullable DatabaseSnapshotAgent snapshotAgent,
-                Metrics metrics
         );
     }
 

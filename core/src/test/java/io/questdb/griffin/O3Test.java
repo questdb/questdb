@@ -1248,32 +1248,7 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = WorkerPoolManager.createUnmanaged(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-
-                @Override
-                public boolean isEnabled() {
-                    return true;
-                }
-
-                @Override
-                public String getPoolName() {
-                    return "pool1";
-                }
-            }, Metrics.disabled());
+            WorkerPool pool1 = TestWorkerPool.create(1);
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1298,7 +1273,7 @@ public class O3Test extends AbstractO3Test {
             pool1.assignCleaner(Path.CLEANER);
 
 
-            final WorkerPool pool2 = new TestWorkerPool(engine, 1);
+            final WorkerPool pool2 = TestWorkerPool.create(1);
 
             pool2.assign(new Job() {
                 private boolean toRun = true;
@@ -1323,13 +1298,9 @@ public class O3Test extends AbstractO3Test {
 
             pool2.assignCleaner(Path.CLEANER);
 
-            pool1.start();
-            pool2.start();
-
+            WorkerPoolManager.startAll();
             haltLatch.await();
-
-            pool1.close();
-            pool2.close();
+            WorkerPoolManager.closeAll();
 
             Assert.assertEquals(0, errorCount.get());
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);

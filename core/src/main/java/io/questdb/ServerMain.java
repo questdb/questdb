@@ -76,7 +76,7 @@ public class ServerMain implements QuietCloseable {
         );
         final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(
                 config.getWorkerPoolConfiguration(), metrics
-        ).configure(cairoEngine, ffCache, true, true);
+        ).configure(cairoEngine, ffCache, true, true, true);
         WorkerPoolManager.setSharedInstance(sharedPool);
 
         // snapshots
@@ -105,7 +105,6 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 sharedPool,
-                log,
                 cairoEngine,
                 ffCache,
                 snapshotAgent,
@@ -116,10 +115,7 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 sharedPool,
-                log,
                 cairoEngine,
-                ffCache,
-                snapshotAgent,
                 metrics
         ));
 
@@ -128,7 +124,6 @@ public class ServerMain implements QuietCloseable {
             toBeClosed.add(Services.createPGWireServer(
                     config.getPGWireConfiguration(),
                     sharedPool,
-                    log,
                     cairoEngine,
                     ffCache,
                     snapshotAgent,
@@ -140,7 +135,6 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
                 sharedPool,
-                log,
                 cairoEngine,
                 metrics
         ));
@@ -149,9 +143,7 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(Services.createLineUdpReceiver(
                 config.getLineUdpReceiverConfiguration(),
                 sharedPool,
-                log,
-                cairoEngine,
-                metrics
+                cairoEngine
         ));
 
         // telemetry

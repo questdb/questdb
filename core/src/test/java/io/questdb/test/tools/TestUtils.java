@@ -844,7 +844,7 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    pool.configure( engine, null, false, false);
+                    pool.configure( engine, null, false, false, true);
                     pool.start(LOG);
                 }
 

@@ -39,6 +39,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -121,8 +122,8 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    WorkerPool workerPool = new TestWorkerPool(engine, workerCount, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    WorkerPool workerPool = TestWorkerPool.create(workerCount, metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 workerPool.assignCleaner(Path.CLEANER);
                 TelemetryJob telemetryJob = null;
@@ -223,7 +224,7 @@ public class HttpQueryTestBuilder {
 
                 QueryCache.configure(httpConfiguration);
 
-                workerPool.start(LOG);
+                WorkerPoolManager.startAll();
 
                 try {
                     code.run(engine);
@@ -231,7 +232,7 @@ public class HttpQueryTestBuilder {
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }
-                    workerPool.close();
+                    WorkerPoolManager.closeAll();
                 }
             }
         });

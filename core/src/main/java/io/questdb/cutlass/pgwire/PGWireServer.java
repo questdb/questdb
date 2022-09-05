@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.Services;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -38,7 +37,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakMutableObjectPool;
-import org.jetbrains.annotations.Nullable;
 
 
 import static io.questdb.network.IODispatcher.*;
@@ -49,14 +47,12 @@ public class PGWireServer implements QuietCloseable {
 
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
-    private final WorkerPool workerPool;
     private final Metrics metrics;
 
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
-            boolean workerPoolLocal,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             PGConnectionContextFactory contextFactory
@@ -120,20 +116,10 @@ public class PGWireServer implements QuietCloseable {
                 queryCacheEventSubSeq.clear();
             });
         }
-
-        if (workerPoolLocal) {
-            this.workerPool = workerPool;
-        } else {
-            this.workerPool = null;
-        }
     }
 
     @Override
     public void close() {
-        // worker pool will only be set if it is "local"
-        if (workerPool != null) {
-            workerPool.close();
-        }
         Misc.free(contextFactory);
         Misc.free(dispatcher);
     }
