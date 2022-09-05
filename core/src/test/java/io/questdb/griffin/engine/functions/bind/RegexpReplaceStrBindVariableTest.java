@@ -32,80 +32,56 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MatchStrBindVariableTest extends AbstractGriffinTest {
+public class RegexpReplaceStrBindVariableTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() s from long_sequence(100))", sqlExecutionContext);
+            compiler.compile("create table x as (select rnd_str('foobar','barbaz') s from long_sequence(3))", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where s ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
-                bindVariableService.setStr(0, "GQO");
+            try (RecordCursorFactory factory = compiler.compile("select regexp_replace(s, $1, $2) from x", sqlExecutionContext).getRecordCursorFactory()) {
+                bindVariableService.setStr(0, "foo");
+                bindVariableService.setStr(1, "bar");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
                 }
 
-                TestUtils.assertEquals("s\n" +
-                        "YCTGQO\n", sink);
+                TestUtils.assertEquals("regexp_replace\n" +
+                        "barbar\n" +
+                        "barbar\n" +
+                        "barbaz\n", sink);
 
-                bindVariableService.setStr(0, "QTQ");
+                bindVariableService.setStr(0, "def");
+                bindVariableService.setStr(1, "abc");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
                 }
 
-                TestUtils.assertEquals("s\n" +
-                        "ZWEVQTQO\n", sink);
+                TestUtils.assertEquals("regexp_replace\n" +
+                        "foobar\n" +
+                        "foobar\n" +
+                        "barbaz\n", sink);
 
                 bindVariableService.setStr(0, null);
+                bindVariableService.setStr(1, "abc");
                 try {
                     factory.getCursor(sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals(12, e.getPosition());
+                    Assert.assertEquals(25, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
                 }
-            }
-        });
-    }
 
-    @Test
-    public void testConstant() throws Exception {
-        assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(1) where '1GQO2' ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
-                bindVariableService.setStr(0, "GQO");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                }
-
-                TestUtils.assertEquals("x\n" +
-                        "1\n", sink);
-
-                bindVariableService.setStr(0, "QTQ");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                }
-
-                TestUtils.assertEquals("x\n", sink);
-
-                bindVariableService.setStr(0, null);
+                bindVariableService.setStr(0, "abc");
+                bindVariableService.setStr(1, null);
                 try {
                     factory.getCursor(sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals(47, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+                    Assert.assertEquals(29, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL replacement");
                 }
             }
         });
-    }
-
-    @Test
-    public void testDynamicRegexFailure() throws Exception {
-        assertFailure(
-                "x where s ~ s",
-                "create table x as (select rnd_str() s from long_sequence(100))",
-                12,
-                "not implemented: dynamic pattern would be very slow to execute"
-        );
     }
 }

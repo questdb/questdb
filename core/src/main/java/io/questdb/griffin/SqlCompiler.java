@@ -1174,7 +1174,6 @@ public class SqlCompiler implements Closeable {
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
-
                 } else if (SqlKeywords.isSetKeyword(tok)) {
                     tok = expectToken(lexer, "'param'");
                     if (SqlKeywords.isParamKeyword(tok)) {
@@ -1192,7 +1191,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'set' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(name).$(", ex=").$((Throwable) e).$();

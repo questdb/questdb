@@ -33,7 +33,7 @@ import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ReplaceFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNullTerm() throws SqlException {
