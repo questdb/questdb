@@ -1975,6 +1975,18 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testSyntaxErrorUnknownKeyword() throws Exception {
+        try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.DAY).timestamp()) {
+            AbstractSqlParserTest.assertSyntaxError(
+                    "ALTER TABLE tab foobar",
+                    16,
+                    "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected",
+                    tableModel
+            );
+        }
+    }
+
     private static void assertContent(String expected, String tableName) throws Exception {
         engine.clear();
         assertQuery(expected, tableName, null, "ts", true, false, true);
