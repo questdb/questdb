@@ -29,14 +29,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOContext;
+import io.questdb.network.AbstractMutableIOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 
-class LineTcpConnectionContext implements IOContext, Mutable {
+class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
@@ -46,8 +46,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser;
     private final boolean disconnectOnError;
-    protected long fd;
-    protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
     protected long recvBufEnd;
     protected long recvBufPos;
@@ -154,13 +152,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     IOContextResult handleIO(NetworkIOJob netIoJob) {
         read();
         return parseMeasurements(netIoJob);
-    }
-
-    LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-        this.fd = clientFd;
-        this.dispatcher = dispatcher;
-        clear();
-        return this;
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {

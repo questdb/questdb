@@ -22,17 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package org.questdb;
 
-import java.io.Closeable;
+import io.questdb.network.*;
 
-public interface IOContext extends Closeable {
-    @Override
-    void close();
+public class PongMain {
+    public static void main(String[] args) {
+        final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration();
+        int workerCount = 0;
 
-    long getFd();
 
-    boolean invalid();
+        IODispatcher<PongContext> dispatcher = IODispatchers.create(
+                configuration,
+                new MutableIOContextFactory<>(PongContext::new, 16)
+        );
+    }
 
-     IODispatcher<?> getDispatcher();
+    private static class PongContext extends AbstractMutableIOContext<PongContext> {
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public boolean invalid() {
+            return fd == -1;
+        }
+    }
 }

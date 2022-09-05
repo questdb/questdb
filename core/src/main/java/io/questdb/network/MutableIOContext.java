@@ -24,15 +24,8 @@
 
 package io.questdb.network;
 
-import java.io.Closeable;
+import io.questdb.std.Mutable;
 
-public interface IOContext extends Closeable {
-    @Override
-    void close();
-
-    long getFd();
-
-    boolean invalid();
-
-     IODispatcher<?> getDispatcher();
+public interface MutableIOContext<T extends MutableIOContext<T>> extends IOContext, Mutable {
+    T of(long fd, IODispatcher<T> dispatcher);
 }

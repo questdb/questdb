@@ -24,15 +24,32 @@
 
 package io.questdb.network;
 
-import java.io.Closeable;
+public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
+    protected long fd = -1;
+    protected IODispatcher<T> dispatcher;
 
-public interface IOContext extends Closeable {
     @Override
-    void close();
+    public void clear() {
+        this.fd = -1;
+        this.dispatcher = null;
+    }
 
-    long getFd();
+    @Override
+    public long getFd() {
+        return fd;
+    }
 
-    boolean invalid();
+    @Override
+    public  IODispatcher<T> getDispatcher() {
+        return dispatcher;
+    }
 
-     IODispatcher<?> getDispatcher();
+    @SuppressWarnings("unchecked")
+    @Override
+    public T of(long fd, IODispatcher<T> dispatcher) {
+        clear();
+        this.fd = fd;
+        this.dispatcher = dispatcher;
+        return (T) this;
+    }
 }
