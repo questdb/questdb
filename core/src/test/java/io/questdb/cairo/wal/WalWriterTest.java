@@ -40,6 +40,10 @@ import org.hamcrest.MatcherAssert;
 import org.junit.*;
 
 import java.io.File;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
@@ -682,8 +686,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    public void testConcurrentWalWriters() throws Exception {
+    public void testConcurrentInsert() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -705,11 +708,16 @@ public class WalWriterTest extends AbstractGriffinTest {
             final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
             rollStrategy.setMaxRowCount(maxRowCount);
 
+            // map<walId, numOfThreadsUsedThisWalWriter>
+            final ConcurrentMap<Integer, AtomicInteger> counters = new ConcurrentHashMap<>(numOfThreads);
             for (int i = 0; i < numOfThreads; i++) {
                 new Thread(() -> {
                     try {
                         TableWriter.Row row;
                         try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                            final Integer walId = walWriter.getWalId();
+                            final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
+                            counter.incrementAndGet();
                             walWriter.setRollStrategy(rollStrategy);
                             assertEquals(0, walWriter.size());
                             for (int n = 0; n < numOfRows; n++) {
@@ -741,9 +749,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .timestamp("ts")
                     .wal()
             ) {
-                for (int i = 0; i < numOfThreads; i++) {
-                    final String walName = WAL_NAME_BASE + (i + 1);
-                    for (int segmentId = 0; segmentId < numOfSegments; segmentId++) {
+                for (Map.Entry<Integer, AtomicInteger> counterEntry: counters.entrySet()) {
+                    final int walId = counterEntry.getKey();
+                    final int count = counterEntry.getValue().get();
+                    final String walName = WAL_NAME_BASE + walId;
+
+                    for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
                         try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, segmentId, maxRowCount)) {
                             assertEquals(3, reader.getColumnCount());
                             assertEquals(walName, reader.getWalName());
@@ -754,9 +765,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                             final Record record = cursor.getRecord();
                             int n = 0;
                             while (cursor.hasNext()) {
-                                assertEquals(segmentId * maxRowCount + n, record.getInt(0));
+                                assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
                                 assertEquals(n, record.getInt(1)); // New symbol value every row
-                                assertEquals("test" + (segmentId * maxRowCount + n), record.getSym(1));
+                                assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSym(1));
                                 assertEquals(n, record.getRowId());
                                 n++;
                             }
@@ -767,7 +778,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             final WalEventCursor eventCursor = reader.getEventCursor();
                             assertTrue(eventCursor.hasNext());
                             assertEquals(WalTxnType.DATA, eventCursor.getType());
-                            txnSet.add(Numbers.encodeLowHighInts(i, segmentId * 1000 + (int) eventCursor.getTxn()));
+                            txnSet.add(Numbers.encodeLowHighInts(walId, segmentId * 1000 + (int) eventCursor.getTxn()));
 
                             final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                             assertEquals(0, dataInfo.getStartRowID());
@@ -781,7 +792,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             int expectedKey = 0;
                             SymbolMapDiffEntry entry;
                             while ((entry = symbolMapDiff.nextEntry()) != null) {
-                                assertEquals("test" + (segmentId * maxRowCount + expectedKey), entry.getSymbol().toString());
+                                assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + expectedKey), entry.getSymbol().toString());
                                 expectedKey++;
                             }
                             assertEquals(maxRowCount, expectedKey);
@@ -802,9 +813,11 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             assertEquals(numOfTxn, txnSet.size());
-            for (int i = 0; i < numOfThreads; i++) {
-                for (int segmentId = 0; segmentId < numOfSegments; segmentId++) {
-                    txnSet.remove(Numbers.encodeLowHighInts(i, segmentId * 1000));
+            for (Map.Entry<Integer, AtomicInteger> counterEntry: counters.entrySet()) {
+                final int walId = counterEntry.getKey();
+                final int count = counterEntry.getValue().get();
+                for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
+                    txnSet.remove(Numbers.encodeLowHighInts(walId, segmentId * 1000));
                 }
             }
             assertEquals(0, txnSet.size());

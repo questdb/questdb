@@ -292,6 +292,10 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return rowCount - startRowCount;
     }
 
+    public int getWalId() {
+        return walId;
+    }
+
     public String getWalName() {
         return walName;
     }
