@@ -148,7 +148,13 @@ public class PGWireServer implements QuietCloseable {
 
         public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount, int sharedWorkerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(() ->
-                    new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount, sharedWorkerCount)), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(
+                            engine,
+                            configuration,
+                            getSqlExecutionContext(engine, workerCount, sharedWorkerCount)
+                    ),
+                    configuration.getConnectionPoolInitialCapacity())
+            );
         }
 
         protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {

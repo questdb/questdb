@@ -95,15 +95,25 @@ public class PageFrameReduceJob implements Job, Closeable {
      * @param subSeq subscriber sequence
      * @param record instance of record that can be positioned on the frame and each row in that frame
      * @param circuitBreaker circuit breaker instance
+     * @param stealingFrameSequence page frame sequence that is stealing work, it is used to identify if
+     *                              page frame sequence is stealing its own work or someone else's
      * @return inverted value of queue processing status; true if nothing was processed.
      */
     public static boolean consumeQueue(
             RingQueue<PageFrameReduceTask> queue,
             MCSequence subSeq,
             PageAddressCacheRecord record,
-            SqlExecutionCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PageFrameSequence<?> stealingFrameSequence
     ) {
-        return consumeQueue(-1, queue, subSeq, record, circuitBreaker);
+        return consumeQueue(
+                -1,
+                queue,
+                subSeq,
+                record,
+                circuitBreaker,
+                stealingFrameSequence
+        );
     }
 
     private static boolean consumeQueue(
@@ -111,7 +121,8 @@ public class PageFrameReduceJob implements Job, Closeable {
             RingQueue<PageFrameReduceTask> queue,
             MCSequence subSeq,
             PageAddressCacheRecord record,
-            SqlExecutionCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
         // loop is required to deal with CAS errors, cursor == -2
         do {
@@ -129,7 +140,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                             .$(", cursor=").$(cursor)
                             .I$();
                     if (frameSequence.isActive()) {
-                        reduce(workerId, record, circuitBreaker, task, frameSequence);
+                        reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
                 } catch (Throwable e) {
                     frameSequence.cancel();
@@ -153,9 +164,17 @@ public class PageFrameReduceJob implements Job, Closeable {
             PageAddressCacheRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             PageFrameReduceTask task,
-            PageFrameSequence<?> frameSequence
+            PageFrameSequence<?> frameSequence,
+            PageFrameSequence<?> stealingFrameSequence
     ) {
-        reduce(-1, record, circuitBreaker, task, frameSequence);
+        reduce(
+                -1,
+                record,
+                circuitBreaker,
+                task,
+                frameSequence,
+                stealingFrameSequence
+        );
     }
 
     private static void reduce(
@@ -163,7 +182,8 @@ public class PageFrameReduceJob implements Job, Closeable {
             PageAddressCacheRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             PageFrameReduceTask task,
-            PageFrameSequence<?> frameSequence
+            PageFrameSequence<?> frameSequence,
+            PageFrameSequence<?> stealingFrameSequence
     ) {
         // we deliberately hold the queue item because
         // processing is daisy-chained. If we were to release item before
@@ -172,7 +192,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
             record.setFrameIndex(task.getFrameIndex());
             assert frameSequence.doneLatch.getCount() == 0;
-            frameSequence.getReducer().reduce(workerId, record, task);
+            frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel();
         }
@@ -196,7 +216,9 @@ public class PageFrameReduceJob implements Job, Closeable {
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,
-                    circuitBreaker
+                    circuitBreaker,
+                    null // this is correct worker processing tasks rather than PageFrameSequence
+                    // helping to steal work
             ) || useful;
         }
         return useful;

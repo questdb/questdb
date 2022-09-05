@@ -22,20 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql.async;
+package io.questdb.griffin.engine.functions.regex;
 
-import io.questdb.cairo.sql.PageAddressCacheRecord;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-@FunctionalInterface
-public interface PageFrameReducer {
-    void reduce(
-            int workerId,
-            @NotNull PageAddressCacheRecord record,
-            @NotNull PageFrameReduceTask task,
-            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
-    );
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+final class RegexUtils {
+
+    private RegexUtils() {
+    }
+
+    @NotNull
+    public static Matcher createMatcher(Function pattern, int position) throws SqlException {
+        final CharSequence regex = pattern.getStr(null);
+        if (regex == null) {
+            throw SqlException.$(position, "NULL regex");
+        }
+        try {
+            return Pattern.compile(Chars.toString(regex)).matcher("");
+        } catch (PatternSyntaxException e) {
+            throw SqlException.$(position + e.getIndex() + 1, e.getMessage());
+        }
+    }
 }

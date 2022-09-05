@@ -22,20 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql.async;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.PageAddressCacheRecord;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-@FunctionalInterface
-public interface PageFrameReducer {
-    void reduce(
-            int workerId,
-            @NotNull PageAddressCacheRecord record,
-            @NotNull PageFrameReduceTask task,
-            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
-    );
+public class MaxStrGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "max(S)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new MaxStrGroupByFunction(args.getQuick(0));
+    }
 }
