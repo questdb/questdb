@@ -225,14 +225,14 @@ public class HttpQueryTestBuilder {
                 });
 
                 QueryCache.configure(httpConfiguration);
-                workerPoolManager.startAll(LOG);
                 try {
+                    workerPoolManager.startAll();
                     code.run(engine);
                 } finally {
+                    workerPoolManager.closeAll();
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }
-                    workerPoolManager.closeAll();
                 }
             }
         });

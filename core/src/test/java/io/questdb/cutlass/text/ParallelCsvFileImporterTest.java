@@ -2737,6 +2737,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         },
                         Metrics.disabled()
                 );
+                pool.assignCleaner(Path.CLEANER);
+                TextImportJob.assignToPool(engine.getMessageBus(), pool);
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
@@ -2799,31 +2801,21 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
-    protected static void execute(
-            @Nullable WorkerPool pool,
-            TextImportRunnable runnable,
-            CairoConfiguration configuration
-    ) throws Exception {
-        final int workerCount = pool == null ? 1 : pool.getWorkerCount();
-        try (final CairoEngine engine = new CairoEngine(configuration);
-             final SqlCompiler compiler = new SqlCompiler(engine)) {
-
-            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
-                try {
-                    if (pool != null) {
-                        pool.assignCleaner(Path.CLEANER);
-                        TextImportJob.assignToPool(engine.getMessageBus(), pool);
-                        pool.start(LOG);
-                    }
-
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
-                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
-                } finally {
-                    if (pool != null) {
-                        pool.close();
-                    }
-                }
+    protected void execute(@Nullable WorkerPool pool, TextImportRunnable runnable, CairoConfiguration configuration) throws Exception {
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, pool == null ? 1 : pool.getWorkerCount())
+        ) {
+            if (pool != null) {
+                workerPoolManager.startAll();
+            }
+            runnable.run(engine, compiler, sqlExecutionContext);
+            Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+            Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+        } finally {
+            if (pool != null) {
+                workerPoolManager.closeAll();
             }
         }
     }
