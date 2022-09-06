@@ -587,7 +587,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         private final long bufSize;
         private long bufStart;
         private long bufStartOfData;
-        private long bufEndOfData;
         private long _wptr;
         private long _rptr;
 
@@ -598,8 +597,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void close() {
             if (bufStart != 0) {
-                Unsafe.free(bufStart, bufEndOfData - bufStart + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
-                bufStart = bufEndOfData = _wptr = _rptr = 0;
+                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                bufStart = bufStartOfData = _wptr = _rptr = 0;
             }
         }
 
@@ -608,7 +607,6 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (bufStart == 0) {
                 bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
                 bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
-                bufEndOfData = bufStartOfData + bufSize;
                 clear();
             }
         }
@@ -640,7 +638,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         long getWriteNAvailable() {
-            return bufEndOfData - _wptr;
+            return bufStartOfData + bufSize - _wptr;
         }
 
         void onWrite(int nWrite) {
