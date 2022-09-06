@@ -1056,7 +1056,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.authenticate(authKeyId, authPrivateKey);
                     }
                     return sender;
-
                 });
     }
 
@@ -1092,7 +1091,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(getWorkerCount()), metrics).configure(engine, null, true, false, false);
+            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(getWorkerCount()), metrics);
+            sharedWorkerPool.assignCleaner(Path.CLEANER);
             workerPoolManager.setSharedPool(sharedWorkerPool);
             try (LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics)) {
                 long startEpochMs = System.currentTimeMillis();
@@ -1101,7 +1101,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
                 for (int n = 0; n < senders.length; n++) {
                     senders[n] = senderSupplier.get();
-                    ;
                     StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
                     sb.append("location\ttemp\ttimestamp\n");
                     expectedSbs[n] = sb;
@@ -1177,8 +1176,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 LOG.info().$(nRowsWritten).$(" rows written").$();
 
             } finally {
-                engine.setPoolListener(null);
                 workerPoolManager.closeAll();
+                engine.setPoolListener(null);
             }
 
             for (int n = 0; n < tables.size(); n++) {
