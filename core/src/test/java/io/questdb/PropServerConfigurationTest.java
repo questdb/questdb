@@ -261,15 +261,15 @@ public class PropServerConfigurationTest {
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getEventCapacity());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getEventCapacity());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTimeout());
         Assert.assertEquals(5000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getQueueTimeout());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRcvBufSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getSndBufSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
