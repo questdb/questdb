@@ -119,17 +119,17 @@ public class WorkerPoolManager {
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.getQuick(i);
                 WorkerPool pool = dedicatedPools.get(name);
-                pool.close();
-                LOG.info().$("Closed dedicated pool [name=").$(name)
+                LOG.info().$("Closing dedicated pool [name=").$(name)
                         .$(", workers=").$(pool.getWorkerCount())
                         .I$();
+                pool.close();
             }
             dedicatedPools.clear();
             if (sharedPool != null) {
-                sharedPool.close();
-                LOG.info().$("Closed shared pool [name=").$(sharedPool.getPoolName())
+                LOG.info().$("Closing shared pool [name=").$(sharedPool.getPoolName())
                         .$(", workers=").$(sharedPool.getWorkerCount())
                         .I$();
+                sharedPool.close();
                 sharedPool = null;
             }
         }

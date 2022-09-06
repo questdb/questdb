@@ -41,6 +41,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -3090,7 +3091,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getPoolName() {
-            return "worker";
+            return WorkerPool.SHARED_POOL_NAME;
         }
 
         @Override

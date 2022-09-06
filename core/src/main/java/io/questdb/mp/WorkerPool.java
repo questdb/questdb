@@ -41,6 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements QuietCloseable {
 
+    public static final String SHARED_POOL_NAME = "worker";
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
     private final int[] workerAffinity;

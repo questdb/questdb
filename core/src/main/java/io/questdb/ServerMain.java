@@ -41,7 +41,6 @@ import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 
 import java.util.ServiceLoader;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements QuietCloseable {
@@ -49,7 +48,7 @@ public class ServerMain implements QuietCloseable {
     private final PropServerConfiguration config;
     private final Log log;
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
-    private final AtomicBoolean isWorking = new AtomicBoolean();
+    private final AtomicBoolean hasStarted = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) throws SqlException {
@@ -163,12 +162,12 @@ public class ServerMain implements QuietCloseable {
     }
 
     public void start(boolean addShutdownHook) {
-        if (isWorking.compareAndSet(false, true)) {
+        if (hasStarted.compareAndSet(false, true)) {
             if (addShutdownHook) {
                 addShutdownHook();
             }
             workerPoolManager.startAll(log); // starts QuestDB's workers
-            Os.sleep(1L); // allow threads to start before logging console URLs
+            Os.sleep(5L); // allow threads to start before logging console URLs
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
@@ -177,7 +176,7 @@ public class ServerMain implements QuietCloseable {
 
     @Override
     public void close() {
-        if (isWorking.compareAndSet(true, false)) {
+        if (hasStarted.compareAndSet(true, false)) {
             workerPoolManager.closeAll();
             ShutdownFlag.INSTANCE.shutdown();
             Misc.freeObjList(toBeClosed);
