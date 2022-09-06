@@ -1363,18 +1363,33 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void executeUpdate() throws SqlException {
-        try {
-            if (transactionState != ERROR_TRANSACTION) {
-                // when transaction is in error state, skip execution
-                executeUpdate0();
+    private void executeUpdate(SqlCompiler compiler) throws SqlException {
+        boolean recompileStale = true;
+        for (int retries = 0; recompileStale; retries++) {
+            try {
+                if (transactionState != ERROR_TRANSACTION) {
+                    // when transaction is in error state, skip execution
+                    executeUpdate0();
+                    recompileStale = false;
+                }
+                prepareCommandComplete(true);
+            } catch (ReaderOutOfDateException e) {
+                if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    if (transactionState == IN_TRANSACTION) {
+                        transactionState = ERROR_TRANSACTION;
+                    }
+                    throw e;
+                }
+                LOG.info().$(e.getFlyweightMessage()).$();
+                typesAndUpdate = Misc.free(typesAndUpdate);
+                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+                processCompiledQuery(cc);
+            } catch (Throwable e) {
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
+                throw e;
             }
-            prepareCommandComplete(true);
-        } catch (Throwable e) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
-            throw e;
         }
     }
 
@@ -2125,7 +2140,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             executeInsert();
         } else if (typesAndUpdate != null) {
             LOG.debug().$("executing update").$();
-            executeUpdate();
+            executeUpdate(compiler);
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
@@ -2544,7 +2559,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
-            do {
+            for (int retries = 0; recompileStale; retries++) {
                 currentFactory = typesAndSelect.getFactory();
                 try {
                     currentCursor = currentFactory.getCursor(sqlExecutionContext);
@@ -2552,6 +2567,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     // cache random if it was replaced
                     this.rnd = sqlExecutionContext.getRandom();
                 } catch (ReaderOutOfDateException e) {
+                    if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                        throw e;
+                    }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
                     compileQuery(compiler);
@@ -2561,7 +2579,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     freeFactory();
                     throw e;
                 }
-            } while (recompileStale);
+            }
         }
     }
 
@@ -2658,7 +2676,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } else if (typesAndInsert != null) {
                 executeInsert();
             } else if (typesAndUpdate != null) {
-                executeUpdate();
+                executeUpdate(compiler);
             } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
                     cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                 prepareCommandComplete(true);
