@@ -3120,7 +3120,6 @@ nodejs code:
                         TestUtils.assertContains(e.getMessage(), "Invalid column: id");
                     }
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });
