@@ -92,6 +92,10 @@ public final class Services {
             CairoEngine cairoEngine,
             Metrics metrics
     ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
         final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
         final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
         server.bind(new HttpRequestProcessorFactory() {
@@ -186,6 +190,7 @@ public final class Services {
         if (!lineConfiguration.isEnabled()) {
             return null;
         }
+
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             return new LinuxMMLineUdpReceiver(
                     lineConfiguration,

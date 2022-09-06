@@ -49,6 +49,9 @@ public class WorkerPoolManager {
     }
 
     public void setSharedPool(WorkerPool sharedPool) {
+        if (hasStarted.get()) {
+            throw new IllegalStateException("can only set the shared pool before start");
+        }
         this.sharedPool = sharedPool;
     }
 
@@ -64,7 +67,10 @@ public class WorkerPoolManager {
         if (config.getWorkerCount() < 1) {
             WorkerPool pool = sharedPool;
             if (pool != null) {
-                LOG.info().$("Accessing pool [").$(config.getPoolName()).$("] -> SHARED").$();
+                LOG.info().$("Using pool [").$(config.getPoolName())
+                        .$(", workers=").$(pool.getWorkerCount())
+                        .$("] -> SHARED")
+                        .$();
                 return pool;
             }
         }
@@ -75,7 +81,10 @@ public class WorkerPoolManager {
             pool.assignCleaner(Path.CLEANER);
             dedicatedPools.put(poolName, pool);
         }
-        LOG.info().$("Accessing pool [").$(poolName).$(", workers=").$(config.getWorkerCount()).$("] -> DEDICATED").$();
+        LOG.info().$("Using pool [").$(poolName)
+                .$(", workers=").$(config.getWorkerCount())
+                .$("] -> DEDICATED")
+                .$();
         return pool;
     }
 

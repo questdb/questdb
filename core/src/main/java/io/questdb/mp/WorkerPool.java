@@ -30,8 +30,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;

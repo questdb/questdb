@@ -385,7 +385,7 @@ public class LogFactory implements Closeable {
         }
         this.workerPool = WorkerPoolManager.createLoggerWorkerPool();
         assign(workerPool);
-        workerPool.start();
+        workerPool.start();  // unmanaged, thus we need to start it
     }
 
     private static String getProperty(final Properties properties, String key) {

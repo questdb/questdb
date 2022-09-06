@@ -68,16 +68,13 @@ public class ServerMain implements QuietCloseable {
         final CairoEngine cairoEngine = new CairoEngine(cairoConfig, metrics);
         toBeClosed.add(cairoEngine);
 
-        // setup shared worker pool
+        // setup shared worker pool, plus dedicated pools
         final FunctionFactoryCache ffCache = new FunctionFactoryCache(
                 cairoConfig,
-                ServiceLoader.load(
-                        FunctionFactory.class, FunctionFactory.class.getClassLoader()
-                )
+                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
-        final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(
-                config.getWorkerPoolConfiguration(), metrics
-        ).configure(cairoEngine, ffCache, true, true, true);
+        final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(config.getWorkerPoolConfiguration(), metrics);
+        sharedPool.configure(cairoEngine, ffCache, true, true, true);
         workerPoolManager = new WorkerPoolManager(sharedPool);
 
         // snapshots

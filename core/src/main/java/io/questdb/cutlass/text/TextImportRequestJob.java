@@ -38,16 +38,18 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.Closeable;
+import java.io.IOException;
+
 import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
 import static io.questdb.cutlass.text.TextImportTask.getStatusName;
 
-public class TextImportRequestJob extends SynchronizedJob implements QuietCloseable {
+public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
 
     private final RingQueue<TextImportRequestTask> requestQueue;
@@ -109,7 +111,7 @@ public class TextImportRequestJob extends SynchronizedJob implements QuietClosea
     }
 
     @Override
-    public void close() {
+    public void close() throws IOException {
         this.parallelImporter = Misc.free(parallelImporter);
         this.serialImporter = Misc.free(serialImporter);
         this.writer = Misc.free(this.writer);
