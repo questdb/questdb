@@ -37,7 +37,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUnboundedByteSink;
@@ -159,7 +158,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
             WorkerPool sharedWorkerPool = workerPoolManager.getInstance(sharedWorkerPoolConfiguration, metrics);
-            sharedWorkerPool.configure(engine, null, false, true, true);
             workerPoolManager.setSharedPool(sharedWorkerPool);
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
             try (
@@ -173,9 +171,10 @@ public class LineTcpO3Test extends AbstractCairoTest {
                         haltLatch.countDown();
                     }
                 });
-                TestUtils.assertConnect(clientFd, ilpSockAddr);
 
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 workerPoolManager.startAll();
+                TestUtils.assertConnect(clientFd, ilpSockAddr);
                 readGzResource(ilpResourceName);
                 Net.send(clientFd, resourceAddress, resourceSize);
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
@@ -188,8 +187,8 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 expectedSink.clear(resourceSize);
                 TestUtils.assertEquals(expectedSink.toString(), sink);
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
-            } finally {
                 workerPoolManager.closeAll();
+            } finally {
                 engine.setPoolListener(null);
                 Net.close(clientFd);
                 Net.freeSockAddr(ilpSockAddr);

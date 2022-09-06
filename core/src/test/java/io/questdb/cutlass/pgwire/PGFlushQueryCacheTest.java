@@ -91,7 +91,6 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                     checkQueryCacheFlushed(memInitial, memAfterJoin);
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });

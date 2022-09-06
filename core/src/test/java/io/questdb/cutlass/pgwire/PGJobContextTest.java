@@ -1944,7 +1944,7 @@ public class PGJobContextTest extends BasePGTest {
                         Assert.assertNotNull(ex);
                     }
                 }
-                Thread.sleep(100); // Give connection some time to close before closing the server.
+                Os.sleep(100); // Give connection some time to close before closing the server.
                 workerPoolManager.closeAll();
             }
             // Assertion that no open readers left will be performed in assertMemoryLeak
@@ -4605,9 +4605,9 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
+                    workerPoolManager.closeAll();
                 } finally {
                     currentMicros = -1;
-                    workerPoolManager.closeAll();
                 }
             }
         });
