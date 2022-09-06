@@ -71,6 +71,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final IDGenerator tableIdGenerator;
     private final TableRegistry tableRegistry;
+    private final Path rootPath;
+    private final int rootPathLen;
 
     private final TextImportExecutionContext textImportExecutionContext;
     // Kept for embedded API purposes. The second constructor (the one with metrics)
@@ -119,6 +121,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             close();
             throw e;
         }
+
+        this.rootPath = new Path().of(configuration.getRoot());
+        this.rootPathLen = rootPath.length();
+
+        tableRegistry.forAllWalTables(this::notifyWalTxnUncompleted);
+        this.rootPath.trimTo(this.rootPathLen);
     }
 
     @TestOnly
@@ -135,6 +143,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(readerPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
+        Misc.free(rootPath);
         tableRegistry.close();
     }
 
@@ -280,6 +289,17 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             return tableRegistry.getWalWriter(tableName);
         }
         return getWriter(securityContext, tableName, lockReason);
+    }
+
+    public void notifyWalTxnUncompleted(int tableId, CharSequence tableName, long txn) {
+        rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+        try (TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(rootPath, PartitionBy.NONE)) {
+            if (txReader.unsafeLoad(true)) {
+                if (txReader.getTxn() < txn) {
+                    notifyWalTxnCommitted(tableId, tableName, txn);
+                }
+            }
+        }
     }
 
     public void notifyWalTxnCommitted(int tableId, CharSequence tableName, long txn) {

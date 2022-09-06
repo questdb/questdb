@@ -109,7 +109,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 } else {
                     // This is metadata change
                     // to be taken from Sequencer directly
-                    // This may look odd, but on metadata change record, segment ID means structure version.
                     final int newStructureVersion = segmentId;
                     if (writer.getStructureVersion() != newStructureVersion - 1) {
                         throw CairoException.critical(0)
@@ -117,10 +116,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                 .put(']');
                     }
-
-                    // TODO: reuse the cursor, do not initilize every time
                     reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
-                    if (reusableStructureChangeCursor != null && reusableStructureChangeCursor.hasNext()) {
+                    if (reusableStructureChangeCursor.hasNext()) {
                         try {
                             reusableStructureChangeCursor.next().apply(writer, true);
                         } catch (SqlException e) {

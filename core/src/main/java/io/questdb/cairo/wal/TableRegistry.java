@@ -36,9 +36,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -58,6 +60,31 @@ public class TableRegistry extends AbstractPool {
         super(configuration, configuration.getInactiveWriterTTL()); //todo: separate config option
         this.engine = engine;
         notifyListener(Thread.currentThread().getId(), "TableRegistry", PoolListener.EV_POOL_OPEN);
+    }
+
+    public void forAllWalTables(final RegisteredTable callback) {
+        final CharSequence root = getConfiguration().getRoot();
+        final FilesFacade ff = getConfiguration().getFilesFacade();
+
+        try(Path path = new Path().of(root).slash$()) {
+            final StringSink nameSink = new StringSink();
+            int rootLen = path.length();
+            ff.iterateDir(path, (name, type) -> {
+                if (Files.isDir(name, type, nameSink) ) {
+                    path.trimTo(rootLen);
+                    if (isWalTable(nameSink, path, ff)) {
+                        try (SequencerImpl sequencer = openSequencer(nameSink)) {
+                            callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    @FunctionalInterface
+    public interface RegisteredTable {
+        void onTable(int tableId, final CharSequence tableName, long lastTxn);
     }
 
     public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
@@ -120,8 +147,12 @@ public class TableRegistry extends AbstractPool {
     // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
     private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
-        path.concat(tableName).concat(SEQ_DIR);
-        return ff.exists(path.$());
+        return isWalTable(tableName, path, ff);
+    }
+
+    private static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
+        root.concat(tableName).concat(SEQ_DIR);
+        return ff.exists(root.$());
     }
 
     private @NotNull SequencerImpl createSequencer(int tableId, final TableStructure tableStructure) {

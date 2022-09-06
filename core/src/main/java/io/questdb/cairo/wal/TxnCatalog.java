@@ -119,6 +119,10 @@ public class TxnCatalog implements Closeable {
         return maxTxn;
     }
 
+    long lastTxn() {
+        return maxTxn;
+    }
+
     SequencerCursor getCursor(long txnLo) {
         int rootLen = path.length();
         path.concat(CATALOG_FILE_NAME).$();

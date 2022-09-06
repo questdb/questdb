@@ -178,6 +178,10 @@ public class SequencerImpl implements Sequencer {
         return txn;
     }
 
+    public long lastTxn() {
+        return catalog.lastTxn();
+    }
+
     private void applyToMetadata(AlterOperation operation) {
         try {
             operation.apply(sequencerMetadataUpdater, true);
