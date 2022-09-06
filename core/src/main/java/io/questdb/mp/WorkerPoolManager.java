@@ -135,35 +135,6 @@ public class WorkerPoolManager {
         }
     }
 
-    public static WorkerPool createLoggerWorkerPool() {
-        return new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return new int[]{-1};
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return false;
-            }
-
-            @Override
-            public boolean isDaemonPool() {
-                return true;
-            }
-
-            @Override
-            public String getPoolName() {
-                return "logging";
-            }
-        }, Metrics.disabled());
-    }
-
     public static WorkerPool createUnmanaged(WorkerPoolConfiguration config, Metrics metrics) {
         return new WorkerPool(config, metrics);
     }
