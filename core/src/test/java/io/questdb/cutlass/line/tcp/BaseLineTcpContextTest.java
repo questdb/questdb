@@ -90,7 +90,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpMeasurementScheduler scheduler;
     protected boolean disconnected;
     protected String recvBuffer;
-    protected WorkerPool ioPool;
     protected WorkerPool workerPool;
     protected int nWriterThreads;
     protected long microSecondTicks;
@@ -121,8 +120,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         return new LineTcpNetworkFacade();
     }
 
-    private WorkerPool createWorkerPool(String poolName, final int workerCount, final boolean haltOnError) {
-        final WorkerPool pool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
+        return WorkerPoolManager.createUnmanaged(new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
                 return TestUtils.getWorkerAffinity(workerCount);
@@ -140,10 +139,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public String getPoolName() {
-                return poolName;
+                return "testing";
             }
         }, metrics);
-        return pool;
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
@@ -273,12 +271,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setupContext(new AuthDb(lineTcpConfiguration), null);
             try {
-                workerPoolManager.startAll();
                 r.run();
             } finally {
                 closeContext();
-                Os.sleep(200L);
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -295,12 +290,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             setupContext(authDb, onCommitNewEvent);
             try {
-                workerPoolManager.startAll();
                 r.run();
             } finally {
                 closeContext();
-                Os.sleep(300L);
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -311,9 +303,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         scheduler = new LineTcpMeasurementScheduler(
                 lineTcpConfiguration,
                 engine,
-                ioPool = createWorkerPool("io-worker", 1, true),
+                createWorkerPool(1, true),
                 null,
-                workerPool = createWorkerPool("writer-worker", nWriterThreads, false)) {
+                workerPool = createWorkerPool(nWriterThreads, false)) {
 
             @Override
             protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
@@ -377,6 +369,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         Assert.assertFalse(context.invalid());
         Assert.assertEquals(FD, context.getFd());
         workerPool.assignCleaner(Path.CLEANER);
+        workerPool.start(LOG);
     }
 
     protected void waitForIOCompletion() {

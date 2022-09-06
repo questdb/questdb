@@ -31,7 +31,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.security.NoSuchAlgorithmException;
@@ -189,7 +188,6 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    @Ignore("there is a memory leak")
     public void testGoodAuthenticationFragmented1() throws Exception {
         runInAuthContext(() -> {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, false, false, null);

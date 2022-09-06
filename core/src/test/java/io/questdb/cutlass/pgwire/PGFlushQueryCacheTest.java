@@ -135,7 +135,6 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                     checkQueryCacheFlushed(memInitial, memAfterJoin);
                 }
-            } finally {
                 Os.sleep(500L);
                 workerPoolManager.closeAll();
             }
