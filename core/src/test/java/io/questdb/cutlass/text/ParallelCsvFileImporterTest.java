@@ -2708,7 +2708,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     affinity[i] = -1;
                 }
 
-                WorkerPool pool = WorkerPoolManager.createUnmanaged(
+                WorkerPool pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {

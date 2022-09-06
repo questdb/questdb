@@ -91,7 +91,6 @@ public class EmbeddedApiTest {
                         }
                     }
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });

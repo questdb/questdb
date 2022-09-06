@@ -120,8 +120,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         return new LineTcpNetworkFacade();
     }
 
-    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
-        return WorkerPoolManager.createUnmanaged(new WorkerPoolConfiguration() {
+    private WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
+        return workerPoolManager.getInstance(new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
                 return TestUtils.getWorkerAffinity(workerCount);
@@ -152,7 +152,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void closeContext() {
         if (null != scheduler) {
-            workerPool.close();
+            workerPoolManager.closeAll();
             Assert.assertFalse(context.invalid());
             Assert.assertEquals(FD, context.getFd());
             context.close();
@@ -369,7 +369,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         Assert.assertFalse(context.invalid());
         Assert.assertEquals(FD, context.getFd());
         workerPool.assignCleaner(Path.CLEANER);
-        workerPool.start(LOG);
+        workerPoolManager.startAll();
     }
 
     protected void waitForIOCompletion() {

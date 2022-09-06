@@ -59,6 +59,7 @@ public class LatestByParallelTest {
     protected static CharSequence root;
     @Rule
     public TestName testName = new TestName();
+    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     @BeforeClass
     public static void setupStatic() {
@@ -243,15 +244,14 @@ public class LatestByParallelTest {
         }
     }
 
-    protected static void executeWithPool(
+    protected void executeWithPool(
             int workerCount,
             int queueCapacity,
             LatestByRunnable runnable
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-
-                WorkerPool pool = WorkerPoolManager.createUnmanaged(
+                WorkerPool pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
@@ -307,7 +307,7 @@ public class LatestByParallelTest {
         });
     }
 
-    protected static void execute(
+    protected void execute(
             @Nullable WorkerPool pool,
             LatestByRunnable runnable,
             CairoConfiguration configuration
@@ -323,22 +323,22 @@ public class LatestByParallelTest {
                     if (pool != null) {
                         pool.assignCleaner(Path.CLEANER);
                         pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
-                        pool.start(LOG);
-                    }
 
+                    }
+                    workerPoolManager.closeAll();
                     runnable.run(engine, compiler, sqlExecutionContext);
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                 } finally {
                     if (pool != null) {
-                        pool.close();
+                        workerPoolManager.closeAll();
                     }
                 }
             }
         }
     }
 
-    protected static void executeVanilla(LatestByRunnable code) throws Exception {
+    protected void executeVanilla(LatestByRunnable code) throws Exception {
         executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
     }
 

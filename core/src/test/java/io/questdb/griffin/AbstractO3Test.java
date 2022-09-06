@@ -343,7 +343,7 @@ public class AbstractO3Test {
                 };
                 pool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("default-pool", wc), Metrics.disabled());
             }
-
+            pool.assignCleaner(Path.CLEANER);
             workerPoolManager.setSharedPool(pool);
             TestUtils.execute(runnable, cairoConfiguration, wc);
         });

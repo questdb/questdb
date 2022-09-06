@@ -1270,7 +1270,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     affinity[i] = -1;
                 }
 
-                WorkerPool pool = WorkerPoolManager.createUnmanaged(
+                WorkerPool pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
@@ -1331,7 +1331,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         pool.assignCleaner(Path.CLEANER);
                         GroupByJob job = new GroupByJob(engine.getMessageBus());
                         pool.assign(job);
-                        pool.start(LOG);
+                        workerPoolManager.startAll(LOG);
                     }
 
                     runnable.run(engine, compiler, sqlExecutionContext);
@@ -1339,7 +1339,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
                 } finally {
                     if (pool != null) {
-                        pool.close();
+                        workerPoolManager.closeAll();
                     }
                 }
             }

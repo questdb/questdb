@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.WorkerPoolManager;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Before;
@@ -135,7 +136,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     checkQueryCacheFlushed(memInitial, memAfterJoin);
                 }
             } finally {
-                TimeUnit.MILLISECONDS.sleep(500L);
+                Os.sleep(500L);
                 workerPoolManager.closeAll();
             }
         });

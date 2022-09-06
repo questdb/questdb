@@ -5859,6 +5859,7 @@ create table tab as (
                     LOG.info().$("hasResultSet=").$(hasResultSet).$();
                     Assert.assertTrue(hasResultSet);
                 }
+                Os.sleep(200L);
                 workerPoolManager.closeAll();
             }
         });
@@ -6545,7 +6546,7 @@ create table tab as (
             try (PGWireServer server = createPGServer(configuration)) {
                 workerPoolManager.startAll();
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
-                TimeUnit.MILLISECONDS.sleep(500L);
+                Os.sleep(500L);
                 workerPoolManager.closeAll();
             }
         });
@@ -6817,8 +6818,10 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = WorkerPoolManager.createUnmanaged(conf, metrics);
-        pool.assign(engine.getEngineMaintenanceJob());
+        WorkerPool pool = workerPoolManager.getInstance(conf, metrics);
+        pool.configure(engine, null, false, true, true);
+        workerPoolManager.setSharedPool(pool);
+//        pool.assign(engine.getEngineMaintenanceJob());
         try (
                 final PGWireServer server = Services.createPGWireServer(
                         conf,
@@ -6830,8 +6833,7 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
-            workerPoolManager.startAll();
-            pool.start(LOG);
+            workerPoolManager.startAll(LOG);
             int iteration = 0;
 
             do {
