@@ -124,6 +124,10 @@ public class WorkerPool implements QuietCloseable {
         return this;
     }
 
+    public String getPoolName() {
+        return poolName;
+    }
+
     /**
      * Assigns job instance to all workers. Job member variables
      * could be accessed by multiple threads at the same time. Jobs cannot
@@ -197,9 +201,6 @@ public class WorkerPool implements QuietCloseable {
                 worker.setDaemon(daemons);
                 workers.add(worker);
                 worker.start();
-            }
-            if (log != null) {
-                log.info().$("started").$();
             }
             started.countDown();
         }

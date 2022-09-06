@@ -41,6 +41,7 @@ import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 
 import java.util.ServiceLoader;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements QuietCloseable {
@@ -154,7 +155,7 @@ public class ServerMain implements QuietCloseable {
         }
 
         System.gc(); // GC 1
-        log.advisoryW().$("Bootstrap complete").$();
+        log.advisoryW().$("Bootstrap complete, ready to start").$();
     }
 
     public void start() {
@@ -166,11 +167,10 @@ public class ServerMain implements QuietCloseable {
             if (addShutdownHook) {
                 addShutdownHook();
             }
-            log.advisoryW().$("QuestDB is starting...").$();
             workerPoolManager.startAll(log); // starts QuestDB's workers
+            Os.sleep(1L); // allow threads to start before logging console URLs
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
-            log.advisoryW().$("QuestDB is running").$();
             log.advisoryW().$("enjoy").$();
         }
     }

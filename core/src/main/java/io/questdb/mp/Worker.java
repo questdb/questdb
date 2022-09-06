@@ -94,16 +94,17 @@ public class Worker extends Thread {
                 if (affinity > -1) {
                     if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
                         if (log != null) {
-                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).I$();
                         }
                     } else {
                         if (log != null) {
-                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).I$();
                         }
                     }
                 } else {
                     if (log != null) {
-                        log.info().$("os scheduled [name=").$(getName()).$(']').$();
+                        log.info().$("os scheduled worker started [name=").$(getName()).I$();
+
                     }
                 }
                 setupJobs();
@@ -155,6 +156,9 @@ public class Worker extends Thread {
                 cleaner.run(ex);
             }
             haltLatch.countDown();
+            if (log != null) {
+                log.info().$("os scheduled worker ended [name=").$(getName()).I$();
+            }
         }
     }
 
@@ -167,7 +171,7 @@ public class Worker extends Thread {
 
         // Log error even then halt if halt error setting is on.
         if (log != null) {
-            log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
+            log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
         } else {
             stdErrCritical(e);
         }

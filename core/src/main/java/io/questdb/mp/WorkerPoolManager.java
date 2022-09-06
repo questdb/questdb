@@ -67,7 +67,7 @@ public class WorkerPoolManager {
         if (config.getWorkerCount() < 1) {
             WorkerPool pool = sharedPool;
             if (pool != null) {
-                LOG.info().$("Using pool [").$(config.getPoolName())
+                LOG.info().$("Using pool [name=").$(config.getPoolName())
                         .$(", workers=").$(pool.getWorkerCount())
                         .$("] -> SHARED")
                         .$();
@@ -81,7 +81,7 @@ public class WorkerPoolManager {
             pool.assignCleaner(Path.CLEANER);
             dedicatedPools.put(poolName, pool);
         }
-        LOG.info().$("Using pool [").$(poolName)
+        LOG.info().$("Using pool [name=").$(poolName)
                 .$(", workers=").$(config.getWorkerCount())
                 .$("] -> DEDICATED")
                 .$();
@@ -96,14 +96,19 @@ public class WorkerPoolManager {
         if (hasStarted.compareAndSet(false, true)) {
             if (sharedPool != null) {
                 sharedPool.start(sharedPoolLog);
+                LOG.info().$("Started shared pool [name=").$(sharedPool.getPoolName())
+                        .$(", workers=").$(sharedPool.getWorkerCount())
+                        .I$();
             }
-            LOG.info().$("Started shared pool").$();
+
             ObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.get(i);
                 WorkerPool pool = dedicatedPools.get(name);
                 pool.start(sharedPoolLog);
-                LOG.info().$("Started dedicated pool [").$(name).I$();
+                LOG.info().$("Started dedicated pool [name=").$(name)
+                        .$(", workers=").$(pool.getWorkerCount())
+                        .I$();
             }
         }
     }
@@ -115,13 +120,17 @@ public class WorkerPoolManager {
                 CharSequence name = poolNames.getQuick(i);
                 WorkerPool pool = dedicatedPools.get(name);
                 pool.close();
-                LOG.info().$("Closed dedicated pool [").$(name).I$();
+                LOG.info().$("Closed dedicated pool [name=").$(name)
+                        .$(", workers=").$(pool.getWorkerCount())
+                        .I$();
             }
             dedicatedPools.clear();
             if (sharedPool != null) {
                 sharedPool.close();
+                LOG.info().$("Closed shared pool [name=").$(sharedPool.getPoolName())
+                        .$(", workers=").$(sharedPool.getWorkerCount())
+                        .I$();
                 sharedPool = null;
-                LOG.info().$("Closed shared pool").$();
             }
         }
     }
