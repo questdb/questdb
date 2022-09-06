@@ -6516,7 +6516,6 @@ create table tab as (
                         assertResultSet(expected, sink, resultSet);
                     }
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });

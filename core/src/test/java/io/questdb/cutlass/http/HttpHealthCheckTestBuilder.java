@@ -78,7 +78,7 @@ public class HttpHealthCheckTestBuilder {
                     });
                 }
                 try (HttpServer ignored = Services.createMinHttpServer(httpConfiguration, workerPoolManager, engine, metrics)) {
-                    workerPoolManager.startAll();
+                    workerPoolManager.startAll(LOG);
                     if (injectUnhandledError && metrics.isEnabled()) {
                         for (int i = 0; i < 40; i++) {
                             if (metrics.healthCheck().unhandledErrorsCount() > 0) {
@@ -89,7 +89,6 @@ public class HttpHealthCheckTestBuilder {
                     }
 
                     code.run(engine);
-                } finally {
                     workerPoolManager.closeAll();
                 }
             }

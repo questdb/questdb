@@ -373,7 +373,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
