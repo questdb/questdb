@@ -267,6 +267,12 @@ public class TxnCatalog implements Closeable {
         }
 
         @Override
+        public SequencerStructureChangeCursor empty() {
+            txnMetaOffset = txnMetaOffsetHi = 0;
+            return this;
+        }
+
+        @Override
         public boolean hasNext() {
             return txnMetaOffset < txnMetaOffsetHi;
         }

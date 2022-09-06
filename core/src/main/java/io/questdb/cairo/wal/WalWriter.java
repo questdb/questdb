@@ -47,11 +47,13 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
-public class WalWriter implements TableWriterFrontend, Mutable {
+public class WalWriter implements TableWriterFrontend {
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final Runnable NOOP = () -> {
     };
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
+    private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
+
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders;
     private final IntList initialSymbolCounts = new IntList();
@@ -188,20 +190,10 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         throw new UnsupportedOperationException("UPDATE statements with join are not supported yet for WAL tables");
     }
 
-    private long applyNonStructuralOperation(AbstractOperation operation) {
-        try {
-            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement());
-            return getTableTxn();
-        } catch (Throwable th) {
-            rollback();
-            throw th;
-        }
-    }
-
     @Override
     public void close() {
         if (isOpen()) {
-            clear();
+            rollback();
             doClose(true);
         }
     }
@@ -234,35 +226,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return newRow(0L);
     }
 
-    @Override
-    public void clear() {
-        try {
-            closeCurrentSegment();
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
-    }
-
-    public void doClose(boolean truncate) {
-        open = false;
-        Misc.free(metadata);
-        Misc.free(events);
-        freeSymbolMapWriters();
-        Misc.free(symbolMapMem);
-        freeColumns(truncate);
-
-        try {
-            releaseLock(!truncate);
-        } finally {
-            Misc.free(path);
-            LOG.info().$("closed '").utf8(tableName).$('\'').$();
-        }
-    }
-
-    public boolean isOpen() {
-        return this.open;
-    }
-
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
         try {
@@ -284,6 +247,39 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
     }
 
+    @Override
+    public void rollback() {
+        if (inTransaction() || hasDirtyColumns()) {
+            setAppendPosition(startRowCount);
+        }
+    }
+
+    private boolean hasDirtyColumns() {
+        for(int i = 0; i < columnCount; i++) {
+            long writtenCount = rowValueIsNotNull.getQuick(i);
+            if (writtenCount > startRowCount && writtenCount != COLUMN_DELETED_NULL_FLAG) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void doClose(boolean truncate) {
+        open = false;
+        Misc.free(metadata);
+        Misc.free(events);
+        freeSymbolMapWriters();
+        Misc.free(symbolMapMem);
+        freeColumns(truncate);
+
+        try {
+            releaseLock(!truncate);
+        } finally {
+            Misc.free(path);
+            LOG.info().$("closed '").utf8(tableName).$('\'').$();
+        }
+    }
+
     public long getSegment() {
         return segmentId;
     }
@@ -300,6 +296,20 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return walName;
     }
 
+    public boolean goActive() {
+        try {
+            applyStructureChanges();
+            return true;
+        } catch (CairoException e) {
+            LOG.critical().$("could not apply structure changes, wal will be closed [table=").$(tableName)
+                    .$(", walId=").$(walId)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", error=").$((Throwable) e).I$();
+            distressed = true;
+            return false;
+        }
+    }
+
     public boolean inTransaction() {
         return rowCount > startRowCount;
     }
@@ -308,21 +318,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return distressed;
     }
 
-    @Override
-    public void rollback() {
-        // TODO: roll back current transaction
-//        throw new UnsupportedOperationException();
-    }
-
-    public long rollSegment() {
-        try {
-            closeCurrentSegment();
-            final long rolledRowCount = rowCount;
-            openNewSegment();
-            return rolledRowCount;
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
+    public boolean isOpen() {
+        return this.open;
     }
 
     public long rollSegmentIfLimitReached() {
@@ -339,6 +336,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
 
         if (rollStrategy.shouldRoll(segmentSize, rowCount, segmentAge)) {
+            commit();
             return rollSegment();
         }
         return 0L;
@@ -360,6 +358,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             LongList newColumnFiles = new LongList();
             newColumnFiles.setPos(columnCount * 4);
             newColumnFiles.fill(0, columnCount * 4, -1);
+            rowValueIsNotNull.fill(0, columnCount, -1);
 
             try {
                 int timestampIndex = metadata.getTimestampIndex();
@@ -384,6 +383,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                                 newColumnFiles,
                                 columnIndex
                         );
+                    } else {
+                        rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
                     }
                 }
             } catch (Throwable e) {
@@ -395,7 +396,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             segmentId = newSegmentId;
             rowCount = uncommittedRows;
             startRowCount = 0;
-            rowValueIsNotNull.fill(0, columnCount, -1);
         } else if (rowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;
         }
@@ -480,9 +480,23 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         }
     }
 
+    private long applyNonStructuralOperation(AbstractOperation operation) {
+        try {
+            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement());
+            return getTableTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
+    }
+
     private void applyStructureChanges() {
         try {
             structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, getStructureVersion());
+            if (structureChangeCursor == null) {
+                // nothing to do
+                return;
+            }
             while (structureChangeCursor.hasNext()) {
                 AlterOperation alterOperation = structureChangeCursor.next();
                 long metadataVersion = getStructureVersion();
@@ -544,17 +558,6 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return Sequencer.NO_TXN;
     }
 
-    private long getTableTxn() {
-        long txn;
-        do {
-            txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
-            if (txn == Sequencer.NO_TXN) {
-                applyStructureChanges();
-            }
-        } while (txn == Sequencer.NO_TXN);
-        return txn;
-    }
-
     private void configureColumn(int index, int type) {
         final MemoryMA primary;
         final MemoryMA secondary;
@@ -587,6 +590,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
             int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
                 configureColumn(i, columnType);
+            } else {
+                rowValueIsNotNull.setQuick(i, COLUMN_DELETED_NULL_FLAG);
             }
         }
     }
@@ -763,6 +768,17 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
+    private long getTableTxn() {
+        long txn;
+        do {
+            txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            if (txn == Sequencer.NO_TXN) {
+                applyStructureChanges();
+            }
+        } while (txn == Sequencer.NO_TXN);
+        return txn;
+    }
+
     private void lock() {
         try {
             lockName(path);
@@ -781,6 +797,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         final int si = getSecondaryColumnIndex(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
+        rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
     }
 
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
@@ -829,6 +846,8 @@ public class WalWriter implements TableWriterFrontend, Mutable {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.setQuick(i, reader.getSymbolCount());
                     }
+                } else {
+                    rowValueIsNotNull.setQuick(i, COLUMN_DELETED_NULL_FLAG);
                 }
             }
 
@@ -877,6 +896,16 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         lastSegmentTxn = events.data(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
     }
 
+    long rollSegment() {
+        try {
+            final long rolledRowCount = rowCount;
+            openNewSegment();
+            return rolledRowCount;
+        } catch (Throwable e) {
+            throw new CairoError(e);
+        }
+    }
+
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
         for (int i = 0; i < columnCount; i++) {
             if (rowValueIsNotNull.getQuick(i) < rowCount) {
@@ -896,12 +925,56 @@ public class WalWriter implements TableWriterFrontend, Mutable {
         rowCount++;
     }
 
+    private void setAppendPosition(final long segmentRowCount) {
+        for (int i = 0; i < columnCount; i++) {
+            setColumnSize(i, segmentRowCount);
+            int type = metadata.getColumnType(i);
+            if (type > 0) {
+                rowValueIsNotNull.setQuick(i, segmentRowCount - 1);
+            }
+        }
+    }
+
     private void setColumnNull(int columnType, int columnIndex, long rowCount) {
         if (ColumnType.isVariableLength(columnType)) {
             setVarColumnVarFileNull(columnType, columnIndex, rowCount);
             setVarColumnFixedFileNull(columnType, columnIndex, rowCount);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
+        }
+    }
+
+    private void setColumnSize(int columnIndex, long size) {
+        MemoryMA mem1 = getPrimaryColumn(columnIndex);
+        MemoryMA mem2 = getSecondaryColumn(columnIndex);
+        int type = metadata.getColumnType(columnIndex);
+        if (type > 0) { // Not deleted
+            final long pos = size;
+            if (pos > 0) {
+                // subtract column top
+                final long m1pos;
+                switch (ColumnType.tagOf(type)) {
+                    case ColumnType.BINARY:
+                    case ColumnType.STRING:
+                        assert mem2 != null;
+                        // Jump to the number of records written to read length of var column correctly
+                        mem2.jumpTo(pos * Long.BYTES);
+                        m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
+                        // Jump to the end of file to correctly trim the file
+                        mem2.jumpTo((pos + 1) * Long.BYTES);
+                        break;
+                    default:
+                        m1pos = pos << ColumnType.pow2SizeOf(type);
+                        break;
+                }
+                mem1.jumpTo(m1pos);
+            } else {
+                mem1.jumpTo(0);
+                if (mem2 != null) {
+                    mem2.jumpTo(0);
+                    mem2.putLong(0);
+                }
+            }
         }
     }
 
@@ -997,7 +1070,7 @@ public class WalWriter implements TableWriterFrontend, Mutable {
 
         @Override
         public void cancel() {
-            rollSegment();
+            setAppendPosition(rowCount);
         }
 
         @Override

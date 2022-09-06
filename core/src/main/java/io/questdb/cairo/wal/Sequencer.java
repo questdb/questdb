@@ -37,7 +37,7 @@ public interface Sequencer extends Closeable {
 
     void copyMetadataTo(SequencerMetadata metadata);
 
-    @NotNull SequencerStructureChangeCursor getStructureChangeCursor(
+    SequencerStructureChangeCursor getStructureChangeCursor(
             @Nullable SequencerStructureChangeCursor reusableCursor,
             long fromSchemaVersion
     );

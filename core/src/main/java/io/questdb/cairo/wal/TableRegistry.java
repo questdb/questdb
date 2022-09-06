@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -71,7 +72,7 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public @NotNull SequencerStructureChangeCursor getStructureChangeCursor(
+    public SequencerStructureChangeCursor getStructureChangeCursor(
             final CharSequence tableName,
             @Nullable SequencerStructureChangeCursor reusableCursor,
             long fromSchemaVersion
@@ -262,13 +263,21 @@ public class TableRegistry extends AbstractPool {
         public Entry get() {
             lock.lock();
             try {
-                final Entry obj = cache.poll();
-                if (obj == null) {
-                    return new Entry(tableName, tableRegistry, configuration, this);
-                } else {
-                    obj.reset();
-                    return obj;
-                }
+                Entry obj;
+                do {
+                    obj = cache.poll();
+                    if (obj == null) {
+                        obj = new Entry(tableName, tableRegistry, configuration, this);
+                    } else {
+                        if (!obj.goActive()) {
+                            obj = Misc.free(obj);
+                        } else {
+                            obj.reset();
+                        }
+                    }
+                } while (obj == null);
+
+                return obj;
             } finally {
                 lock.unlock();
             }
@@ -281,8 +290,15 @@ public class TableRegistry extends AbstractPool {
                 if (closed) {
                     return false;
                 } else {
-                    obj.clear();
-                    obj.reset();
+                    try {
+                        obj.rollback();
+                    } catch (Throwable e) {
+                        LOG.error().$("could not rollback WAL writer [table=").$(obj.getTableName())
+                                .$(", walId=").$(obj.getWalId())
+                                .$(", error=").$(e).$();
+                        obj.close();
+                        throw e;
+                    }
                     cache.push(obj);
                     obj.releaseTime = configuration.getMicrosecondClock().getTicks();
                     return true;
@@ -304,8 +320,8 @@ public class TableRegistry extends AbstractPool {
        protected boolean releaseAll(long deadline) {
            boolean removed = false;
            lock.lock();
-           Iterator<Entry> iterator = cache.iterator();
            try {
+               Iterator<Entry> iterator = cache.iterator();
                while (iterator.hasNext()) {
                    final Entry e = iterator.next();
                    if (deadline >= e.releaseTime) {

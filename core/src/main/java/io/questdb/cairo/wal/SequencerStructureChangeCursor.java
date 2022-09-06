@@ -29,6 +29,8 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import java.io.Closeable;
 
 public interface SequencerStructureChangeCursor extends Closeable {
+    SequencerStructureChangeCursor empty();
+
     boolean hasNext();
 
     AlterOperation next();

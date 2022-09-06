@@ -196,7 +196,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testAddWalColumnAfterCommit() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

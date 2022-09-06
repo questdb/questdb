@@ -141,11 +141,22 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    @NotNull
     public SequencerStructureChangeCursor getStructureChangeCursor(
             @Nullable SequencerStructureChangeCursor reusableCursor,
             long fromSchemaVersion
     ) {
+        schemaLock.readLock().lock();
+        try {
+            if (metadata.getStructureVersion() == fromSchemaVersion) {
+                // Nothing to do.
+                if (reusableCursor != null) {
+                    return reusableCursor.empty();
+                }
+                return null;
+            }
+        } finally {
+            schemaLock.readLock().unlock();
+        }
         return catalog.getStructureChangeCursor(reusableCursor, fromSchemaVersion, alterCommandWalFormatter);
     }
 
