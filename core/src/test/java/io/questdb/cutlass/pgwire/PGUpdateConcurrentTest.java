@@ -150,8 +150,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         "1970-01-01T00:00:02.000000Z\t5\n" +
                         "1970-01-01T00:00:03.000000Z\t5\n" +
                         "1970-01-01T00:00:04.000000Z\t5\n");
+                workerPoolManager.closeAll();
             }
-            workerPoolManager.closeAll();
         });
     }
 
@@ -375,8 +375,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             for (int i = 0; i < threads.size(); i++) {
                 threads.get(i).join();
             }
-            workerPoolManager.closeAll();
             pgServer.close();
+            workerPoolManager.closeAll();
 
             if (exceptions.size() != 0) {
                 Assert.fail(exceptions.poll().toString());
