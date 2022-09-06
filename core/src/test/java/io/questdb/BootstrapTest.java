@@ -225,7 +225,7 @@ public class BootstrapTest {
     @Test
     public void testServerMain() throws Exception {
         createDummyConfiguration();
-        try (ServerMain serverMain = new ServerMain(Bootstrap.withArgs("-d", root.toString()))) {
+        try (ServerMain serverMain = new ServerMain("-d", root.toString())) {
             serverMain.start();
         }
     }

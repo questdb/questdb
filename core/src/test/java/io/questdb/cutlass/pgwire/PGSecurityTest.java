@@ -303,6 +303,7 @@ public class PGSecurityTest extends BasePGTest {
                     final Statement statement = connection.createStatement()
             ) {
                 statement.execute(query);
+            } finally {
                 workerPoolManager.closeAll();
             }
         }
