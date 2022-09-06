@@ -57,11 +57,11 @@ public class HttpHealthCheckTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
                     .build();
-            QueryCache.configure(httpConfiguration);
-
             if (metrics == null) {
                 metrics = Metrics.enabled();
             }
+
+            QueryCache.configure(httpConfiguration, metrics);
 
             WorkerPool workerPool = new TestWorkerPool(1, metrics);
 
