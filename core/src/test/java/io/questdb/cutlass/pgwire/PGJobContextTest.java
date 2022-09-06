@@ -3059,7 +3059,6 @@ nodejs code:
                         stmt.executeUpdate();
                     }
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });
@@ -3089,7 +3088,6 @@ nodejs code:
                         stmt.executeUpdate();
                     }
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });

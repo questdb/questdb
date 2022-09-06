@@ -62,10 +62,9 @@ public class HttpMinTestBuilder {
                     .build();
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-
+            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -84,7 +83,6 @@ public class HttpMinTestBuilder {
 
                 workerPoolManager.startAll();
                 code.run(engine);
-            } finally {
                 workerPoolManager.closeAll();
             }
         });

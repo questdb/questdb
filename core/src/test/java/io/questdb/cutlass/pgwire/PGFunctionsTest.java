@@ -1,6 +1,5 @@
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
@@ -10,9 +9,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
-/**
- *
- */
 public class PGFunctionsTest extends BasePGTest {
 
     @Test
@@ -38,7 +34,6 @@ public class PGFunctionsTest extends BasePGTest {
 
                     Assert.assertEquals(openFilesBefore, openFilesAfter);
                 }
-            } finally {
                 workerPoolManager.closeAll();
             }
         });
