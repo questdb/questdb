@@ -69,8 +69,10 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         for (int i = 0, n = keys.length; i < n; i++) {
             if (keys[i] != null) {
                 keys[i] = null;
-                free(i);
-                freed++;
+                if (values[i] != null) {
+                    values[i] = Misc.free(values[i]);
+                    freed++;
+                }
             }
         }
         cachedGauge.add(-freed);
@@ -118,10 +120,11 @@ public class AssociativeCache<V> implements Closeable, Mutable {
 
         final CharSequence outgoingKey = keys[lo + bmask];
         if (outgoingKey != null) {
-            if (values[lo + bmask] == null) {
+            int idx = lo + bmask;
+            if (values[idx] == null) {
                 cachedGauge.inc();
             } else {
-                free(lo + bmask);
+                values[idx] = Misc.free(values[idx]);
             }
         } else {
             cachedGauge.inc();
@@ -137,10 +140,6 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         values[lo] = value;
 
         return outgoingKey;
-    }
-
-    private void free(int lo) {
-        values[lo] = Misc.free(values[lo]);
     }
 
     private int getIndex(CharSequence key) {
