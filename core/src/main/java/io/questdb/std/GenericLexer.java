@@ -257,7 +257,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                 case '\'':
                     if (c == '\'') {
                         _hi += 2;
-                        return last = flyweightSequence;
+                        if (hasNext() && content.charAt(_pos) == '\'') {
+                            _pos++;
+                        } else {
+                            return last = flyweightSequence;
+                        }
                     } else {
                         _hi++;
                     }
@@ -265,7 +269,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                 case '"':
                     if (c == '"') {
                         _hi += 2;
-                        return last = flyweightSequence;
+                        if (hasNext() && content.charAt(_pos) == '"') {
+                            _pos++;
+                        } else {
+                            return last = flyweightSequence;
+                        }
                     } else {
                         _hi++;
                     }
