@@ -249,15 +249,15 @@ public class WalWriter implements TableWriterFrontend {
 
     @Override
     public void rollback() {
-        if (inTransaction() || hasDirtyColumns()) {
+        if (inTransaction() || hasDirtyColumns(startRowCount)) {
             setAppendPosition(startRowCount);
         }
     }
 
-    private boolean hasDirtyColumns() {
+    private boolean hasDirtyColumns(long rowCount) {
         for(int i = 0; i < columnCount; i++) {
             long writtenCount = rowValueIsNotNull.getQuick(i);
-            if (writtenCount > startRowCount && writtenCount != COLUMN_DELETED_NULL_FLAG) {
+            if (writtenCount >= rowCount && writtenCount != COLUMN_DELETED_NULL_FLAG) {
                 return true;
             }
         }
@@ -1262,11 +1262,17 @@ public class WalWriter implements TableWriterFrontend {
                     // create column file
                     configureColumn(columnIndex, type);
 
-                    if (uncommittedRows > 0) {
+                    if (!rollSegmentOnNextRow) {
+                        // This is WAL writer receiving notification from another writer that the column is added
+                        // it has to add it to the open segment.
                         metadata.syncToMetaFile();
-
                         path.trimTo(rootLen).slash().put(segmentId);
                         openColumnFiles(columnName, columnIndex, path.length());
+                    }
+                    // If this is the WAL writer performing the add column operation
+                    // it will add the column file / flush metadata on next row write.
+
+                    if (uncommittedRows > 0) {
                         setColumnNull(type, columnIndex, segmentRowCount);
                     }
                     LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(columnName).I$();
