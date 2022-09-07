@@ -50,7 +50,7 @@ public interface MemoryA extends Closeable {
 
     void putBool(boolean value);
 
-    void putByte(byte b);
+    void putByte(byte value);
 
     void putChar(char value);
 

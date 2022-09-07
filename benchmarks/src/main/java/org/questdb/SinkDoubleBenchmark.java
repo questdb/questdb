@@ -41,7 +41,7 @@ public class SinkDoubleBenchmark {
     private final static long memSize = 1024 * 16;
     private final static double d = 78899.9;
     private final static long l = 2298989898L;
-    private final static DirectUnboundedByteSink flyweight = new DirectUnboundedByteSink();
+    private final static DirectUnboundedByteSink unboundedSink = new DirectUnboundedByteSink();
     private long mem;
 
     public static void main(String[] args) throws RunnerException {
@@ -69,16 +69,16 @@ public class SinkDoubleBenchmark {
 
     @Benchmark
     public long testSinkDouble() {
-        flyweight.of(mem);
-        Numbers.append(flyweight, d);
-        return flyweight.getAddress();
+        unboundedSink.of(mem);
+        Numbers.append(unboundedSink, d);
+        return unboundedSink.getAddress();
     }
 
     @Benchmark
     public long testSinkLong() {
-        flyweight.of(mem);
-        Numbers.append(flyweight, l);
-        return flyweight.getAddress();
+        unboundedSink.of(mem);
+        Numbers.append(unboundedSink, l);
+        return unboundedSink.getAddress();
     }
 
     @Benchmark

@@ -42,8 +42,8 @@ public class PingMain {
     public static void main(String[] args) {
         String host = "127.0.0.1";
         int port = 9001;
-        long durationSec = 60;
-        long delayMillis = 10;
+        long durationSec = 120;
+        long delayMillis = 5;
         long bufSize = 1024;
 
         // blocking client for simplicity
@@ -68,9 +68,17 @@ public class PingMain {
             while (Os.currentTimeMicros() - durationUs < startUs) {
                 Chars.asciiStrCpy(PING, buf);
                 int n = Net.send(fd, buf, PING.length());
+                if (n < 0) {
+                    LOG.error().$("connection lost").$();
+                    break;
+                }
                 assert n == PING.length();
 
                 n = Net.recv(fd, buf, PONG.length());
+                if (n < 0) {
+                    LOG.error().$("connection lost").$();
+                    break;
+                }
                 assert n == PONG.length();
                 LOG.info().$(flyweight.of(buf, buf + PONG.length())).$();
                 Os.sleep(delayMillis);
