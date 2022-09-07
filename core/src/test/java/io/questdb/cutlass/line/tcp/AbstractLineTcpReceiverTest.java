@@ -49,7 +49,6 @@ import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
@@ -211,8 +210,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
-            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(getWorkerCount()), metrics);
-            sharedWorkerPool.configure(engine, null, false, needMaintenanceJob, true);
+            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("tests", getWorkerCount()), metrics);
+            sharedWorkerPool.assignCleaner(Path.CLEANER);
+            if (needMaintenanceJob) {
+                sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+            }
             workerPoolManager.setSharedPool(sharedWorkerPool);
             LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics);
             workerPoolManager.startAll();
@@ -222,7 +224,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
                 throw err;
             } finally {
-                Os.sleep(600L);
+                Os.sleep(1000L);
                 workerPoolManager.closeAll();
                 receiver.close();
             }
