@@ -22,22 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.wal.fuzz;
 
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
-class TableDescriptorImpl extends BaseRecordMetadata implements TableDescriptor {
-
-    private int schemaVersion;
-
-    TableDescriptorImpl() {
-        columnMetadata = new ObjList<>();
-        columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-    }
-
-    @Override
-    public int getSchemaVersion() {
-        return schemaVersion;
-    }
+public class FuzzTransaction {
+    public int metadataVersion;
+    public boolean rollback;
+    public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
 }

@@ -128,9 +128,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                 .put(']');
                     }
-                    // TODO: reuse the cursor, do not initilize every time
-                    reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
-                    if (reusableStructureChangeCursor != null && reusableStructureChangeCursor.hasNext()) {
+                    boolean hasNext;
+                    if (reusableStructureChangeCursor == null || !(hasNext = reusableStructureChangeCursor.hasNext())) {
+                        reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
+                        hasNext = reusableStructureChangeCursor.hasNext();
+                    }
+
+                    if (hasNext) {
                         try {
                             reusableStructureChangeCursor.next().apply(writer, true);
                         } catch (SqlException e) {

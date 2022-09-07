@@ -232,6 +232,7 @@ public class WalWriter implements TableWriterFrontend {
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
+                rollSegmentOnNextRow = false;
             }
 
             final int timestampIndex = metadata.getTimestampIndex();
@@ -343,7 +344,6 @@ public class WalWriter implements TableWriterFrontend {
         return 0L;
     }
 
-    // TODO: do we need to roll uncommitted rows ever?
     public void rollUncommittedToNewSegment() {
         long uncommittedRows = rowCount - currentTxnStartRowNum;
         long newSegmentId = segmentId + 1;
@@ -398,6 +398,8 @@ public class WalWriter implements TableWriterFrontend {
             segmentId = newSegmentId;
             rowCount = uncommittedRows;
             currentTxnStartRowNum = 0;
+        } else if (rowCount > 0 && uncommittedRows == 0) {
+            rollSegmentOnNextRow = true;
         }
     }
 
@@ -824,6 +826,9 @@ public class WalWriter implements TableWriterFrontend {
 
     private void openNewSegment() {
         try {
+            if (segmentId > -1) {
+                int i = 0;
+            }
             segmentId++;
             rowCount = 0;
             currentTxnStartRowNum = 0;
@@ -1241,28 +1246,37 @@ public class WalWriter implements TableWriterFrontend {
         public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-//                long uncommittedRows = rowCount - currentTxnStartRowNum;
-//                if (uncommittedRows > 0) {
-//                    // Roll last transaction to new segment
-//                    rollUncommittedToNewSegment();
-//                }
-
-                metadata.addColumn(columnName, columnType);
-                columnCount = metadata.getColumnCount();
-                columnIndex = metadata.getColumnCount() - 1;
-                // create column file
-                configureColumn(columnIndex, columnType);
-
-                if (columnType == ColumnType.SYMBOL) {
-                    configureSymbolMapWriter(columnIndex, columnName, 0, COLUMN_NAME_TXN_NONE);
+                long uncommittedRows = rowCount - currentTxnStartRowNum;
+                if (currentTxnStartRowNum > 0) {
+                    // Roll last transaction to new segment
+                    rollUncommittedToNewSegment();
                 }
 
-                metadata.syncToMetaFile();
-                path.trimTo(rootLen).slash().put(segmentId);
-                openColumnFiles(columnName, columnIndex, path.length());
+                if (currentTxnStartRowNum == 0 || rowCount == currentTxnStartRowNum) {
+                    long segmentRowCount = rowCount - currentTxnStartRowNum;
+                    metadata.addColumn(columnName, columnType);
+                    columnCount = metadata.getColumnCount();
+                    columnIndex = metadata.getColumnCount() - 1;
+                    // create column file
+                    configureColumn(columnIndex, columnType);
 
-                setColumnNull(columnType, columnIndex, rowCount);
-                LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(columnName).I$();
+                    if (!rollSegmentOnNextRow) {
+                        // This is WAL writer receiving notification from another writer that the column is added
+                        // it has to add it to the open segment.
+                        metadata.syncToMetaFile();
+                        path.trimTo(rootLen).slash().put(segmentId);
+                        openColumnFiles(columnName, columnIndex, path.length());
+                    }
+                    // If this is the WAL writer performing the add column operation
+                    // it will add the column file / flush metadata on next row write.
+
+                    if (uncommittedRows > 0) {
+                        setColumnNull(columnType, columnIndex, segmentRowCount);
+                    }
+                    LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(columnName).I$();
+                } else {
+                    throw CairoException.critical(0).put("column '").put(columnName).put("' added, cannot commit because of concurrent table definition change ");
+                }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
                     // TODO: this should be some kind of warning probably that different wals adding the same column concurrently
@@ -1287,27 +1301,36 @@ public class WalWriter implements TableWriterFrontend {
         public void removeColumn(CharSequence columnName) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
-                final int columnType = metadata.getColumnType(columnIndex);
-                if (columnType > -1) {
-//                    long uncommittedRows = rowCount - currentTxnStartRowNum;
-//                    if (currentTxnStartRowNum > 0) {
-//                        // Roll last transaction to new segment
-//                        rollUncommittedToNewSegment();
-//                    }
-
-                    int index = metadata.getColumnIndex(columnName);
-                    metadata.removeColumn(columnName);
-                    columnCount = metadata.getColumnCount();
-                    metadata.syncToMetaFile();
-
-                    if (ColumnType.isSymbol(columnType)) {
-                        removeSymbolMapWriter(index);
+                int type = metadata.getColumnType(columnIndex);
+                if (type > 0) {
+                    long uncommittedRows = rowCount - currentTxnStartRowNum;
+                    if (currentTxnStartRowNum > 0) {
+                        // Roll last transaction to new segment
+                        rollUncommittedToNewSegment();
                     }
-                    markColumnRemoved(index);
-                    LOG.info().$("removed column from wal [path=").$(path).$(", columnName=").$(columnName).I$();
-                } else {
-                    // TODO: this should be some kind of warning probably that different wals removing the same column concurrently
-                    LOG.info().$("column has already been removed by another WAL [path=").$(path).$(", columnName=").$(columnName).I$();
+
+                    if (currentTxnStartRowNum == 0 || rowCount == currentTxnStartRowNum) {
+                        int index = metadata.getColumnIndex(columnName);
+                        metadata.removeColumn(columnName);
+                        columnCount = metadata.getColumnCount();
+
+                        if (!rollSegmentOnNextRow) {
+                            // This is WAL writer receiving notification from another writer that the column is added
+                            // it has to add it to the open segment.
+                            metadata.syncToMetaFile();
+                        }
+                        // If this is the WAL writer performing the add column operation
+                        // it will add the column file / flush metadata on next row write.
+
+                        if (ColumnType.isSymbol(type)) {
+                            removeSymbolMapWriter(index);
+                        }
+                        markColumnRemoved(index);
+                        LOG.info().$("removed column from wal [path=").$(path).$(", columnName=").$(columnName).I$();
+                    } else {
+                        throw CairoException.critical(0).put("column '").put(columnName)
+                                .put("' removed, cannot commit because of concurrent table definition change ");
+                    }
                 }
             } else {
                 throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
