@@ -66,8 +66,9 @@ public class WalUtils {
                 final String name = getColumnName(metaMem, memSize, offset, i).toString();
                 offset += Vm.getStorageLength(name);
 
-                // Negative type means deleted column, but it is still loaded included
-                nameIndex.put(name, i);
+                if (type > 0) {
+                    nameIndex.put(name, i);
+                }
 
                 if (ColumnType.isSymbol(Math.abs(type))) {
                     columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));

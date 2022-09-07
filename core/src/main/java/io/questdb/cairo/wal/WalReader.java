@@ -164,6 +164,10 @@ public class WalReader implements Closeable {
         return index * 2 + 2;
     }
 
+    int getRealColumnCount() {
+        return metadata.getRealColumnCount();
+    }
+
     int getColumnCount() {
         return columnCount;
     }
@@ -243,7 +247,6 @@ public class WalReader implements Closeable {
                                             cleanSymbolCount
                                     )
                             ) {
-
                                 for (int key = 0; key < cleanSymbolCount; key++) {
                                     CharSequence symbol = symbolMapReader.valueOf(key);
                                     symbolMap.put(key, String.valueOf(symbol));

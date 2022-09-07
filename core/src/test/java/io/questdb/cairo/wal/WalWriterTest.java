@@ -181,56 +181,38 @@ public class WalWriterTest extends AbstractGriffinTest {
                 addColumn(walWriter, "d", ColumnType.SHORT);
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 100);
+                row.putShort(3, (short) 1000);
                 row.append();
                 walWriter.commit();
             }
 
-            try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 1)) {
-                    assertEquals(2, reader.getColumnCount());
+            try (TableModel model = defaultModel(tableName).col("c", ColumnType.INT).col("d", ColumnType.SHORT)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 3)) {
+                    assertEquals(4, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
+                    assertEquals(3, reader.size());
 
                     final RecordCursor cursor = reader.getDataCursor();
                     final Record record = cursor.getRecord();
                     assertTrue(cursor.hasNext());
                     assertEquals(1, record.getByte(0));
                     assertNull(record.getStr(1));
+                    assertEquals(Integer.MIN_VALUE, record.getInt(2));
+                    assertEquals(0, record.getShort(3));
                     assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
-                    assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
-                    assertEquals(0, dataInfo.getMinTimestamp());
-                    assertEquals(0, dataInfo.getMaxTimestamp());
-                    assertFalse(dataInfo.isOutOfOrder());
-                    assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertFalse(eventCursor.hasNext());
-                }
-                model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 1)) {
-                    assertEquals(3, reader.getColumnCount());
-                    assertEquals(walName, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
                     assertTrue(cursor.hasNext());
                     assertEquals(10, record.getByte(0));
                     assertNull(record.getStr(1));
                     assertEquals(Integer.MIN_VALUE, record.getInt(2));
-                    assertEquals(0, record.getRowId());
+                    assertEquals(0, record.getShort(3));
+                    assertEquals(1, record.getRowId());
+                    assertTrue(cursor.hasNext());
+                    assertEquals(100, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(Integer.MIN_VALUE, record.getInt(2));
+                    assertEquals(1000, record.getShort(3));
+                    assertEquals(2, record.getRowId());
                     assertFalse(cursor.hasNext());
 
                     assertColumnMetadata(model, reader);
@@ -239,8 +221,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertTrue(eventCursor.hasNext());
                     assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     assertEquals(0, dataInfo.getStartRowID());
                     assertEquals(1, dataInfo.getEndRowID());
                     assertEquals(0, dataInfo.getMinTimestamp());
@@ -248,34 +229,23 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(dataInfo.isOutOfOrder());
                     assertNull(dataInfo.nextSymbolMapDiff());
 
-                    assertFalse(eventCursor.hasNext());
-                }
-                model.col("d", ColumnType.SHORT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 2, 1)) {
-                    assertEquals(4, reader.getColumnCount());
-                    assertEquals(walName, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    assertTrue(cursor.hasNext());
-                    assertEquals(100, record.getByte(0));
-                    assertNull(record.getStr(1));
-                    assertEquals(Integer.MIN_VALUE, record.getInt(2));
-                    assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
+                    dataInfo = eventCursor.getDataInfo();
+                    assertEquals(1, dataInfo.getStartRowID());
+                    assertEquals(2, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
 
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(2, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+                    dataInfo = eventCursor.getDataInfo();
+                    assertEquals(2, dataInfo.getStartRowID());
+                    assertEquals(3, dataInfo.getEndRowID());
                     assertEquals(0, dataInfo.getMinTimestamp());
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
@@ -320,12 +290,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                 walWriter.commit();
             }
 
-            try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 1)) {
-                    assertEquals(2, reader.getColumnCount());
+            try (TableModel model = defaultModel(tableName).col("c", ColumnType.INT)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 3)) {
+                    assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
+                    assertEquals(3, reader.size());
 
                     final RecordCursor cursor = reader.getDataCursor();
                     final Record record = cursor.getRecord();
@@ -333,44 +303,14 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(1, record.getByte(0));
                     assertNull(record.getStr(1));
                     assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
-                    assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
-                    assertEquals(0, dataInfo.getMinTimestamp());
-                    assertEquals(0, dataInfo.getMaxTimestamp());
-                    assertFalse(dataInfo.isOutOfOrder());
-                    assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertFalse(eventCursor.hasNext());
-                }
-                model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 2)) {
-                    assertEquals(3, reader.getColumnCount());
-                    assertEquals(walName, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(2, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
                     assertTrue(cursor.hasNext());
                     assertEquals(10, record.getByte(0));
                     assertNull(record.getStr(1));
-                    assertEquals(Integer.MIN_VALUE, record.getInt(2));
-                    assertEquals(0, record.getRowId());
+                    assertEquals(1, record.getRowId());
                     assertTrue(cursor.hasNext());
                     assertEquals(100, record.getByte(0));
                     assertNull(record.getStr(1));
-                    assertEquals(Integer.MIN_VALUE, record.getInt(2));
-                    assertEquals(1, record.getRowId());
+                    assertEquals(2, record.getRowId());
                     assertFalse(cursor.hasNext());
 
                     assertColumnMetadata(model, reader);
@@ -379,7 +319,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertTrue(eventCursor.hasNext());
                     assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
-
                     WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     assertEquals(0, dataInfo.getStartRowID());
                     assertEquals(1, dataInfo.getEndRowID());
@@ -391,10 +330,20 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertTrue(eventCursor.hasNext());
                     assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
-
                     dataInfo = eventCursor.getDataInfo();
                     assertEquals(1, dataInfo.getStartRowID());
                     assertEquals(2, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(2, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+                    dataInfo = eventCursor.getDataInfo();
+                    assertEquals(2, dataInfo.getStartRowID());
+                    assertEquals(3, dataInfo.getEndRowID());
                     assertEquals(0, dataInfo.getMinTimestamp());
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
@@ -404,13 +353,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 try {
-                    engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 2, 1);
-                    fail("Segment 2 should not exist");
+                    engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 0);
+                    fail("Segment 1 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
                             File.separatorChar + tableName +
                             File.separatorChar + walName +
-                            File.separatorChar + "2" +
+                            File.separatorChar + "1" +
                             File.separatorChar + TableUtils.META_FILE_NAME + "]"));
                 }
             }
@@ -433,9 +382,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                 addColumn(walWriter, "c", ColumnType.SYMBOL);
             }
 
-            try (TableModel model = defaultModel(tableName)) {
+            try (TableModel model = defaultModel(tableName).col("c", ColumnType.SYMBOL)) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 1)) {
-                    assertEquals(2, reader.getColumnCount());
+                    assertEquals(3, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(1, reader.size());
@@ -814,6 +763,134 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConcurrentAddRemoveColumn_DifferentColNamePerThread() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            final int numOfRows = 11;
+            final int numOfThreads = 10;
+            final int numOfTxn = numOfThreads;
+            final SOCountDownLatch alterFinished = new SOCountDownLatch(numOfThreads);
+            final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
+            final AtomicInteger columnNumber = new AtomicInteger();
+
+            for (int i = 0; i < numOfThreads; i++) {
+                new Thread(() -> {
+                    final String colName = "col" + columnNumber.incrementAndGet();
+                    TableWriter.Row row;
+                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                        System.out.println(Thread.currentThread().getName() + " wal=" + walWriter.getWalName() + ", col=" + colName);
+
+                        addColumn(walWriter, colName, ColumnType.LONG);
+                        removeColumn(walWriter, colName);
+                        addColumn(walWriter, colName, ColumnType.STRING);
+                        removeColumn(walWriter, colName);
+                        addColumn(walWriter, colName, ColumnType.BYTE);
+                        removeColumn(walWriter, colName);
+                        alterFinished.countDown();
+
+                        alterFinished.await();
+                        assertEquals(0, walWriter.size());
+                        for (int n = 0; n < numOfRows; n++) {
+                            row = walWriter.newRow();
+                            row.putByte(0, (byte) 1);
+                            row.putStr(1, "test" + n);
+                            row.append();
+                        }
+                        walWriter.commit();
+                        walWriter.rollSegment();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        Assert.fail("Alter failed [e=" + e + "]");
+                        throw new RuntimeException(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                        writeFinished.countDown();
+                    }
+                }).start();
+            }
+            writeFinished.await();
+
+            final LongHashSet txnSet = new LongHashSet(numOfTxn);
+            final IntList symbolCounts = new IntList();
+            symbolCounts.add(numOfRows);
+            try (TableModel model = defaultModel(tableName)) {
+                for (int i = 0; i < numOfThreads; i++) {
+                    final String walName = WAL_NAME_BASE + (i + 1);
+                    try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, numOfRows)) {
+                        assertEquals(2, reader.getRealColumnCount());
+                        assertEquals(walName, reader.getWalName());
+                        assertEquals(tableName, reader.getTableName());
+                        assertEquals(numOfRows, reader.size());
+
+                        final RecordCursor cursor = reader.getDataCursor();
+                        final Record record = cursor.getRecord();
+                        int n = 0;
+                        while (cursor.hasNext()) {
+                            assertEquals(1, record.getByte(0));
+                            assertEquals("test" + n, record.getStr(1).toString());
+                            assertEquals(n, record.getRowId());
+                            n++;
+                        }
+                        assertEquals(numOfRows, n);
+
+                        assertColumnMetadata(model, reader);
+
+                        final WalEventCursor eventCursor = reader.getEventCursor();
+                        assertTrue(eventCursor.hasNext());
+                        assertEquals(WalTxnType.DATA, eventCursor.getType());
+                        txnSet.add(Numbers.encodeLowHighInts(i, (int) eventCursor.getTxn()));
+
+                        final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                        assertEquals(0, dataInfo.getStartRowID());
+                        assertEquals(numOfRows, dataInfo.getEndRowID());
+                        assertEquals(0, dataInfo.getMinTimestamp());
+                        assertEquals(0, dataInfo.getMaxTimestamp());
+                        assertFalse(dataInfo.isOutOfOrder());
+
+                        assertNull(dataInfo.nextSymbolMapDiff());
+
+                        assertFalse(eventCursor.hasNext());
+                    }
+
+                    try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 0)) {
+                        assertEquals(2, reader.getRealColumnCount());
+                        assertEquals(walName, reader.getWalName());
+                        assertEquals(tableName, reader.getTableName());
+                        assertEquals(0, reader.size());
+
+                        final RecordCursor cursor = reader.getDataCursor();
+                        assertFalse(cursor.hasNext());
+
+                        assertColumnMetadata(model, reader);
+
+                        final WalEventCursor eventCursor = reader.getEventCursor();
+                        assertFalse(eventCursor.hasNext());
+                    }
+
+                    try (Path path = new Path().of(configuration.getRoot())) {
+                        assertWalFileExist(path, tableName, walName, 0, "_meta");
+                        assertWalFileExist(path, tableName, walName, 0, "_event");
+                        assertWalFileExist(path, tableName, walName, 0, "a.d");
+                        assertWalFileExist(path, tableName, walName, 0, "b.d");
+                        assertWalFileExist(path, tableName, walName, 1, "_meta");
+                        assertWalFileExist(path, tableName, walName, 1, "_event");
+                        assertWalFileExist(path, tableName, walName, 1, "a.d");
+                        assertWalFileExist(path, tableName, walName, 1, "b.d");
+                    }
+                }
+            }
+
+            assertEquals(numOfTxn, txnSet.size());
+            for (int i = 0; i < numOfThreads; i++) {
+                txnSet.remove(Numbers.encodeLowHighInts(i, 0));
+            }
+            assertEquals(0, txnSet.size());
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
         testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
     }
@@ -1029,9 +1106,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                 removeColumn(walWriter, "a");
             }
 
-            try (TableModel model = defaultModel(tableName)) {
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR).col("b", ColumnType.STRING)) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 1)) {
                     assertEquals(2, reader.getColumnCount());
+                    assertEquals(1, reader.getRealColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(1, reader.size());
@@ -1039,7 +1117,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     final RecordCursor cursor = reader.getDataCursor();
                     final Record record = cursor.getRecord();
                     assertTrue(cursor.hasNext());
-                    assertEquals(1, record.getByte(0));
                     assertNull(record.getStr(1));
                     assertEquals(0, record.getRowId());
                     assertFalse(cursor.hasNext());
@@ -1195,22 +1272,25 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
                     .col("c", ColumnType.SYMBOL)
             ) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 1)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 2)) {
                     assertEquals(3, reader.getColumnCount());
+                    assertEquals(2, reader.getRealColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
+                    assertEquals(2, reader.size());
 
                     final RecordCursor cursor = reader.getDataCursor();
                     final Record record = cursor.getRecord();
                     assertTrue(cursor.hasNext());
                     assertEquals(12, record.getInt(0));
-                    assertEquals("symb", record.getSym(1));
                     assertEquals("symc", record.getSym(2));
                     assertEquals(0, record.getRowId());
+                    assertTrue(cursor.hasNext());
+                    assertEquals(133, record.getInt(0));
+                    assertEquals("symc", record.getSym(2));
+                    assertEquals(1, record.getRowId());
                     assertFalse(cursor.hasNext());
 
                     assertColumnMetadata(model, reader);
@@ -1220,7 +1300,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     assertEquals(0, dataInfo.getStartRowID());
                     assertEquals(1, dataInfo.getEndRowID());
                     assertEquals(0, dataInfo.getMinTimestamp());
@@ -1248,45 +1328,26 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(1, expectedKey);
                     assertNull(dataInfo.nextSymbolMapDiff());
 
-//                    assertFalse(eventCursor.hasNext());
-                }
-            }
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.INT)
-                    .col("b", -ColumnType.SYMBOL)
-                    .col("c", ColumnType.SYMBOL)
-            ) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 1)) {
-                    assertEquals(3, reader.getColumnCount());
-                    assertEquals(walName, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    assertTrue(cursor.hasNext());
-                    assertEquals(133, record.getInt(0));
-                    assertEquals("symc", record.getSym(2));
-                    assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
+                    dataInfo = eventCursor.getDataInfo();
+                    assertEquals(1, dataInfo.getStartRowID());
+                    assertEquals(2, dataInfo.getEndRowID());
                     assertEquals(0, dataInfo.getMinTimestamp());
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
-                    SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
-                    assertEquals(1, symbolMapDiff.getSize());
+
+                    symbolMapDiff = dataInfo.nextSymbolMapDiff();
                     assertEquals(2, symbolMapDiff.getColumnIndex());
-                    assertEquals(0, symbolMapDiff.getCleanSymbolCount());
+                    while ((entry = symbolMapDiff.nextEntry()) != null) {
+                        assertEquals(expectedKey, entry.getKey());
+                        assertEquals("symc", entry.getSymbol().toString());
+                        expectedKey++;
+                    }
+                    assertEquals(2, expectedKey);
+                    assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -1294,7 +1355,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    private void removeColumn(WalWriter walWriter, String columnName) {
+    private static void removeColumn(WalWriter walWriter, String columnName) {
         AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(walWriter.getTableName()), 0);
         removeColumnOperation.ofDropColumn(columnName);
         walWriter.applyAlter(removeColumnOperation.build(), true);
@@ -1973,10 +2034,15 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     private void assertColumnMetadata(TableModel expected, WalReader reader) {
         final int columnCount = expected.getColumnCount();
-        assertEquals(columnCount, reader.getColumnCount());
-        for (int i = 0; i < columnCount; i++) {
-            assertEquals(expected.getColumnName(i), reader.getColumnName(i));
-            assertEquals(expected.getColumnType(i), reader.getColumnType(i));
+        assertEquals(columnCount, reader.getRealColumnCount());
+        int skip = 0;
+        for (int i = 0; i < reader.getColumnCount(); i++) {
+            if (reader.getColumnType(i) < 0) {
+                skip++;
+                continue;
+            }
+            assertEquals(expected.getColumnName(i - skip), reader.getColumnName(i));
+            assertEquals(expected.getColumnType(i - skip), reader.getColumnType(i));
         }
     }
 

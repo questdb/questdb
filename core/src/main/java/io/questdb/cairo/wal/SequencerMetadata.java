@@ -111,6 +111,10 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         return structureVersion;
     }
 
+    public int getRealColumnCount() {
+        return columnNameIndexMap.size();
+    }
+
     public int getTableId() {
         return tableId;
     }
