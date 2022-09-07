@@ -64,6 +64,7 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
     public void reset() {
         count = 0;
         awaitedCount = 0;
+        waiter = null;
     }
 
     private void unparkWaiter() {
