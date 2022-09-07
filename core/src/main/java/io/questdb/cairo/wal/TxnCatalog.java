@@ -56,7 +56,7 @@ public class TxnCatalog implements Closeable {
     public static final int RECORD_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES + RECORD_RESERVED;
     public static final int METADATA_WALID = -1;
     private long maxTxn;
-    private final Path path = new Path();
+    private final Path rootPath = new Path();
 
     TxnCatalog(FilesFacade ff) {
         this.ff = ff;
@@ -90,7 +90,7 @@ public class TxnCatalog implements Closeable {
         Misc.free(txnMem);
         Misc.free(txnMetaMem);
         Misc.free(txnMetaMemIndex);
-        Misc.free(path);
+        Misc.free(rootPath);
     }
 
     @NotNull
@@ -103,6 +103,8 @@ public class TxnCatalog implements Closeable {
         if (cursor == null) {
             cursor = new SequencerStructureChangeCursorImpl();
         }
+
+        final Path path = Path.PATH.get().of(rootPath);
         cursor.of(fromStructureVersion, ff, serializer, path);
         return cursor;
     }
@@ -124,7 +126,8 @@ public class TxnCatalog implements Closeable {
     }
 
     SequencerCursor getCursor(long txnLo) {
-        int rootLen = path.length();
+        final Path path = Path.PATH.get().of(rootPath);
+        final int rootLen = path.length();
         path.concat(CATALOG_FILE_NAME).$();
         try {
             return new SequencerCursorImpl(ff, txnLo, path); //todo: dup fd
@@ -134,7 +137,7 @@ public class TxnCatalog implements Closeable {
     }
 
     void open(Path path) {
-        this.path.of(path);
+        this.rootPath.of(path);
 
         openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MEMORY_TAG);
         openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MEMORY_TAG);
@@ -307,7 +310,6 @@ public class TxnCatalog implements Closeable {
             this.ff = ff;
             this.serializer = serializer;
             try {
-
                 txnMetaOffset = ff.readULong(fdTxnMetaIndex, fromStructureVersion * Long.BYTES);
                 if (txnMetaOffset > -1L) {
                     txnMetaOffsetHi = ff.readULong(fdTxn, TXN_META_SIZE_OFFSET);
