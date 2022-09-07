@@ -50,16 +50,11 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
 
     @Override
     public void countDown() {
-        do {
-            final int current = this.count;
-            final int next = current - 1;
-            if (Unsafe.cas(this, COUNT_OFFSET, current, next)) {
-                if (next <= -awaitedCount) {
-                    unparkWaiter();
-                }
-                break;
-            }
-        } while (true);
+        final int prevCount = Unsafe.getUnsafe().getAndAddInt(this, COUNT_OFFSET, -1);
+        final int awaitedCount = this.awaitedCount;
+        if ((prevCount - 1) <= -awaitedCount) {
+            unparkWaiter();
+        }
     }
 
     public int getCount() {
