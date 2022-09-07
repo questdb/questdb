@@ -767,14 +767,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("s", ColumnType.SYMBOL)
                         .col("l", ColumnType.LONG));
 
-                try {
-                    attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
-                    Assert.fail();
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "Column file does not exist"
-                    );
-                }
+                attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
+
+                // s2 column files from the attached partitions should be ignored
+                // and coltops for s column should be created instead.
+                assertSql("select count() from " + dst.getName() + " where s is not null", "count\n0\n");
             }
         });
     }
