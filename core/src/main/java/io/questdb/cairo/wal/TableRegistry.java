@@ -62,6 +62,12 @@ public class TableRegistry extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), "TableRegistry", PoolListener.EV_POOL_OPEN);
     }
 
+    public long lastTxn(final CharSequence tableName) {
+        try (SequencerImpl sequencer = openSequencer(tableName)) {
+            return sequencer.lastTxn();
+        }
+    }
+
     public void forAllWalTables(final RegisteredTable callback) {
         final CharSequence root = getConfiguration().getRoot();
         final FilesFacade ff = getConfiguration().getFilesFacade();

@@ -63,25 +63,36 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             SqlToOperation sqlToOperation,
             @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
     ) {
-        // This is work steeling, security context is checked on writing to the WAL
-        // and can be ignored here
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
-            assert writer.getMetadata().getId() == tableId;
-            return applyOutstandingWalTransactions(writer, engine, sqlToOperation, reusableStructureChangeCursor);
-        } catch (EntryUnavailableException tableBusy) {
-            // This is all good, someone else will apply the data
-            if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
-                // Oh, no, rogue writer
-                LOG.error().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(tableName)
-                        .$(", lock_reason=").$(tableBusy.getReason()).I$();
+        SequencerStructureChangeCursor cursor = null;
+        long lastTxn;
+        long lastCommittedTxn;
+        do {
+            // This is work steeling, security context is checked on writing to the WAL
+            // and can be ignored here
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
+                assert writer.getMetadata().getId() == tableId;
+                cursor = applyOutstandingWalTransactions(writer, engine, sqlToOperation, reusableStructureChangeCursor);
+                lastCommittedTxn = writer.getTxn();
+            } catch (EntryUnavailableException tableBusy) {
+                // This is all good, someone else will apply the data
+                if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
+                    // Oh, no, rogue writer
+                    LOG.error().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(tableName)
+                            .$(", lock_reason=").$(tableBusy.getReason()).I$();
+                }
+                break;
+            } catch (CairoException ex) {
+                LOG.critical().$("Failed to apply WAL data to table [table=").$(tableName)
+                        .$(", error=").$(ex.getMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
+                break;
             }
-        } catch (CairoException ex) {
-            LOG.critical().$("Failed to apply WAL data to table [table=").$(tableName)
-                    .$(", error=").$(ex.getMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .I$();
-        }
-        return null;
+
+            lastTxn = engine.getTableRegistry().lastTxn(tableName);
+        } while (lastCommittedTxn < lastTxn);
+
+        return cursor;
     }
 
     private static SequencerStructureChangeCursor applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine,

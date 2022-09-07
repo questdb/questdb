@@ -179,7 +179,12 @@ public class SequencerImpl implements Sequencer {
     }
 
     public long lastTxn() {
-        return catalog.lastTxn();
+        schemaLock.readLock().lock();
+        try {
+            return catalog.lastTxn();
+        } finally {
+            schemaLock.readLock().unlock();
+        }
     }
 
     private void applyToMetadata(AlterOperation operation) {
