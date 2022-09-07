@@ -1747,6 +1747,7 @@ public abstract class BasePGJobContextTest extends BasePGTest {
                         "                rnd_boolean() B\n" +
                         "            from long_sequence(1)\n" +
                         "        )").execute();
+                Assert.fail();
             } catch (PSQLException e) {
                 assertContains(e.getMessage(), "Duplicate column [name=B]");
             }
@@ -1763,6 +1764,7 @@ public abstract class BasePGJobContextTest extends BasePGTest {
                         "                rnd_boolean() 侘寂\n" +
                         "            from long_sequence(1)\n" +
                         "        )").execute();
+                Assert.fail();
             } catch (PSQLException e) {
                 assertContains(e.getMessage(), "Duplicate column [name=侘寂]");
             }

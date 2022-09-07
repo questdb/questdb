@@ -158,7 +158,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
 
         if (this.lockFd == -1L) {
-            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.nonCritical().put("Cannot lock table: ").put(path.$());
         }
     }
 
