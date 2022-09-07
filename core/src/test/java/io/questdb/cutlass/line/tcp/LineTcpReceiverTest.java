@@ -1174,9 +1174,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     }
                 } while (nRowsWritten < nRows);
                 LOG.info().$(nRowsWritten).$(" rows written").$();
-
-            } finally {
                 workerPoolManager.closeAll();
+            } finally {
                 engine.setPoolListener(null);
             }
 
