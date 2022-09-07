@@ -602,7 +602,7 @@ public class RetryIODispatcherTest {
 
                     writer.close();
                     if (!countDownLatch.await(50000, TimeUnit.MILLISECONDS)) {
-                        Assert.fail("78Imports did not finish within reasonable time");
+                        Assert.fail("Imports did not finish within reasonable time");
                     }
 
                     if (!allowFailures) {
