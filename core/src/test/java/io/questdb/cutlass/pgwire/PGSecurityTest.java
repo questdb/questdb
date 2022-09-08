@@ -44,7 +44,7 @@ import static org.junit.Assert.fail;
 
 public class PGSecurityTest extends BasePGTest {
 
-    private static final PGWireConfiguration READ_ONLY_CONF = new DefaultPGWireConfiguration() {
+    private static final PGWireConfiguration READ_ONLY_CONF = new Port0PGWireConfiguration() {
         @Override
         public boolean readOnlySecurityContext() {
             return true;
@@ -183,6 +183,26 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testDisallowWriterLock() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            assertQueryDisallowed("alter system lock writer src");
+        });
+    }
+
+    @Test
+    public void testDisallowWriterUnlock() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            compiler.compile("alter system lock writer src", sqlExecutionContext);
+            assertQueryDisallowed("alter system unlock writer src");
+
+            // unlock so it's not leaking memory
+            compiler.compile("alter system unlock writer src", sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testDisallowsBackupDatabase() throws Exception {
         assertMemoryLeak(() -> {
             configureForBackups();
@@ -236,17 +256,18 @@ public class PGSecurityTest extends BasePGTest {
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
+                    final PGWireServer server = createPGServer(1);
                     // Postgres JDBC clients ignores unknown properties and does not send them to a server
                     // so have to use a property which actually exists
-                    final Connection connection = getConnectionWithCustomProperty(PGProperty.OPTIONS.getName(), "user");
+                    final Connection connection = getConnectionWithCustomProperty(
+                        server.getPort(), PGProperty.OPTIONS.getName(), "user");
             ) {
                 // no need to assert anything, if we manage to create a connection then it's already a success!
             }
         });
     }
 
-    protected Connection getConnectionWithCustomProperty(String key, String value) throws SQLException {
+    protected Connection getConnectionWithCustomProperty(int port, String key, String value) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
@@ -257,7 +278,8 @@ public class PGSecurityTest extends BasePGTest {
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
         //use this line to switch to local postgres
         //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 
     private void assertQueryDisallowed(String query) throws Exception {
@@ -271,8 +293,8 @@ public class PGSecurityTest extends BasePGTest {
 
     private void executeWithPg(String query) throws Exception {
         try (
-                final PGWireServer ignored = createPGServer(READ_ONLY_CONF);
-                final Connection connection = getConnection(false, true);
+                final PGWireServer server = createPGServer(READ_ONLY_CONF);
+                final Connection connection = getConnection(server.getPort(), false, true);
                 final Statement statement = connection.createStatement()
         ) {
             statement.execute(query);

@@ -36,7 +36,6 @@ import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
-import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
@@ -306,7 +305,7 @@ public class SqlCompiler implements Closeable {
             }
 
             boolean recompileStale = true;
-            do {
+            for (int retries = 0; recompileStale; retries++) {
                 try {
                     batchCallback.preCompile(this);
                     clear();//we don't use normal compile here because we can't reset existing lexer
@@ -317,11 +316,14 @@ public class SqlCompiler implements Closeable {
                     batchCallback.postCompile(this, current, currentQuery);
                     recompileStale = false;
                 } catch (ReaderOutOfDateException e) {
+                    if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                        throw e;
+                    }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     // will recompile
                     lexer.restart();
                 }
-            } while (recompileStale);
+            }
         }
     }
 
@@ -392,7 +394,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            CharSequence lockedReason = engine.lockWriter(tok, "alterSystem");
+            CharSequence lockedReason = engine.lockWriter(executionContext.getCairoSecurityContext(), tok, "alterSystem");
             if (lockedReason != WriterPool.OWNERSHIP_REASON_NONE) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
@@ -409,7 +411,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            engine.unlockWriter(tok);
+            engine.unlockWriter(executionContext.getCairoSecurityContext(), tok);
             return compiledQuery.ofUnlock();
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
@@ -512,7 +514,6 @@ public class SqlCompiler implements Closeable {
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
-
                 } else if (SqlKeywords.isSetKeyword(tok)) {
                     tok = expectToken(lexer, "'param'");
                     if (SqlKeywords.isParamKeyword(tok)) {
@@ -530,7 +531,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'set' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(name).$(", ex=").$((Throwable) e).$();
@@ -1267,8 +1268,7 @@ public class SqlCompiler implements Closeable {
         while (cursor.hasNext()) {
             CharSequence str = record.getStr(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));
-            copier.copy(record, row);
+            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));                copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
                 writer.commitWithLag(commitLag);
@@ -1510,10 +1510,7 @@ public class SqlCompiler implements Closeable {
             if (hasIfExists) {
                 return compiledQuery.ofDrop();
             }
-            throw SqlException
-                    .$(tableNamePosition, "table '")
-                    .put(tableName)
-                    .put("' does not exist");
+            throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
         return compiledQuery.ofDrop();
@@ -2142,7 +2139,7 @@ public class SqlCompiler implements Closeable {
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
         int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
         if (status != TableUtils.TABLE_EXISTS) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
+            throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
         }
         return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableName));
     }
@@ -2161,7 +2158,7 @@ public class SqlCompiler implements Closeable {
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
+            throw SqlException.$(position, "table does not exist [table=").put(tableName).put(']');
         }
     }
 
@@ -2566,7 +2563,7 @@ public class SqlCompiler implements Closeable {
                 dstPath.trimTo(currDirPrefixLen).concat(file).$();
                 LOG.info().$("backup copying config file [from=").$(srcPath).$(",to=").$(dstPath).I$();
                 if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.instance(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
+                    throw CairoException.critical(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
                 }
             }
         };
@@ -2614,7 +2611,7 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(currDirPrefixLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             LOG.info().$("backup copying file [from=").$(srcPath).$(",to=").$(dstPath).I$();
             if (ff.copy(srcPath, dstPath) < 0) {
-                throw CairoException.instance(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
             }
         }
 
@@ -2622,7 +2619,7 @@ public class SqlCompiler implements Closeable {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
-                    throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                    throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
                 }
                 srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
                 cachedTmpBackupRoot = Chars.toString(srcPath);
@@ -2689,11 +2686,11 @@ public class SqlCompiler implements Closeable {
             srcPath.of(backupRoot).concat(tableName).slash$();
 
             if (ff.exists(srcPath)) {
-                throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
+                throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
             }
 
             if (ff.mkdirs(srcPath, mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
+                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
             }
 
             int rootLen = srcPath.length();
@@ -2728,7 +2725,7 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(changeDirPrefixLen).concat(dir).slash$();
             currDirPrefixLen = dstPath.length();
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put(errorMessage).put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put(errorMessage).put(dstPath).put(']');
             }
         }
 
@@ -2751,7 +2748,7 @@ public class SqlCompiler implements Closeable {
             } while (ff.exists(dstPath));
 
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
             changeDirPrefixLen = dstPath.length();
         }
@@ -2759,7 +2756,7 @@ public class SqlCompiler implements Closeable {
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
             executionContext.getCairoSecurityContext().checkWritePermission();
             if (null == configuration.getBackupRoot()) {
-                throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
             final CharSequence tok = SqlUtil.fetchNext(lexer);
             if (null != tok) {
@@ -2802,7 +2799,7 @@ public class SqlCompiler implements Closeable {
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     int status = engine.getStatus(executionContext.getCairoSecurityContext(), srcPath, tableName, 0, tableName.length());
                     if (status != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not  a valid table");
+                        throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
                     }
                     tableNames.add(tableName);
 

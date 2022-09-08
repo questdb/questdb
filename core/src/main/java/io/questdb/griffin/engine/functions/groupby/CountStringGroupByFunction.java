@@ -53,6 +53,12 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
+    public void clear() {
+        sets.clear();
+        setIndex = 0;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final CharSequenceHashSet set;
         if (sets.size() <= setIndex) {

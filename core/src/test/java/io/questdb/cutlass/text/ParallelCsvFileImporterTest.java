@@ -779,6 +779,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         null
                 );
                 importer.process();
+                Assert.fail();
             } catch (TextImportException e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("ignored empty input file [file='"));
             }
@@ -802,6 +803,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         null
                 );
                 importer.process();
+                Assert.fail();
             } catch (TextImportException e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("No rows in input file to import."));
             }
@@ -1211,7 +1213,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportWithZeroWorkersFails() throws Exception {
         executeWithPool(0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            SqlExecutionContextStub context = new SqlExecutionContextStub() {
+            SqlExecutionContextStub context = new SqlExecutionContextStub(engine) {
                 @Override
                 public int getWorkerCount() {
                     return 0;
@@ -1405,6 +1407,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try {
                 compiler.compile("select count(*) from " + tableName + ";", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("table does not exist"));
             }
@@ -2062,7 +2065,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenTargetTableNameIsInvalid() throws Exception {
-        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "[0] invalid table name [table=../t]");
+        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "invalid table name [table=../t]");
     }
 
     @Test
@@ -2133,6 +2136,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab43", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
                 importer.process();
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=boundary_check, msg=`Cancelled`]"));
             }
@@ -2215,7 +2219,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertEquals("[0] partition strategy for parallel import cannot be NONE", e.getMessage());
+                MatcherAssert.assertThat(e.getMessage(), containsString("partition strategy for parallel import cannot be NONE"));
             }
         });
     }

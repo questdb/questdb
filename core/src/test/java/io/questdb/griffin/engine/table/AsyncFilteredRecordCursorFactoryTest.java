@@ -40,6 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.core.StringContains;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
@@ -824,7 +825,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
-        public CairoEngine getCairoEngine() {
+        public @NotNull CairoEngine getCairoEngine() {
             return sqlExecutionContext.getCairoEngine();
         }
 
@@ -834,7 +835,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
-        public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
             return sqlExecutionContext.getCircuitBreaker();
         }
 

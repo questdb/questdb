@@ -92,4 +92,13 @@ public final class Misc {
             }
         }
     }
+
+    public static void clearObjList(ObjList<? extends Mutable> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            Mutable m = args.getQuick(i);
+            if (m != null) {
+                m.clear();
+            }
+        }
+    }
 }

@@ -18,8 +18,8 @@ public class PGFunctionsTest extends BasePGTest {
     public void testListTablesDoesntLeakMetaFds() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, true)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), true, true)
             ) {
                 try (CallableStatement st1 = connection.prepareCall("create table a (i int)")) {
                     st1.execute();

@@ -90,7 +90,8 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
 
             // Check that table structure hasn't changed between planning and executing the UPDATE
             if (writerMetadata.getId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
-                throw ReaderOutOfDateException.of(tableName);
+                throw ReaderOutOfDateException.of(tableName, tableId, writerMetadata.getId(),
+                        tableVersion, tableWriter.getStructureVersion());
             }
 
             // Select the rows to be updated
@@ -134,7 +135,7 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                     if (rowId < lastRowId) {
                         // We're assuming, but not enforcing the fact that
                         // factory produces rows in incrementing order.
-                        throw CairoException.instance(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
+                        throw CairoException.critical(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
                     }
                     lastRowId = rowId;
 

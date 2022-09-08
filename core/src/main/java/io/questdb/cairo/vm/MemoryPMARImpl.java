@@ -97,7 +97,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
         releaseCurrentPage();
         if (!ff.truncate(Math.abs(fd), getExtendSegmentSize())) {
-            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getExtendSegmentSize()).put(" bytes");
+            throw CairoException.critical(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getExtendSegmentSize()).put(" bytes");
         }
         updateLimits(0, pageAddress = mapPage(0));
         LOG.debug().$("truncated [fd=").$(fd).$(']').$();

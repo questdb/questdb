@@ -40,7 +40,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class ReplaceStrFunctionFactory implements FunctionFactory {
 
-    final static String SIGNATURE = "replace(SSS)";
+    private static final String SIGNATURE = "replace(SSS)";
 
     @Override
     public String getSignature() {
@@ -72,9 +72,8 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        int maxSize = configuration.getReplaceFunctionMaxBufferLength();
-
-        return new Func(value, term, withWhat, maxSize);
+        final int maxLength = configuration.getReplaceFunctionMaxBufferLength();
+        return new Func(value, term, withWhat, maxLength);
     }
 
     private static class Func extends StrFunction {
@@ -121,7 +120,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        //if result is null then return null; otherwise return sink   
+        //if result is null then return null; otherwise return sink
         private CharSink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, CharSink sink) throws CairoException {
             int valueLen = value.length();
             if (valueLen < 1) {
@@ -177,7 +176,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
 
         private void checkLengthLimit(int length) {
             if (length > maxLength) {
-                throw CairoException.instance(-1)
+                throw CairoException.nonCritical()
                         .put("breached memory limit set for ").put(SIGNATURE)
                         .put(" [maxLength=").put(maxLength)
                         .put(", requiredLength=").put(length).put(']');

@@ -73,11 +73,11 @@ public interface SqlExecutionContext extends Closeable {
 
     void setRandom(Rnd rnd);
 
-    CairoEngine getCairoEngine();
+    @NotNull CairoEngine getCairoEngine();
 
     long getRequestFd();
 
-    SqlExecutionCircuitBreaker getCircuitBreaker();
+    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
 
     void storeTelemetry(short event, short origin);
 

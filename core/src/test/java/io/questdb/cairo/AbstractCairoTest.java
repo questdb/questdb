@@ -148,11 +148,6 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getDetachRoot() {
-                return PropServerConfiguration.rootSubdir(getRoot(), "dbRoot_detached");
-            }
-
-            @Override
             public CharSequence getBackupRoot() {
                 if (backupDir != null) {
                     return backupDir;
@@ -250,7 +245,7 @@ public class AbstractCairoTest {
 
             @Override
             public int getPartitionPurgeListCapacity() {
-                // Bump it to high number so that test don't fail with memory leak if LongList
+                // Bump it to high number so that test doesn't fail with memory leak if LongList
                 // re-allocates
                 return 512;
             }

@@ -333,6 +333,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     @Override
     public void close() {
+        // we're about to close the context, so no need to return pending factory to cache
+        typesAndSelectIsCached = false;
+        typesAndUpdateIsCached = false;
         clear();
         // fd == -1 is only when context is closed
         // when context is initialized fd == 0
@@ -435,7 +438,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         } catch (ImplicitCastException e) {
             reportError(-1, e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
-            reportError(-1, e.getFlyweightMessage(), e.getErrno());
+            if (e.isInterruption()) {
+                reportQueryCancelled(e.getFlyweightMessage());
+            } else {
+                reportError(-1, e.getFlyweightMessage(), e.getErrno());
+            }
         } catch (AuthenticationException e) {
             prepareError(-1, e.getMessage(), 0);
             sendAndReset();
@@ -887,7 +894,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             // oopsie, buffer is too small for single record
             LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
             responseAsciiSink.reset();
-            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
+            freeFactory();
+            throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
         }
     }
 
@@ -1338,18 +1346,33 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void executeUpdate() throws SqlException {
-        try {
-            if (transactionState != ERROR_TRANSACTION) {
-                // when transaction is in error state, skip execution
-                executeUpdate0();
+    private void executeUpdate(SqlCompiler compiler) throws SqlException {
+        boolean recompileStale = true;
+        for (int retries = 0; recompileStale; retries++) {
+            try {
+                if (transactionState != ERROR_TRANSACTION) {
+                    // when transaction is in error state, skip execution
+                    executeUpdate0();
+                    recompileStale = false;
+                }
+                prepareCommandComplete(true);
+            } catch (ReaderOutOfDateException e) {
+                if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    if (transactionState == IN_TRANSACTION) {
+                        transactionState = ERROR_TRANSACTION;
+                    }
+                    throw e;
+                }
+                LOG.info().$(e.getFlyweightMessage()).$();
+                typesAndUpdate = Misc.free(typesAndUpdate);
+                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+                processCompiledQuery(cc);
+            } catch (Throwable e) {
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
+                throw e;
             }
-            prepareCommandComplete(true);
-        } catch (Throwable e) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
-            throw e;
         }
     }
 
@@ -1617,7 +1640,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 LOG.error().$("not enough space in buffer for row description [buffer=").$(sendBufferSize).I$();
                 responseAsciiSink.reset();
-                throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row description");
+                freeFactory();
+                throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row description");
             }
         } else {
             prepareNoDataMessage();
@@ -1632,7 +1656,31 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareDescribePortalResponse();
     }
 
+    private void prepareQueryCanceled(CharSequence message) {
+        prepareErrorResponse(-1, message);
+        LOG.info()
+                .$("query cancelled [msg=`").$(message).$('`')
+                .I$();
+    }
+
     private void prepareError(int position, CharSequence message, long errno) {
+        prepareErrorResponse(position, message);
+        if (errno == CairoException.NON_CRITICAL) {
+            LOG.error()
+                    .$("error [pos=").$(position)
+                    .$(", msg=`").$(message).$('`')
+                    .$(", errno=`").$(errno)
+                    .I$();
+        } else {
+            LOG.critical()
+                    .$("error [pos=").$(position)
+                    .$(", msg=`").$(message).$('`')
+                    .$(", errno=`").$(errno)
+                    .I$();
+        }
+    }
+
+    private void prepareErrorResponse(int position, CharSequence message) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
         responseAsciiSink.put('C');
@@ -1646,11 +1694,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
         responseAsciiSink.put((char) 0);
         responseAsciiSink.putLen(addr);
-        LOG.error()
-                .$("error [pos=").$(position)
-                .$(", msg=`").$(message).$('`')
-                .$(", errno=`").$(errno)
-                .I$();
     }
 
     //clears whole state except for characterStore because top-level batch text is using it
@@ -2080,7 +2123,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             executeInsert();
         } else if (typesAndUpdate != null) {
             LOG.debug().$("executing update").$();
-            executeUpdate();
+            executeUpdate(compiler);
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
@@ -2265,7 +2308,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } catch (SqlException ex) {
                 prepareError(ex.getPosition(), ex.getFlyweightMessage(), 0);
             } catch (CairoException ex) {
-                prepareError(0, ex.getFlyweightMessage(), ex.getErrno());
+                if (ex.isInterruption()) {
+                    prepareQueryCanceled(ex.getFlyweightMessage());
+                } else {
+                    prepareError(-1, ex.getFlyweightMessage(), ex.getErrno());
+                }
             }
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -2358,6 +2405,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         clearRecvBuffer();
     }
 
+    private void reportQueryCancelled(CharSequence flyweightMessage)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareQueryCanceled(flyweightMessage);
+        sendReadyForNewQuery();
+        clearRecvBuffer();
+    }
+
     private void resumeCommandComplete() {
         prepareCommandComplete(true);
     }
@@ -2415,7 +2469,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
             responseAsciiSink.putLen(addr);
         } else {
-            final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
+            final SqlException e = SqlException.$(0, "table does not exist [table=").put(textLoader.getTableName()).put(']');
             prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
             prepareReadyForQuery();
         }
@@ -2488,7 +2542,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
-            do {
+            for (int retries = 0; recompileStale; retries++) {
                 currentFactory = typesAndSelect.getFactory();
                 try {
                     currentCursor = currentFactory.getCursor(sqlExecutionContext);
@@ -2496,6 +2550,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     // cache random if it was replaced
                     this.rnd = sqlExecutionContext.getRandom();
                 } catch (ReaderOutOfDateException e) {
+                    if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                        throw e;
+                    }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
                     compileQuery(compiler);
@@ -2505,7 +2562,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     freeFactory();
                     throw e;
                 }
-            } while (recompileStale);
+            }
         }
     }
 
@@ -2602,7 +2659,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } else if (typesAndInsert != null) {
                 executeInsert();
             } else if (typesAndUpdate != null) {
-                executeUpdate();
+                executeUpdate(compiler);
             } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
                     cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                 prepareCommandComplete(true);

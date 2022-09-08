@@ -198,7 +198,6 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {

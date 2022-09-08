@@ -210,7 +210,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
                         LOG.error().$("remove failed [tableName='").utf8(tableName).$("',path='").utf8(path).$(", error=").$(errno).$(']').$();
-                        throw CairoException.instance(errno).put("Table remove failed [tableName=").put(tableName).put("]");
+                        throw CairoException.critical(errno).put("Table remove failed [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
@@ -459,7 +459,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
         if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
-            throw CairoException.instance(0)
+            throw CairoException.nonCritical()
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
@@ -608,7 +608,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Path workDirPath = tmpPath.of(importRoot).slash$();
         int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
         if (errno != 0) {
-            throw CairoException.instance(errno).put("could not create temporary import directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
+            throw CairoException.critical(errno).put("could not create temporary import directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
         }
 
         createdWorkDir = true;
@@ -633,7 +633,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 path.equals(normalize(configuration.getRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
                 path.equals(normalize(configuration.getSnapshotRoot())) ||
-                path.equals(normalize(configuration.getDetachRoot())) ||
                 path.equals(normalize(configuration.getBackupRoot()));
     }
 
@@ -656,7 +655,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put("_").put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDetachRoot()).concat(tableName);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableName);
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
 
@@ -696,7 +695,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         });
                         srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
-                        throw CairoException.instance(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
+                        throw CairoException.critical(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
                     }
                 }
             }
@@ -1208,10 +1207,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             TypeManager typeManager
     ) throws TextException {
         if (types.size() == 0) {
-            throw CairoException.instance(0).put("cannot determine text structure");
+            throw CairoException.nonCritical().put("cannot determine text structure");
         }
         if (partitionBy == PartitionBy.NONE) {
-            throw CairoException.instance(0).put("partition strategy for parallel import cannot be NONE");
+            throw CairoException.nonCritical().put("partition strategy for parallel import cannot be NONE");
         }
 
         if (partitionBy < 0) {

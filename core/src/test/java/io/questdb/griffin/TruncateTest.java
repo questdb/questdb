@@ -315,7 +315,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(20, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'z' does not");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=z]");
             }
 
             assertQuery(
@@ -499,7 +499,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
                 } catch (ReaderOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }
         });
@@ -555,7 +555,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
                 } catch (ReaderOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }
         });

@@ -74,14 +74,14 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             offsetFileName(path.trimTo(plen), name, columnNameTxn);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
-                throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
+                throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
             long len = ff.length(path);
             if (len < HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
-                throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
+                throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
 
             // open "offset" memory and make sure we start appending from where

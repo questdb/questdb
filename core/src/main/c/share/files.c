@@ -367,7 +367,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
     jlong fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 
-    if (fd < -1) {
+    if (fd < 0) {
         // error opening / creating file
         return fd;
     }

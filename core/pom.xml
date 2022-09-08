@@ -26,7 +26,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB core</name>
-    <description>QuestDB is high performance SQL time series database</description>
+    <description>QuestDB a is high performance SQL time series database</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -38,7 +38,7 @@
         <web.console.version>0.0.3</web.console.version>
     </properties>
 
-    <version>6.5.1-SNAPSHOT</version>
+    <version>6.5.3-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -604,6 +604,12 @@
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.hamcrest</groupId>
+            <artifactId>hamcrest-library</artifactId>
+            <version>1.3</version> <!-- should be kept in sync with junit's pom -->
             <scope>test</scope>
         </dependency>
         <dependency>

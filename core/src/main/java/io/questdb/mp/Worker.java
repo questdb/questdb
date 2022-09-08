@@ -45,8 +45,9 @@ public class Worker extends Thread {
     private final long sleepMs;
     private final long yieldThreshold;
     private final long sleepThreshold;
-    private volatile int running = 0;
     private final Metrics metrics;
+    private final String criticalErrorLine;
+    private volatile int running = 0;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -74,6 +75,7 @@ public class Worker extends Thread {
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
         this.metrics = metrics;
+        this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
     }
 
     public int getWorkerId() {
@@ -145,6 +147,7 @@ public class Worker extends Thread {
             }
         } catch (Throwable e) {
             ex = e;
+            stdErrCritical(e);
         } finally {
             // cleaner will typically attempt to release
             // thread-local instances
@@ -156,12 +159,17 @@ public class Worker extends Thread {
     }
 
     private void onError(int i, Throwable e) throws Throwable {
-        metrics.healthCheck().incrementUnhandledErrors();
+        try {
+            metrics.healthCheck().incrementUnhandledErrors();
+        } catch (Throwable t) {
+            stdErrCritical(e);
+        }
+
         // Log error even then halt if halt error setting is on.
         if (log != null) {
             log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
         } else {
-            e.printStackTrace();
+            stdErrCritical(e);
         }
         if (haltOnError) {
             throw e;
@@ -182,6 +190,11 @@ public class Worker extends Thread {
                 }
             }
         }
+    }
+
+    private void stdErrCritical(Throwable e) {
+        System.err.println(criticalErrorLine);
+        e.printStackTrace();
     }
 
 }

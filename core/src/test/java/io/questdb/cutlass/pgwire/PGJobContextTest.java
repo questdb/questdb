@@ -1156,7 +1156,7 @@ public class PGJobContextTest extends BasePGTest {
         assertHexScript(
                 getFragmentedSendFacade(),
                 script,
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -1170,7 +1170,7 @@ public class PGJobContextTest extends BasePGTest {
                         "<520000000800000003\n" +
                         ">700000000464756e6e6f00\n" +
                         "<!!",
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -1543,7 +1543,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testBlobOverLimit() throws Exception {
-        PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+        PGWireConfiguration configuration = new Port0PGWireConfiguration() {
             @Override
             public int getMaxBlobSizeOnQuery() {
                 return 150;
@@ -1552,8 +1552,8 @@ public class PGJobContextTest extends BasePGTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(configuration);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(configuration);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 Statement statement = connection.createStatement();
                 statement.executeQuery(
@@ -1593,7 +1593,7 @@ public class PGJobContextTest extends BasePGTest {
                         "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
                         ">50000000220053ac542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
                         "<!!"
-                , new DefaultPGWireConfiguration()
+                , new Port0PGWireConfiguration()
         );
     }
 
@@ -1601,8 +1601,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testCairoException() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
 
                 connection.prepareStatement("create table xyz(a int)").execute();
@@ -1806,8 +1806,8 @@ public class PGJobContextTest extends BasePGTest {
     @Ignore
     public void testCopyIn() throws SQLException {
         try (
-                final PGWireServer ignored = createPGServer(2);
-                final Connection connection = getConnection(false, true)
+                final PGWireServer server = createPGServer(2);
+                final Connection connection = getConnection(server.getPort(), false, true)
         ) {
             PreparedStatement stmt = connection.prepareStatement("create table tab (a int, b int)");
             stmt.execute();
@@ -1890,6 +1890,7 @@ public class PGJobContextTest extends BasePGTest {
                         "                rnd_boolean() B\n" +
                         "            from long_sequence(1)\n" +
                         "        )").execute();
+                Assert.fail();
             } catch (PSQLException e) {
                 assertContains(e.getMessage(), "Duplicate column [name=B]");
             }
@@ -1906,6 +1907,7 @@ public class PGJobContextTest extends BasePGTest {
                         "                rnd_boolean() 侘寂\n" +
                         "            from long_sequence(1)\n" +
                         "        )").execute();
+                Assert.fail();
             } catch (PSQLException e) {
                 assertContains(e.getMessage(), "Duplicate column [name=侘寂]");
             }
@@ -2011,14 +2013,14 @@ public class PGJobContextTest extends BasePGTest {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
     @Test
     public void testDropTable() throws Exception {
         String[][] sqlExpectedErrMsg = {
-                {"drop table doesnt", "ERROR: table 'doesnt' does not exist"},
+                {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
                 {"drop table", "ERROR: expected [if exists] table-name"},
                 {"drop doesnt", "ERROR: 'table' expected"},
                 {"drop", "ERROR: 'table' expected"},
@@ -2062,8 +2064,8 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, true)) {
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     connection.setAutoCommit(false);
 
                     PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
@@ -2139,8 +2141,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testGetRow() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 connection.setAutoCommit(false);
                 Statement stmt = connection.createStatement();
@@ -2379,8 +2381,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 connection.prepareStatement("create table x as " +
                         "(" +
@@ -2447,8 +2449,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testIndexedSymbolBindVariableNotMultipleValuesMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 connection.prepareStatement("create table x as " +
                         "(" +
@@ -2508,8 +2510,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 int totalRows = 1;
                 PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
@@ -2568,8 +2570,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsertBooleans() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer ignored = createPGServer(4);
-                    Connection conn = getConnection(true, true)
+                    final PGWireServer server = createPGServer(4);
+                    final Connection conn = getConnection(server.getPort(), true, true)
             ) {
                 conn.prepareStatement(
                         "create table booleans (value boolean, ts timestamp) timestamp(ts)"
@@ -2648,7 +2650,7 @@ public class PGJobContextTest extends BasePGTest {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -2656,8 +2658,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsertDoubleTableWithTypeSuffix() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(true, false)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), true, false)
             ) {
                 final PreparedStatement statement = connection.prepareStatement("create table x (val double)");
                 statement.execute();
@@ -2703,8 +2705,8 @@ public class PGJobContextTest extends BasePGTest {
                     "10000\n";
 
             try (
-                    final PGWireServer ignored = createPGServer(3);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(3);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
 
                 connection.setAutoCommit(false);
@@ -2782,8 +2784,8 @@ public class PGJobContextTest extends BasePGTest {
     public void testInsertFloatTableWithTypeSuffix() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(true, false)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), true, false)
             ) {
                 final PreparedStatement statement = connection.prepareStatement("create table x (val float)");
                 statement.execute();
@@ -2927,7 +2929,7 @@ nodejs code:
 
     @Test
     public void testInsertTableDoesNotExistSimple() throws Exception {
-        testInsertTableDoesNotExist(true, "table 'x' does not exist");
+        testInsertTableDoesNotExist(true, "table does not exist [table=x]");
     }
 
     @Test
@@ -2937,8 +2939,8 @@ nodejs code:
                     "10\n";
 
             try (
-                    final PGWireServer ignored = createPGServer(3);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(3);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
 
                 connection.setAutoCommit(false);
@@ -2983,8 +2985,8 @@ nodejs code:
     public void testInsertTimestampWithTypeSuffix() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(true, false)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), true, false)
             ) {
                 final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp) timestamp(ts)");
                 statement.execute();
@@ -3078,8 +3080,8 @@ nodejs code:
     public void testInvalidateWriterBetweenInserts() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table test_batch(id long,val int)");
@@ -3150,11 +3152,99 @@ nodejs code:
     }
 
     @Test
+    public void testUpdateAfterDropAndRecreate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("drop table update_after_drop");
+                    stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    stmt.setLong(1, 42);
+                    stmt.executeUpdate();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("alter table update_after_drop drop column val");
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    stmt.setLong(1, 42);
+                    stmt.executeUpdate();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("alter table update_after_drop drop column id");
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                    stmt.setLong(1, 42);
+                    stmt.executeUpdate();
+                    fail("id column was dropped, the UPDATE should have failed");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(4);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(4);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table test_large_batch(id long, val int, ts timestamp) timestamp(ts)");
@@ -3208,8 +3298,8 @@ nodejs code:
     public void testLargeBatchInsertMethod() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(4);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(4);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table test_large_batch(id long,val int)");
@@ -3302,7 +3392,7 @@ nodejs code:
                     "1,2,3\n" +
                     "1,2,3\n";
 
-            final PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+            final PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public int getSendBufferSize() {
                     return 512;
@@ -3310,8 +3400,8 @@ nodejs code:
             };
 
             try (
-                    final PGWireServer ignored = createPGServer(configuration);
-                    final Connection connection = getConnection(false, false)
+                    final PGWireServer server = createPGServer(configuration);
+                    final Connection connection = getConnection(server.getPort(), false, false)
             ) {
                 PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(50)");
                 Statement statement1 = connection.createStatement();
@@ -3400,7 +3490,7 @@ nodejs code:
                 ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<31000000043200000004540000001a00013100000000000001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
                 ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration() {
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration() {
             @Override
             public String getDefaultPassword() {
                 return "oh";
@@ -3422,8 +3512,8 @@ nodejs code:
     public void testLargeSelect() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(4);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(4);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("CREATE TABLE IF NOT EXISTS recorded_l1_data (\n" +
@@ -3584,12 +3674,13 @@ nodejs code:
     @Test
     public void testLoginBadPassword() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer ignored = createPGServer(1)) {
+            try (PGWireServer server = createPGServer(1)) {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "dunno");
                 try {
-                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+                    final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+                    DriverManager.getConnection(url, properties);
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
@@ -3601,12 +3692,13 @@ nodejs code:
     @Test
     public void testLoginBadUsername() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (PGWireServer ignored = createPGServer(1)) {
+            try (PGWireServer server = createPGServer(1)) {
                 Properties properties = new Properties();
                 properties.setProperty("user", "joe");
                 properties.setProperty("password", "quest");
                 try {
-                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+                    final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+                    DriverManager.getConnection(url, properties);
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
@@ -3628,7 +3720,7 @@ nodejs code:
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -3638,7 +3730,7 @@ nodejs code:
                 NetworkFacadeImpl.INSTANCE,
                 ">0000004c00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<!!",
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -3648,7 +3740,7 @@ nodejs code:
                 NetworkFacadeImpl.INSTANCE,
                 ">0000001e00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<!!",
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -3656,8 +3748,8 @@ nodejs code:
     public void testMicroTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 connection.prepareCall("create table x(t timestamp)").execute();
 
@@ -3702,8 +3794,8 @@ nodejs code:
     public void testMiscExtendedPrepared() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(Mode.ExtendedForPrepared, false, -1)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, -1)
             ) {
                 connection.setAutoCommit(false);
                 try (PreparedStatement pstmt = connection.prepareStatement("begin")) {
@@ -3726,8 +3818,8 @@ nodejs code:
     public void testMultiplePreparedStatements() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false)
             ) {
                 PreparedStatement ps1 = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
                 PreparedStatement ps2 = connection.prepareStatement("select 4,5,6 from long_sequence(1)");
@@ -3764,8 +3856,8 @@ nodejs code:
     public void testMultistatement() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 connection.setAutoCommit(false);
                 int totalRows = 100;
@@ -3822,8 +3914,8 @@ nodejs code:
     public void testNoCursorWithAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 connection.setAutoCommit(false);
                 int totalRows = 10;
@@ -3865,8 +3957,8 @@ nodejs code:
     @Test
     public void testNullTypeSerialization() throws Exception {
         assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, true)) {
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     sink.clear();
                     try (
                             PreparedStatement ps = connection.prepareStatement("create table test as (select x from long_sequence(10))")
@@ -3874,10 +3966,10 @@ nodejs code:
                         ps.execute();
                     }
                 }
-                testNullTypeSerialization0(true, true);
-                testNullTypeSerialization0(true, false);
-                testNullTypeSerialization0(false, false);
-                testNullTypeSerialization0(false, true);
+                testNullTypeSerialization0(server.getPort(), true, true);
+                testNullTypeSerialization0(server.getPort(), true, false);
+                testNullTypeSerialization0(server.getPort(), false, false);
+                testNullTypeSerialization0(server.getPort(), false, true);
             }
         });
     }
@@ -3912,7 +4004,7 @@ nodejs code:
                 ">420000001f0070646f5f73746d745f303030303030303100000000000001000044000000065000450000000900000000005300000004\n" +
                 "<3200000004540000008a00066900000000000001000000170004ffffffff000073796d0000000000000200000413ffffffffffff0000616d7400000000000003000002bd0008ffffffff000074696d657374616d70000000000000040000045a0008ffffffff0000630000000000000500000413ffffffffffff00006400000000000006000002bd0008ffffffff0000440000005700060000000131000000046d7366740000000632322e3436330000001a323031382d30312d30312030303a31323a30302e3030303030300000000343444500000011302e323939313939303435393631383435440000005500060000000132000000046d7366740000000636352e3038360000001a323031382d30312d30312030303a32343a30302e303030303030ffffffff00000012302e39383536323930383435383734323633440000005800060000000133000000046d7366740000000635302e3933380000001a323031382d30312d30312030303a33363a30302e3030303030300000000358595a00000012302e37363131303239353134393935373434440000006400060000000134000000046d7366740000001235352e3939323030303030303030303030340000001a323031382d30312d30312030303a34383a30302e3030303030300000000358595a00000012302e32333930353239303130383436353235440000005a0006000000013500000005676f6f676c0000000636372e3738360000001a323031382d30312d30312030313a30303a30302e3030303030300000000358595a00000013302e333835333939343738363532343439393444000000650006000000013600000005676f6f676c0000001233332e3630383030303030303030303030340000001a323031382d30312d30312030313a31323a30302e3030303030300000000343444500000012302e3736373536373330373037393631303444000000590006000000013700000005676f6f676c0000000636322e3137330000001a323031382d30312d30312030313a32343a30302e3030303030300000000343444500000012302e3633383136303735333131373835313344000000470006000000013800000005676f6f676c0000000635372e3933350000001a323031382d30312d30312030313a33363a30302e3030303030300000000358595affffffff440000004300060000000139000000046d7366740000000636372e3631390000001a323031382d30312d30312030313a34383a30302e303030303030ffffffffffffffff4400000057000600000002313000000005676f6f676c0000000634322e3238310000001a323031382d30312d30312030323a30303a30302e303030303030ffffffff00000012302e37363634323536373533353936313338430000000e53454c454354203130005a0000000549\n" +
                 ">51000000214445414c4c4f434154452070646f5f73746d745f303030303030303100\n" +
-                "<450000003e433030303030004d7461626c6520646f6573206e6f74206578697374205b6e616d653d4445414c4c4f434154455d00534552524f5200503100005a0000000549\n" +
+                "<450000003f433030303030004d7461626c6520646f6573206e6f74206578697374205b7461626c653d4445414c4c4f434154455d00534552524f5200503100\n" +
                 ">5800000004\n";
 
         assertMemoryLeak(() -> {
@@ -3929,8 +4021,8 @@ nodejs code:
                             ") timestamp (timestamp)",
                     sqlExecutionContext
             );
-            try (PGWireServer ignored = createPGServer(new DefaultPGWireConfiguration())) {
-                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptx00, "127.0.0.1", 8812);
+            try (PGWireServer server = createPGServer(new Port0PGWireConfiguration())) {
+                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptx00, "127.0.0.1", server.getPort());
             }
         });
     }
@@ -3956,8 +4048,8 @@ nodejs code:
     @Test
     public void testParseErrorDoesNotCorruptConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(2);
-                 final Connection connection = getConnection(false, false)) {
+            try (final PGWireServer server = createPGServer(2);
+                 final Connection connection = getConnection(server.getPort(), false, false)) {
 
                 try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
                         "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
@@ -3984,8 +4076,8 @@ nodejs code:
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
     public void testParseErrorDoesntCorruptConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(2);
-                 final Connection connection = getConnection(false, false)) {
+            try (final PGWireServer server = createPGServer(2);
+                 final Connection connection = getConnection(server.getPort(), false, false)) {
 
                 try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
                         "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
@@ -4100,8 +4192,8 @@ nodejs code:
     public void testPreparedStatement() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false)
             ) {
                 PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
                 Statement statement1 = connection.createStatement();
@@ -4183,8 +4275,8 @@ nodejs code:
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false);
                     final Statement statement = connection.createStatement();
                     final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
             ) {
@@ -4217,8 +4309,8 @@ nodejs code:
     public void testPreparedStatementInsertSelectNullNoDesignatedColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false);
                     final Statement statement = connection.createStatement()
             ) {
                 statement.execute("create table tab(ts timestamp, value double)");
@@ -4252,7 +4344,7 @@ nodejs code:
                         "<310000000432000000044300000008534554005a0000000549\n" +
                         ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352e343300000007302e353637383900000002993100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
                         "<!!",
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -4270,7 +4362,7 @@ nodejs code:
                         "<310000000432000000044300000008534554005a0000000549\n" +
                         ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001fc0000000331323300000004352e343300000007302e353637383900000002393100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
                         "<!!",
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -4288,7 +4380,7 @@ nodejs code:
                         "<310000000432000000044300000008534554005a0000000549\n" +
                         ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331b23300000004352e343300000007302e353637383900000002393100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
                         "<!!",
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -4306,14 +4398,14 @@ nodejs code:
                         "<310000000432000000044300000008534554005a0000000549\n" +
                         ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000333331b23300000004352e343300000007302e353637383900000002393100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
                         "<!!",
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
     @Test
     public void testPreparedStatementParams() throws Exception {
         assertMemoryLeak(() -> {
-            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
                     return TestUtils.getWorkerAffinity(getWorkerCount());
@@ -4325,7 +4417,7 @@ nodejs code:
                 }
             };
 
-            try (final PGWireServer ignored = PGWireServer.create(
+            try (final PGWireServer server = PGWireServer.create(
                     conf,
                     null,
                     LOG,
@@ -4340,7 +4432,8 @@ nodejs code:
                 properties.setProperty("sslmode", "disable");
                 properties.setProperty("binaryTransfer", "true");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+                final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+                final Connection connection = DriverManager.getConnection(url, properties);
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
@@ -4395,8 +4488,8 @@ nodejs code:
     public void testPreparedStatementSelectNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false);
                     final PreparedStatement statement = connection.prepareStatement("select ? from long_sequence(1)")
             ) {
                 StringSink sink = new StringSink();
@@ -4417,8 +4510,8 @@ nodejs code:
     public void testPreparedStatementTextParams() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false)
             ) {
 
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
@@ -4477,15 +4570,15 @@ nodejs code:
     @Test
     public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, false)) {
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
                     queryTimestampsInRange(connection);
                 }
 
-                try (final Connection connection = getConnection(false, false)) {
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     queryTimestampsInRange(connection);
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
@@ -4499,8 +4592,8 @@ nodejs code:
     @Test
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, false)) {
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
@@ -4508,7 +4601,7 @@ nodejs code:
                 }
 
                 boolean caught = false;
-                try (final Connection connection = getConnection(false, false)) {
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
                         sink.clear();
                         statement.setString(1, "abcd");
@@ -4520,7 +4613,7 @@ nodejs code:
                     }
                 }
 
-                try (final Connection connection = getConnection(false, false);
+                try (final Connection connection = getConnection(server.getPort(), false, false);
                      PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
                 }
@@ -4550,8 +4643,8 @@ nodejs code:
     @Test
     public void testPreparedStatementWithNowFunction() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, false)) {
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement(
                             "create table xts (ts timestamp) timestamp(ts)")) {
                         statement.execute();
@@ -4617,7 +4710,7 @@ nodejs code:
                 "<540000006100047473000000000000010000045a0008ffffffff000064617465000000000000020000045a0008ffffffff00006e616d650000000000000300000413ffffffffffff000076616c756500000000000004000000170004ffffffff0000440000005d00040000001a323032312d30312d32362031333a34333a34302e32323030383900000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000130440000005d00040000001a323032312d30312d32362031333a34333a34302e32333130323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000131440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000132440000005d00040000001a323032312d30312d32362031333a34333a34302e32333230323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000133440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000134440000005d00040000001a323032312d30312d32362031333a34333a34302e32333330323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000135440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000136440000005d00040000001a323032312d30312d32362031333a34333a34302e32333430323800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000137440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000138440000005d00040000001a323032312d30312d32362031333a34333a34302e32333530373800000017323032312d30312d32362030303a30303a30302e30303000000015707974686f6e20707265702073746174656d656e740000000139430000000e53454c454354203130005a0000000554\n";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -4664,7 +4757,7 @@ nodejs code:
                 ">5800000004\n";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -4673,8 +4766,8 @@ nodejs code:
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
             try (
-                    final PGWireServer ignored = createPGServer(1, Timestamps.SECOND_MILLIS);
-                    final Connection connection = getConnection(false, true);
+                    final PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
+                    final Connection connection = getConnection(server.getPort(), false, true);
                     final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")
             ) {
                 try {
@@ -4691,8 +4784,8 @@ nodejs code:
     public void testRegProcedure() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 final CallableStatement stmt = connection.prepareCall("SELECT t.oid, t.typname, t.typelem, t.typdelim, t.typinput, r.rngsubtype, t.typtype, t.typbasetype " +
                         "FROM pg_type as t " +
@@ -4888,8 +4981,8 @@ nodejs code:
     @Test
     public void testRollbackDataOnStaleTransaction() throws Exception {
         assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(2)) {
-                try (final Connection connection = getConnection(false, true)) {
+            try (final PGWireServer server = createPGServer(2)) {
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     connection.setAutoCommit(false);
                     connection.prepareStatement("create table xyz(a int)").execute();
                     connection.prepareStatement("insert into xyz values (100)").execute();
@@ -4917,7 +5010,7 @@ nodejs code:
                     w.commit();
                 }
 
-                try (final Connection connection = getConnection(false, true)) {
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     sink.clear();
                     try (
                             PreparedStatement ps = connection.prepareStatement("xyz");
@@ -4937,8 +5030,8 @@ nodejs code:
     @Test
     public void testRowLimitNotResumed() throws Exception {
         assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection connection = getConnection(server.getPort(), false
                         , true)) {
                     try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                             "select timestamp_sequence(0, 1000000000) timestamp," +
@@ -4950,9 +5043,9 @@ nodejs code:
                 }
             }
 
-            try (final PGWireServer ignored = createPGServer(1)) {
+            try (final PGWireServer server = createPGServer(1)) {
                 for (int i = 0; i < 3; i++) {
-                    try (final Connection connection = getConnection(false, true)) {
+                    try (final Connection connection = getConnection(server.getPort(), false, true)) {
                         try (PreparedStatement select1 = connection.prepareStatement("select version()")) {
                             ResultSet rs0 = select1.executeQuery();
                             sink.clear();
@@ -5077,7 +5170,7 @@ nodejs code:
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new Port0PGWireConfiguration()
         );
     }
 
@@ -5126,7 +5219,7 @@ nodejs code:
                 ">5800000004\n";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration());
+                new Port0PGWireConfiguration());
     }
 
     @Test
@@ -5135,8 +5228,8 @@ nodejs code:
 
             sink.clear();
 
-            try (final PGWireServer ignored = createPGServer(2);
-                 final Connection connection = getConnection(false, true)
+            try (final PGWireServer server = createPGServer(2);
+                 final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table test (id long,val int)");
@@ -5484,9 +5577,9 @@ create table tab as (
     @Test
     public void testSimpleModeNoCommit() throws Exception {
         assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(2)) {
+            try (final PGWireServer server = createPGServer(2)) {
                 for (int i = 0; i < 50; i++) {
-                    try (final Connection connection = getConnection(true, true)) {
+                    try (final Connection connection = getConnection(server.getPort(), true, true)) {
 
                         connection.setAutoCommit(false);
                         connection.prepareStatement("create table if not exists xyz(a int)").execute();
@@ -5779,7 +5872,7 @@ create table tab as (
     public void testSlowClient() throws Exception {
         assertMemoryLeak(() -> {
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
-            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -5792,8 +5885,8 @@ create table tab as (
             };
 
             try (
-                    PGWireServer ignored = createPGServer(configuration);
-                    Connection connection = getConnection(false, true);
+                    PGWireServer server = createPGServer(configuration);
+                    Connection connection = getConnection(server.getPort(), false, true);
                     Statement statement = connection.createStatement()
             ) {
                 String sql = "SELECT * FROM long_sequence(100) x";
@@ -5812,7 +5905,7 @@ create table tab as (
     public void testSlowClient2() throws Exception {
         assertMemoryLeak(() -> {
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
-            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -5820,8 +5913,8 @@ create table tab as (
             };
 
             try (
-                    PGWireServer ignored = createPGServer(configuration);
-                    Connection connection = getConnection(false, true);
+                    PGWireServer server = createPGServer(configuration);
+                    Connection connection = getConnection(server.getPort(), false, true);
                     Statement statement = connection.createStatement()
             ) {
                 statement.executeUpdate("CREATE TABLE sensors (ID LONG, make STRING, city STRING)");
@@ -5863,7 +5956,7 @@ create table tab as (
     public void testSmallSendBufferForRowData() throws Exception {
         assertMemoryLeak(() -> {
 
-            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public int getSendBufferSize() {
                     return 300;
@@ -5871,8 +5964,8 @@ create table tab as (
             };
 
             try (
-                    PGWireServer ignored = createPGServer(configuration);
-                    Connection connection = getConnection(false, true);
+                    PGWireServer server = createPGServer(configuration);
+                    Connection connection = getConnection(server.getPort(), false, true);
                     Statement statement = connection.createStatement()
             ) {
                 statement.executeUpdate("create table x as (" +
@@ -5913,7 +6006,7 @@ create table tab as (
     public void testSmallSendBufferForRowDescription() throws Exception {
         assertMemoryLeak(() -> {
 
-            PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public int getSendBufferSize() {
                     return 256;
@@ -5921,8 +6014,8 @@ create table tab as (
             };
 
             try (
-                    PGWireServer ignored = createPGServer(configuration);
-                    Connection connection = getConnection(false, true);
+                    PGWireServer server = createPGServer(configuration);
+                    Connection connection = getConnection(server.getPort(), false, true);
                     Statement statement = connection.createStatement()
             ) {
                 statement.executeUpdate("create table x as (" +
@@ -6046,8 +6139,8 @@ create table tab as (
     public void testSyntaxErrorSimple() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(4);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(4);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 // column does not exits
                 connection.prepareStatement("select x2 from long_sequence(5)").execute();
@@ -6066,8 +6159,8 @@ create table tab as (
     public void testThatTableOidIsSetToZero() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false);
                     final PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
                     final ResultSet rs = statement.executeQuery()
             ) {
@@ -6079,8 +6172,8 @@ create table tab as (
     @Test
     public void testTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, true)) {
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
 
                     connection.setAutoCommit(false);
                     connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
@@ -6177,8 +6270,8 @@ create table tab as (
             assertEquals(1632761103202L, expectedTs.getTime());
             assertEquals(202000000, expectedTs.getNanos());
 
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection conn = getConnection(false, true)) {
+            try (final PGWireServer server = createPGServer(1)) {
+                try (final Connection conn = getConnection(server.getPort(), false, true)) {
                     conn.setAutoCommit(false);
                     conn.prepareStatement("CREATE TABLE ts (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
                     conn.commit();
@@ -6286,8 +6379,8 @@ create table tab as (
     public void testUnsupportedParameterType() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, false);
                     final PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)")
             ) {
                 // TIME is passed over protocol as UNSPECIFIED type
@@ -6313,12 +6406,60 @@ create table tab as (
         });
     }
 
+    private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(queryScheduledCount);
+                    final Connection connection = getConnection(server.getPort(), true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
+                    SOCountDownLatch finished = new SOCountDownLatch(1);
+                    new Thread(() -> {
+                        try {
+                            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                            int numOfRowsUpdated1 = update1.executeUpdate();
+                            assertEquals(2, numOfRowsUpdated1);
+                        } catch (Throwable e) {
+                            Assert.fail(e.getMessage());
+                            e.printStackTrace();
+                        } finally {
+                            finished.countDown();
+                        }
+                    }).start();
+
+                    MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                    long startTimeMicro = microsecondClock.getTicks();
+                    // Wait 1 min max for completion
+                    while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
+                        onTick.run(writer);
+                        writer.tick(true);
+                        finished.await(500_000);
+                    }
+                }
+
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+    
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(true, false)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), true, false)
             ) {
                 final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
                 statement.execute();
@@ -6394,8 +6535,8 @@ create table tab as (
     public void testUpdateBatch() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, false)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), true, false)
             ) {
                 final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
                 statement.execute();
@@ -6437,8 +6578,8 @@ create table tab as (
     public void testUpdateNoAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, true)
             ) {
                 connection.setAutoCommit(false);
 
@@ -6519,7 +6660,7 @@ create table tab as (
 
     private void assertHexScript(String script) throws Exception {
         final Rnd rnd = new Rnd();
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration() {
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration() {
             @Override
             public Rnd getRandom() {
                 return rnd;
@@ -6533,52 +6674,10 @@ create table tab as (
             PGWireConfiguration configuration
     ) throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer ignored = createPGServer(configuration)) {
-                NetUtils.playScript(clientNf, script, "127.0.0.1", 8812);
+            try (PGWireServer server = createPGServer(configuration)) {
+                NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
             }
         });
-    }
-
-    private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
-        if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
-            assertWithPgServer(Mode.Simple, true, runnable, -2);
-            assertWithPgServer(Mode.Simple, true, runnable, -1);
-        }
-
-        if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
-            assertWithPgServer(Mode.Simple, false, runnable, -2);
-            assertWithPgServer(Mode.Simple, false, runnable, -1);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
-            assertWithPgServer(Mode.Extended, true, runnable, -2);
-            assertWithPgServer(Mode.Extended, true, runnable, -1);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
-            assertWithPgServer(Mode.Extended, false, runnable, -2);
-            assertWithPgServer(Mode.Extended, false, runnable, -1);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2);
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2);
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2);
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2);
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1);
-        }
     }
 
     private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold) throws Exception {
@@ -6638,7 +6737,7 @@ create table tab as (
     private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
         int workerCount = 2;
 
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration() {
             @Override
             public Rnd getRandom() {
                 return new Rnd();
@@ -6667,6 +6766,68 @@ create table tab as (
         );
     }
 
+    private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
+        if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
+            assertWithPgServer(Mode.Simple, true, runnable, -2);
+            assertWithPgServer(Mode.Simple, true, runnable, -1);
+        }
+
+        if((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
+            assertWithPgServer(Mode.Simple, false, runnable, -2);
+            assertWithPgServer(Mode.Simple, false, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
+            assertWithPgServer(Mode.Extended, true, runnable, -2);
+            assertWithPgServer(Mode.Extended, true, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
+            assertWithPgServer(Mode.Extended, false, runnable, -2);
+            assertWithPgServer(Mode.Extended, false, runnable, -1);
+        }
+
+        if((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2);
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1);
+        }
+
+        if((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2);
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2);
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1);
+        }
+
+        if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2);
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1);
+        }
+    }
+
+    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold) throws Exception {
+        LOG.info().$("asserting PG Wire server [mode=").$(mode)
+                .$(", binary=").$(binary)
+                .$(", prepareThreshold=").$(prepareThreshold)
+                .I$();
+        setUp();
+        try {
+            assertMemoryLeak(() -> {
+                try (
+                        final PGWireServer server = createPGServer(2);
+                        final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)
+                ) {
+                    runnable.run(connection, binary);
+                }
+            });
+        } finally {
+            tearDown();
+        }
+    }
+
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table xyz (" +
@@ -6682,8 +6843,8 @@ create table tab as (
             );
 
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, binary);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, binary);
                     final PreparedStatement insert = connection.prepareStatement(
                             "insert into xyz values (" +
                                     "cast(? as geohash(1b))," +
@@ -6760,7 +6921,7 @@ create table tab as (
         AtomicLong errors = new AtomicLong();
         int workerCount = 2;
 
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration() {
             @Override
             public Rnd getRandom() {
                 return new Rnd();
@@ -6780,7 +6941,7 @@ create table tab as (
         WorkerPool pool = new WorkerPool(conf, metrics);
         pool.assign(engine.getEngineMaintenanceJob());
         try (
-                final PGWireServer ignored = PGWireServer.create(
+                final PGWireServer server = PGWireServer.create(
                         conf,
                         pool,
                         LOG,
@@ -6799,8 +6960,8 @@ create table tab as (
                 compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
 
                 try (
-                        final Connection connection1 = getConnection(false, true);
-                        final Connection connection2 = getConnection(false, true);
+                        final Connection connection1 = getConnection(server.getPort(), false, true);
+                        final Connection connection2 = getConnection(server.getPort(), false, true);
                         final PreparedStatement insert = connection1.prepareStatement(
                                 "insert into " + tableName + " values (?)"
                         )
@@ -6859,8 +7020,8 @@ create table tab as (
     private void testAllTypesSelect(boolean simple) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(simple, true)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), simple, true)
             ) {
                 CallableStatement stmt = connection.prepareCall(
                         "create table x as (select" +
@@ -6962,8 +7123,8 @@ create table tab as (
                     sqlExecutionContext
             );
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, binaryProtocol);
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, binaryProtocol);
                     final PreparedStatement insert = connection.prepareStatement(
                             "insert into xyz values (?)"
                     )
@@ -7012,8 +7173,8 @@ create table tab as (
     private void testBindVariableIsNotNull(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, binary)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, binary)
             ) {
                 connection.setAutoCommit(false);
                 connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
@@ -7175,8 +7336,8 @@ create table tab as (
     private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, binary)
+                    final PGWireServer server = createPGServer(1);
+                    final Connection connection = getConnection(server.getPort(), false, binary)
             ) {
                 connection.setAutoCommit(false);
                 connection.prepareStatement("create table x (device_id symbol" + (indexed ? " index," : ",") + " column_name symbol, value double, timestamp timestamp) timestamp(timestamp) partition by day").execute();
@@ -7262,8 +7423,8 @@ create table tab as (
     private void testGeoHashSelect(boolean simple, boolean binary) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignore = createPGServer(2);
-                    final Connection connection = getConnection(simple, binary)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), simple, binary)
             ) {
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery(
@@ -7391,8 +7552,8 @@ create table tab as (
                     "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.087,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821\n";
 
             try (
-                    final PGWireServer ignored = createPGServer(4);
-                    final Connection connection = getConnection(simpleQueryMode, binary)
+                    final PGWireServer server = createPGServer(4);
+                    final Connection connection = getConnection(server.getPort(), simpleQueryMode, binary)
             ) {
                 //
                 // test methods of inserting QuestDB's DATA and TIMESTAMP values
@@ -7475,8 +7636,8 @@ create table tab as (
                     sqlExecutionContext
             );
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, binary);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, binary);
                     final PreparedStatement insert = connection.prepareStatement(
                             "insert into xyz values (?,?,?,?,?,?,?,?,?,?,?)"
                     )
@@ -7647,8 +7808,8 @@ create table tab as (
                     sqlExecutionContext
             );
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, binaryProtocol);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, binaryProtocol);
                     final PreparedStatement insert = connection.prepareStatement(
                             "insert into xyz values (?)"
                     )
@@ -7685,8 +7846,8 @@ create table tab as (
         // 4. attempt to insert a record (should fail)
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(simple, true)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), simple, true)
             ) {
                 PreparedStatement statement = connection.prepareStatement("create table x (a int)");
                 statement.execute();
@@ -7713,8 +7874,8 @@ create table tab as (
         });
     }
 
-    private void testNullTypeSerialization0(boolean simple, boolean binary) throws Exception {
-        try (final Connection connection = getConnection(simple, binary)) {
+    private void testNullTypeSerialization0(int port, boolean simple, boolean binary) throws Exception {
+        try (final Connection connection = getConnection(port, simple, binary)) {
             sink.clear();
             try (
                     PreparedStatement ps = connection.prepareStatement("SELECT * FROM (\n" +
@@ -7856,8 +8017,8 @@ create table tab as (
     private void testSemicolon(boolean simpleQueryMode) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(simpleQueryMode, true);
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), simpleQueryMode, true);
                     final PreparedStatement statement = connection.prepareStatement(";;")
             ) {
                 statement.execute();
@@ -7865,54 +8026,78 @@ create table tab as (
         });
     }
 
-    private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(queryScheduledCount);
-                    final Connection connection = getConnection(true, false)
-            ) {
-                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
-                statement.execute();
+    @Test
+    public void testSymbolBindVariableInFilter() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
+            // create and initialize table outside of PG wire
+            // to ensure we do not collaterally initialize execution context on function parser
+            compiler.compile("CREATE TABLE x (\n" +
+                    "    ticker symbol index,\n" +
+                    "    sample_time timestamp,\n" +
+                    "    value int\n" +
+                    ") timestamp (sample_time)", sqlExecutionContext);
+            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
 
-                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                insert1.execute();
-
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
-                    SOCountDownLatch finished = new SOCountDownLatch(1);
-                    new Thread(() -> {
-                        try {
-                            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
-                            int numOfRowsUpdated1 = update1.executeUpdate();
-                            assertEquals(2, numOfRowsUpdated1);
-                        } catch (Throwable e) {
-                            Assert.fail(e.getMessage());
-                            e.printStackTrace();
-                        } finally {
-                            finished.countDown();
-                        }
-                    }).start();
-
-                    MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
-                    long startTimeMicro = microsecondClock.getTicks();
-                    // Wait 1 min max for completion
-                    while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
-                        onTick.run(writer);
-                        writer.tick(true);
-                        finished.await(500_000);
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
+                    ps.setString(1, "ABC");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
+                                        "ABC,1970-01-01 00:00:00.0,0\n",
+                                sink,
+                                rs
+                        );
                     }
                 }
+        });
+    }
 
-                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
-                }
+    @Test
+    public void testSyntaxErrorReporting() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try {
+                connection.prepareCall("drop table xyz;").execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "table does not exist [table=xyz]");
+                TestUtils.assertEquals("00000", e.getSQLState());
             }
         });
     }
 
+    @Test
+    public void testTruncateAndUpdateOnNonPartitionedTableWithoutDesignatedTs() throws Exception {
+        testTruncateAndUpdateOnTable("");
+    }
+
+    @Test
+    public void testTruncateAndUpdateOnNonPartitionedTableWithDesignatedTs() throws Exception {
+        testTruncateAndUpdateOnTable("timestamp(ts)");
+    }
+
+    @Test
+    public void testTruncateAndUpdateOnPartitionedTable() throws Exception {
+        testTruncateAndUpdateOnTable("timestamp(ts) partition by DAY");
+    }
+
+    public void testTruncateAndUpdateOnTable(String config) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
+            }
+
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("insert into tb values (1, true, now() );");
+                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("truncate table tb;");
+                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
+                stat.execute("insert into tb values (1, true, now() );");
+                stat.execute("update tb set i = 1, b = true;");
+
+                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
+                    StringSink sink = new StringSink();
+                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);

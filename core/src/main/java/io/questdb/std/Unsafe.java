@@ -245,6 +245,7 @@ public final class Unsafe {
         COUNTERS[memoryTag].add(size);
     }
 
+    //most significant bit 
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

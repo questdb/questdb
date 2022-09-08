@@ -78,8 +78,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     protected void _close() {
+        super._close();
         Misc.free(filter);
-        Misc.free(dataFrameCursorFactory);
     }
 
     @Override

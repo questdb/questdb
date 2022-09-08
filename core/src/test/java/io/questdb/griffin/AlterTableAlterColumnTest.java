@@ -175,7 +175,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testInvalidTableName() throws Exception {
-        assertFailure("alter table z alter column y add index", 12, "table 'z' does not exist");
+        assertFailure("alter table z alter column y add index", 12, "table does not exist [table=z]");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

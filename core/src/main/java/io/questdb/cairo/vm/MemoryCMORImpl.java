@@ -54,7 +54,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     public void growToFileSize() {
         long length = getFilesFacade().length(getFd());
         if (length < 0) {
-            throw CairoException.instance(ff.errno()).put("could not get length fd: ").put(fd);
+            throw CairoException.critical(ff.errno()).put("could not get length fd: ").put(fd);
         }
 
         extend(length - mapFileOffset);
@@ -86,7 +86,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
             hi = ff.length(fd);
             if (hi < 0) {
                 close();
-                throw CairoException.instance(ff.errno()).put("could not get length: ").put(name);
+                throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
             }
         }
 

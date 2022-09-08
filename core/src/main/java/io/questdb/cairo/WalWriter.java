@@ -146,7 +146,7 @@ public class WalWriter implements Closeable {
         assert isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
 
         if (metadata.getColumnIndexQuiet(name) != -1) {
-            throw CairoException.instance(0).put("Duplicate column name: ").put(name);
+            throw CairoException.nonCritical().put("Duplicate column name: ").put(name);
         }
 
         try {
@@ -379,7 +379,7 @@ public class WalWriter implements Closeable {
         TableUtils.offsetFileName(tempPath, columnName, columnNameTxm);
         TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.instance(ff.errno()).put("failed to link offset file [from=")
+            throw CairoException.critical(ff.errno()).put("failed to link offset file [from=")
                     .put(tempPath)
                     .put(", to=")
                     .put(path)
@@ -391,7 +391,7 @@ public class WalWriter implements Closeable {
         TableUtils.charFileName(tempPath, columnName, columnNameTxm);
         TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.instance(ff.errno()).put("failed to link char file [from=")
+            throw CairoException.critical(ff.errno()).put("failed to link char file [from=")
                     .put(tempPath)
                     .put(", to=")
                     .put(path)
@@ -403,7 +403,7 @@ public class WalWriter implements Closeable {
         BitmapIndexUtils.keyFileName(tempPath, columnName, columnNameTxm);
         BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.instance(ff.errno()).put("failed to link key file [from=")
+            throw CairoException.critical(ff.errno()).put("failed to link key file [from=")
                     .put(tempPath)
                     .put(", to=")
                     .put(path)
@@ -415,7 +415,7 @@ public class WalWriter implements Closeable {
         BitmapIndexUtils.valueFileName(tempPath, columnName, columnNameTxm);
         BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.instance(ff.errno()).put("failed to link value file [from=")
+            throw CairoException.critical(ff.errno()).put("failed to link value file [from=")
                     .put(tempPath)
                     .put(", to=")
                     .put(path)
@@ -499,7 +499,7 @@ public class WalWriter implements Closeable {
         }
 
         if (lockFd == -1L) {
-            throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
     }
 
@@ -609,7 +609,7 @@ public class WalWriter implements Closeable {
         path.slash().put(segmentId);
         final int segmentPathLen = path.length();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
+            throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
         path.trimTo(segmentPathLen);
         return segmentPathLen;

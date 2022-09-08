@@ -34,6 +34,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.hamcrest.MatcherAssert;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -42,6 +43,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.function.Consumer;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
@@ -1087,7 +1089,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     walWriter.addColumn("c", ColumnType.SHORT);
                     fail("Should not be able to add duplicate column");
                 } catch (CairoException e) {
-                    assertEquals("[0] Duplicate column name: c", e.getMessage());
+                    MatcherAssert.assertThat(e.getMessage(), containsString("Duplicate column name: c"));
                 }
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 100);

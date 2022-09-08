@@ -49,8 +49,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testAsyncPGCommandBlockDoesntProduceError() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, true)
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), true, true)
             ) {
                 try (Statement statement = connection.createStatement()) {
                     boolean result = statement.execute("SELECT pg_advisory_unlock_all();\nCLOSE ALL;\nUNLISTEN *;\nRESET ALL;");
@@ -224,7 +224,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testCachedPgStatementReturnsDataUsingProperFormatOnRecompilation() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, 1);
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -241,7 +241,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     pstmt.close();
                 }
 
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, true, -1);
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
                      PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable")) {
 
                     boolean hasResult = pstmt.execute();
@@ -258,7 +258,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, 1);
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -273,7 +273,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             }
 
             try (PGWireServer server = createPGServer(2)) {
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, true, 1);
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -625,7 +625,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "DROP TABLE testX;" +
                                 "SELECT l from testX;");
             } catch (PSQLException e) {
-                assertEquals("ERROR: table does not exist [name=testX]\n  Position: 108", e.getMessage());
+                assertEquals("ERROR: table does not exist [table=testX]\n  Position: 108", e.getMessage());
             }
         });
     }
@@ -906,7 +906,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testDifferentExtendedQueriesExecutedInExtendedModeDontSpillFormats() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, -1);
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, -1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -921,7 +921,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             }
 
             try (PGWireServer server = createPGServer(2)) {
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, true, -1);
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -955,7 +955,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testQueryExecutedInBatchModeDoesntUseCachedStatementBinaryFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(2)) {
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, 1);
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -1676,13 +1676,13 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
         PGTestSetup(boolean useSimpleMode) throws SQLException {
             server = createPGServer(2);
-            connection = getConnection(useSimpleMode, true);
+            connection = getConnection(server.getPort(), useSimpleMode, true);
             statement = connection.createStatement();
         }
 
         PGTestSetup(Mode mode, int prepareThreshold) throws SQLException {
             server = createPGServer(2);
-            connection = getConnection(mode, true, prepareThreshold);
+            connection = getConnection(mode, server.getPort(), true, prepareThreshold);
             statement = connection.createStatement();
         }
 

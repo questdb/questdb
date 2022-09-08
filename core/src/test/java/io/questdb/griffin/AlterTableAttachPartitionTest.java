@@ -767,13 +767,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("s", ColumnType.SYMBOL)
                         .col("l", ColumnType.LONG));
 
-                try {
-                    attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "Column file does not exist"
-                    );
-                }
+                attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
+
+                // s2 column files from the attached partitions should be ignored
+                // and coltops for s column should be created instead.
+                assertSql("select count() from " + dst.getName() + " where s is not null", "count\n0\n");
             }
         });
     }
@@ -843,6 +841,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
+                    Assert.fail();
                 } catch (SqlException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
                             "Symbol index value file does not exist"
@@ -888,6 +887,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
+                    Assert.fail();
                 } catch (SqlException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "Symbol index key file does not exist");
                 }
@@ -1128,16 +1128,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             AddColumn srcTransform,
             String dstTableName,
             AddColumn dstTransform,
-            String errorMessage
-    ) throws Exception {
-        assertSchemaMismatch(srcTableName, srcTransform, dstTableName, dstTransform, null, errorMessage);
-    }
-
-    private void assertSchemaMismatch(
-            String srcTableName,
-            AddColumn srcTransform,
-            String dstTableName,
-            AddColumn dstTransform,
             AddColumn afterCreateSrc,
             String errorMessage
     ) throws Exception {
@@ -1199,7 +1189,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         engine.clear();
         path.of(configuration.getRoot()).concat(src.getName());
         int pathLen = path.length();
-        other.of(configuration.getDetachRoot()).concat(dst.getName());
+        other.of(configuration.getRoot()).concat(dst.getName());
         int otherLen = other.length();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
@@ -1245,7 +1235,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 .concat(srcTableName)
                 .concat(srcPartitionName)
                 .slash$();
-        other.of(configuration.getDetachRoot())
+        other.of(configuration.getRoot())
                 .concat(dstTableName)
                 .concat(dstPartitionName)
                 .put(configuration.getAttachPartitionSuffix())

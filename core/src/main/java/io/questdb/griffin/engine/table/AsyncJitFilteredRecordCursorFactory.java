@@ -44,8 +44,6 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -55,8 +53,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final RecordCursorFactory base;
     private final AsyncFilteredRecordCursor cursor;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
-    private final FilterAtom filterAtom;
-    private final PageFrameSequence<FilterAtom> frameSequence;
+    private final AsyncJitFilterAtom filterAtom;
+    private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -83,7 +81,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
         MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
-        this.filterAtom = new FilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions);
+        this.filterAtom = new AsyncJitFilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -142,7 +140,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public PageFrameSequence<FilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
 
@@ -165,25 +163,37 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         return base.hasDescendingOrder();
     }
 
-    private static void filter(int workerId, PageAddressCacheRecord record, PageFrameReduceTask task) {
+    private static void filter(
+            int workerId,
+            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
         final DirectLongList rows = task.getRows();
         final DirectLongList columns = task.getColumns();
         final long frameRowCount = task.getFrameRowCount();
-        final FilterAtom atom = task.getFrameSequence(FilterAtom.class).getAtom();
+        final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();
         final PageAddressCache pageAddressCache = task.getPageAddressCache();
 
         rows.clear();
 
         if (pageAddressCache.hasColumnTops(task.getFrameIndex())) {
             // Use Java-based filter in case of a page frame with column tops.
-            final Function filter = atom.getFilter(workerId);
-            for (long r = 0; r < frameRowCount; r++) {
-                record.setRowIndex(r);
-                if (filter.getBool(record)) {
-                    rows.add(r);
+            final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+            final int filterId = atom.acquireFilter(workerId, owner, circuitBreaker);
+            final Function filter = atom.getFilter(filterId);
+            try {
+                for (long r = 0; r < frameRowCount; r++) {
+                    record.setRowIndex(r);
+                    if (filter.getBool(record)) {
+                        rows.add(r);
+                    }
                 }
+                return;
+            } finally {
+                atom.releaseFilter(filterId);
             }
-            return;
         }
 
         // Use JIT-compiled filter.
@@ -214,23 +224,20 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         rows.setPos(hi);
     }
 
-    private static class FilterAtom implements StatefulAtom, Closeable {
+    private static class AsyncJitFilterAtom extends AsyncFilterAtom {
 
-        private final Function filter;
-        private final ObjList<Function> perWorkerFilters;
         final CompiledFilter compiledFilter;
         final MemoryCARW bindVarMemory;
         final ObjList<Function> bindVarFunctions;
 
-        public FilterAtom(
+        public AsyncJitFilterAtom(
                 Function filter,
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
                 MemoryCARW bindVarMemory,
                 ObjList<Function> bindVarFunctions
         ) {
-            this.filter = filter;
-            this.perWorkerFilters = perWorkerFilters;
+            super(filter, perWorkerFilters);
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
@@ -238,43 +245,27 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            filter.init(symbolTableSource, executionContext);
-            if (perWorkerFilters != null) {
-                final boolean current = executionContext.getCloneSymbolTables();
-                executionContext.setCloneSymbolTables(true);
-                try {
-                    for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
-                        perWorkerFilters.getQuick(i).init(symbolTableSource, executionContext);
-                    }
-                } finally {
-                    executionContext.setCloneSymbolTables(current);
-                }
-            }
+            super.init(symbolTableSource, executionContext);
             Function.init(bindVarFunctions, symbolTableSource, executionContext);
             prepareBindVarMemory(symbolTableSource, executionContext);
         }
 
         @Override
         public void close() {
-            Misc.free(filter);
-            Misc.freeObjList(perWorkerFilters);
+            super.close();
             Misc.free(compiledFilter);
             Misc.free(bindVarMemory);
             Misc.freeObjList(bindVarFunctions);
         }
 
-        public Function getFilter(int workerId) {
-            if (workerId == -1 || perWorkerFilters == null) {
-                return filter;
-            }
-            return perWorkerFilters.getQuick(workerId);
-        }
-
         private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            bindVarMemory.truncate();
-            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
-                Function function = bindVarFunctions.getQuick(i);
-                writeBindVarFunction(function, symbolTableSource, executionContext);
+            //don't trigger memory allocation if there are no variables 
+            if (bindVarFunctions.size() > 0) {
+                bindVarMemory.truncate();
+                for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+                    Function function = bindVarFunctions.getQuick(i);
+                    writeBindVarFunction(function, symbolTableSource, executionContext);
+                }
             }
         }
 

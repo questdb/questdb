@@ -188,7 +188,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                     this.keyMem.of(ff, keyFd, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
                     initKeyMemory(this.keyMem, indexBlockCapacity);
                 } else {
-                    throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
                 }
             } else {
                 kFdUnassigned = false;
@@ -198,26 +198,26 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] [fd=").$(keyFd).$(']').$();
-                throw CairoException.instance(0).put("Index file too short (w): [fd=").put(keyFd).put(']');
+                throw CairoException.critical(0).put("Index file too short (w): [fd=").put(keyFd).put(']');
             }
 
             // verify header signature
             if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] [fd=").$(keyFd).$(']').$();
-                throw CairoException.instance(0).put("Unknown format: [fd=").put(keyFd).put(']');
+                throw CairoException.critical(0).put("Unknown format: [fd=").put(keyFd).put(']');
             }
 
             // verify key count
             this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
             if (keyMemSize < keyMemSize()) {
                 LOG.error().$("key count does not match file length [corrupt] [fd=").$(keyFd).$(", keyCount=").$(this.keyCount).$(']').$();
-                throw CairoException.instance(0).put("Key count does not match file length [fd=").put(keyFd).put(']');
+                throw CairoException.critical(0).put("Key count does not match file length [fd=").put(keyFd).put(']');
             }
 
             // check if sequence is intact
             if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                 LOG.error().$("sequence mismatch [corrupt] at [fd=").$(keyFd).$(']').$();
-                throw CairoException.instance(0).put("Sequence mismatch [fd=").put(keyFd).put(']');
+                throw CairoException.critical(0).put("Sequence mismatch [fd=").put(keyFd).put(']');
             }
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
@@ -228,7 +228,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                     this.valueMem.of(ff, valueFd, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
                     this.valueMem.jumpTo(0);
                 } else {
-                    throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
                 vFdUnassigned = false;
@@ -261,33 +261,33 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
-                throw CairoException.instance(0).put("Index does not exist: ").put(path);
+                throw CairoException.critical(0).put("Index does not exist: ").put(path);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Index file too short (w): ").put(path);
+                throw CairoException.critical(0).put("Index file too short (w): ").put(path);
             }
 
             // verify header signature
             if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Unknown format: ").put(path);
+                throw CairoException.critical(0).put("Unknown format: ").put(path);
             }
 
             // verify key count
             this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
             if (keyMemSize < keyMemSize()) {
                 LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(this.keyCount).$(']').$();
-                throw CairoException.instance(0).put("Key count does not match file length of ").put(path);
+                throw CairoException.critical(0).put("Key count does not match file length of ").put(path);
             }
 
             // check if sequence is intact
             if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                 LOG.error().$("sequence mismatch [corrupt] at ").$(path).$();
-                throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
+                throw CairoException.critical(0).put("Sequence mismatch on ").put(path);
             }
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
@@ -308,7 +308,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                         .$(", valueMemSize=").$(this.valueMemSize)
                         .$(", blockValueCountMod=").$(this.blockValueCountMod)
                         .I$();
-                throw CairoException.instance(0).put("corrupt file ").put(path);
+                throw CairoException.critical(0).put("corrupt file ").put(path);
             }
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
         } catch (Throwable e) {

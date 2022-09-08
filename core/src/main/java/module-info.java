@@ -507,19 +507,21 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.MaxBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.MaxCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxTimestampGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.MaxStrGroupByFunctionFactory,
 //                  'min' group
             io.questdb.griffin.engine.functions.groupby.MinDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinBooleanGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.MaxCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.MinStrGroupByFunctionFactory,
 //                  'count' group by function
             io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory,
@@ -603,6 +605,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
             io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
+            // regexp_replace()
+            io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,
