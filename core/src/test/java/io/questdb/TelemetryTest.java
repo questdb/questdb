@@ -173,11 +173,6 @@ public class TelemetryTest extends AbstractCairoTest {
             public CharSequence getCommitHash() {
                 return null;
             }
-
-            @Override
-            public int getYear() {
-                return 2022;
-            }
         };
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
