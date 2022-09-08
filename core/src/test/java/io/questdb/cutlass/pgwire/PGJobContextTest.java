@@ -47,7 +47,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -69,7 +68,6 @@ import java.util.TimeZone;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -6836,7 +6834,7 @@ create table tab as (
         };
 
         WorkerPool pool = workerPoolManager.getInstance(conf, metrics);
-        pool.configure(engine, null, false, true, true);
+        pool.configureAsShared(engine, null, false, true, true);
         workerPoolManager.setSharedPool(pool);
 //        pool.assign(engine.getEngineMaintenanceJob());
         try (

@@ -1748,9 +1748,10 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(3), metrics);
+
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(3), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4412,7 +4413,7 @@ public class IODispatcherTest {
                         }
                     }
                 };
-                workerPool.configure(engine, null, false, true, true);
+                workerPool.configureAsShared(engine, null, false, true, true);
                 workerPoolManager.startAll();
                 try {
                     // create table with all column types
@@ -5389,9 +5390,9 @@ public class IODispatcherTest {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -5520,11 +5521,9 @@ public class IODispatcherTest {
                             LOG.info().$("closed [fd=").$(fd).$(']').$();
                         }
                     } finally {
-                        workerPool.close();
                         Files.remove(path);
                     }
                 }
-
                 workerPoolManager.closeAll();
             }
         });

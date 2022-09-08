@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
@@ -137,7 +138,7 @@ public class Bootstrap {
 
         // report copyright and architecture
         log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion())
-                .$(". Copyright (C) 2014-").$(buildInformation.getYear())
+                .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
                 .$(", all rights reserved.")
                 .$();
         String archName;

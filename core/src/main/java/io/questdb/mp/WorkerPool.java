@@ -82,7 +82,7 @@ public class WorkerPool implements QuietCloseable {
         }
     }
 
-    public WorkerPool configure(
+    public WorkerPool configureAsShared(
             CairoEngine cairoEngine,
             @Nullable FunctionFactoryCache functionFactoryCache,
             boolean withCircuitBreaker,

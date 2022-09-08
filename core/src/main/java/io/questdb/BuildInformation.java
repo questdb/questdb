@@ -28,5 +28,4 @@ public interface BuildInformation {
     CharSequence getQuestDbVersion();
     CharSequence getJdkVersion();
     CharSequence getCommitHash();
-    int getYear();
 }

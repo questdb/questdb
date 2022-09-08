@@ -74,7 +74,7 @@ public class ServerMain implements QuietCloseable {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
         final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(config.getWorkerPoolConfiguration(), metrics);
-        sharedPool.configure(cairoEngine, ffCache, true, true, true);
+        sharedPool.configureAsShared(cairoEngine, ffCache, true, true, true);
         workerPoolManager = new WorkerPoolManager(sharedPool);
 
         // snapshots
@@ -117,7 +117,7 @@ public class ServerMain implements QuietCloseable {
                 metrics
         ));
 
-        // pg-wire
+        // pg wire
         if (config.getPGWireConfiguration().isEnabled()) {
             toBeClosed.add(Services.createPGWireServer(
                     config.getPGWireConfiguration(),

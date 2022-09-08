@@ -209,7 +209,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public String getPoolName() {
-        return "pg-wire";
+        return "pgwire";
     }
 
     @Override

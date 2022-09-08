@@ -64,6 +64,9 @@ public class WorkerPoolManager {
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {
+        if (hasStarted.get()) {
+            throw new IllegalStateException("can only get instance before start");
+        }
         if (config.getWorkerCount() < 1) {
             WorkerPool pool = sharedPool;
             if (pool != null) {

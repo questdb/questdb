@@ -64,7 +64,7 @@ public final class Services {
         final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
         final int sharedWorkerCount = workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount();
         final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
-        QueryCache.configure(configuration);
+        QueryCache.configure(configuration, metrics);
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,

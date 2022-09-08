@@ -3373,7 +3373,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getPoolName() {
-            return "pg-wire";
+            return "pgwire";
         }
 
         @Override
@@ -3449,7 +3449,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getPoolName() {
-            return "min-http";
+            return "minhttp";
         }
 
         @Override

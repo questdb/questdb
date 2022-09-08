@@ -41,7 +41,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
-    private static final long CLOSE_AWAIT_LIMIT_NS = (long) 2e8; // 200 millis
     protected final LineUdpLexer lexer;
     protected final LineUdpParserImpl parser;
     protected final NetworkFacade nf;
@@ -100,8 +99,8 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     public void close() {
         if (fd > -1) {
             if (running.compareAndSet(true, false)) {
-                started.await(CLOSE_AWAIT_LIMIT_NS);
-                halted.await(CLOSE_AWAIT_LIMIT_NS);
+                started.await();
+                halted.await();
             }
             if (nf.close(fd) != 0) {
                 LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();

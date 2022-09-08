@@ -157,7 +157,7 @@ public class Worker extends Thread {
             }
             haltLatch.countDown();
             if (log != null) {
-                log.info().$("os scheduled worker ended [name=").$(getName()).I$();
+                log.info().$("os scheduled worker stopped [name=").$(getName()).I$();
             }
         }
     }
