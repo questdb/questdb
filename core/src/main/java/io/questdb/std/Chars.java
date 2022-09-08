@@ -682,6 +682,19 @@ public final class Chars {
         return b.toString();
     }
 
+    public static String toString(CharSequence cs, int start, int end, char unescape) {
+        final CharSink b = Misc.getThreadLocalBuilder();
+        final int lastChar = end - 1;
+        for (int i = start; i < end; i++) {
+            char c = cs.charAt(i);
+            b.put(c);
+            if (c == unescape && i < lastChar && cs.charAt(i + 1) == unescape) {
+                i++;
+            }
+        }
+        return b.toString();
+    }
+
     public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
         if (str != null) {
             final int len = str.length();
