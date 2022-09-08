@@ -201,7 +201,20 @@ public class WalWriter implements TableWriterFrontend {
 
     // Returns table transaction number.
     public long commit() {
-        return commit(false);
+        checkDistressed();
+        try {
+            if (inTransaction()) {
+                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(rowCount).I$();
+                lastSegmentTxn = events.data(currentTxnStartRowNum, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                final long tableTxn = getTableTxn();
+                resetDataTxnProperties();
+                return tableTxn;
+            }
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
+        return Sequencer.NO_TXN;
     }
 
     @Override
@@ -349,14 +362,11 @@ public class WalWriter implements TableWriterFrontend {
         long newSegmentId = segmentId + 1;
 
         path.trimTo(rootLen);
-        LOG.info().$("rolling uncommitted rows to new segment [wal=").$(path)
-                .$(", newSegmentId=").$(newSegmentId)
-                .$(", uncommittedRows=").$(uncommittedRows).I$();
+
 
         if (uncommittedRows > 0) {
             createSegmentDir(newSegmentId);
             path.trimTo(rootLen);
-
             LongList newColumnFiles = new LongList();
             newColumnFiles.setPos(columnCount * 4);
             newColumnFiles.fill(0, columnCount * 4, -1);
@@ -364,6 +374,9 @@ public class WalWriter implements TableWriterFrontend {
 
             try {
                 int timestampIndex = metadata.getTimestampIndex();
+                LOG.debug().$("rolling uncommitted rows to new segment [wal=").$(Files.SEPARATOR).$(segmentId + 1)
+                        .$(", rowCount=").$(uncommittedRows).I$();
+
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     int columnType = metadata.getColumnType(columnIndex);
 
@@ -541,23 +554,6 @@ public class WalWriter implements TableWriterFrontend {
                 ff.close(fd);
             }
         }
-    }
-
-    private long commit(boolean rollSegment) {
-        checkDistressed();
-        rollSegmentOnNextRow = rollSegment;
-        try {
-            if (getTransientRowCount() != 0) {
-                lastSegmentTxn = events.data(currentTxnStartRowNum, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-                final long tableTxn = getTableTxn();
-                resetDataTxnProperties();
-                return tableTxn;
-            }
-        } catch (Throwable th) {
-            rollback();
-            throw th;
-        }
-        return Sequencer.NO_TXN;
     }
 
     private void configureColumn(int index, int columnType) {
@@ -826,11 +822,7 @@ public class WalWriter implements TableWriterFrontend {
 
     private void openNewSegment() {
         try {
-            if (segmentId > -1) {
-                int i = 0;
-            }
             segmentId++;
-            rowCount = 0;
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(segmentId);
@@ -850,6 +842,7 @@ public class WalWriter implements TableWriterFrontend {
                 }
             }
 
+            rowCount = 0;
             metadata.dumpTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
@@ -963,7 +956,11 @@ public class WalWriter implements TableWriterFrontend {
                         mem2.jumpTo((pos + 1) * Long.BYTES);
                         break;
                     default:
-                        m1pos = pos << ColumnType.pow2SizeOf(type);
+                        if (columnIndex == metadata.getTimestampIndex()) {
+                            m1pos = pos << 4;
+                        } else {
+                            m1pos = pos << ColumnType.pow2SizeOf(type);
+                        }
                         break;
                 }
                 mem1.jumpTo(m1pos);
@@ -1245,6 +1242,7 @@ public class WalWriter implements TableWriterFrontend {
         @Override
         public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
+
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
                 long uncommittedRows = rowCount - currentTxnStartRowNum;
                 if (currentTxnStartRowNum > 0) {
@@ -1259,6 +1257,9 @@ public class WalWriter implements TableWriterFrontend {
                     columnIndex = metadata.getColumnCount() - 1;
                     // create column file
                     configureColumn(columnIndex, columnType);
+                    if (ColumnType.isSymbol(columnType)) {
+                        configureSymbolMapWriter(columnIndex, columnName, 0, -1);
+                    }
 
                     if (!rollSegmentOnNextRow) {
                         // This is WAL writer receiving notification from another writer that the column is added
@@ -1273,7 +1274,7 @@ public class WalWriter implements TableWriterFrontend {
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount);
                     }
-                    LOG.info().$("added column to wal [path=").$(path).$(", columnName=").$(columnName).I$();
+                    LOG.info().$("added column to wal [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName).put("' added, cannot commit because of concurrent table definition change ");
                 }
@@ -1303,7 +1304,6 @@ public class WalWriter implements TableWriterFrontend {
             if (columnIndex > -1) {
                 int type = metadata.getColumnType(columnIndex);
                 if (type > 0) {
-                    long uncommittedRows = rowCount - currentTxnStartRowNum;
                     if (currentTxnStartRowNum > 0) {
                         // Roll last transaction to new segment
                         rollUncommittedToNewSegment();
