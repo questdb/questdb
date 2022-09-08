@@ -6406,6 +6406,21 @@ create table tab as (
     }
 
     @Test
+    public void testInsertStringWithEscapedQuote() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement s = connection.createStatement()) {
+                s.execute("create table t ( s string)");
+                s.executeUpdate("insert into t values ('o''brien ''''')");
+
+                sink.clear();
+                try (ResultSet resultSet = s.executeQuery("select * from t")) {
+                    assertResultSet("s[VARCHAR]\no'brien ''\n", sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTransaction() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             connection.setAutoCommit(false);

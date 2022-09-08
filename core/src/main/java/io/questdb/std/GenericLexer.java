@@ -227,7 +227,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
         char term = 0;
         int openTermIdx = -1;
-        while (hasNext()) {
+        while (_pos < _len) {
             char c = content.charAt(_pos++);
             CharSequence token;
             switch (term) {
@@ -257,7 +257,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                 case '\'':
                     if (c == '\'') {
                         _hi += 2;
-                        return last = flyweightSequence;
+                        if (_pos < _len && content.charAt(_pos) == '\'') {
+                            _pos++;
+                        } else {
+                            return last = flyweightSequence;
+                        }
                     } else {
                         _hi++;
                     }
@@ -265,7 +269,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                 case '"':
                     if (c == '"') {
                         _hi += 2;
-                        return last = flyweightSequence;
+                        if (_pos < _len && content.charAt(_pos) == '"') {
+                            _pos++;
+                        } else {
+                            return last = flyweightSequence;
+                        }
                     } else {
                         _hi++;
                     }
