@@ -53,27 +53,27 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsByte(getStr(rec));
     }
 
     @Override
     public final char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsChar(getStr(rec));
     }
 
     @Override
     public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsDate(getStr(rec));
     }
 
     @Override
     public final double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsDouble(getStr(rec));
     }
 
     @Override
     public final float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsFloat(getStr(rec));
     }
 
     @Override
@@ -98,12 +98,12 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final int getInt(Record rec) {
-        return SqlUtil.parseInt(getStr(rec));
+        return SqlUtil.implicitCastStrAsInt(getStr(rec));
     }
 
     @Override
     public final long getLong(Record rec) {
-        return SqlUtil.parseLong(getStr(rec));
+        return SqlUtil.implicitCastStrAsLong(getStr(rec));
     }
 
     @Override
@@ -128,7 +128,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsShort(getStr(rec));
     }
 
     @Override
@@ -154,7 +154,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsTimestamp(getStr(rec));
     }
 
     @Override
@@ -166,4 +166,6 @@ public abstract class StrFunction implements ScalarFunction {
     public boolean isReadThreadSafe() {
         return false;
     }
+
+    // todo: write tests for "switch" function that would exercise the type conversions
 }

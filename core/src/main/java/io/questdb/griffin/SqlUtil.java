@@ -44,8 +44,8 @@ public class SqlUtil {
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
     private static final DateFormat[] DATE_FORMATS;
     private static final int DATE_FORMATS_SIZE;
-    private static final DateFormat[] TIMESTAMP_FORMATS;
-    private static final int TIMESTAMP_FORMATS_SIZE;
+    private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
+    private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
 
     public static void addSelectStar(
             QueryModel model,
@@ -54,6 +54,18 @@ public class SqlUtil {
     ) throws SqlException {
         model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
         model.setArtificialStar(true);
+    }
+
+    public static char implicitCastStrAsChar(CharSequence value) {
+        if (value == null || value.length() == 0) {
+            return 0;
+        }
+
+        if (value.length() == 1) {
+            return value.charAt(0);
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.CHAR);
     }
 
     // used by Copier assembler
@@ -103,7 +115,7 @@ public class SqlUtil {
         return null;
     }
 
-    public static byte parseByte(CharSequence value) {
+    public static byte implicitCastStrAsByte(CharSequence value) {
         if (value != null) {
             try {
                 int res = Numbers.parseInt(value);
@@ -117,7 +129,7 @@ public class SqlUtil {
         return 0;
     }
 
-    public static byte parseChar(char value, int tupleIndex, int toType) {
+    public static byte castCharToType(char value, int tupleIndex, int toType) {
         byte v = (byte) (value - '0');
         if (v > -1 && v < 10) {
             return v;
@@ -125,15 +137,11 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
     }
 
-    public static byte parseChar(char value, int toType) {
-        byte v = (byte) (value - '0');
-        if (v > -1 && v < 10) {
-            return v;
-        }
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.CHAR, toType);
+    public static byte implicitCastCharAsByte(char value, int toType) {
+        return castCharToType(value, 0, toType);
     }
 
-    public static long parseDate(CharSequence value) {
+    public static long implicitCastStrAsDate(CharSequence value) {
         if (value != null) {
             final int hi = value.length();
             for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
@@ -151,7 +159,7 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
-    public static double parseDouble(CharSequence value) {
+    public static double implicitCastStrAsDouble(CharSequence value) {
         if (value != null) {
             try {
                 return Numbers.parseDouble(value);
@@ -162,7 +170,24 @@ public class SqlUtil {
         return Double.NaN;
     }
 
-    public static float parseFloat(CharSequence value) {
+    public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
+        try {
+            if (value != null) {
+                Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+            } else {
+                long256Acceptor.setAll(
+                        Long256Impl.NULL_LONG256.getLong0(),
+                        Long256Impl.NULL_LONG256.getLong1(),
+                        Long256Impl.NULL_LONG256.getLong2(),
+                        Long256Impl.NULL_LONG256.getLong3()
+                );
+            }
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.LONG256);
+        }
+    }
+
+    public static float implicitCastStrAsFloat(CharSequence value) {
         if (value != null) {
             try {
                 return Numbers.parseFloat(value);
@@ -190,7 +215,7 @@ public class SqlUtil {
         }
     }
 
-    public static int parseInt(CharSequence value) {
+    public static int implicitCastStrAsInt(CharSequence value) {
         if (value != null) {
             try {
                 return Numbers.parseInt(value);
@@ -201,7 +226,7 @@ public class SqlUtil {
         return Numbers.INT_NaN;
     }
 
-    public static long parseLong(CharSequence value) {
+    public static long implicitCastStrAsLong(CharSequence value) {
         if (value != null) {
             try {
                 return Numbers.parseLong(value);
@@ -212,7 +237,7 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
-    public static short parseShort(@Nullable CharSequence value) {
+    public static short implicitCastStrAsShort(@Nullable CharSequence value) {
         try {
             return value != null ? Numbers.parseShort(value) : 0;
         } catch (NumericException ignore) {
@@ -220,27 +245,31 @@ public class SqlUtil {
         }
     }
 
-    public static long parseTimestamp(CharSequence value) throws NumericException {
-        // Parse as ISO with variable length.
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(value);
-        } catch (NumericException ignore) {
-        }
-
-        final int hi = value.length();
-        for (int i = 0; i < TIMESTAMP_FORMATS_SIZE; i++) {
+    public static long implicitCastStrAsTimestamp(CharSequence value) {
+        if (value != null) {
             try {
-                return TIMESTAMP_FORMATS[i].parse(value, 0, hi, enLocale);
+                return Numbers.parseLong(value);
             } catch (NumericException ignore) {
             }
-        }
 
-        try {
-            return Numbers.parseLong(value);
-        } catch (NumericException ignore) {
-        }
+            // Parse as ISO with variable length.
+            try {
+                return IntervalUtils.parseFloorPartialTimestamp(value);
+            } catch (NumericException ignore) {
+            }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.TIMESTAMP);
+            final int hi = value.length();
+            for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
+                try {
+                    //
+                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, enLocale) * 1000L;
+                } catch (NumericException ignore) {
+                }
+            }
+
+            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.TIMESTAMP);
+        }
+        return Numbers.LONG_NaN;
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
@@ -398,13 +427,13 @@ public class SqlUtil {
         DATE_FORMATS_SIZE = DATE_FORMATS.length;
 
         // we are using "millis" compiler deliberately because clients encode millis into strings
-        TIMESTAMP_FORMATS = new DateFormat[]{
+        DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{
                 PG_DATE_Z_FORMAT,
                 PG_DATE_MILLI_TIME_Z_FORMAT,
                 pgDateTimeFormat
         };
 
-        TIMESTAMP_FORMATS_SIZE = TIMESTAMP_FORMATS.length;
+        DATE_FORMATS_FOR_TIMESTAMP_SIZE = DATE_FORMATS_FOR_TIMESTAMP.length;
 
     }
 }

@@ -432,6 +432,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage(), 0);
+        } catch (ImplicitCastException e) {
+            reportError(-1, e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
             reportError(-1, e.getFlyweightMessage(), e.getErrno());
         } catch (AuthenticationException e) {
@@ -1827,7 +1829,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
                 }
             }
-        } catch (SqlException e) {
+        } catch (SqlException | ImplicitCastException e) {
             freeFactory();
             typesAndUpdate = Misc.free(typesAndUpdate);
             throw e;
@@ -2250,7 +2252,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
         prepareForNewQuery();
         CharacterStoreEntry e = characterStore.newEntry();
 

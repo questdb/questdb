@@ -780,28 +780,28 @@ public class BindVariableServiceImpl implements BindVariableService {
         // treat char as string representation of numeric type
         switch (functionType) {
             case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.BYTE);
+                ((ByteBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.BYTE);
                 break;
             case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.SHORT);
+                ((ShortBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.SHORT);
                 break;
             case ColumnType.INT:
-                ((IntBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.INT);
+                ((IntBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.INT);
                 break;
             case ColumnType.LONG:
-                ((LongBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.LONG);
+                ((LongBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.LONG);
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.DATE);
+                ((DateBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.DATE);
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.TIMESTAMP);
+                ((TimestampBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.TIMESTAMP);
                 break;
             case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.FLOAT);
+                ((FloatBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.FLOAT);
                 break;
             case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = SqlUtil.parseChar(value, index, ColumnType.DOUBLE);
+                ((DoubleBindVariable) function).value = SqlUtil.castCharToType(value, index, ColumnType.DOUBLE);
                 break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = value;
@@ -947,57 +947,46 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
-        try {
-            switch (functionType) {
-                case ColumnType.BOOLEAN:
-                    ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
-                    break;
-                case ColumnType.BYTE:
-                    ((ByteBindVariable) function).value = SqlUtil.parseByte(value);
-                    break;
-                case ColumnType.SHORT:
-                    ((ShortBindVariable) function).value = SqlUtil.parseShort(value);
-                    break;
-                case ColumnType.CHAR:
-                    // todo: when assigning STRING to CHAR we need to validate is STRING is one CHAR long
-                    ((CharBindVariable) function).value = (char) (Chars.nonEmpty(value) ? Numbers.parseShort(value) : 0);
-                    break;
-                case ColumnType.INT:
-                    ((IntBindVariable) function).value = SqlUtil.parseInt(value);
-                    break;
-                case ColumnType.LONG:
-                    ((LongBindVariable) function).value = SqlUtil.parseLong(value);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    ((TimestampBindVariable) function).value = SqlUtil.parseTimestamp(value);
-                    break;
-                case ColumnType.DATE:
-                    ((DateBindVariable) function).value = SqlUtil.parseDate(value);
-                    break;
-                case ColumnType.FLOAT:
-                    ((FloatBindVariable) function).value = SqlUtil.parseFloat(value);
-                    break;
-                case ColumnType.DOUBLE:
-                    ((DoubleBindVariable) function).value = SqlUtil.parseDouble(value);
-                    break;
-                case ColumnType.STRING:
-                    ((StrBindVariable) function).setValue(value);
-                    break;
-                case ColumnType.LONG256:
-                    // todo: make a generic function that converts STRING to LONG256
-                    if (value != null) {
-                        Long256FromCharSequenceDecoder.decode(value, 0, value.length(), ((Long256BindVariable) function).value);
-                    } else {
-                        ((Long256BindVariable) function).value.copyFrom(Long256Impl.NULL_LONG256);
-                    }
-                    break;
-                default:
-                    reportError(function, ColumnType.STRING, index, name);
-                    break;
-            }
-        } catch (NumericException e) {
-            // todo: may be use ImplicitTypeException?
-            throw SqlException.$(0, "could not parse [value='").put(value).put("', as=").put(ColumnType.nameOf(functionType)).put(", index=").put(index).put(']');
+        switch (functionType) {
+            case ColumnType.BOOLEAN:
+                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
+                break;
+            case ColumnType.BYTE:
+                ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
+                break;
+            case ColumnType.SHORT:
+                ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);
+                break;
+            case ColumnType.CHAR:
+                ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
+                break;
+            case ColumnType.INT:
+                ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);
+                break;
+            case ColumnType.LONG:
+                ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
+                break;
+            case ColumnType.TIMESTAMP:
+                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(value);
+                break;
+            case ColumnType.DATE:
+                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(value);
+                break;
+            case ColumnType.FLOAT:
+                ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);
+                break;
+            case ColumnType.DOUBLE:
+                ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);
+                break;
+            case ColumnType.STRING:
+                ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.LONG256:
+                SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
+                break;
+            default:
+                reportError(function, ColumnType.STRING, index, name);
+                break;
         }
     }
 }

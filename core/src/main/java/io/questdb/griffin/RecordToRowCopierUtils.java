@@ -85,22 +85,23 @@ public class RecordToRowCopierUtils {
         int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
-        int parseChar = asm.poolMethod(SqlUtil.class, "parseChar", "(CI)B");
-        int parseStrAsFloat = asm.poolMethod(SqlUtil.class, "parseFloat", "(Ljava/lang/CharSequence;)F");
-        int parseStrAsDouble = asm.poolMethod(SqlUtil.class, "parseDouble", "(Ljava/lang/CharSequence;)D");
-        int parseStrAsByte = asm.poolMethod(SqlUtil.class, "parseByte", "(Ljava/lang/CharSequence;)B");
-        int parseStrAsShort = asm.poolMethod(SqlUtil.class, "parseShort", "(Ljava/lang/CharSequence;)S");
-        int parseStrAsInt = asm.poolMethod(SqlUtil.class, "parseInt", "(Ljava/lang/CharSequence;)I");
-        int parseStrAsLong = asm.poolMethod(SqlUtil.class, "parseLong", "(Ljava/lang/CharSequence;)J");
-        int parseStrAsDate = asm.poolMethod(SqlUtil.class, "parseDate", "(Ljava/lang/CharSequence;)J");
-        int parseStrAsTimestamp = asm.poolMethod(SqlUtil.class, "parseTimestamp", "(Ljava/lang/CharSequence;)J");
-        int castDateToTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
+        int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
+        int implicitCastStrAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastStrAsFloat", "(Ljava/lang/CharSequence;)F");
+        int implicitCastStrAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDouble", "(Ljava/lang/CharSequence;)D");
+        int implicitCastStrAsByte = asm.poolMethod(SqlUtil.class, "implicitCastStrAsByte", "(Ljava/lang/CharSequence;)B");
+        int implicitCastStrAsShort = asm.poolMethod(SqlUtil.class, "implicitCastStrAsShort", "(Ljava/lang/CharSequence;)S");
+        int implicitCastStrAsInt = asm.poolMethod(SqlUtil.class, "implicitCastStrAsInt", "(Ljava/lang/CharSequence;)I");
+        int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
+        int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
+        int implicitCastStrAsTimestamp = asm.poolMethod(SqlUtil.class, "implicitCastStrAsTimestamp", "(Ljava/lang/CharSequence;)J");
+        int implicitCastDateAsTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
         int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
         int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
 
+        // todo: move this to the same system for implicit cast as string and char
         int checkDoubleBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkDoubleBounds", "(DDDIII)V");
         int checkLongBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkLongBounds", "(JJJIII)V");
 
@@ -288,7 +289,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeStatic(castDateToTimestamp);
+                            asm.invokeStatic(implicitCastDateAsTimestamp);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
@@ -634,13 +635,13 @@ public class RecordToRowCopierUtils {
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.SHORT:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
@@ -649,36 +650,36 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.INT:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(parseChar);
+                            asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
@@ -714,41 +715,46 @@ public class RecordToRowCopierUtils {
                     }
                     break;
                 case ColumnType.STRING:
+                    // This is generic code, and it acts on a record
+                    // whereas Functions support string to primitive conversions, Record instances
+                    // do not. This is because functions are aware of their return type but records
+                    // would have to do expensive checks to decide which conversion would be required
                     asm.invokeInterface(rGetStr);
+                    // todo: add string to char semantics
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
-                            asm.invokeStatic(parseStrAsByte);
+                            asm.invokeStatic(implicitCastStrAsByte);
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.SHORT:
-                            asm.invokeStatic(parseStrAsShort);
+                            asm.invokeStatic(implicitCastStrAsShort);
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.INT:
-                            asm.invokeStatic(parseStrAsInt);
+                            asm.invokeStatic(implicitCastStrAsInt);
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.invokeStatic(parseStrAsLong);
+                            asm.invokeStatic(implicitCastStrAsLong);
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.invokeStatic(parseStrAsFloat);
+                            asm.invokeStatic(implicitCastStrAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.invokeStatic(parseStrAsDouble);
+                            asm.invokeStatic(implicitCastStrAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(wPutSym, 2);
                             break;
                         case ColumnType.DATE:
-                            asm.invokeStatic(parseStrAsDate);
+                            asm.invokeStatic(implicitCastStrAsDate);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeStatic(parseStrAsTimestamp);
+                            asm.invokeStatic(implicitCastStrAsTimestamp);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.GEOBYTE:

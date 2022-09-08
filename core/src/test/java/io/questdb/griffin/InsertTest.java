@@ -247,9 +247,10 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
         assertInsertTimestamp(
-                "inconvertible value: 123456 [STRING -> TIMESTAMP] tuple: 0",
+                "seq\tts\n" +
+                        "1\t1970-01-01T00:00:00.123456Z\n",
                 "insert into tab select 1, '123456'",
-                ImplicitCastException.class,
+                null,
                 false
         );
     }
@@ -1008,6 +1009,7 @@ public class InsertTest extends AbstractGriffinTest {
                 }
                 assertSql("tab", expected);
             } catch (Throwable e) {
+                e.printStackTrace();
                 if (exceptionType == null) throw e;
                 Assert.assertSame(exceptionType, e.getClass());
                 TestUtils.assertContains(e.getMessage(), expected);

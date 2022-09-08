@@ -45,11 +45,6 @@ public class StrFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        Assert.assertEquals('a', function.getChar(null));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGeoByte() {
         function.getGeoByte(null);
     }
@@ -85,43 +80,8 @@ public class StrFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetByte() {
-        function.getByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDate() {
-        function.getDate(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDouble() {
-        function.getDouble(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetFloat() {
-        function.getFloat(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetInt() {
-        function.getInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong() {
-        function.getLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetShort() {
-        function.getShort(null);
     }
 
     @Test
@@ -137,11 +97,6 @@ public class StrFunctionTest {
     @Test
     public void testGetSymbolB() {
         TestUtils.assertEquals("a", function.getSymbolB(null));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

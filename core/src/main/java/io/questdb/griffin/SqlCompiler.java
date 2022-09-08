@@ -1291,7 +1291,7 @@ public class SqlCompiler implements Closeable {
         while (cursor.hasNext()) {
             final CharSequence str = record.getStr(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));
+            TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
             copier.copy(record, row);
             row.append();
             rowCount++;
@@ -2325,18 +2325,6 @@ public class SqlCompiler implements Closeable {
             switch (ColumnType.tagOf(function.getType())) {
                 case ColumnType.CHAR:
                     switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.BYTE:
-                        case ColumnType.SHORT:
-                        case ColumnType.INT:
-                        case ColumnType.LONG:
-                        case ColumnType.DATE:
-                        case ColumnType.TIMESTAMP:
-                        case ColumnType.FLOAT:
-                        case ColumnType.DOUBLE:
-                            if (function.isConstant()) {
-                                function = ByteConstant.newInstance(SqlUtil.parseChar(function.getChar(null), tupleIndex, ColumnType.tagOf(columnType)));
-                            }
-                            break;
                         case ColumnType.GEOBYTE:
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:

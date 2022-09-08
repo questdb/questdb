@@ -26,6 +26,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -34,13 +37,13 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrByte() {
-        Assert.assertEquals(0, SqlUtil.parseByte(null));
-        Assert.assertEquals(89, SqlUtil.parseByte("89"));
-        Assert.assertEquals(-89, SqlUtil.parseByte("-89"));
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsByte(null));
+        Assert.assertEquals(89, SqlUtil.implicitCastStrAsByte("89"));
+        Assert.assertEquals(-89, SqlUtil.implicitCastStrAsByte("-89"));
 
         // overflow
         try {
-            SqlUtil.parseByte("778");
+            SqlUtil.implicitCastStrAsByte("778");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: 778 [STRING -> BYTE] tuple: 0", e.getFlyweightMessage());
@@ -48,7 +51,7 @@ public class SqlUtilTest {
 
         // not a number
         try {
-            SqlUtil.parseByte("hello");
+            SqlUtil.implicitCastStrAsByte("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> BYTE] tuple: 0", e.getFlyweightMessage());
@@ -56,22 +59,59 @@ public class SqlUtilTest {
     }
 
     @Test
-    public void testParseStrDouble() {
-        //noinspection SimplifiableAssertion
-        Assert.assertFalse(SqlUtil.parseDouble(null) == SqlUtil.parseDouble(null));
-        Assert.assertEquals(9.901E62, SqlUtil.parseDouble("990.1e60"), 0.001);
-
-        // overflow
-        try {
-            SqlUtil.parseDouble("1e450");
-            Assert.fail();
-        } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: 1e450 [STRING -> DOUBLE] tuple: 0", e.getFlyweightMessage());
-        }
+    public void testParseStrDate() {
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsDate(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20T10:30:55.123Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.200Z", Dates.toString(SqlUtil.implicitCastStrAsDate("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.100Z", Dates.toString(SqlUtil.implicitCastStrAsDate("-900")));
 
         // not a number
         try {
-            SqlUtil.parseDouble("hello");
+            SqlUtil.implicitCastStrAsDate("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: hello [STRING -> DATE] tuple: 0", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseStrTimestamp() {
+        // this is required to initialize calendar indexes ahead of using it
+        // otherwise sink can end up having odd characters
+        TimestampFormatUtils.init();
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsTimestamp(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("-900")));
+
+        // not a number
+        try {
+            SqlUtil.implicitCastStrAsDate("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: hello [STRING -> DATE] tuple: 0", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseStrDouble() {
+        //noinspection SimplifiableAssertion
+        Assert.assertFalse(SqlUtil.implicitCastStrAsDouble(null) == SqlUtil.implicitCastStrAsDouble(null));
+        Assert.assertEquals(9.901E62, SqlUtil.implicitCastStrAsDouble("990.1e60"), 0.001);
+
+        // overflow
+        //noinspection SimplifiableAssertion
+        Assert.assertTrue(Double.POSITIVE_INFINITY == SqlUtil.implicitCastStrAsDouble("1e450"));
+
+        // not a number
+        try {
+            SqlUtil.implicitCastStrAsDouble("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> DOUBLE] tuple: 0", e.getFlyweightMessage());
@@ -81,16 +121,17 @@ public class SqlUtilTest {
     @Test
     public void testParseStrFloat() {
         //noinspection SimplifiableAssertion
-        Assert.assertFalse(SqlUtil.parseFloat(null) == SqlUtil.parseFloat(null));
-        Assert.assertEquals(990.1, SqlUtil.parseFloat("990.1"), 0.001);
-        Assert.assertEquals(-899.23, SqlUtil.parseFloat("-899.23"), 0.001);
+        Assert.assertFalse(SqlUtil.implicitCastStrAsFloat(null) == SqlUtil.implicitCastStrAsFloat(null));
+        Assert.assertEquals(990.1, SqlUtil.implicitCastStrAsFloat("990.1"), 0.001);
+        Assert.assertEquals(-899.23, SqlUtil.implicitCastStrAsFloat("-899.23"), 0.001);
 
         // overflow
-        Assert.assertTrue(Float.POSITIVE_INFINITY == SqlUtil.parseFloat("1e210"));
+        //noinspection SimplifiableAssertion
+        Assert.assertTrue(Float.POSITIVE_INFINITY == SqlUtil.implicitCastStrAsFloat("1e210"));
 
         // not a number
         try {
-            SqlUtil.parseFloat("hello");
+            SqlUtil.implicitCastStrAsFloat("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> FLOAT] tuple: 0", e.getFlyweightMessage());
@@ -99,13 +140,13 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrInt() {
-        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.parseInt(null));
-        Assert.assertEquals(22222123, SqlUtil.parseInt("22222123"));
-        Assert.assertEquals(-2222232, SqlUtil.parseInt("-2222232"));
+        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastStrAsInt(null));
+        Assert.assertEquals(22222123, SqlUtil.implicitCastStrAsInt("22222123"));
+        Assert.assertEquals(-2222232, SqlUtil.implicitCastStrAsInt("-2222232"));
 
         // overflow
         try {
-            SqlUtil.parseInt("77823232322323233");
+            SqlUtil.implicitCastStrAsInt("77823232322323233");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: 77823232322323233 [STRING -> INT] tuple: 0", e.getFlyweightMessage());
@@ -113,7 +154,7 @@ public class SqlUtilTest {
 
         // not a number
         try {
-            SqlUtil.parseInt("hello");
+            SqlUtil.implicitCastStrAsInt("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> INT] tuple: 0", e.getFlyweightMessage());
@@ -122,15 +163,15 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.parseLong(null));
-        Assert.assertEquals(222221211212123L, SqlUtil.parseLong("222221211212123"));
-        Assert.assertEquals(222221211212123L, SqlUtil.parseLong("222221211212123L"));
-        Assert.assertEquals(-222221211212123L, SqlUtil.parseLong("-222221211212123"));
-        Assert.assertEquals(-222221211212123L, SqlUtil.parseLong("-222221211212123L"));
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsLong(null));
+        Assert.assertEquals(222221211212123L, SqlUtil.implicitCastStrAsLong("222221211212123"));
+        Assert.assertEquals(222221211212123L, SqlUtil.implicitCastStrAsLong("222221211212123L"));
+        Assert.assertEquals(-222221211212123L, SqlUtil.implicitCastStrAsLong("-222221211212123"));
+        Assert.assertEquals(-222221211212123L, SqlUtil.implicitCastStrAsLong("-222221211212123L"));
 
         // overflow
         try {
-            SqlUtil.parseLong("778232323223232389080898083");
+            SqlUtil.implicitCastStrAsLong("778232323223232389080898083");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: 778232323223232389080898083 [STRING -> LONG] tuple: 0", e.getFlyweightMessage());
@@ -138,7 +179,7 @@ public class SqlUtilTest {
 
         // not a number
         try {
-            SqlUtil.parseLong("hello");
+            SqlUtil.implicitCastStrAsLong("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> LONG] tuple: 0", e.getFlyweightMessage());
@@ -147,13 +188,13 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrShort() {
-        Assert.assertEquals(0, SqlUtil.parseShort(null));
-        Assert.assertEquals(22222, SqlUtil.parseShort("22222"));
-        Assert.assertEquals(-22222, SqlUtil.parseShort("-22222"));
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsShort(null));
+        Assert.assertEquals(22222, SqlUtil.implicitCastStrAsShort("22222"));
+        Assert.assertEquals(-22222, SqlUtil.implicitCastStrAsShort("-22222"));
 
         // overflow
         try {
-            SqlUtil.parseShort("77823232323");
+            SqlUtil.implicitCastStrAsShort("77823232323");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: 77823232323 [STRING -> SHORT] tuple: 0", e.getFlyweightMessage());
@@ -161,7 +202,7 @@ public class SqlUtilTest {
 
         // not a number
         try {
-            SqlUtil.parseShort("hello");
+            SqlUtil.implicitCastStrAsShort("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> SHORT] tuple: 0", e.getFlyweightMessage());
