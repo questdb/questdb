@@ -224,7 +224,7 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                QueryCache.configure(httpConfiguration);
+                QueryCache.configure(httpConfiguration, metrics);
                 try {
                     workerPoolManager.startAll();
                     code.run(engine);

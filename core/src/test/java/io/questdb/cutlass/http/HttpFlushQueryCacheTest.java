@@ -24,11 +24,11 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -57,7 +57,8 @@ public class HttpFlushQueryCacheTest {
 
     @Test
     public void testJsonQueryFlushQueryCache() throws Exception {
-        testJsonQuery(2, engine -> {
+        Metrics metrics = Metrics.enabled();
+        testJsonQuery(2, metrics, engine -> {
             // create tables
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -68,10 +69,9 @@ public class HttpFlushQueryCacheTest {
                     "TIMESTAMP(ts)\n" +
                     "PARTITION BY DAY");
 
-            // execute a SELECT query that uses native memory
-            engine.releaseInactive();
-            long memInitial = Unsafe.getMemUsed();
+            Assert.assertEquals(0, metrics.jsonQuery().cachedQueriesGauge().getValue());
 
+            // execute a SELECT query
             String sql = "SELECT *\n" +
                     "FROM test t1 JOIN test t2 \n" +
                     "ON t1.id = t2.id\n" +
@@ -82,9 +82,8 @@ public class HttpFlushQueryCacheTest {
                     "00\r\n" +
                     "\r\n");
 
-            engine.releaseInactive();
-            long memAfterJoin = Unsafe.getMemUsed();
-            Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+            // The query might not be returned to cache immediately, so we need to try a few times.
+            assertEventually(() -> Assert.assertEquals(1, metrics.jsonQuery().cachedQueriesGauge().getValue()));
 
             // flush query cache and verify that the memory gets released
             sql = "SELECT flush_query_cache()";
@@ -103,17 +102,11 @@ public class HttpFlushQueryCacheTest {
 
             // Sequence set to done before actual flush performed. We might have to try it a few times,
             // before memory usage drop is measured.
-            assertEventually(() -> {
-                long memAfterFlush = Unsafe.getMemUsed();
-                Assert.assertTrue(
-                        "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
-                        memAfterFlush < memAfterJoin
-                );
-            });
+            assertEventually(() -> Assert.assertEquals(0, metrics.jsonQuery().cachedQueriesGauge().getValue()));
         });
     }
 
-    private void testJsonQuery(int workerCount, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+    private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         final String baseDir = temp.getRoot().getAbsolutePath();
         CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
             @Override
@@ -125,6 +118,7 @@ public class HttpFlushQueryCacheTest {
                 .withWorkerCount(workerCount)
                 .withTempFolder(temp)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withMetrics(metrics)
                 .run(configuration, code);
     }
 

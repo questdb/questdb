@@ -24,7 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.DefaultTelemetryConfiguration;
+import io.questdb.MessageBus;
+import io.questdb.Metrics;
+import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -83,7 +86,7 @@ public class AbstractCairoTest {
     protected static DateFormat backupDirTimestampFormat;
     protected static long configOverrideCommitLagMicros = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
-    protected static Metrics metrics = Metrics.enabled();
+    protected static Metrics metrics;
     protected static int capacity = -1;
     protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
@@ -371,6 +374,7 @@ public class AbstractCairoTest {
                 return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
             }
         };
+        metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();

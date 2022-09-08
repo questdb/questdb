@@ -79,7 +79,7 @@ public class HttpMinTestBuilder {
                     }
                 });
 
-                QueryCache.configure(httpConfiguration);
+                QueryCache.configure(httpConfiguration, Metrics.disabled());
 
                 workerPoolManager.startAll();
                 code.run(engine);

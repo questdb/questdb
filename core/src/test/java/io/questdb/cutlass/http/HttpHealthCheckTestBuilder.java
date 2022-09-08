@@ -59,11 +59,11 @@ public class HttpHealthCheckTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
                     .build();
-            QueryCache.configure(httpConfiguration);
-
             if (metrics == null) {
                 metrics = Metrics.enabled();
             }
+
+            QueryCache.configure(httpConfiguration, metrics);
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (CairoEngine engine = new CairoEngine(cairoConfiguration, metrics)) {
