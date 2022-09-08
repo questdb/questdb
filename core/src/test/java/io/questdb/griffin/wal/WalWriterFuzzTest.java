@@ -60,8 +60,13 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
             SharedRandom.RANDOM.set(new Rnd());
             compile("create table " + tableName2 + " as (" +
-                    "select * from " +
-                    tableName1 +
+                    "select x as c1, " +
+                    " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                    " cast(x as int) c3," +
+                    " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') " +
+                    " from long_sequence(5000)" +
                     ") timestamp(ts) partition by DAY BYPASS WAL");
 
             ObjList<FuzzTransaction> transactions;
