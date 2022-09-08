@@ -70,8 +70,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                         "TIMESTAMP(ts)\n" +
                         "PARTITION BY DAY");
 
-                engine.releaseInactive();
-                long memInitial = Unsafe.getMemUsed();
+                Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue());
 
                 String sql = "SELECT *\n" +
                         "FROM test t1 JOIN test t2 \n" +
@@ -79,13 +78,11 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                         "LIMIT 1";
                 statement.execute(sql);
 
-                engine.releaseInactive();
-                long memAfterJoin = Unsafe.getMemUsed();
-                Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+                assertEventually(() -> Assert.assertEquals(1, metrics.pgWire().cachedSelectsGauge().getValue()));
 
                 statement.execute("SELECT flush_query_cache()");
 
-                checkQueryCacheFlushed(memInitial, memAfterJoin);
+                assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()));
             }
         });
     }
@@ -107,25 +104,21 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                         "TIMESTAMP(ts)\n" +
                         "PARTITION BY DAY");
 
-                engine.releaseInactive();
-                long memInitial = Unsafe.getMemUsed();
+                Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue());
 
                 String sql = "UPDATE test t1 set id = ? \n" +
                         "FROM test t2 \n" +
                         "WHERE t1.id = t2.id";
-
                 try (PreparedStatement updateSt = connection.prepareStatement(sql)) {
                     updateSt.setLong(1, 1L);
                     updateSt.execute();
                 }
 
-                engine.releaseInactive();
-                long memAfterJoin = Unsafe.getMemUsed();
-                Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+                assertEventually(() -> Assert.assertEquals(1, metrics.pgWire().cachedUpdatesGauge().getValue()));
 
                 statement.execute("SELECT flush_query_cache()");
 
-                checkQueryCacheFlushed(memInitial, memAfterJoin);
+                assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue()));
             }
         });
     }
