@@ -266,6 +266,7 @@ public class WalWriter implements TableWriterFrontend {
     public void rollback() {
         if (inTransaction() || hasDirtyColumns(currentTxnStartRowNum)) {
             setAppendPosition(currentTxnStartRowNum);
+            rowCount = currentTxnStartRowNum;
         }
     }
 

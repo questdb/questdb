@@ -67,6 +67,7 @@ import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
+import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.WalTxnType.*;
@@ -1381,6 +1382,11 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
         txWriter.beginPartitionSizeUpdate();
         LOG.debug().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi).I$();
+        if (rowAction == ROW_ACTION_OPEN_PARTITION && txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
+            // table truncated, open partition file.
+            openFirstPartition(o3TimestampMin);
+        }
+
         if (processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
             return;
         }
@@ -2529,6 +2535,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             timestampSetter = appendTimestampSetter;
         }
         activeColumns = columns;
+        activeNullSetters = nullSetters;
     }
 
     private void configureColumn(int type, boolean indexFlag, int index) {
@@ -5317,7 +5324,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         if (Files.isDir(pUtf8NameZ, type)) {
             path.trimTo(rootLen);
             path.concat(pUtf8NameZ).$();
-            if (!Chars.endsWith(path, DETACHED_DIR_MARKER)) {
+            if (!Chars.endsWith(path, DETACHED_DIR_MARKER) &&
+                    !Chars.endsWith(path, SEQ_DIR) && !Chars.equals(path, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {
                 if (ff.rmdir(path) != 0) {
                     LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
                 }
@@ -5332,7 +5340,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
                             || Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
                             || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
-                            || Chars.startsWith(fileNameSink, Sequencer.SEQ_DIR)
+                            || Chars.startsWith(fileNameSink, SEQ_DIR)
             ) {
                 // Do not remove detached partitions, wals and sequencer directories
                 // They are probably about to be attached.
