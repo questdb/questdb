@@ -22,37 +22,26 @@
  *
  ******************************************************************************/
 
+package io.questdb.cutlass.pgwire;
 
-package io.questdb.metrics;
+import io.questdb.metrics.Gauge;
+import io.questdb.metrics.MetricsRegistry;
 
-import io.questdb.std.str.CharSink;
+public class PGWireMetrics {
 
-import java.util.concurrent.atomic.LongAdder;
+    private final Gauge cachedSelectsGauge;
+    private final Gauge cachedUpdatesGauge;
 
-class CounterImpl implements Counter {
-    private final CharSequence name;
-    private final LongAdder counter;
-
-    CounterImpl(CharSequence name) {
-        this.name = name;
-        this.counter = new LongAdder();
+    public PGWireMetrics(MetricsRegistry metricsRegistry) {
+        this.cachedSelectsGauge = metricsRegistry.newGauge("pg_wire_select_queries_cached");
+        this.cachedUpdatesGauge = metricsRegistry.newGauge("pg_wire_update_queries_cached");
     }
 
-    @Override
-    public void add(long value) {
-        counter.add(value);
+    public Gauge cachedSelectsGauge() {
+        return cachedSelectsGauge;
     }
 
-    @Override
-    public long getValue() {
-        return counter.sum();
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
-        PrometheusFormatUtils.appendCounterType(name, sink);
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
-        PrometheusFormatUtils.appendNewLine(sink);
+    public Gauge cachedUpdatesGauge() {
+        return cachedUpdatesGauge;
     }
 }

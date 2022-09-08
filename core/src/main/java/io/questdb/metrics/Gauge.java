@@ -29,4 +29,8 @@ public interface Gauge extends Scrapable {
     void inc();
 
     void dec();
+
+    void add(long value);
+
+    long getValue();
 }

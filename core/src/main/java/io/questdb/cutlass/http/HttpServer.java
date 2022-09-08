@@ -303,7 +303,7 @@ public class HttpServer implements Closeable {
             Metrics metrics
     ) {
         final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
-        QueryCache.configure(configuration);
+        QueryCache.configure(configuration, metrics);
         HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,

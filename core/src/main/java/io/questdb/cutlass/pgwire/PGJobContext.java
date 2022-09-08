@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -53,16 +54,18 @@ public class PGJobContext implements Closeable {
     ) {
         this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
 
+        final Metrics metrics = engine.getMetrics();
+
         final boolean enableSelectCache = configuration.isSelectCacheEnabled();
         final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
         final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
-        typesAndSelectCache = new AssociativeCache<>(blockCount, rowCount);
+        typesAndSelectCache = new AssociativeCache<>(blockCount, rowCount, metrics.pgWire().cachedSelectsGauge());
         typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
 
         final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
         final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8
         final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8
-        typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount);
+        typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
         typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
     }
 
