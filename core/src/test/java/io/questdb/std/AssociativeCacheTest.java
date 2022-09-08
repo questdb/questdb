@@ -58,10 +58,16 @@ public class AssociativeCacheTest {
             cache.put(Integer.toString(i), Integer.toString(i));
             Assert.assertEquals(i + 1, gauge.getValue());
         }
+
         cache.poll("0");
         Assert.assertEquals(9, gauge.getValue());
+        // Second poll() on the same key should be ignored.
+        cache.poll("0");
+        Assert.assertEquals(9, gauge.getValue());
+        // put() should insert value for key-value pair cleared by poll().
         cache.put("0", "42");
         Assert.assertEquals(10, gauge.getValue());
+
         cache.clear();
         Assert.assertEquals(0, gauge.getValue());
     }

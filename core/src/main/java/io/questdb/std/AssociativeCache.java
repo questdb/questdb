@@ -98,8 +98,11 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         }
         V value = values[index];
         values[index] = null;
-        cachedGauge.dec();
-        // do not null value to avoid creating another immutable key
+        if (value != null) {
+            // The value is present, so we're removing.
+            cachedGauge.dec();
+        }
+        // We do not null the key reference to avoid creating another immutable key.
         return value;
     }
 
@@ -107,10 +110,13 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         final int lo = lo(key);
 
         if (Chars.equalsNc(key, keys[lo])) {
+            // Present entry case.
             if (values[lo] != value) {
                 if (values[lo] == null) {
+                    // The value was previously cleared by poll(), so we're inserting.
                     cachedGauge.inc();
                 } else {
+                    // We're replacing the value with another one, no need to change the gauge.
                     Misc.free(values[lo]);
                 }
                 values[lo] = value;
@@ -118,15 +124,20 @@ public class AssociativeCache<V> implements Closeable, Mutable {
             return null;
         }
 
+        // New entry case.
+
         final CharSequence outgoingKey = keys[lo + bmask];
         if (outgoingKey != null) {
             int idx = lo + bmask;
             if (values[idx] == null) {
+                // The value for the outgoing key was previously cleared by poll(), so we're inserting.
                 cachedGauge.inc();
             } else {
+                // We're replacing the value with another one, no need to change the gauge.
                 values[idx] = Misc.free(values[idx]);
             }
         } else {
+            // The block has empty entries, so we're inserting.
             cachedGauge.inc();
         }
 
