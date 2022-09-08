@@ -408,6 +408,29 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastStrCharTab() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a char, b string);", sqlExecutionContext);
+            compiler.compile("create table x as (select cast(rnd_byte()%10 as string) a from long_sequence(5));", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            compiler.compile("insert into y select a,a from x", sqlExecutionContext).getInsertOperation();
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\tb\n" +
+                            "6\t6\n" +
+                            "2\t2\n" +
+                            "7\t7\n" +
+                            "7\t7\n" +
+                            "9\t9\n"
+            );
+        });
+    }
+
+    @Test
     public void testCastStrIntTab() throws Exception {
         assertStrTab(
                 "int",
@@ -481,6 +504,34 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "76\n" +
                         "124\n"
         );
+    }
+
+    @Test
+    public void testCastStrToCharLit() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a char);", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            executeInsert("insert into y values (cast('A' as string))");
+            executeInsert("insert into y values (cast('7' as string))");
+            try {
+                executeInsert("insert into y values ('cc')");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+            executeInsert("insert into y values (cast('K' as string))");
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\n" +
+                            "A\n" +
+                            "7\n" +
+                            "K\n"
+            );
+        });
     }
 
     @Test

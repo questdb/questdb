@@ -90,6 +90,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDouble", "(Ljava/lang/CharSequence;)D");
         int implicitCastStrAsByte = asm.poolMethod(SqlUtil.class, "implicitCastStrAsByte", "(Ljava/lang/CharSequence;)B");
         int implicitCastStrAsShort = asm.poolMethod(SqlUtil.class, "implicitCastStrAsShort", "(Ljava/lang/CharSequence;)S");
+        int implicitCastStrAsChar = asm.poolMethod(SqlUtil.class, "implicitCastStrAsChar", "(Ljava/lang/CharSequence;)C");
         int implicitCastStrAsInt = asm.poolMethod(SqlUtil.class, "implicitCastStrAsInt", "(Ljava/lang/CharSequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
@@ -101,7 +102,6 @@ public class RecordToRowCopierUtils {
         int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
         int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
 
-        // todo: move this to the same system for implicit cast as string and char
         int checkDoubleBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkDoubleBounds", "(DDDIII)V");
         int checkLongBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkLongBounds", "(JJJIII)V");
 
@@ -720,7 +720,6 @@ public class RecordToRowCopierUtils {
                     // do not. This is because functions are aware of their return type but records
                     // would have to do expensive checks to decide which conversion would be required
                     asm.invokeInterface(rGetStr);
-                    // todo: add string to char semantics
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastStrAsByte);
@@ -729,6 +728,10 @@ public class RecordToRowCopierUtils {
                         case ColumnType.SHORT:
                             asm.invokeStatic(implicitCastStrAsShort);
                             asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastStrAsChar);
+                            asm.invokeInterface(wPutChar, 2);
                             break;
                         case ColumnType.INT:
                             asm.invokeStatic(implicitCastStrAsInt);

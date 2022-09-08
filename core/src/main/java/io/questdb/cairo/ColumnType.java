@@ -350,6 +350,7 @@ public final class ColumnType {
                 || (fromType == STRING && toType == TIMESTAMP)
                 || (fromType == STRING && toType == FLOAT)
                 || (fromType == STRING && toType == DOUBLE)
+                || (fromType == STRING && toType == CHAR)
                 ;
     }
 
