@@ -2638,14 +2638,17 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRebuildIndexReadersLock() throws Exception {
+    public void testRebuildIndexWritersLock() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)", sqlExecutionContext);
 
-            try (TableReader ignore = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "rebuild_index")) {
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (TableWriter ignore = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "rebuild_index", "test")) {
                 compile("reindex table rebuild_index column sym lock exclusive");
+                Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "annot lock table");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot lock table");
             }
         });
     }

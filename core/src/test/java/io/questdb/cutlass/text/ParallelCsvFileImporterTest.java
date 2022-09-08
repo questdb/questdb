@@ -778,6 +778,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         null
                 );
                 importer.process();
+                Assert.fail();
             } catch (TextImportException e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("ignored empty input file [file='"));
             }
@@ -801,6 +802,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         null
                 );
                 importer.process();
+                Assert.fail();
             } catch (TextImportException e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("No rows in input file to import."));
             }
@@ -1404,6 +1406,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             try {
                 compiler.compile("select count(*) from " + tableName + ";", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("table does not exist"));
             }
@@ -2132,6 +2135,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab43", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
                 importer.process();
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=boundary_check, msg=`Cancelled`]"));
             }
