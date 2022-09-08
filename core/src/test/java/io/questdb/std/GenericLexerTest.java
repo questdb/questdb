@@ -56,6 +56,54 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testEscapeQuoteWithinStringLiteral() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.of("INSERT INTO tab VALUES ('o''brian');");
+
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
+        }
+        TestUtils.assertEquals("INSERT\n" +
+                        "INTO\n" +
+                        "tab\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'o''brian'\n" +
+                        ")\n;\n",
+                sink
+        );
+    }
+
+    @Test
+    public void testEscapeDoubleQuoteWithinQuotedIdentifier() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.of("INSERT INTO \"t\"\"ab\" VALUES ('obrian');");
+
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
+        }
+        TestUtils.assertEquals("INSERT\n" +
+                        "INTO\n" +
+                        "\"t\"\"ab\"\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'obrian'\n" +
+                        ")\n;\n",
+                sink
+        );
+    }
+
+    @Test
     public void testDoubleEscapedQuote() {
         GenericLexer lex = new GenericLexer(64);
 

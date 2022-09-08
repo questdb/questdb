@@ -24,34 +24,37 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Single owner count down latch. This latch is mutable and it does not actively
  */
 public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
     private static final long COUNT_OFFSET;
-    private volatile int count = 0;
+    private volatile int count;
+    private volatile int awaitedCount;
+    private volatile Thread waiter;
 
     public SOUnboundedCountDownLatch() {
     }
 
     public void await(int count) {
+        this.awaitedCount = count;
+        this.waiter = Thread.currentThread();
         while (this.count > -count) {
-            Os.pause();
+            LockSupport.park();
         }
     }
 
     @Override
     public void countDown() {
-        do {
-            final int current = this.count;
-            final int next = current - 1;
-            if (Unsafe.cas(this, COUNT_OFFSET, current, next)) {
-                break;
-            }
-        } while (true);
+        final int prevCount = Unsafe.getUnsafe().getAndAddInt(this, COUNT_OFFSET, -1);
+        final int awaitedCount = this.awaitedCount;
+        if ((prevCount - 1) <= -awaitedCount) {
+            unparkWaiter();
+        }
     }
 
     public int getCount() {
@@ -60,6 +63,15 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
 
     public void reset() {
         count = 0;
+        awaitedCount = 0;
+        waiter = null;
+    }
+
+    private void unparkWaiter() {
+        Thread waiter = this.waiter;
+        if (waiter != null) {
+            LockSupport.unpark(waiter);
+        }
     }
 
     static {
