@@ -4426,6 +4426,7 @@ nodejs code:
                     snapshotAgent,
                     metrics
             )) {
+                Assert.assertNotNull(server);
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -6129,7 +6130,7 @@ create table tab as (
                 connection.prepareCall("drop table xyz;").execute();
                 Assert.fail();
             } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "table 'xyz' does not exist");
+                TestUtils.assertContains(e.getMessage(), "table does not exist [table=xyz]");
                 TestUtils.assertEquals("00000", e.getSQLState());
             }
         });
@@ -6680,26 +6681,6 @@ create table tab as (
         });
     }
 
-    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold) throws Exception {
-        LOG.info().$("asserting PG Wire server [mode=").$(mode)
-                .$(", binary=").$(binary)
-                .$(", prepareThreshold=").$(prepareThreshold)
-                .I$();
-        setUp();
-        try {
-            assertMemoryLeak(() -> {
-                try (
-                        final PGWireServer ignored = createPGServer(2);
-                        final Connection connection = getConnection(mode, binary, prepareThreshold)
-                ) {
-                    runnable.run(connection, binary);
-                }
-            });
-        } finally {
-            tearDown();
-        }
-    }
-
     private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(
             PGWireConfiguration conf,
             int workerCount,
@@ -6952,6 +6933,7 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
+            Assert.assertNotNull(server);
             pool.start(LOG);
             int iteration = 0;
 
@@ -8026,78 +8008,6 @@ create table tab as (
         });
     }
 
-    @Test
-    public void testSymbolBindVariableInFilter() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
-            // create and initialize table outside of PG wire
-            // to ensure we do not collaterally initialize execution context on function parser
-            compiler.compile("CREATE TABLE x (\n" +
-                    "    ticker symbol index,\n" +
-                    "    sample_time timestamp,\n" +
-                    "    value int\n" +
-                    ") timestamp (sample_time)", sqlExecutionContext);
-            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
-                    ps.setString(1, "ABC");
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
-                                        "ABC,1970-01-01 00:00:00.0,0\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-        });
-    }
-
-    @Test
-    public void testSyntaxErrorReporting() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try {
-                connection.prepareCall("drop table xyz;").execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "table does not exist [table=xyz]");
-                TestUtils.assertEquals("00000", e.getSQLState());
-            }
-        });
-    }
-
-    @Test
-    public void testTruncateAndUpdateOnNonPartitionedTableWithoutDesignatedTs() throws Exception {
-        testTruncateAndUpdateOnTable("");
-    }
-
-    @Test
-    public void testTruncateAndUpdateOnNonPartitionedTableWithDesignatedTs() throws Exception {
-        testTruncateAndUpdateOnTable("timestamp(ts)");
-    }
-
-    @Test
-    public void testTruncateAndUpdateOnPartitionedTable() throws Exception {
-        testTruncateAndUpdateOnTable("timestamp(ts) partition by DAY");
-    }
-
-    public void testTruncateAndUpdateOnTable(String config) throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (Statement stat = connection.createStatement()) {
-                stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
-            }
-
-            try (Statement stat = connection.createStatement()) {
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
-                stat.execute("truncate table tb;");
-                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
-
-                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
-                    StringSink sink = new StringSink();
-                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);
