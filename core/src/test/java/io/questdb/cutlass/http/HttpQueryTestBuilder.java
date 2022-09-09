@@ -124,14 +124,15 @@ public class HttpQueryTestBuilder {
                 };
             }
             WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(workerCount), metrics);
+            workerPool.assignCleaner(Path.CLEANER);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
-                workerPool.assignCleaner(Path.CLEANER);
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
                     telemetryJob = new TelemetryJob(engine);
+                    workerPool.assign(telemetryJob);
                 }
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -226,6 +227,7 @@ public class HttpQueryTestBuilder {
                 });
 
                 QueryCache.configure(httpConfiguration, metrics);
+
                 try {
                     workerPoolManager.startAll();
                     code.run(engine);
