@@ -70,7 +70,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public void apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList) {
+    public boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList) {
         rnd.reset(this.s0, this.s1);
         TableWriter.Row row = tableWriter.newRow(timestamp);
 
@@ -143,5 +143,6 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
         } else {
             row.append();
         }
+        return false;
     }
 }

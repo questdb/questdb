@@ -28,50 +28,38 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     @Ignore
     public void testWalAddRemoveCommitFuzz() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName1 = testName.getMethodName() + "_wal";
-            String tableName2 = testName.getMethodName() + "_nonwal";
+            String tableNameWal = testName.getMethodName() + "_wal";
+            String tableNameWal2 = testName.getMethodName() + "_wal2";
+            String tableNameNoWal = testName.getMethodName() + "_nonwal";
 
-            compile("create table " + tableName1 + " as (" +
-                    "select x as c1, " +
-                    " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
-                    " cast(x as int) c3," +
-                    " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') " +
-                    " from long_sequence(5000)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-            SharedRandom.RANDOM.set(new Rnd());
-            compile("create table " + tableName2 + " as (" +
-                    "select x as c1, " +
-                    " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
-                    " cast(x as int) c3," +
-                    " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') " +
-                    " from long_sequence(5000)" +
-                    ") timestamp(ts) partition by DAY BYPASS WAL");
+            createInitialTable(tableNameWal, true);
+            createInitialTable(tableNameWal2, true);
+            createInitialTable(tableNameNoWal, false);
 
             ObjList<FuzzTransaction> transactions;
             int tableId1, tableId2;
-            try (TableReader reader = new TableReader(configuration, tableName1)) {
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
                 var metadata = reader.getMetadata();
                 tableId1 = metadata.getTableId();
                 transactions = FuzzTransactionGenerator.generateSet(
@@ -92,16 +80,32 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         10000
                 );
             }
-            try (TableReader reader = new TableReader(configuration, tableName1)) {
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
                 var metadata = reader.getMetadata();
                 tableId2 = metadata.getTableId();
             }
 
-            applyNonWal(transactions, tableName2, tableId2);
-            applyWal(transactions, tableName1, tableId1, 3);
+            applyNonWal(transactions, tableNameNoWal, tableId2);
 
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableName2, tableName1, LOG);
+            applyWal(transactions, tableNameWal, tableId1, 3);
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+
+            applyWalParallel(transactions, tableNameWal2, tableId1, 4);
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
         });
+    }
+
+    private void createInitialTable(String tableName1, boolean isWal) throws SqlException {
+        SharedRandom.RANDOM.set(new Rnd());
+        compile("create table " + tableName1 + " as (" +
+                "select x as c1, " +
+                " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                " cast(x as int) c3," +
+                " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') " +
+                " from long_sequence(5000)" +
+                ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
     }
 
     private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int tableId, int walWriterCount) {
@@ -131,6 +135,100 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         Misc.freeObjList(writers);
         drainWalQueue();
     }
+
+    private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, int tableId, int walWriterCount) {
+        ObjList<WalWriter> writers = new ObjList<>();
+
+        Thread[] threads = new Thread[walWriterCount];
+        AtomicLong structureVersion = new AtomicLong();
+        AtomicInteger nextOperation = new AtomicInteger(-1);
+        ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        CountDownLatch latch = new CountDownLatch(walWriterCount);
+        AtomicInteger done = new AtomicInteger();
+
+        for(int i = 0; i < walWriterCount; i++) {
+            final WalWriter walWriter = (WalWriter) engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test");
+            writers.add(walWriter);
+
+            Thread thread = new Thread(() -> {
+                IntList tempList = new IntList();
+                int opIndex;
+
+                try {
+                    latch.countDown();
+                    while ((opIndex = nextOperation.incrementAndGet()) < transactions.size()) {
+                        FuzzTransaction transaction = transactions.getQuick(opIndex);
+
+                        // wait until structure version is applied
+                        while (structureVersion.get() < transaction.metadataVersion) {
+                            Os.sleep(5);
+                        }
+
+                        boolean increment = false;
+                        for (int tranIndex = 0; tranIndex < transaction.operationList.size(); tranIndex++) {
+                            var operation = transaction.operationList.getQuick(tranIndex);
+                            increment |= operation.apply(walWriter, tableName, tableId, tempList);
+                        }
+
+                        if (transaction.rollback) {
+                            walWriter.rollback();
+                        } else {
+                            walWriter.commit();
+                            if (increment) {
+                                structureVersion.incrementAndGet();
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    errors.add(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            thread.start();
+            threads[i] = thread;
+        }
+
+        Thread applyThread = new Thread(() -> {
+            try {
+                int i = 0;
+                while(done.get() == 0) {
+                    Unsafe.getUnsafe().loadFence();
+                    drainWalQueue();
+                    Os.sleep(1);
+                    i++;
+                }
+                LOG.info().$("finished apply thread after iterations: ").$(i).$();
+            } catch (Throwable e) {
+                errors.add(e);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        applyThread.start();
+
+
+        for (int i = 0; i < threads.length; i++) {
+            try {
+                threads[i].join();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        done.incrementAndGet();
+        Misc.freeObjList(writers);
+        for(Throwable e : errors) {
+            throw new RuntimeException(e);
+        }
+
+        try {
+            applyThread.join();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
 
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName, int tableId) {
         try(TableWriterFrontend writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test")) {

@@ -78,8 +78,8 @@ public class FuzzTransactionGenerator {
 
                 final long startTs, stopTs;
                 if (o3) {
-                    long offset = (long) ((maxTimestamp - minTimestamp) / (transactionCount - 1.0 * i) * i);
-                    long jitter = (long) ((maxTimestamp - minTimestamp) / transactionCount * 1.0 * getZeroToOneDouble(rnd));
+                    long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
+                    long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * getZeroToOneDouble(rnd));
                     if (rnd.nextBoolean()) {
                         startTs = (minTimestamp + offset + jitter);
                     } else {
@@ -88,7 +88,7 @@ public class FuzzTransactionGenerator {
                 } else {
                     startTs = lastTimestamp;
                 }
-                stopTs = (long) (startTs + (maxTimestamp - minTimestamp) / (transactionCount - i) * (i + 1.0) * getZeroToOneDouble(rnd));
+                stopTs = Math.min((long) (startTs + (maxTimestamp - minTimestamp) / (transactionCount - i) * (i + 1.0) * getZeroToOneDouble(rnd)), maxTimestamp);
 
 
                 generateDataBlock(transactionList, rnd, tableModel, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols);

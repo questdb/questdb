@@ -37,6 +37,7 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class CopySegmentFileJob {
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
+    private static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
 
     public static void rollColumnToSegment(
             FilesFacade ff,
@@ -84,7 +85,8 @@ public class CopySegmentFileJob {
     }
 
     private static boolean copyVarLenFile(FilesFacade ff, MemoryMA primaryColumn, MemoryMA secondaryColumn, long primaryFd, long secondaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
-        long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), (rowCount + 1) * Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        long indexMapSize = (rowOffset + rowCount + 1) * Long.BYTES;
+        long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), indexMapSize, MEMORY_TAG);
         try {
             long varStart = Unsafe.getUnsafe().getLong(srcIndexAddr + rowOffset * Long.BYTES);
             long varEnd = Unsafe.getUnsafe().getLong(srcIndexAddr + (rowOffset + rowCount) * Long.BYTES);
@@ -97,17 +99,17 @@ public class CopySegmentFileJob {
             newOffsets.setQuick(columnIndex * 4 + 1, varCopyLen);
 
             long indexLen = (rowCount + 1) * Long.BYTES;
-            long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MEMORY_TAG);
             try {
                 Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);
                 newOffsets.setQuick(columnIndex * 4 + 2, secondaryFd);
                 newOffsets.setQuick(columnIndex * 4 + 3, indexLen);
                 return true;
             } finally {
-                ff.munmap(dstIndexAddr, indexLen, MemoryTag.MMAP_TABLE_WAL_WRITER);
+                ff.munmap(dstIndexAddr, indexLen, MEMORY_TAG);
             }
         } finally {
-            ff.munmap(srcIndexAddr, (rowCount + 1) * Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            ff.munmap(srcIndexAddr, indexMapSize, MEMORY_TAG);
         }
     }
 
@@ -117,11 +119,11 @@ public class CopySegmentFileJob {
             return false;
         }
         long size = rowCount << 4;
-        long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);
         try {
             Vect.flattenIndex(srcDataTimestampAddr, rowCount);
         } finally {
-            ff.munmap(srcDataTimestampAddr, size, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
         }
         return true;
     }

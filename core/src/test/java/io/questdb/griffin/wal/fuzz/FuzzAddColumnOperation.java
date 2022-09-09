@@ -49,12 +49,13 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public void apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList) {
+    public boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList) {
         try {
             AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, tableName, tableId);
             builder.ofAddColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
             AlterOperation alter = builder.build();
             tableWriter.applyAlter(alter, true);
+            return true;
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
