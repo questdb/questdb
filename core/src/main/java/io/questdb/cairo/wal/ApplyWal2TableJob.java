@@ -71,7 +71,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             // and can be ignored here
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getId() == tableId;
-                LOG.info().$("processWalTxnNotification :: (A) ").$(tableName).$();
                 cursor = applyOutstandingWalTransactions(writer, engine, sqlToOperation, reusableStructureChangeCursor);
                 lastCommittedTxn = writer.getTxn();
             } catch (EntryUnavailableException tableBusy) {
