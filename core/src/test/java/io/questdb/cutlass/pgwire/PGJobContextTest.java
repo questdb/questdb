@@ -3906,21 +3906,22 @@ nodejs code:
         assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
-                try (final Connection connection = getConnection(server.getPort(), false, true)) {
-                    sink.clear();
-                    try (
-                            PreparedStatement ps = connection.prepareStatement("create table test as (select x from long_sequence(10))")
-                    ) {
-                        ps.execute();
+                try {
+                    try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                        sink.clear();
+                        try (
+                                PreparedStatement ps = connection.prepareStatement("create table test as (select x from long_sequence(10))")
+                        ) {
+                            ps.execute();
+                        }
                     }
+                    testNullTypeSerialization0(server.getPort(), true, true);
+                    testNullTypeSerialization0(server.getPort(), true, false);
+                    testNullTypeSerialization0(server.getPort(), false, false);
+                    testNullTypeSerialization0(server.getPort(), false, true);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                testNullTypeSerialization0(server.getPort(), true, true);
-                testNullTypeSerialization0(server.getPort(), true, false);
-                testNullTypeSerialization0(server.getPort(), false, false);
-                testNullTypeSerialization0(server.getPort(), false, true);
-
-            } finally {
-                workerPoolManager.closeAll();
             }
         });
     }
