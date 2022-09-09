@@ -297,6 +297,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
         rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+        tempTxReader.ofRO(rootPath, PartitionBy.NONE);
         if (tempTxReader.unsafeLoad(true)) {
             if (tempTxReader.getTxn() < txn) {
                 // table name should be immutable when in the notification
