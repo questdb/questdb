@@ -25,8 +25,6 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.mp.MPSequence;
-import io.questdb.mp.WorkerPoolManager;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Before;
@@ -36,7 +34,6 @@ import org.junit.Test;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
@@ -88,8 +85,8 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                     assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()));
                 }
+                workerPoolManager.closeAll();
             }
-            workerPoolManager.closeAll();
         });
     }
 
@@ -127,9 +124,8 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                     assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue()));
                 }
+                workerPoolManager.closeAll();
             }
-            Os.sleep(500L);
-            workerPoolManager.closeAll();
         });
     }
 
