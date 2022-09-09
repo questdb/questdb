@@ -36,7 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -820,10 +819,9 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    @Ignore("should fail... not failing")
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
         counter.set(174 + 45);
-        executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+        executeWithPool(2, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
@@ -901,7 +899,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    @Ignore("ends up with a distressed table")
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
         counter.set(193 + 45);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
@@ -1960,8 +1957,6 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
         for (int i = 0; i < 20; i++) {
             try {
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
@@ -1969,10 +1964,7 @@ public class O3FailureTest extends AbstractO3Test {
             } catch (CairoException | CairoError ignored) {
             }
         }
-
         fixFailure.set(true);
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3172,7 +3164,7 @@ public class O3FailureTest extends AbstractO3Test {
             try {
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException ignored) {
+            } catch (CairoException | CairoError ignored) {
             }
         }
 
