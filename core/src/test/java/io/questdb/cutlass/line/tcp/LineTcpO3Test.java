@@ -160,38 +160,43 @@ public class LineTcpO3Test extends AbstractCairoTest {
             WorkerPool sharedWorkerPool = workerPoolManager.getInstance(sharedWorkerPoolConfiguration, metrics);
             workerPoolManager.setSharedPool(sharedWorkerPool);
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
-            try (
-                    LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics);
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            ) {
-                SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
-                        haltLatch.countDown();
-                    }
-                });
+            LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics);
+            try {
+                try (
+                        SqlCompiler compiler = new SqlCompiler(engine);
+                        SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                ) {
+                    SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
+                            haltLatch.countDown();
+                        }
+                    });
 
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
-                workerPoolManager.startAll();
-                TestUtils.assertConnect(clientFd, ilpSockAddr);
-                readGzResource(ilpResourceName);
-                Net.send(clientFd, resourceAddress, resourceSize);
-                Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
+                    sharedWorkerPool.assignCleaner(Path.CLEANER);
+                    workerPoolManager.startAll();
+                    TestUtils.assertConnect(clientFd, ilpSockAddr);
+                    readGzResource(ilpResourceName);
+                    Net.send(clientFd, resourceAddress, resourceSize);
+                    Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 
-                haltLatch.await();
+                    haltLatch.await();
 
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
-                readGzResource("selectAll1");
-                DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
-                expectedSink.clear(resourceSize);
-                TestUtils.assertEquals(expectedSink.toString(), sink);
-                Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
-                workerPoolManager.closeAll();
+                    TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
+                    readGzResource("selectAll1");
+                    DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
+                    expectedSink.clear(resourceSize);
+                    TestUtils.assertEquals(expectedSink.toString(), sink);
+                    Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
+
+                } finally {
+                    engine.setPoolListener(null);
+                    Net.close(clientFd);
+                    Net.freeSockAddr(ilpSockAddr);
+                }
             } finally {
-                engine.setPoolListener(null);
-                Net.close(clientFd);
-                Net.freeSockAddr(ilpSockAddr);
+                receiver.close();
+                workerPoolManager.closeAll();
             }
         });
     }
