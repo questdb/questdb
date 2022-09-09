@@ -1602,6 +1602,9 @@ public final class SqlParser {
         } else {
             lexer.unparseLast();
         }
+
+        boolean hasSeenLiteral = false;
+
         while (true) {
 
             tok = tok(lexer, "column");
@@ -1705,6 +1708,12 @@ public final class SqlParser {
                 expr.token = alias;
             }
             model.addBottomUpColumn(colPosition, col, false);
+
+            hasSeenLiteral |= col.getAst().type == ExpressionNode.LITERAL;
+
+            if (tok == null && hasSeenLiteral) {
+                throw err(lexer, tok, "'from' expected");
+            }
 
             if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparseLast();
