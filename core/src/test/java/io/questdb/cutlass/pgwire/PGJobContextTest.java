@@ -6546,7 +6546,6 @@ create table tab as (
             try (PGWireServer server = createPGServer(configuration)) {
                 workerPoolManager.startAll();
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
-                Os.sleep(500L);
                 workerPoolManager.closeAll();
             }
         });

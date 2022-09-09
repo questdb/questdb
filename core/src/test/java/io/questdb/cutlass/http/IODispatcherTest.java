@@ -856,7 +856,6 @@ public class IODispatcherTest {
 
             // select * from 'sample.csv' and limit columns to f0,f1
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
-
             workerPoolManager.closeAll();
         }
     }
