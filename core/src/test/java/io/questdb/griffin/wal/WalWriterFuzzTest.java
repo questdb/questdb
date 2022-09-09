@@ -25,6 +25,7 @@
 package io.questdb.griffin.wal;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -33,6 +34,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
+import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -60,7 +62,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             ObjList<FuzzTransaction> transactions;
             int tableId1, tableId2;
             try (TableReader reader = new TableReader(configuration, tableNameWal)) {
-                var metadata = reader.getMetadata();
+                TableReaderMetadata metadata = reader.getMetadata();
                 tableId1 = metadata.getTableId();
                 transactions = FuzzTransactionGenerator.generateSet(
                         metadata,
@@ -81,7 +83,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 );
             }
             try (TableReader reader = new TableReader(configuration, tableNameWal)) {
-                var metadata = reader.getMetadata();
+                TableReaderMetadata metadata = reader.getMetadata();
                 tableId2 = metadata.getTableId();
             }
 
@@ -120,8 +122,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             WalWriter writer = writers.getQuick(writerRnd.nextPositiveInt() % walWriterCount);
             writer.goActive();
             FuzzTransaction transaction = transactions.getQuick(i);
-            for (int tranIndex = 0; tranIndex < transaction.operationList.size(); tranIndex++) {
-                var operation = transaction.operationList.getQuick(tranIndex);
+            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                 operation.apply(writer, tableName, tableId, tempList);
             }
 
@@ -165,8 +167,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         }
 
                         boolean increment = false;
-                        for (int tranIndex = 0; tranIndex < transaction.operationList.size(); tranIndex++) {
-                            var operation = transaction.operationList.getQuick(tranIndex);
+                        for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                            FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                             increment |= operation.apply(walWriter, tableName, tableId, tempList);
                         }
 
@@ -174,9 +176,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                             walWriter.rollback();
                         } else {
                             walWriter.commit();
-                            if (increment) {
-                                structureVersion.incrementAndGet();
-                            }
+                        }
+                        if (increment) {
+                            structureVersion.incrementAndGet();
                         }
                     }
                 } catch (Throwable e) {
@@ -237,8 +239,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             for (int i = 0; i < transactionSize; i++) {
                 FuzzTransaction transaction = transactions.getQuick(i);
                 int size = transaction.operationList.size();
-                for (int tranIndex = 0; tranIndex < size; tranIndex++) {
-                    var operation = transaction.operationList.getQuick(tranIndex);
+                for (int operationIndex = 0; operationIndex < size; operationIndex++) {
+                    FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                     operation.apply(writer, tableName, tableId, tempList);
                 }
 
