@@ -100,7 +100,7 @@ mvn clean package -DskipTests -P build-web-console
 You can then run QuestDB with:
 
 ```bash
-java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
+java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Server -d <root_dir>
 ```
 
 The web console will be available at [localhost:9000](http://localhost:9000).

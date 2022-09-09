@@ -13,7 +13,7 @@ sudo yum install maven
 sudo amazon-linux-extras install java-openjdk11
 
 
-java -Xms3g -Xmx3g -Dfile.encoding=UTF-8 -p /home/pim/.m2/repository/org/jetbrains/annotations/17.0.0/annotations-17.0.0.jar:/home/pim/local/java/questdb/core/target/classes -classpath /home/pim/.m2/repository/junit/junit/4.13.1/junit-4.13.1.jar:/home/pim/.m2/repository/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar:/home/pim/.m2/repository/org/postgresql/postgresql/42.2.12/postgresql-42.2.12.jar --patch-module io.questdb=/home/pim/local/java/questdb/core/target/test-classes --add-reads io.questdb=ALL-UNNAMED -m io.questdb/io.questdb.ServerMain -d /home/pim/deployments/questdb/questdb.1
+java -Xms3g -Xmx3g -Dfile.encoding=UTF-8 -p /home/pim/.m2/repository/org/jetbrains/annotations/17.0.0/annotations-17.0.0.jar:/home/pim/local/java/questdb/core/target/classes -classpath /home/pim/.m2/repository/junit/junit/4.13.1/junit-4.13.1.jar:/home/pim/.m2/repository/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar:/home/pim/.m2/repository/org/postgresql/postgresql/42.2.12/postgresql-42.2.12.jar --patch-module io.questdb=/home/pim/local/java/questdb/core/target/test-classes --add-reads io.questdb=ALL-UNNAMED -m io.questdb/io.questdb.Server -d /home/pim/deployments/questdb/questdb.1
 
 
 

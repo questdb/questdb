@@ -223,7 +223,7 @@ public class Bootstrap {
 
     @TestOnly
     void extractSite() throws IOException {
-        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
+        URL resource = Server.class.getResource(PUBLIC_ZIP);
         long thisVersion = Long.MIN_VALUE;
         if (resource == null) {
             log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
@@ -275,7 +275,7 @@ public class Bootstrap {
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
-        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+        try (final InputStream is = Server.class.getResourceAsStream(PUBLIC_ZIP)) {
             if (is != null) {
                 try (ZipInputStream zip = new ZipInputStream(is)) {
                     ZipEntry ze;
@@ -308,7 +308,7 @@ public class Bootstrap {
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
         File out = new File(dir, res);
-        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
+        try (InputStream is = Server.class.getResourceAsStream("/io/questdb/site/" + res)) {
             if (is != null) {
                 copyInputStream(force, buffer, out, is, log);
             }

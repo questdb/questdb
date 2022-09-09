@@ -179,7 +179,7 @@ function start {
     -XX:+UseParallelGC
     "
 
-    JAVA_MAIN="io.questdb/io.questdb.ServerMain"
+    JAVA_MAIN="io.questdb/io.questdb.Server"
     DATE=`date +%Y-%m-%dT%H-%M-%S`
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then

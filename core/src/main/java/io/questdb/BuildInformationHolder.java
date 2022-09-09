@@ -106,7 +106,7 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     private static Attributes getManifestAttributes() throws IOException {
-        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
+        final Enumeration<URL> resources = Server.class.getClassLoader()
                 .getResources("META-INF/MANIFEST.MF");
         while (resources.hasMoreElements()) {
             try (InputStream is = resources.nextElement().openStream()) {
