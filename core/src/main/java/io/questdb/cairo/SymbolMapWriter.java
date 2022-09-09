@@ -125,7 +125,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // we use index hash maximum equals to half of symbol capacity, which
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
-            this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 4);
+            this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
 
             if (useCache) {
                 this.cache = new CharSequenceIntHashMap(symbolCapacity);
