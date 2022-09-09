@@ -25,7 +25,6 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
-import io.questdb.test.tools.TestUtils;
 
 public class TestWorkerPool extends WorkerPool {
 
@@ -34,21 +33,6 @@ public class TestWorkerPool extends WorkerPool {
     }
 
     public TestWorkerPool(int workerCount, Metrics metrics) {
-        super(new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(workerCount);
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return false;
-            }
-        }, metrics);
+        super(() -> workerCount, metrics);
     }
 }

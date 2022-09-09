@@ -56,7 +56,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
  * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
-public class PGConnectionContext implements IOContext, Mutable, WriterSource {
+public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionContext> implements WriterSource {
 
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
@@ -155,7 +155,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
-    private boolean requireInitialMessage = false;
+    private boolean requireInitialMessage = true;
     private long recvBufferWriteOffset = 0;
     private long totalReceived = 0;
     private long recvBufferReadOffset = 0;
@@ -174,14 +174,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndUpdate typesAndUpdate = null;
     private boolean typesAndSelectIsCached = true;
     private boolean typesAndUpdateIsCached = false;
-    private long fd;
     private CharSequence queryText;
     //command tag used when returning row count to client,
     //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
     private CharSequence queryTag;
     private CharSequence username;
     private boolean authenticationRequired = true;
-    private IODispatcher<PGConnectionContext> dispatcher;
     private Rnd rnd;
     private long rowCount;
     private boolean completed = true;
@@ -233,6 +231,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
+        this.queryTag = TAG_OK;
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -349,21 +348,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public boolean invalid() {
-        return fd == -1;
-    }
-
-    @Override
-    public IODispatcher<PGConnectionContext> getDispatcher() {
-        return dispatcher;
-    }
-
-    @Override
     public TableWriter getWriter(CairoSecurityContext context, CharSequence name, CharSequence lockReason) {
         final int index = pendingWriters.keyIndex(name);
         if (index < 0) {
@@ -446,11 +430,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
-        this.fd = clientFd;
-        sqlExecutionContext.with(clientFd);
-        this.dispatcher = dispatcher;
-        clear();
+    @Override
+    public PGConnectionContext of(long fd, IODispatcher<PGConnectionContext> dispatcher) {
+        PGConnectionContext r = super.of(fd, dispatcher);
+        sqlExecutionContext.with(fd);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
             if (recvBuffer > 0) {
@@ -472,7 +455,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 this.sendBufferLimit = sendBuffer + sendBufferSize;
             }
         }
-        return this;
+        return r;
     }
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
@@ -2312,7 +2295,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
         prepareForNewQuery();
         CharacterStoreEntry e = characterStore.newEntry();
 
