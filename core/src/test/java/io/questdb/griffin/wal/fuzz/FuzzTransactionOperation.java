@@ -28,5 +28,5 @@ import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.std.IntList;
 
 public interface FuzzTransactionOperation {
-    void apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList);
+    boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList);
 }

@@ -22,37 +22,33 @@
  *
  ******************************************************************************/
 
+package io.questdb.network;
 
-package io.questdb.metrics;
+public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
+    protected long fd = -1;
+    protected IODispatcher<T> dispatcher;
 
-import io.questdb.std.str.CharSink;
-
-import java.util.concurrent.atomic.LongAdder;
-
-class CounterImpl implements Counter {
-    private final CharSequence name;
-    private final LongAdder counter;
-
-    CounterImpl(CharSequence name) {
-        this.name = name;
-        this.counter = new LongAdder();
+    @Override
+    public void clear() {
+        this.fd = -1;
+        this.dispatcher = null;
     }
 
     @Override
-    public void add(long value) {
-        counter.add(value);
+    public long getFd() {
+        return fd;
     }
 
     @Override
-    public long getValue() {
-        return counter.sum();
+    public  IODispatcher<T> getDispatcher() {
+        return dispatcher;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
-        PrometheusFormatUtils.appendCounterType(name, sink);
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
-        PrometheusFormatUtils.appendNewLine(sink);
+    public T of(long fd, IODispatcher<T> dispatcher) {
+        this.fd = fd;
+        this.dispatcher = dispatcher;
+        return (T) this;
     }
 }

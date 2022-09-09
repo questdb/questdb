@@ -312,11 +312,11 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public void putByte(byte b) {
+    public void putByte(byte value) {
         if (pageHi == appendPointer) {
             pageAt(getAppendOffset() + 1);
         }
-        Unsafe.getUnsafe().putByte(appendPointer++, b);
+        Unsafe.getUnsafe().putByte(appendPointer++, value);
     }
 
     @Override

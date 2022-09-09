@@ -40,10 +40,11 @@ public class FuzzDropColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public void apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList) {
+    public boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList) {
         try {
             AlterOperation alter = new AlterOperationBuilder().ofDropColumn(0, tableName, tableId).ofDropColumn(columnName).build();
             tableWriter.applyAlter(alter, true);
+            return true;
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }

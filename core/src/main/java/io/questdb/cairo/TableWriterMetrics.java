@@ -55,23 +55,23 @@ public class TableWriterMetrics {
     }
 
     public long getCommitCount() {
-        return commitCounter.get();
+        return commitCounter.getValue();
     }
 
     public long getO3CommitCount() {
-        return o3CommitCounter.get();
+        return o3CommitCounter.getValue();
     }
 
     public long getCommittedRows() {
-        return committedRowCounter.get();
+        return committedRowCounter.getValue();
     }
 
     public long getRollbackCount() {
-        return rollbackCounter.get();
+        return rollbackCounter.getValue();
     }
 
     public long getPhysicallyWrittenRows() {
-        return physicallyWrittenRowCounter.get();
+        return physicallyWrittenRowCounter.getValue();
     }
 
     public void incrementCommits() {

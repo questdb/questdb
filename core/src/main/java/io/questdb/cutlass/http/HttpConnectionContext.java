@@ -37,7 +37,7 @@ import io.questdb.std.str.StdoutSink;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class HttpConnectionContext implements IOContext, Locality, Mutable, Retry {
+public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnectionContext> implements  Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
@@ -61,10 +61,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     };
     private final boolean serverKeepAlive;
     private final Runnable onPeerDisconnect;
-    private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private boolean pendingRetry = false;
-    private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
     private int receivedBytes;
@@ -135,18 +133,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     }
 
     @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
     public boolean invalid() {
         return pendingRetry || receivedBytes > 0 || this.fd == -1;
-    }
-
-    @Override
-    public IODispatcher<HttpConnectionContext> getDispatcher() {
-        return dispatcher;
     }
 
     @Override
@@ -196,7 +184,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                         .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this);
                 resumeProcessor = processor;
-                dispatcher.registerChannel(this, IOOperation.WRITE);
+                getDispatcher().registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RERUN);
@@ -272,11 +260,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         }
     }
 
+    @Override
     public HttpConnectionContext of(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
-        this.fd = fd;
-        this.dispatcher = dispatcher;
+        HttpConnectionContext r = super.of(fd, dispatcher);
         this.responseSink.of(fd);
-        return this;
+        return r;
     }
 
     public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) {

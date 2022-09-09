@@ -43,6 +43,7 @@ import java.io.File;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -824,7 +825,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final int numOfRows = 11;
             final int numOfThreads = 10;
             final int numOfTxn = numOfThreads;
-            final SOCountDownLatch alterFinished = new SOCountDownLatch(numOfThreads);
+            final CountDownLatch alterFinished = new CountDownLatch(numOfThreads);
             final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
             final AtomicInteger columnNumber = new AtomicInteger();
 
@@ -832,6 +833,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 new Thread(() -> {
                     final String colName = "col" + columnNumber.incrementAndGet();
                     TableWriter.Row row;
+                    boolean countedDown = false;
                     try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                         System.out.println(Thread.currentThread().getName() + " wal=" + walWriter.getWalName() + ", col=" + colName);
 
@@ -841,7 +843,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                         removeColumn(walWriter, colName);
                         addColumn(walWriter, colName, ColumnType.BYTE);
                         removeColumn(walWriter, colName);
+
                         alterFinished.countDown();
+                        countedDown = true;
 
                         alterFinished.await();
                         assertEquals(0, walWriter.size());
@@ -859,6 +863,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                         throw new RuntimeException(e);
                     } finally {
                         Path.clearThreadLocals();
+                        if (!countedDown) {
+                            alterFinished.countDown();
+                        }
                         writeFinished.countDown();
                     }
                 }).start();
