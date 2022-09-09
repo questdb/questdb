@@ -1312,7 +1312,7 @@ public class TextImportTask {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
                 type.write(w, fieldIndex, dbcs, utf8Sink);
-            } catch (NumericException | Utf8Exception | ConversionException ignore) {
+            } catch (NumericException | Utf8Exception | ConversionException | ImplicitCastException ignore) {
                 errors++;
                 logError(offset, fieldIndex, dbcs);
                 switch (atomicity) {

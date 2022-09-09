@@ -129,7 +129,7 @@ public class SqlUtil {
         return 0;
     }
 
-    public static byte castCharToType(char value, int tupleIndex, int toType) {
+    public static byte implicitCastCharAsType(char value, int tupleIndex, int toType) {
         byte v = (byte) (value - '0');
         if (v > -1 && v < 10) {
             return v;
@@ -138,7 +138,7 @@ public class SqlUtil {
     }
 
     public static byte implicitCastCharAsByte(char value, int toType) {
-        return castCharToType(value, 0, toType);
+        return implicitCastCharAsType(value, 0, toType);
     }
 
     public static long implicitCastStrAsDate(CharSequence value) {

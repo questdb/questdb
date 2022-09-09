@@ -1961,18 +1961,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table geohash (geohash geohash(1c))",
                 null,
                 "insert into geohash " +
-                        "select rnd_str('q','u','e','o','l') from long_sequence(10)",
+                        "select rnd_str('q','u','e') from long_sequence(10)",
                 "geohash\n" +
                         "q\n" +
-                        "\n" +
-                        "\n" +
+                        "q\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
                         "e\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n",
+                        "q\n" +
+                        "u\n",
                 true,
                 true,
                 true

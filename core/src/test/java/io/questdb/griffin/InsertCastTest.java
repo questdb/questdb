@@ -92,6 +92,19 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastCharDoubleTab() throws Exception {
+        assertCharTab(
+                "double",
+                "a\n" +
+                        "5.0\n" +
+                        "3.0\n" +
+                        "0.0\n" +
+                        "7.0\n" +
+                        "0.0\n"
+        );
+    }
+
+    @Test
     public void testCastCharFloatFunc() throws Exception {
         assertCharFunc(
                 "float",
@@ -99,6 +112,32 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "5.0000\n" +
                         "3.0000\n" +
                         "0.0000\n"
+        );
+    }
+
+    @Test
+    public void testCastCharFloatTab() throws Exception {
+        assertCharTab(
+                "float",
+                "a\n" +
+                        "5.0000\n" +
+                        "3.0000\n" +
+                        "0.0000\n" +
+                        "7.0000\n" +
+                        "0.0000\n"
+        );
+    }
+
+    @Test
+    public void testCastCharGeoByteTab() throws Exception {
+        assertCharTab(
+                "geohash(1c)",
+                "a\n" +
+                        "5\n" +
+                        "3\n" +
+                        "0\n" +
+                        "7\n" +
+                        "0\n"
         );
     }
 
@@ -305,6 +344,17 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastCharToGeoByteLit() throws Exception {
+        assertCharLit(
+                "geohash(1c)",
+                "a\n" +
+                        "4\n" +
+                        "7\n" +
+                        "1\n"
+        );
+    }
+
+    @Test
     public void testCastCharToLongBind() throws Exception {
         assertCharBind(
                 "long",
@@ -382,6 +432,42 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastStrCharTab() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a char, b string);", sqlExecutionContext);
+            compiler.compile("create table x as (select cast(rnd_byte()%10 as string) a from long_sequence(5));", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            compiler.compile("insert into y select a,a from x", sqlExecutionContext).getInsertOperation();
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\tb\n" +
+                            "6\t6\n" +
+                            "2\t2\n" +
+                            "7\t7\n" +
+                            "7\t7\n" +
+                            "9\t9\n"
+            );
+        });
+    }
+
+    @Test
+    public void testCastStrDateTab() throws Exception {
+        assertStrTab(
+                "date",
+                "a\tb\n" +
+                        "1970-01-01T00:00:00.076Z\t76\n" +
+                        "1970-01-01T00:00:00.102Z\t102\n" +
+                        "1970-01-01T00:00:00.027Z\t27\n" +
+                        "1970-01-01T00:00:00.087Z\t87\n" +
+                        "1970-01-01T00:00:00.079Z\t79\n"
+        );
+    }
+
+    @Test
     public void testCastStrDoubleTab() throws Exception {
         assertStrTab(
                 "double",
@@ -405,29 +491,6 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "87.0000\t87\n" +
                         "79.0000\t79\n"
         );
-    }
-
-    @Test
-    public void testCastStrCharTab() throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            compiler.compile("create table y(a char, b string);", sqlExecutionContext);
-            compiler.compile("create table x as (select cast(rnd_byte()%10 as string) a from long_sequence(5));", sqlExecutionContext);
-            // execute insert statement for each value of reference table
-            compiler.compile("insert into y select a,a from x", sqlExecutionContext).getInsertOperation();
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "y",
-                    sink,
-                    "a\tb\n" +
-                            "6\t6\n" +
-                            "2\t2\n" +
-                            "7\t7\n" +
-                            "7\t7\n" +
-                            "9\t9\n"
-            );
-        });
     }
 
     @Test
@@ -457,15 +520,15 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastStrDateTab() throws Exception {
+    public void testCastStrShortTab() throws Exception {
         assertStrTab(
-                "date",
+                "short",
                 "a\tb\n" +
-                        "1970-01-01T00:00:00.076Z\t76\n" +
-                        "1970-01-01T00:00:00.102Z\t102\n" +
-                        "1970-01-01T00:00:00.027Z\t27\n" +
-                        "1970-01-01T00:00:00.087Z\t87\n" +
-                        "1970-01-01T00:00:00.079Z\t79\n"
+                        "76\t76\n" +
+                        "102\t102\n" +
+                        "27\t27\n" +
+                        "87\t87\n" +
+                        "79\t79\n"
         );
     }
 
@@ -479,19 +542,6 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000027Z\t27\n" +
                         "1970-01-01T00:00:00.000087Z\t87\n" +
                         "1970-01-01T00:00:00.000079Z\t79\n"
-        );
-    }
-
-    @Test
-    public void testCastStrShortTab() throws Exception {
-        assertStrTab(
-                "short",
-                "a\tb\n" +
-                        "76\t76\n" +
-                        "102\t102\n" +
-                        "27\t27\n" +
-                        "87\t87\n" +
-                        "79\t79\n"
         );
     }
 
@@ -746,7 +796,8 @@ public class InsertCastTest extends AbstractGriffinTest {
             executeInsert("insert into y values ('4')");
             executeInsert("insert into y values ('7')");
             try {
-                executeInsert("insert into y values ('c')");
+                // 'a' is an invalid geohash and also invalid number
+                executeInsert("insert into y values ('a')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");

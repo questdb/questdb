@@ -37,7 +37,6 @@ import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -915,7 +914,9 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSerialCopyWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
-        testCopyWithAtomicity(false, "SKIP_ROW", 6);
+        // invalid geohash 'GEOHASH' in the CSV file errors out rather than storing NULL silently
+        // therefore such row is skipped
+        testCopyWithAtomicity(false, "SKIP_ROW", 5);
     }
 
     @Test
@@ -925,7 +926,9 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
-        testCopyWithAtomicity(true, "SKIP_ROW", 6);
+        // invalid geohash 'GEOHASH' in the CSV file errors out rather than storing NULL silently
+        // therefore such row is skipped
+        testCopyWithAtomicity(true, "SKIP_ROW", 5);
     }
 
     @Test
