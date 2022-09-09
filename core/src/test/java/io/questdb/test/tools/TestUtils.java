@@ -461,6 +461,7 @@ public final class TestUtils {
 
         Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
+        String fileDebugInfo = Files.getOpenFdDebugInfo();
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
         int addrInfoCount = Net.getAllocatedAddrInfoCount();
@@ -472,7 +473,7 @@ public final class TestUtils {
         runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
-            Assert.assertEquals("file descriptors " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+            Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
 
         // Checks that the same tag used for allocation and freeing native memory
