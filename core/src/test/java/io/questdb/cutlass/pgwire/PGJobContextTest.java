@@ -3791,8 +3791,7 @@ nodejs code:
     }
 
     @Test
-    @Ignore
-    public void testMultistatement() throws Exception {
+    public void testMultiStatement() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
@@ -3800,12 +3799,11 @@ nodejs code:
                         final Connection connection = getConnection(server.getPort(), false, true)
                 ) {
                     connection.setAutoCommit(false);
-                    int totalRows = 100;
+                    final int totalRows = 100;
 
                     CallableStatement tbl = connection.prepareCall(
                             "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
                     tbl.execute();
-                    connection.commit();
                     // Queries with multiple statements should not be transformed.
                     PreparedStatement stmt = connection.prepareStatement("insert into x(a) values(100); x");
                     stmt.setFetchSize(10);
@@ -3815,10 +3813,9 @@ nodejs code:
                     ResultSet rs = stmt.getResultSet();
                     int count = 0;
                     while (rs.next()) {
-                        assertEquals(count, rs.getInt(1));
-                        ++count;
+                        assertEquals(count++, rs.getInt(1));
                     }
-                    assertEquals(totalRows + 1, count);
+                    assertEquals(totalRows, count);
                 } finally {
                     workerPoolManager.closeAll();
                 }
