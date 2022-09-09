@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
@@ -95,6 +96,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         configuration = serverConf.getCairoConfiguration();
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
+        metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
@@ -160,8 +162,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             WorkerPool sharedWorkerPool = workerPoolManager.getInstance(sharedWorkerPoolConfiguration, metrics);
             workerPoolManager.setSharedPool(sharedWorkerPool);
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
-            LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics);
-            try {
+            try (LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics)) {
                 try (
                         SqlCompiler compiler = new SqlCompiler(engine);
                         SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
@@ -190,13 +191,11 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 
                 } finally {
+                    workerPoolManager.closeAll();
                     engine.setPoolListener(null);
                     Net.close(clientFd);
                     Net.freeSockAddr(ilpSockAddr);
                 }
-            } finally {
-                receiver.close();
-                workerPoolManager.closeAll();
             }
         });
     }
