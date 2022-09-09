@@ -5233,7 +5233,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("spc", 2), Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -5251,7 +5251,6 @@ public class IODispatcherTest {
                 });
 
                 workerPoolManager.startAll();
-
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
@@ -5376,12 +5375,9 @@ public class IODispatcherTest {
                     } finally {
                         Files.remove(path);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-            } finally {
-                if (Os.isWindows()) {
-                    Os.sleep(1000L);
-                }
-                workerPoolManager.closeAll();
             }
         });
     }
