@@ -5379,7 +5379,7 @@ public class IODispatcherTest {
                 }
             } finally {
                 if (Os.isWindows()) {
-                    Os.sleep(500L);
+                    Os.sleep(1000L);
                 }
                 workerPoolManager.closeAll();
             }
