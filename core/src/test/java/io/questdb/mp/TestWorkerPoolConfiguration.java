@@ -27,13 +27,16 @@ package io.questdb.mp;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.Metrics;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 
 public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    private static final AtomicInteger ID = new AtomicInteger(-1);
     private final String poolName;
     private final int workerCount;
 
     public TestWorkerPoolConfiguration(int workerCount) {
-        this("test-worker", workerCount);
+        this("pool" + ID.incrementAndGet(), workerCount);
     }
 
     public TestWorkerPoolConfiguration(String poolName, int workerCount) {

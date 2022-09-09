@@ -43,7 +43,6 @@ import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
@@ -229,16 +228,13 @@ public class HttpQueryTestBuilder {
                 QueryCache.configure(httpConfiguration, metrics);
 
                 try {
-                    workerPoolManager.startAll();
+                    workerPoolManager.startAll(LOG);
                     code.run(engine);
                 } finally {
-                    if (Os.isWindows()) {
-                        Os.sleep(1000L);
-                    }
+                    workerPoolManager.closeAll();
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }
-                    workerPoolManager.closeAll();
                 }
             }
         });

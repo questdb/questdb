@@ -2848,9 +2848,7 @@ public class IODispatcherTest {
                 });
 
                 workerPoolManager.startAll();
-
                 try {
-
                     // send multipart request to server
                     final String request = "GET /query?limit=0%2C1000&count=true&src=con&query=select%20npe()%20from%20long_sequence(1)&timings=true HTTP/1.1\r\n" +
                             "Host: localhost:9000\r\n" +
@@ -5405,8 +5403,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
-
+                workerPoolManager.startAll(LOG);
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
@@ -5520,10 +5517,9 @@ public class IODispatcherTest {
                         }
                     } finally {
                         Files.remove(path);
+                        workerPoolManager.closeAll();
                     }
                 }
-            } finally {
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -5715,10 +5711,9 @@ public class IODispatcherTest {
                         }
                     } finally {
                         Files.remove(path);
+                        workerPoolManager.closeAll();
                     }
                 }
-            } finally {
-                workerPoolManager.closeAll();
             }
         });
     }
