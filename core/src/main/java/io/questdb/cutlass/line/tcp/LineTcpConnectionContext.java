@@ -77,8 +77,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
     @Override
     public void close() {
         this.fd = -1;
-        Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
-        recvBufStart = recvBufEnd = recvBufPos = 0;
+        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
     }
 
     private boolean checkQueueFullLogHysteresis() {
