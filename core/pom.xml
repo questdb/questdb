@@ -88,6 +88,7 @@
                         <arg>${compilerArg0}</arg>
                         <arg>${compilerArg1}</arg>
                         <arg>${compilerArg2}</arg>
+                        <arg>-XDignore.symbol.file</arg>
                     </compilerArgs>
                     <fork>true</fork>
                     <source>${javac.compile.source}</source>
