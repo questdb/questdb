@@ -291,7 +291,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return getWriter(securityContext, tableName, lockReason);
     }
 
-    public void notifyWalTxnUncompleted(int tableId, CharSequence tableName, long txn) {
+    public void notifyWalTxnUncompleted(int tableId, String tableName, long txn) {
         rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(rootPath, PartitionBy.NONE)) {
             if (txReader.unsafeLoad(true)) {
@@ -302,7 +302,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
-    public void notifyWalTxnCommitted(int tableId, CharSequence tableName, long txn) {
+    public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
         Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         int steelingAttempts = 10;
         while (true) {

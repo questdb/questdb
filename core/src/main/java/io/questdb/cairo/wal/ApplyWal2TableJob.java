@@ -159,14 +159,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
+        CharSequence tableName;
+        int tableId;
         try {
             WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
-            int tableId = walTxnNotificationTask.getTableId();
-            CharSequence tableName = walTxnNotificationTask.getTableName();
-            reusableStructureChangeCursor.set(processWalTxnNotification(tableName, tableId, engine, sqlToOperation, reusableStructureChangeCursor.get()));
+            tableId = walTxnNotificationTask.getTableId();
+            tableName = walTxnNotificationTask.getTableName();
         } finally {
+            // Don't hold the queue until the all the transactions applied to the table
             subSeq.done(cursor);
         }
+        reusableStructureChangeCursor.set(processWalTxnNotification(tableName, tableId, engine, sqlToOperation, reusableStructureChangeCursor.get()));
         return true;
     }
 

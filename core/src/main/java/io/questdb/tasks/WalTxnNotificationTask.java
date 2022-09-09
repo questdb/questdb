@@ -25,18 +25,18 @@
 package io.questdb.tasks;
 
 public class WalTxnNotificationTask {
-    private CharSequence tableName;
+    private String tableName;
     private int tableId;
 
     public int getTableId() {
         return tableId;
     }
 
-    public CharSequence getTableName() {
+    public String getTableName() {
         return tableName;
     }
 
-    public void of(CharSequence tableName, int tableId, long txn) {
+    public void of(String tableName, int tableId, long txn) {
         this.tableName = tableName;
         this.tableId = tableId;
     }
