@@ -233,12 +233,12 @@ public class HttpQueryTestBuilder {
                     code.run(engine);
                 } finally {
                     if (Os.isWindows()) {
-                        Os.sleep(500L);
+                        Os.sleep(1000L);
                     }
-                    workerPoolManager.closeAll();
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }
+                    workerPoolManager.closeAll();
                 }
             }
         });
