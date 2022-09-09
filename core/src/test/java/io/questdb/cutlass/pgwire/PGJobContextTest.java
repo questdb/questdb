@@ -1423,8 +1423,9 @@ public class PGJobContextTest extends BasePGTest {
                 } catch (PSQLException e) {
                     Assert.assertNotNull(e.getServerErrorMessage());
                     TestUtils.assertContains(e.getServerErrorMessage().getMessage(), "blob is too large");
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -1462,8 +1463,9 @@ public class PGJobContextTest extends BasePGTest {
                         TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
                         Assert.assertEquals("00000", e.getSQLState());
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -1674,8 +1676,9 @@ public class PGJobContextTest extends BasePGTest {
                 byte[] bytes = text.getBytes();
                 copyIn.writeToCopy(bytes, 0, bytes.length);
                 copyIn.endCopy();
+            } finally {
+                workerPoolManager.closeAll();
             }
-            workerPoolManager.closeAll();
         }
     }
 
@@ -1943,9 +1946,10 @@ public class PGJobContextTest extends BasePGTest {
                         // expected
                         Assert.assertNotNull(ex);
                     }
+                } finally {
+                    Os.sleep(100); // Give connection some time to close before closing the server.
+                    workerPoolManager.closeAll();
                 }
-                Os.sleep(100); // Give connection some time to close before closing the server.
-                workerPoolManager.closeAll();
             }
             // Assertion that no open readers left will be performed in assertMemoryLeak
         });
@@ -2016,8 +2020,9 @@ public class PGJobContextTest extends BasePGTest {
                         assertEquals(count, rs.getRow());
                     }
                     assertEquals(totalRows, count);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2301,8 +2306,9 @@ public class PGJobContextTest extends BasePGTest {
                             );
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2362,8 +2368,9 @@ public class PGJobContextTest extends BasePGTest {
                             );
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2387,8 +2394,9 @@ public class PGJobContextTest extends BasePGTest {
                         insert.setFetchSize(100); // Should be meaningless.
                         insert.execute();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2495,8 +2503,9 @@ public class PGJobContextTest extends BasePGTest {
                                 sink,
                                 resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2559,8 +2568,9 @@ public class PGJobContextTest extends BasePGTest {
                         sink.clear();
                         assertResultSet(expectedInsertWithoutLosingPrecision, sink, resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2643,8 +2653,9 @@ public class PGJobContextTest extends BasePGTest {
                     execSelectWithParam(select, 11);
                     TestUtils.assertEquals("11\n", sink);
 
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2690,8 +2701,9 @@ public class PGJobContextTest extends BasePGTest {
                         sink.clear();
                         assertResultSet(expectedInsertWithLosingPrecision, sink, resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2854,8 +2866,9 @@ nodejs code:
                     // exercise parameters on select statement
                     execSelectWithParam(select, 9);
                     TestUtils.assertEquals("9\n", sink);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -2882,8 +2895,9 @@ nodejs code:
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3028,8 +3042,9 @@ nodejs code:
                     ) {
                         assertResultSet(expected, sink, rs);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3037,7 +3052,7 @@ nodejs code:
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            try(final PGWireServer server = createPGServer(1)) {
+            try (final PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     try (Statement statement = connection.createStatement()) {
@@ -3058,8 +3073,9 @@ nodejs code:
                         stmt.setLong(1, 42);
                         stmt.executeUpdate();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3087,8 +3103,9 @@ nodejs code:
                         stmt.setLong(1, 42);
                         stmt.executeUpdate();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3096,7 +3113,7 @@ nodejs code:
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            try(final PGWireServer server = createPGServer(1)) {
+            try (final PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     try (Statement statement = connection.createStatement()) {
@@ -3119,8 +3136,9 @@ nodejs code:
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "Invalid column: id");
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3175,8 +3193,9 @@ nodejs code:
                     Statement statement = connection.createStatement();
                     ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
                     assertResultSet(expected, sink, rs);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3220,8 +3239,9 @@ nodejs code:
                     Statement statement = connection.createStatement();
                     ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
                     assertResultSet(expected, sink, rs);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3305,8 +3325,9 @@ nodejs code:
                         assertResultSet(expected, sink, rs);
                         rs.close();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3495,8 +3516,9 @@ nodejs code:
                     }
                     Assert.assertEquals(50_000, count);
                     Assert.assertEquals(24963.57352782434, sum, 0.00000001);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3571,17 +3593,20 @@ nodejs code:
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "dunno");
                 try {
-                    final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
-                    DriverManager.getConnection(url, properties);
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                    Properties properties = new Properties();
+                    properties.setProperty("user", "admin");
+                    properties.setProperty("password", "dunno");
+                    try {
+                        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+                        DriverManager.getConnection(url, properties);
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                    }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3591,17 +3616,20 @@ nodejs code:
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
-                Properties properties = new Properties();
-                properties.setProperty("user", "joe");
-                properties.setProperty("password", "quest");
                 try {
-                    final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
-                    DriverManager.getConnection(url, properties);
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                    Properties properties = new Properties();
+                    properties.setProperty("user", "joe");
+                    properties.setProperty("password", "quest");
+                    try {
+                        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+                        DriverManager.getConnection(url, properties);
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                    }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3686,8 +3714,9 @@ nodejs code:
                     PreparedStatement sel = connection.prepareStatement("x");
                     ResultSet res = sel.executeQuery();
                     assertResultSet(expected, sink, res);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3713,8 +3742,9 @@ nodejs code:
                     try (PreparedStatement pstmt = connection.prepareStatement("rollback")) {
                         pstmt.execute();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3753,8 +3783,9 @@ nodejs code:
                         s.executeQuery();
                         statement1.executeQuery("select 1 from long_sequence(2)");
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3788,8 +3819,9 @@ nodejs code:
                         ++count;
                     }
                     assertEquals(totalRows + 1, count);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3845,8 +3877,9 @@ nodejs code:
                         assertEquals(count++, rs.getInt(1));
                     }
                     assertEquals(totalRows, count);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -3885,6 +3918,8 @@ nodejs code:
                 testNullTypeSerialization0(server.getPort(), true, false);
                 testNullTypeSerialization0(server.getPort(), false, false);
                 testNullTypeSerialization0(server.getPort(), false, true);
+
+            } finally {
                 workerPoolManager.closeAll();
             }
         });
@@ -3939,8 +3974,11 @@ nodejs code:
             );
             try (PGWireServer server = createPGServer(new Port0PGWireConfiguration())) {
                 workerPoolManager.startAll();
-                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptx00, "127.0.0.1", server.getPort());
-                workerPoolManager.closeAll();
+                try {
+                    NetUtils.playScript(NetworkFacadeImpl.INSTANCE, scriptx00, "127.0.0.1", server.getPort());
+                } finally {
+                    workerPoolManager.closeAll();
+                }
             }
         });
     }
@@ -3987,8 +4025,9 @@ nodejs code:
                         ResultSet result = s.executeQuery();
                         assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4018,8 +4057,9 @@ nodejs code:
                         ResultSet result = s.executeQuery();
                         assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4135,8 +4175,9 @@ nodejs code:
                         assertResultSet(expected, sink, rs);
                         rs.close();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4229,8 +4270,9 @@ nodejs code:
                         assertResultSet(expected, sink, rs);
                     }
                     statement.execute("drop table tab");
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4257,8 +4299,9 @@ nodejs code:
                         assertResultSet(expected, sink, rs);
                     }
                     statement.execute("drop table tab");
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4355,61 +4398,64 @@ nodejs code:
             )) {
                 Assert.assertNotNull(server);
                 workerPoolManager.startAll();
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "true");
-                TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-                final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
-                final Connection connection = DriverManager.getConnection(url, properties);
-                PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
-                statement.setInt(1, 4);
-                statement.setLong(2, 123L);
-                statement.setFloat(3, 5.43f);
-                statement.setDouble(4, 0.56789);
-                statement.setByte(5, (byte) 91);
-                statement.setBoolean(6, true);
-                statement.setString(7, "hello");
-                // this is to test UTF8 behaviour
-                statement.setString(8, "группа туристов");
-                statement.setDate(9, new Date(100L));
-                statement.setTimestamp(10, new Timestamp(20000000033L));
+                try {
+                    Properties properties = new Properties();
+                    properties.setProperty("user", "admin");
+                    properties.setProperty("password", "quest");
+                    properties.setProperty("sslmode", "disable");
+                    properties.setProperty("binaryTransfer", "true");
+                    TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+                    final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
+                    final Connection connection = DriverManager.getConnection(url, properties);
+                    PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
+                    statement.setInt(1, 4);
+                    statement.setLong(2, 123L);
+                    statement.setFloat(3, 5.43f);
+                    statement.setDouble(4, 0.56789);
+                    statement.setByte(5, (byte) 91);
+                    statement.setBoolean(6, true);
+                    statement.setString(7, "hello");
+                    // this is to test UTF8 behaviour
+                    statement.setString(8, "группа туристов");
+                    statement.setDate(9, new Date(100L));
+                    statement.setTimestamp(10, new Timestamp(20000000033L));
 
-                // nulls
-                statement.setNull(11, Types.INTEGER);
-                statement.setNull(12, Types.BIGINT);
-                statement.setNull(13, Types.REAL);
-                statement.setNull(14, Types.DOUBLE);
-                statement.setNull(15, Types.SMALLINT);
-                statement.setNull(16, Types.BOOLEAN);
-                statement.setNull(17, Types.VARCHAR);
-                statement.setString(18, null);
-                statement.setNull(19, Types.DATE);
+                    // nulls
+                    statement.setNull(11, Types.INTEGER);
+                    statement.setNull(12, Types.BIGINT);
+                    statement.setNull(13, Types.REAL);
+                    statement.setNull(14, Types.DOUBLE);
+                    statement.setNull(15, Types.SMALLINT);
+                    statement.setNull(16, Types.BOOLEAN);
+                    statement.setNull(17, Types.VARCHAR);
+                    statement.setString(18, null);
+                    statement.setNull(19, Types.DATE);
 
-                // when someone uses PostgreSQL's type extensions, which alter driver behaviour
-                // we should handle this gracefully
-                statement.setTimestamp(20, new PGTimestamp(300011));
-                statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
-                statement.setTimestamp(22, null);
+                    // when someone uses PostgreSQL's type extensions, which alter driver behaviour
+                    // we should handle this gracefully
+                    statement.setTimestamp(20, new PGTimestamp(300011));
+                    statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
+                    statement.setTimestamp(22, null);
 
 
-                final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
-                        "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                        "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                        "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                        "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                        "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
+                    final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
+                            "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
 
-                StringSink sink = new StringSink();
-                for (int i = 0; i < 10000; i++) {
-                    sink.clear();
-                    ResultSet rs = statement.executeQuery();
-                    assertResultSet(expected, sink, rs);
-                    rs.close();
+                    StringSink sink = new StringSink();
+                    for (int i = 0; i < 10000; i++) {
+                        sink.clear();
+                        ResultSet rs = statement.executeQuery();
+                        assertResultSet(expected, sink, rs);
+                        rs.close();
+                    }
+                    connection.close();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                connection.close();
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4433,8 +4479,9 @@ nodejs code:
                         sink.clear();
                         assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4497,8 +4544,9 @@ nodejs code:
                         assertResultSet(expected, sink, rs);
                         rs.close();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4508,20 +4556,23 @@ nodejs code:
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
-                try (final Connection connection = getConnection(server.getPort(), false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
-                        statement.execute();
+                try {
+                    try (final Connection connection = getConnection(server.getPort(), false, false)) {
+                        try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                            statement.execute();
+                        }
+                        queryTimestampsInRange(connection);
                     }
-                    queryTimestampsInRange(connection);
-                }
 
-                try (final Connection connection = getConnection(server.getPort(), false, false)) {
-                    queryTimestampsInRange(connection);
-                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                        statement.execute();
+                    try (final Connection connection = getConnection(server.getPort(), false, false)) {
+                        queryTimestampsInRange(connection);
+                        try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                            statement.execute();
+                        }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4531,32 +4582,35 @@ nodejs code:
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
-                try (final Connection connection = getConnection(server.getPort(), false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                try {
+                    try (final Connection connection = getConnection(server.getPort(), false, false)) {
+                        try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                            statement.execute();
+                        }
+                        queryTimestampsInRange(connection);
+                    }
+
+                    boolean caught = false;
+                    try (final Connection connection = getConnection(server.getPort(), false, false)) {
+                        try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
+                            sink.clear();
+                            statement.setString(1, "abcd");
+                            statement.setString(2, "abdc");
+                            statement.executeQuery();
+                        } catch (PSQLException ex) {
+                            caught = true;
+                            Assert.assertEquals("ERROR: could not parse [value='abcd', as=TIMESTAMP, index=0]\n  Position: 1", ex.getMessage());
+                        }
+                    }
+
+                    try (final Connection connection = getConnection(server.getPort(), false, false);
+                         PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
-                    queryTimestampsInRange(connection);
+                    Assert.assertTrue("Exception is not thrown", caught);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-
-                boolean caught = false;
-                try (final Connection connection = getConnection(server.getPort(), false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
-                        sink.clear();
-                        statement.setString(1, "abcd");
-                        statement.setString(2, "abdc");
-                        statement.executeQuery();
-                    } catch (PSQLException ex) {
-                        caught = true;
-                        Assert.assertEquals("ERROR: could not parse [value='abcd', as=TIMESTAMP, index=0]\n  Position: 1", ex.getMessage());
-                    }
-                }
-
-                try (final Connection connection = getConnection(server.getPort(), false, false);
-                     PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                    statement.execute();
-                }
-                Assert.assertTrue("Exception is not thrown", caught);
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4601,8 +4655,8 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
-                    workerPoolManager.closeAll();
                 } finally {
+                    workerPoolManager.closeAll();
                     currentMicros = -1;
                 }
             }
@@ -4718,8 +4772,9 @@ nodejs code:
                     } catch (SQLException e) {
                         TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4741,8 +4796,9 @@ nodejs code:
                             "OR t.typinput = 'array_in(cstring,oid,integer)'::regprocedure " +
                             "OR t.typelem != 0 ");
                     stmt.execute();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4970,8 +5026,9 @@ nodejs code:
                                 rs
                         );
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -4990,30 +5047,34 @@ nodejs code:
                             ") timestamp (timestamp)")) {
                         st1.execute();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
 
             try (final PGWireServer server = createPGServer(1)) {
                 workerPoolManager.startAll();
-                for (int i = 0; i < 3; i++) {
-                    try (final Connection connection = getConnection(server.getPort(), false, true)) {
-                        try (PreparedStatement select1 = connection.prepareStatement("select version()")) {
-                            ResultSet rs0 = select1.executeQuery();
-                            sink.clear();
-                            assertResultSet("version[VARCHAR]\n" +
-                                    "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit\n", sink, rs0);
-                            rs0.close();
-                        }
-                        try (PreparedStatement select2 = connection.prepareStatement("select timestamp from y")) {
-                            select2.setMaxRows(1);
-                            ResultSet rs2 = select2.executeQuery();
-                            rs2.next();
-                            rs2.close();
+                try {
+                    for (int i = 0; i < 3; i++) {
+                        try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                            try (PreparedStatement select1 = connection.prepareStatement("select version()")) {
+                                ResultSet rs0 = select1.executeQuery();
+                                sink.clear();
+                                assertResultSet("version[VARCHAR]\n" +
+                                        "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit\n", sink, rs0);
+                                rs0.close();
+                            }
+                            try (PreparedStatement select2 = connection.prepareStatement("select timestamp from y")) {
+                                select2.setMaxRows(1);
+                                ResultSet rs2 = select2.executeQuery();
+                                rs2.next();
+                                rs2.close();
+                            }
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -5230,8 +5291,9 @@ nodejs code:
                     );
                 }
                 */
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -5516,39 +5578,42 @@ create table tab as (
         assertMemoryLeak(() -> {
             try (final PGWireServer server = createPGServer(2)) {
                 workerPoolManager.startAll();
-                for (int i = 0; i < 50; i++) {
-                    try (final Connection connection = getConnection(server.getPort(), true, true)) {
+                try {
+                    for (int i = 0; i < 50; i++) {
+                        try (final Connection connection = getConnection(server.getPort(), true, true)) {
 
-                        connection.setAutoCommit(false);
-                        connection.prepareStatement("create table if not exists xyz(a int)").execute();
-                        connection.prepareStatement("insert into xyz values (100)").execute();
-                        connection.prepareStatement("insert into xyz values (101)").execute();
-                        connection.prepareStatement("insert into xyz values (102)").execute();
-                        connection.prepareStatement("insert into xyz values (103)").execute();
-                        connection.rollback();
+                            connection.setAutoCommit(false);
+                            connection.prepareStatement("create table if not exists xyz(a int)").execute();
+                            connection.prepareStatement("insert into xyz values (100)").execute();
+                            connection.prepareStatement("insert into xyz values (101)").execute();
+                            connection.prepareStatement("insert into xyz values (102)").execute();
+                            connection.prepareStatement("insert into xyz values (103)").execute();
+                            connection.rollback();
 
-                        sink.clear();
-                        try (
-                                PreparedStatement ps = connection.prepareStatement("xyz");
-                                ResultSet rs = ps.executeQuery()
-                        ) {
-                            assertResultSet(
-                                    "a[INTEGER]\n",
-                                    sink,
-                                    rs
-                            );
+                            sink.clear();
+                            try (
+                                    PreparedStatement ps = connection.prepareStatement("xyz");
+                                    ResultSet rs = ps.executeQuery()
+                            ) {
+                                assertResultSet(
+                                        "a[INTEGER]\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+                            // The next iteration of the loop will create a new connection which may be in a different thread than the current
+                            // connection
+                            // The new connection will execute a "create table if not exists " statement which requires a full table lock
+                            // This connection has just execute a read query on the table and hence has a temporary read lock which will be
+                            // released shortly after we receive the query response
+                            // In order to guarantee that the temporary read lock is released before the next iteration of this loop we execute
+                            // a new query, with this connection, which does not lock the table.
+                            connection.prepareStatement("select 1").execute();
                         }
-                        // The next iteration of the loop will create a new connection which may be in a different thread than the current
-                        // connection
-                        // The new connection will execute a "create table if not exists " statement which requires a full table lock
-                        // This connection has just execute a read query on the table and hence has a temporary read lock which will be
-                        // released shortly after we receive the query response
-                        // In order to guarantee that the temporary read lock is released before the next iteration of this loop we execute
-                        // a new query, with this connection, which does not lock the table.
-                        connection.prepareStatement("select 1").execute();
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -5840,7 +5905,7 @@ create table tab as (
                     return 1024;
                 }
             };
-            try(PGWireServer server = createPGServer(configuration);) {
+            try (PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
@@ -5854,9 +5919,10 @@ create table tab as (
                     // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
                     LOG.info().$("hasResultSet=").$(hasResultSet).$();
                     Assert.assertTrue(hasResultSet);
+                } finally {
+                    Os.sleep(200L);
+                    workerPoolManager.closeAll();
                 }
-                Os.sleep(200L);
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -5872,7 +5938,7 @@ create table tab as (
                 }
             };
 
-            try(PGWireServer server = createPGServer(configuration);) {
+            try (PGWireServer server = createPGServer(configuration);) {
                 workerPoolManager.startAll();
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
@@ -5909,8 +5975,9 @@ create table tab as (
                     // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
                     LOG.info().$("hasResultSet=").$(hasResultSet).$();
                     Assert.assertTrue(hasResultSet);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -5961,8 +6028,9 @@ create table tab as (
                     } catch (SQLException e) {
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row data");
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6014,8 +6082,9 @@ create table tab as (
                     } catch (SQLException e) {
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row description");
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6032,8 +6101,9 @@ create table tab as (
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "Invalid column: x2");
                     TestUtils.assertEquals("00000", e.getSQLState());
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6052,8 +6122,9 @@ create table tab as (
                         final ResultSet rs = statement.executeQuery()
                 ) {
                     assertTrue(((PGResultSetMetaData) rs.getMetaData()).getBaseColumnName(1).isEmpty()); // getBaseColumnName returns "" if tableOid is zero
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6178,8 +6249,9 @@ create table tab as (
                         }
                     }
                     connection.prepareStatement("drop table ts").execute();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6223,8 +6295,9 @@ create table tab as (
 
                     // cleanup
                     conn.prepareStatement("drop table ts").execute();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6257,8 +6330,9 @@ create table tab as (
                                 rs
                         );
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6306,8 +6380,9 @@ create table tab as (
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6350,8 +6425,9 @@ create table tab as (
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6428,8 +6504,9 @@ create table tab as (
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6509,8 +6586,9 @@ create table tab as (
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6541,8 +6619,11 @@ create table tab as (
         assertMemoryLeak(() -> {
             try (PGWireServer server = createPGServer(configuration)) {
                 workerPoolManager.startAll();
-                NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
-                workerPoolManager.closeAll();
+                try {
+                    NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
+                } finally {
+                    workerPoolManager.closeAll();
+                }
             }
         });
     }
@@ -6704,8 +6785,9 @@ create table tab as (
                     workerPoolManager.startAll();
                     try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
                         runnable.run(connection, binary);
+                    } finally {
+                        workerPoolManager.closeAll();
                     }
-                    workerPoolManager.closeAll();
                 }
             });
         } finally {
@@ -6774,8 +6856,9 @@ create table tab as (
                             Assert.assertEquals(100, count);
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -6834,68 +6917,71 @@ create table tab as (
         ) {
             Assert.assertNotNull(server);
             workerPoolManager.startAll(LOG);
-            int iteration = 0;
+            try {
+                int iteration = 0;
 
-            do {
-                final String tableName = "xyz" + iteration++;
-                compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+                do {
+                    final String tableName = "xyz" + iteration++;
+                    compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
 
-                try (
-                        final Connection connection1 = getConnection(server.getPort(), false, true);
-                        final Connection connection2 = getConnection(server.getPort(), false, true);
-                        final PreparedStatement insert = connection1.prepareStatement(
-                                "insert into " + tableName + " values (?)"
-                        )
-                ) {
-                    connection1.setAutoCommit(false);
-                    int totalCount = 10;
-                    for (int i = 0; i < totalCount; i++) {
-                        insert.setInt(1, i);
-                        insert.execute();
-                    }
-                    CyclicBarrier start = new CyclicBarrier(2);
-                    CountDownLatch finished = new CountDownLatch(1);
-                    errors.set(0);
+                    try (
+                            final Connection connection1 = getConnection(server.getPort(), false, true);
+                            final Connection connection2 = getConnection(server.getPort(), false, true);
+                            final PreparedStatement insert = connection1.prepareStatement(
+                                    "insert into " + tableName + " values (?)"
+                            )
+                    ) {
+                        connection1.setAutoCommit(false);
+                        int totalCount = 10;
+                        for (int i = 0; i < totalCount; i++) {
+                            insert.setInt(1, i);
+                            insert.execute();
+                        }
+                        CyclicBarrier start = new CyclicBarrier(2);
+                        CountDownLatch finished = new CountDownLatch(1);
+                        errors.set(0);
 
-                    new Thread(() -> {
-                        try {
-                            start.await();
-                            try (
-                                    final PreparedStatement alter = connection2.prepareStatement(
-                                            "alter table " + tableName + " add column b long"
-                                    )
-                            ) {
-                                alter.execute();
+                        new Thread(() -> {
+                            try {
+                                start.await();
+                                try (
+                                        final PreparedStatement alter = connection2.prepareStatement(
+                                                "alter table " + tableName + " add column b long"
+                                        )
+                                ) {
+                                    alter.execute();
+                                }
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                finished.countDown();
                             }
-                        } catch (Throwable e) {
-                            e.printStackTrace();
-                            errors.incrementAndGet();
-                        } finally {
-                            finished.countDown();
-                        }
-                    }).start();
+                        }).start();
 
-                    start.await();
-                    Os.sleep(100);
-                    connection1.commit();
-                    finished.await();
+                        start.await();
+                        Os.sleep(100);
+                        connection1.commit();
+                        finished.await();
 
-                    if (alterRequestReturnSuccess) {
-                        Assert.assertEquals(0, errors.get());
-                        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                            int bIndex = rdr.getMetadata().getColumnIndex("b");
-                            Assert.assertEquals(1, bIndex);
-                            Assert.assertEquals(totalCount, rdr.size());
+                        if (alterRequestReturnSuccess) {
+                            Assert.assertEquals(0, errors.get());
+                            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                                int bIndex = rdr.getMetadata().getColumnIndex("b");
+                                Assert.assertEquals(1, bIndex);
+                                Assert.assertEquals(totalCount, rdr.size());
+                            }
                         }
+                    } finally {
+                        pool.close();
+                        engine.releaseAllWriters();
                     }
-                } finally {
-                    pool.close();
-                    engine.releaseAllWriters();
-                }
-                // Failure may not happen if we're lucky, even when they are expected
-                // When alterRequestReturnSuccess if false and errors are 0, repeat
-            } while (!alterRequestReturnSuccess && errors.get() == 0);
-            workerPoolManager.closeAll();
+                    // Failure may not happen if we're lucky, even when they are expected
+                    // When alterRequestReturnSuccess if false and errors are 0, repeat
+                } while (!alterRequestReturnSuccess && errors.get() == 0);
+            } finally {
+                workerPoolManager.closeAll();
+            }
         }
     }
 
@@ -6992,8 +7078,9 @@ create table tab as (
                             }
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7050,8 +7137,9 @@ create table tab as (
                             }
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7214,8 +7302,9 @@ create table tab as (
                             TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7457,8 +7546,9 @@ create table tab as (
                             );
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7494,8 +7584,9 @@ create table tab as (
                     StringSink sink = new StringSink();
                     // dump metadata
                     assertResultSet(expected, sink, rs);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7648,9 +7739,9 @@ create table tab as (
 
                     execSelectWithParam(select, 11);
                     TestUtils.assertEquals("11\n", sink);
-
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7834,8 +7925,9 @@ create table tab as (
                             Assert.assertEquals(10_000, count);
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7875,8 +7967,9 @@ create table tab as (
                             Assert.assertEquals(totalCount, count);
                         }
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -7914,8 +8007,9 @@ create table tab as (
                     } catch (SQLException e) {
                         TestUtils.assertContains(e.getMessage(), expectedError);
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -8062,15 +8156,16 @@ create table tab as (
 
     private void testSemicolon(boolean simpleQueryMode) throws Exception {
         assertMemoryLeak(() -> {
-            try(PGWireServer server = createPGServer(2)) {
+            try (PGWireServer server = createPGServer(2)) {
                 workerPoolManager.startAll();
                 try (
                         final Connection connection = getConnection(server.getPort(), simpleQueryMode, true);
                         final PreparedStatement statement = connection.prepareStatement(";;")
                 ) {
                     statement.execute();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }

@@ -84,8 +84,9 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     statement.execute("SELECT flush_query_cache()");
 
                     assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()));
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -123,8 +124,9 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     statement.execute("SELECT flush_query_cache()");
 
                     assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue()));
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }

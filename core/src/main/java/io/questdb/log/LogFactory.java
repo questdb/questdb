@@ -386,11 +386,6 @@ public class LogFactory implements Closeable {
         }
         this.workerPool = WorkerPoolManager.createUnmanaged(new WorkerPoolConfiguration() {
             @Override
-            public int[] getWorkerAffinity() {
-                return new int[]{-1};
-            }
-
-            @Override
             public int getWorkerCount() {
                 return 1;
             }

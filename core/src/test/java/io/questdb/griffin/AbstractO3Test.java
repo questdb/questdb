@@ -255,11 +255,6 @@ public class AbstractO3Test {
                             }
 
                             @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
-
-                            @Override
                             public String getPoolName() {
                                 return "testing";
                             }

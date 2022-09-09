@@ -24,9 +24,6 @@
 
 package io.questdb.mp;
 
-import io.questdb.test.tools.TestUtils;
-import io.questdb.Metrics;
-
 import java.util.concurrent.atomic.AtomicInteger;
 
 
@@ -47,11 +44,6 @@ public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
     @Override
     public int getWorkerCount() {
         return workerCount;
-    }
-
-    @Override
-    public boolean haltOnError() {
-        return false;
     }
 
     @Override

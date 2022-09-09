@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.mp.WorkerPoolManager;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -61,8 +60,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         results.next();
                         assertNull(null, results.getString(1));
                     }
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -251,8 +251,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                     boolean hasResult = pstmt.execute();
                     assertResults(pstmt, hasResult, data(row(1L, "a")));
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -273,8 +274,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     hasResult = pstmt.execute();
                     assertResults(pstmt, hasResult, data(row(1L, "a")));
                     pstmt.close();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
 
             try (PGWireServer server = createPGServer(2)) {
@@ -289,8 +291,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     boolean hasResult = pstmt.execute();
                     assertResults(pstmt, hasResult, data(row(1L, "a")));
                     pstmt.close();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -924,8 +927,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     hasResult = pstmt.execute();
                     assertResults(pstmt, hasResult, data(row(53L, "z")));
                     pstmt.close();
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
 
             try (PGWireServer server = createPGServer(2)) {
@@ -937,8 +941,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     PreparedStatement pstmt1 = connection.prepareStatement("SELECT l FROM mytable where 1=1");
                     boolean hasResult = pstmt1.execute();
                     assertResults(pstmt1, hasResult, data(row(53L)));
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }
@@ -982,8 +987,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                     hasResult = stmt.execute("SELECT * FROM mytable");
                     assertResults(stmt, hasResult, data(row(33L, "x")));
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }

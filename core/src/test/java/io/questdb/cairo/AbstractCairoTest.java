@@ -31,14 +31,11 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
@@ -55,7 +52,6 @@ import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 
 import java.io.IOException;
-import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {

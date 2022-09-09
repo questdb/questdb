@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
@@ -150,6 +149,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         "1970-01-01T00:00:02.000000Z\t5\n" +
                         "1970-01-01T00:00:03.000000Z\t5\n" +
                         "1970-01-01T00:00:04.000000Z\t5\n");
+            } finally {
                 workerPoolManager.closeAll();
             }
         });
@@ -242,6 +242,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 assertSql("select count() from testUpdateTimeout where x = 5",
                         "count\n" +
                                 "2000\n");
+            } finally {
                 workerPoolManager.closeAll();
             }
         });

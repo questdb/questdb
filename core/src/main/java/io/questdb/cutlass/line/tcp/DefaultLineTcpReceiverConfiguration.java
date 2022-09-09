@@ -188,14 +188,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
         return ColumnType.LONG;
     }
 
-    private static final int[] WORKER_AFFINITY = new int[]{};
     private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return WORKER_AFFINITY;
-        }
-
         @Override
         public int getWorkerCount() {
             return 0;
@@ -208,7 +201,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
         @Override
         public String getPoolName() {
-            return "line-tcp";
+            return "ilptcp";
         }
 
         @Override

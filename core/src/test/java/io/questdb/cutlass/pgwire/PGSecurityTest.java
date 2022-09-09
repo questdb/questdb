@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -38,7 +37,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 import java.util.TimeZone;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.fail;
@@ -265,8 +263,9 @@ public class PGSecurityTest extends BasePGTest {
                                 server.getPort(), PGProperty.OPTIONS.getName(), "user");
                 ) {
                     // no need to assert anything, if we manage to create a connection then it's already a success!
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }

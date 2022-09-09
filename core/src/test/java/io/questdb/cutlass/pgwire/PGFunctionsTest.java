@@ -33,8 +33,9 @@ public class PGFunctionsTest extends BasePGTest {
                     long openFilesAfter = FilesFacadeImpl.INSTANCE.getOpenFileCount();
 
                     Assert.assertEquals(openFilesBefore, openFilesAfter);
+                } finally {
+                    workerPoolManager.closeAll();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }

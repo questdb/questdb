@@ -60,10 +60,6 @@ public class WorkerPool implements QuietCloseable {
     private final ObjList<Closeable> freeOnHalt = new ObjList<>();
     private final Metrics metrics;
 
-    WorkerPool(WorkerPoolConfiguration configuration) {
-        this(configuration, Metrics.disabled());
-    }
-
     WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         int[] workerAffinity = configuration.getWorkerAffinity();
