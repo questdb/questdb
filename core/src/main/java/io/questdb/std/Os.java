@@ -131,6 +131,10 @@ public final class Os {
         return type != Os.WINDOWS;
     }
 
+    public static boolean isWindows() {
+        return type == Os.WINDOWS;
+    }
+
     public static void pause() {
         if (Os.type != Os.WINDOWS) {
             LockSupport.parkNanos(1);
