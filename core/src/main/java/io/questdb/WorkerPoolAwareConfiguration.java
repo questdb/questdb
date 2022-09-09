@@ -51,11 +51,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
         public boolean haltOnError() {
             throw new UnsupportedOperationException();
         }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
-        }
     };
 
     static WorkerPool configureWorkerPool(
@@ -104,7 +99,9 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
         return null;
     }
 
-    boolean isEnabled();
+    default boolean isEnabled() {
+        return true;
+    }
 
     @FunctionalInterface
     interface ServerFactory<T extends Closeable, C> {

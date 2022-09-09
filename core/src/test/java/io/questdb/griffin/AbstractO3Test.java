@@ -240,30 +240,7 @@ public class AbstractO3Test {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(
-                        new WorkerPoolAwareConfiguration() {
-                            @Override
-                            public int[] getWorkerAffinity() {
-                                return TestUtils.getWorkerAffinity(getWorkerCount());
-                            }
-
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
-
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
-                            }
-                        },
-                        Metrics.disabled()
-                );
+                WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
