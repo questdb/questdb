@@ -337,14 +337,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         Misc.free(path);
         Misc.free(utf8Sink);
         Misc.free(circuitBreaker);
-        if (recvBuffer > 0) {
-            Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.recvBuffer = 0;
-        }
-        if (sendBuffer > 0) {
-            Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = 0;
-        }
+        freeBuffers();
     }
 
     @Override
@@ -436,14 +429,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         sqlExecutionContext.with(fd);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
-            if (recvBuffer > 0) {
-                Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-                this.recvBuffer = 0;
-            }
-            if (sendBuffer > 0) {
-                Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-                this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = 0;
-            }
+            freeBuffers();
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
@@ -456,6 +442,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             }
         }
         return r;
+    }
+
+    private void freeBuffers() {
+        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
     }
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {

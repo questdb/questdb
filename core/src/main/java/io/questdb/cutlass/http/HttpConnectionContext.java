@@ -126,10 +126,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.multipartContentHeaderParser.close();
         this.headerParser.close();
         this.localValueMap.close();
-        if (recvBuffer > 0) {
-            Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            this.recvBuffer = 0;
-        }
+        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink.close();
         this.receivedBytes = 0;
         LOG.debug().$("closed").$();
@@ -269,10 +266,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.responseSink.of(fd);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
-            if (recvBuffer > 0) {
-                Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-                this.recvBuffer = 0;
-            }
+            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             this.responseSink.close();
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
