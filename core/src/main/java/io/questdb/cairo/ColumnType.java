@@ -292,13 +292,11 @@ public final class ColumnType {
     }
 
     public static int variableColumnLengthBytes(int columnType) {
-        switch (columnType) {
-            case ColumnType.STRING:
-                return Integer.BYTES;
-            default:
-                assert columnType == ColumnType.STRING;
-                return Long.BYTES;
+        if (columnType == ColumnType.STRING) {
+            return Integer.BYTES;
         }
+        assert columnType == ColumnType.BINARY;
+        return Long.BYTES;
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

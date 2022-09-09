@@ -75,6 +75,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final int rootPathLen;
 
     private final TextImportExecutionContext textImportExecutionContext;
+    private final TxReader tempTxReader;
+
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
@@ -125,8 +127,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.rootPath = new Path().of(configuration.getRoot());
         this.rootPathLen = rootPath.length();
 
-        tableRegistry.forAllWalTables(this::notifyWalTxnUncompleted);
-        this.rootPath.trimTo(this.rootPathLen);
+        try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+            tempTxReader = txReader;
+            tableRegistry.forAllWalTables(this::checkNotifyOutstandingTxnInWal);
+        }
     }
 
     @TestOnly
@@ -134,7 +138,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableRegistry.releaseAll();
-        return b1 & b2;
+        return b1 & b2 & b3;
     }
 
     @Override
@@ -291,13 +295,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return getWriter(securityContext, tableName, lockReason);
     }
 
-    public void notifyWalTxnUncompleted(int tableId, String tableName, long txn) {
+    public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
         rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
-        try (TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader.unsafeLoad(true)) {
-                if (txReader.getTxn() < txn) {
-                    notifyWalTxnCommitted(tableId, tableName, txn);
-                }
+        if (tempTxReader.unsafeLoad(true)) {
+            if (tempTxReader.getTxn() < txn) {
+                // table name should be immutable when in the notification
+                String tableNameStr = Chars.toString(tableName);
+                notifyWalTxnCommitted(tableId, tableNameStr, txn);
             }
         }
     }
@@ -321,13 +325,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                         while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
                             if (cursor > -1L) {
                                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                                CharSequence taskTableName = task.getTableName();
+                                String taskTableName = task.getTableName();
                                 int taskTableId = task.getTableId();
-
                                 // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
                                 subSeq.done(cursor);
 
-                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation, null);
+                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
                             }
                         }
                     } catch (Throwable throwable) {

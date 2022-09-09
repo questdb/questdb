@@ -38,6 +38,7 @@ import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -47,6 +48,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
+    @Ignore
     public void testWalAddRemoveCommitFuzz() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameWal = testName.getMethodName() + "_wal";
@@ -74,8 +76,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         0.1,
                         0.005,
                         0.05,
-                        0.01,
-                        100,
+                        0.05,
+                        1000,
                         20,
                         10000
                 );

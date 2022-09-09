@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class WalTableSqlTest extends AbstractGriffinTest {
