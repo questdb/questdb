@@ -399,18 +399,8 @@ public class LogFactory implements Closeable {
 
         this.workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
-            public int[] getWorkerAffinity() {
-                return new int[]{-1};
-            }
-
-            @Override
             public int getWorkerCount() {
                 return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return false;
             }
 
             @Override
@@ -424,7 +414,7 @@ public class LogFactory implements Closeable {
             }
         }, Metrics.disabled());
         assign(workerPool);
-        workerPool.start(null);
+        workerPool.start();
     }
 
     private static String getProperty(final Properties properties, String key) {
