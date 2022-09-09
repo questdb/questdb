@@ -81,11 +81,6 @@ public class BasePGTest extends AbstractGriffinTest {
             }
 
             @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(workerCount);
-            }
-
-            @Override
             public int getWorkerCount() {
                 return workerCount;
             }

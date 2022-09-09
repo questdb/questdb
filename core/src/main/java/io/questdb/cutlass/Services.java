@@ -41,6 +41,7 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
@@ -157,12 +158,19 @@ public final class Services {
         }
 
         final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, new PGWireServer.PGConnectionContextFactory(
-                cairoEngine,
+        final int sharedWorkerCount = workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount();
+        return new PGWireServer(
                 configuration,
-                workerPool.getWorkerCount(),
-                workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount()
-        ));
+                cairoEngine,
+                workerPool,
+                functionFactoryCache,
+                snapshotAgent,
+                new PGWireServer.PGConnectionContextFactory(
+                        cairoEngine,
+                        configuration,
+                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), sharedWorkerCount)
+                )
+        );
     }
 
     @Nullable

@@ -22,38 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.network;
 
-public interface WorkerPoolConfiguration {
-    default int[] getWorkerAffinity() {
-        return null;
-    }
+import io.questdb.std.Mutable;
 
-    int getWorkerCount();
-
-    default boolean haltOnError() {
-        return false;
-    }
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
-    String getPoolName();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default long getSleepThreshold() {
-        return 10000;
-    }
-
-    default long getSleepTimeout() {
-        return 100;
-    }
-
-    default boolean isEnabled() {
-        return true;
-    }
+public interface MutableIOContext<T extends MutableIOContext<T>> extends IOContext, Mutable {
+    T of(long fd, IODispatcher<T> dispatcher);
 }

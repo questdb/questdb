@@ -22,38 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.network;
 
-public interface WorkerPoolConfiguration {
-    default int[] getWorkerAffinity() {
-        return null;
+public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
+    protected long fd = -1;
+    protected IODispatcher<T> dispatcher;
+
+    @Override
+    public void clear() {
+        this.fd = -1;
+        this.dispatcher = null;
     }
 
-    int getWorkerCount();
-
-    default boolean haltOnError() {
-        return false;
+    @Override
+    public long getFd() {
+        return fd;
     }
 
-    default boolean isDaemonPool() {
-        return false;
+    @Override
+    public  IODispatcher<T> getDispatcher() {
+        return dispatcher;
     }
 
-    String getPoolName();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default long getSleepThreshold() {
-        return 10000;
-    }
-
-    default long getSleepTimeout() {
-        return 100;
-    }
-
-    default boolean isEnabled() {
-        return true;
+    @SuppressWarnings("unchecked")
+    @Override
+    public T of(long fd, IODispatcher<T> dispatcher) {
+        this.fd = fd;
+        this.dispatcher = dispatcher;
+        return (T) this;
     }
 }

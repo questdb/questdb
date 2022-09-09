@@ -24,7 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.log.*;
+import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -36,14 +37,15 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class LogBenchmark {
-
-    private static final Log LOG;
-    private long counter = 0;
+public class ParseDoubleBenchmark {
+    private final static long memSize = 1024 * 16;
+    private final static String d = "78899.9";
+    private final static DirectByteCharSequence flyweight = new DirectByteCharSequence();
+    private long mem;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(LogBenchmark.class.getSimpleName())
+                .include(ParseDoubleBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
                 .addProfiler("gc")
@@ -53,34 +55,29 @@ public class LogBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public void testLogOneInt() {
-        LOG.info().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    @Setup(Level.Iteration)
+    public void setup() {
+        Os.init();
+        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        Chars.asciiStrCpy(d, d.length(), mem);
+    }
+
+    @TearDown(Level.Iteration)
+    public void tearDown() {
+        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
-    public void testLogOneIntBlocking() {
-        LOG.infoW().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    public double testCharSequenceParse() throws NumericException {
+        return Numbers.parseDouble(flyweight.of(mem, mem + d.length()));
     }
 
     @Benchmark
-    public void testLogOneIntDisabled() {
-        LOG.debug().$("brown fox jumped over ").$(counter++).$(" fence").$();
-    }
-
-    @Benchmark
-    public void testBaseline() {
-    }
-
-    static {
-        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
-            LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
-            w.setLocation("log-bench1.log");
-            return w;
-        }));
-        LogFactory.INSTANCE.bind();
-        LogFactory.INSTANCE.startThread();
-
-        LOG = LogFactory.getLog(LogBenchmark.class);
+    public double testStringParse() {
+        final byte[] b = new byte[d.length()];
+        for (int i = 0, n = b.length; i < n; i++) {
+            b[i] = Unsafe.getUnsafe().getByte(mem + i);
+        }
+        return Double.parseDouble(new String(b));
     }
 }

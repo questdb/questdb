@@ -250,11 +250,6 @@ public class AbstractO3Test {
                 pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
-                            public int[] getWorkerAffinity() {
-                                return TestUtils.getWorkerAffinity(getWorkerCount());
-                            }
-
-                            @Override
                             public int getWorkerCount() {
                                 return workerCount;
                             }
@@ -267,11 +262,6 @@ public class AbstractO3Test {
                             @Override
                             public String getPoolName() {
                                 return "testing";
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
                             }
                         },
                         Metrics.disabled()

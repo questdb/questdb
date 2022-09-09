@@ -254,11 +254,6 @@ public class LatestByParallelTest {
                 WorkerPool pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
-                            public int[] getWorkerAffinity() {
-                                return TestUtils.getWorkerAffinity(getWorkerCount());
-                            }
-
-                            @Override
                             public int getWorkerCount() {
                                 return workerCount;
                             }
@@ -271,11 +266,6 @@ public class LatestByParallelTest {
                             @Override
                             public String getPoolName() {
                                 return "testing";
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
                             }
                         },
                         Metrics.disabled()

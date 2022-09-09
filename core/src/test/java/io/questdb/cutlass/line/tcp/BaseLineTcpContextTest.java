@@ -37,7 +37,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -122,11 +121,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
         return WorkerPoolManager.createUnmanaged(new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(workerCount);
-            }
-
             @Override
             public int getWorkerCount() {
                 return workerCount;

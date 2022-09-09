@@ -45,6 +45,11 @@ public final class Chars {
         }
     }
 
+    public static long asciiStrCpy(final CharSequence value, final long address) {
+        asciiStrCpy(value, value.length(), address);
+        return address;
+    }
+
     public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));

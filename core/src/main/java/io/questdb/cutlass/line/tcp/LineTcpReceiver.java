@@ -28,13 +28,13 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.network.MutableIOContextFactory;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
 
@@ -42,30 +42,43 @@ public class LineTcpReceiver implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
 
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
-    private final LineTcpConnectionContextFactory contextFactory;
-    private final LineTcpMeasurementScheduler scheduler;
+    private final MutableIOContextFactory<LineTcpConnectionContext> contextFactory;
+    private LineTcpMeasurementScheduler scheduler;
     private final Metrics metrics;
 
     public LineTcpReceiver(
-            LineTcpReceiverConfiguration lineConfiguration,
+            LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,
             WorkerPool writerWorkerPool
     ) {
-        this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
+        this.scheduler = null;
+        this.metrics = engine.getMetrics();
+        ObjectFactory<LineTcpConnectionContext> factory;
+        if (null == configuration.getAuthDbPath()) {
+            LOG.info().$("using default context").$();
+            factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
+        } else {
+            LOG.info().$("using authenticating context").$();
+            AuthDb authDb = new AuthDb(configuration);
+            factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
+        }
+
+        this.contextFactory = new MutableIOContextFactory<>(
+                factory,
+                configuration.getConnectionPoolInitialCapacity()
+        );
         this.dispatcher = IODispatchers.create(
-                lineConfiguration.getDispatcherConfiguration(),
+                configuration.getDispatcherConfiguration(),
                 contextFactory
         );
         ioWorkerPool.assign(dispatcher);
-        this.scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
-        this.metrics = engine.getMetrics();
+        this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 
-        final QuietCloseable cleaner = contextFactory::closeContextPool;
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            ioWorkerPool.assign(i, cleaner);
+            ioWorkerPool.assign(i, contextFactory);
         }
     }
 
@@ -84,55 +97,5 @@ public class LineTcpReceiver implements QuietCloseable {
     @FunctionalInterface
     public interface SchedulerListener {
         void onEvent(CharSequence tableName, int event);
-    }
-
-    private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, QuietCloseable, EagerThreadSetup {
-        private final ThreadLocal<WeakMutableObjectPool<LineTcpConnectionContext>> contextPool;
-        private boolean closed = false;
-
-        public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
-            ObjectFactory<LineTcpConnectionContext> factory;
-            if (null == configuration.getAuthDbPath()) {
-                LOG.info().$("using default context").$();
-                factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
-            } else {
-                LOG.info().$("using authenticating context").$();
-                AuthDb authDb = new AuthDb(configuration);
-                factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
-            }
-
-            this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-        }
-
-        @Override
-        public LineTcpConnectionContext newInstance(long fd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-            return contextPool.get().pop().of(fd, dispatcher);
-        }
-
-        @Override
-        public void done(LineTcpConnectionContext context) {
-            if (closed) {
-                Misc.free(context);
-            } else {
-                context.of(-1, null);
-                contextPool.get().push(context);
-                LOG.debug().$("pushed").$();
-            }
-        }
-
-        @Override
-        public void setup() {
-            contextPool.get();
-        }
-
-        private void closeContextPool() {
-            Misc.free(this.contextPool);
-            LOG.info().$("closed").$();
-        }
     }
 }

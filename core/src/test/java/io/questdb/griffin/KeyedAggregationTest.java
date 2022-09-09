@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.RostiAllocFacadeImpl;
@@ -1264,37 +1263,16 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                //run less workers so that this thread may safely use workerCount-1 id 
-                int[] affinity = new int[workerCount - 1];
-                for (int i = 0; i < workerCount - 1; i++) {
-                    affinity[i] = -1;
-                }
-
                 WorkerPool pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
-                            @Override
-                            public int[] getWorkerAffinity() {
-                                return affinity;
-                            }
-
                             @Override
                             public int getWorkerCount() {
                                 return workerCount - 1;
                             }
 
                             @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
-
-                            @Override
                             public String getPoolName() {
                                 return "testing";
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
                             }
                         },
                         Metrics.disabled()

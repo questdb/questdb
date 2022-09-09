@@ -34,7 +34,6 @@ import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2706,27 +2705,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-
-                int[] affinity = new int[workerCount];
-                for (int i = 0; i < workerCount; i++) {
-                    affinity[i] = -1;
-                }
-
                 WorkerPool pool = workerPoolManager.getInstance(
                         new WorkerPoolConfiguration() {
                             @Override
-                            public int[] getWorkerAffinity() {
-                                return affinity;
-                            }
-
-                            @Override
                             public int getWorkerCount() {
                                 return workerCount;
-                            }
-
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
                             }
 
                             @Override
@@ -2734,10 +2717,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                                 return "testing";
                             }
 
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
-                            }
                         },
                         Metrics.disabled()
                 );

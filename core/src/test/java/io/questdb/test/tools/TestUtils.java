@@ -54,7 +54,6 @@ import org.junit.Assert;
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -909,12 +908,6 @@ public final class TestUtils {
         };
     }
 
-    public static int[] getWorkerAffinity(int workerCount) {
-        int[] res = new int[workerCount];
-        Arrays.fill(res, -1);
-        return res;
-    }
-
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
         Assert.assertNotNull(compiledQuery.getInsertOperation());
@@ -1146,11 +1139,6 @@ public final class TestUtils {
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
         WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
             @Override
-            public int[] getWorkerAffinity() {
-                return new int[1];
-            }
-
-            @Override
             public int getWorkerCount() {
                 return 1;
             }
@@ -1163,11 +1151,6 @@ public final class TestUtils {
             @Override
             public String getPoolName() {
                 return "testing";
-            }
-
-            @Override
-            public boolean isEnabled() {
-                return true;
             }
         };
         WorkerPool pool = WorkerPoolManager.createUnmanaged(config, Metrics.disabled());

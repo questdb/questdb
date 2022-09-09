@@ -25,6 +25,8 @@
 package io.questdb.mp;
 
 import io.questdb.test.tools.TestUtils;
+import io.questdb.Metrics;
+
 
 public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
     private final String poolName;
@@ -37,11 +39,6 @@ public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
     public TestWorkerPoolConfiguration(String poolName, int workerCount) {
         this.poolName = poolName;
         this.workerCount = workerCount;
-    }
-
-    @Override
-    public int[] getWorkerAffinity() {
-        return TestUtils.getWorkerAffinity(workerCount);
     }
 
     @Override

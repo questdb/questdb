@@ -49,8 +49,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
-    private final int[] workerAffinity = new int[]{-1};
-
     @Override
     public int getBinParamCountCapacity() {
         return 4;
@@ -193,27 +191,12 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int[] getWorkerAffinity() {
-        return workerAffinity;
-    }
-
-    @Override
     public int getWorkerCount() {
         return 1;
     }
 
     @Override
-    public boolean haltOnError() {
-        return false;
-    }
-
-    @Override
     public String getPoolName() {
         return "pgwire";
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
     }
 }

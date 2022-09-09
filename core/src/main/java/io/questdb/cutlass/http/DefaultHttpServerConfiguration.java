@@ -197,11 +197,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public int[] getWorkerAffinity() {
-        return new int[]{-1, -1};
-    }
-
-    @Override
     public int getWorkerCount() {
         return 2;
     }

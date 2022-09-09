@@ -4340,11 +4340,6 @@ nodejs code:
         assertMemoryLeak(() -> {
             final PGWireConfiguration conf = new Port0PGWireConfiguration() {
                 @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
                 public int getWorkerCount() {
                     return 4;
                 }
@@ -4358,6 +4353,7 @@ nodejs code:
                     snapshotAgent,
                     metrics
             )) {
+                Assert.assertNotNull(server);
                 workerPoolManager.startAll();
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
@@ -6602,10 +6598,10 @@ create table tab as (
             SOCountDownLatch queryStartedCount,
             SOCountDownLatch queryScheduledCount
     ) {
-        return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount, sharedWorkerCount) {
-            @Override
-            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
-                return new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+        return new PGWireServer.PGConnectionContextFactory(
+                engine,
+                conf,
+                () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
                     @Override
                     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                         return new QueryFutureUpdateListener() {
@@ -6624,8 +6620,7 @@ create table tab as (
                             }
                         };
                     }
-                };
-            }
+                }) {
         };
     }
 
@@ -6636,11 +6631,6 @@ create table tab as (
             @Override
             public Rnd getRandom() {
                 return new Rnd();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override
@@ -6822,11 +6812,6 @@ create table tab as (
             }
 
             @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
             public int getWorkerCount() {
                 return workerCount;
             }
@@ -6835,7 +6820,7 @@ create table tab as (
         WorkerPool pool = workerPoolManager.getInstance(conf, metrics);
         pool.configureAsShared(engine, null, false, true, true);
         workerPoolManager.setSharedPool(pool);
-//        pool.assign(engine.getEngineMaintenanceJob());
+        pool.assign(engine.getEngineMaintenanceJob());
         try (
                 final PGWireServer server = Services.createPGWireServer(
                         conf,
@@ -6847,6 +6832,7 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
+            Assert.assertNotNull(server);
             workerPoolManager.startAll(LOG);
             int iteration = 0;
 

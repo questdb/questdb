@@ -60,9 +60,18 @@ public class WorkerPool implements QuietCloseable {
     private final ObjList<Closeable> freeOnHalt = new ObjList<>();
     private final Metrics metrics;
 
+    WorkerPool(WorkerPoolConfiguration configuration) {
+        this(configuration, Metrics.disabled());
+    }
+
     WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
-        this.workerAffinity = configuration.getWorkerAffinity();
+        int[] workerAffinity = configuration.getWorkerAffinity();
+        if (workerAffinity != null && workerAffinity.length > 0) {
+            this.workerAffinity = workerAffinity;
+        } else {
+            this.workerAffinity = Misc.getWorkerAffinity(workerCount);
+        }
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
@@ -72,7 +81,7 @@ public class WorkerPool implements QuietCloseable {
         this.sleepMs = configuration.getSleepTimeout();
         this.metrics = metrics;
 
-        assert workerAffinity.length == workerCount;
+        assert this.workerAffinity.length == workerCount;
 
         this.workerJobs = new ObjList<>(workerCount);
         this.cleaners = new ObjList<>(workerCount);

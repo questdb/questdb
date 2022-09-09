@@ -770,7 +770,7 @@ public class IODispatcherTest {
                         metrics
                 )) {
 
-            workerPoolManager.startAll();
+            workerPoolManager.startAll(LOG);
 
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
@@ -1778,7 +1778,7 @@ public class IODispatcherTest {
                     }
                 });
                 workerPool.assignCleaner(Path.CLEANER);
-                workerPoolManager.startAll();
+                workerPoolManager.startAll(LOG);
                 try {
                     // send multipart request to server
                     final String request = "POST /upload HTTP/1.1\r\n" +

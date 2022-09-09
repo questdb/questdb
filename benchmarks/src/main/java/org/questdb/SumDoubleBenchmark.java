@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.log.*;
+import io.questdb.std.*;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -36,14 +36,15 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class LogBenchmark {
-
-    private static final Log LOG;
-    private long counter = 0;
+public class SumDoubleBenchmark {
+    private final static long memSize = 1024 * 16;
+    private final static int doubleCount = (int) (memSize / Double.BYTES);
+    private long mem;
+    private double[] darr;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(LogBenchmark.class.getSimpleName())
+                .include(SumDoubleBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
                 .addProfiler("gc")
@@ -53,34 +54,46 @@ public class LogBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public void testLogOneInt() {
-        LOG.info().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    @Setup(Level.Iteration)
+    public void setup() {
+        Os.init();
+        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        darr = new double[doubleCount];
+        final Rnd rnd = new Rnd();
+        long p = mem;
+        for (int i = 0; i < doubleCount; i++) {
+            double d = rnd.nextDouble();
+            Unsafe.getUnsafe().putDouble(p, d);
+            darr[i] = d;
+            p += Double.BYTES;
+        }
+    }
+
+    @TearDown(Level.Iteration)
+    public void tearDown() {
+        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Benchmark
-    public void testLogOneIntBlocking() {
-        LOG.infoW().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    public double testJavaNativeSum() {
+        double result = 0.0;
+        for (int i = 0; i < doubleCount; i++) {
+            result += Unsafe.getUnsafe().getDouble(mem + i*8);
+        }
+        return result;
     }
 
     @Benchmark
-    public void testLogOneIntDisabled() {
-        LOG.debug().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    public double testJavaHeapSum() {
+        double result = 0.0;
+        for (int i = 0; i < doubleCount; i++) {
+            result += darr[i];
+        }
+        return result;
     }
 
     @Benchmark
-    public void testBaseline() {
-    }
-
-    static {
-        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
-            LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
-            w.setLocation("log-bench1.log");
-            return w;
-        }));
-        LogFactory.INSTANCE.bind();
-        LogFactory.INSTANCE.startThread();
-
-        LOG = LogFactory.getLog(LogBenchmark.class);
+    public double testNativeSum() {
+        return Vect.sumDouble(mem, doubleCount);
     }
 }

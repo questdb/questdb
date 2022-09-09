@@ -24,8 +24,11 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
@@ -342,28 +345,13 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
         WorkerPool pool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
             @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
             public int getWorkerCount() {
                 return workerCount;
             }
 
             @Override
-            public boolean haltOnError() {
-                return false;
-            }
-
-            @Override
             public String getPoolName() {
                 return "testing";
-            }
-
-            @Override
-            public boolean isEnabled() {
-                return true;
             }
         }, Metrics.disabled());
 
@@ -433,28 +421,13 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         workerPoolManager.getInstance(
                 new WorkerPoolConfiguration() {
                     @Override
-                    public int[] getWorkerAffinity() {
-                        return TestUtils.getWorkerAffinity(getWorkerCount());
-                    }
-
-                    @Override
                     public int getWorkerCount() {
                         return workerCount;
                     }
 
                     @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-
-                    @Override
                     public String getPoolName() {
                         return "testing";
-                    }
-
-                    @Override
-                    public boolean isEnabled() {
-                        return true;
                     }
                 },
                 Metrics.disabled()
