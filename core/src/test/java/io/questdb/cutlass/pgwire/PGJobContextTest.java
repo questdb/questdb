@@ -6302,35 +6302,6 @@ create table tab as (
     }
 
     @Test
-    public void testTransaction() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("create table xyz(a int)").execute();
-            connection.prepareStatement("insert into xyz values (100)").execute();
-            connection.prepareStatement("insert into xyz values (101)").execute();
-            connection.prepareStatement("insert into xyz values (102)").execute();
-            connection.prepareStatement("insert into xyz values (103)").execute();
-            connection.commit();
-
-            sink.clear();
-            try (
-                    PreparedStatement ps = connection.prepareStatement("xyz");
-                    ResultSet rs = ps.executeQuery()
-            ) {
-                assertResultSet(
-                        "a[INTEGER]\n" +
-                                "100\n" +
-                                "101\n" +
-                                "102\n" +
-                                "103\n",
-                        sink,
-                        rs
-                );
-            }
-        });
-    }
-
-    @Test
     public void testTruncateAndUpdateOnNonPartitionedTableWithDesignatedTs() throws Exception {
         testTruncateAndUpdateOnTable("timestamp(ts)");
     }
