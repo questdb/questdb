@@ -812,16 +812,16 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
+                public boolean allocate(long fd, long size) {
+                    return !fail && super.allocate(fd, size);
+                }
+
+                @Override
                 public long read(long fd, long buf, long len, long offset) {
                     if (fail) {
                         return -1;
                     }
                     return super.read(fd, buf, len, offset);
-                }
-
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !fail && super.allocate(fd, size);
                 }
             }
 
@@ -1420,19 +1420,19 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name, opts);
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
             public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "productName.i")) {
+                    return fd = super.openRW(name, opts);
+                }
+                return super.openRW(name, opts);
             }
         }, false);
     }
@@ -1446,19 +1446,19 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name, opts);
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
             public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "productName.i")) {
+                    return fd = super.openRW(name, opts);
+                }
+                return super.openRW(name, opts);
             }
         }, false);
     }
@@ -2740,6 +2740,52 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackRestoreNullSetters() throws Exception {
+        assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 1);
+            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            final long increment = 60000L * 1000L;
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
+                ts = populateProducts(writer, rnd, ts, 5, increment);
+                writer.commit();
+
+                long maxTs = ts;
+                ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                populateProducts(writer, rnd, ts, 5, increment);
+
+                writer.rollback();
+
+                ts = maxTs;
+                int nullRows = 10;
+                for (int i = 0; i < nullRows; i++) {
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.append();
+                }
+
+                writer.commit();
+            }
+
+            assertTable("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
+                    "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
+                    "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
+                    "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
+                    "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
+                    "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n", PRODUCT);
+        });
+    }
+
+    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
         testSetAppendPositionFailure();
     }
@@ -3230,6 +3276,12 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(reader.size(), calculatedRowCount);
+    }
+
+    protected void assertTable(CharSequence expected, CharSequence tableName) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        }
     }
 
     private void create(FilesFacade ff, int partitionBy, int N) {
@@ -3975,19 +4027,19 @@ public class TableWriterTest extends AbstractCairoTest {
                 long fd = -1;
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "bin.i")) {
-                        return fd = super.openRW(name, opts);
-                    }
-                    return super.openRW(name, opts);
-                }
-
-                @Override
                 public boolean allocate(long fd, long size) {
                     if (fd == this.fd) {
                         return false;
                     }
                     return super.allocate(fd, size);
+                }
+
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Chars.endsWith(name, "bin.i")) {
+                        return fd = super.openRW(name, opts);
+                    }
+                    return super.openRW(name, opts);
                 }
             }
             final X ff = new X();

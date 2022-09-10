@@ -4407,11 +4407,6 @@ nodejs code:
         assertMemoryLeak(() -> {
             final PGWireConfiguration conf = new Port0PGWireConfiguration() {
                 @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
                 public int getWorkerCount() {
                     return 4;
                 }
@@ -6681,6 +6676,50 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testInsertStringWithEscapedQuote() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement s = connection.createStatement()) {
+                s.execute("create table t ( s string)");
+                s.executeUpdate("insert into t values ('o''brien ''''')");
+
+                sink.clear();
+                try (ResultSet resultSet = s.executeQuery("select * from t")) {
+                    assertResultSet("s[VARCHAR]\no'brien ''\n", sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTransaction() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table xyz(a int)").execute();
+            connection.prepareStatement("insert into xyz values (100)").execute();
+            connection.prepareStatement("insert into xyz values (101)").execute();
+            connection.prepareStatement("insert into xyz values (102)").execute();
+            connection.prepareStatement("insert into xyz values (103)").execute();
+            connection.commit();
+
+            sink.clear();
+            try (
+                    PreparedStatement ps = connection.prepareStatement("xyz");
+                    ResultSet rs = ps.executeQuery()
+            ) {
+                assertResultSet(
+                        "a[INTEGER]\n" +
+                                "100\n" +
+                                "101\n" +
+                                "102\n" +
+                                "103\n",
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
     private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(
             PGWireConfiguration conf,
             int workerCount,
@@ -6688,10 +6727,10 @@ create table tab as (
             SOCountDownLatch queryStartedCount,
             SOCountDownLatch queryScheduledCount
     ) {
-        return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount, sharedWorkerCount) {
-            @Override
-            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
-                return new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+        return new PGWireServer.PGConnectionContextFactory(
+                engine,
+                conf,
+                () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
                     @Override
                     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                         return new QueryFutureUpdateListener() {
@@ -6710,8 +6749,7 @@ create table tab as (
                             }
                         };
                     }
-                };
-            }
+                }) {
         };
     }
 
@@ -6722,11 +6760,6 @@ create table tab as (
             @Override
             public Rnd getRandom() {
                 return new Rnd();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override
@@ -6906,11 +6939,6 @@ create table tab as (
             @Override
             public Rnd getRandom() {
                 return new Rnd();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override

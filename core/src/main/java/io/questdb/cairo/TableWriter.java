@@ -2476,6 +2476,7 @@ public class TableWriter implements Closeable {
             timestampSetter = appendTimestampSetter;
         }
         activeColumns = columns;
+        activeNullSetters = nullSetters;
     }
 
     private void configureColumn(int type, boolean indexFlag, int index) {

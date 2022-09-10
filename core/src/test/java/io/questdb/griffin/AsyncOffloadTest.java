@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
@@ -343,30 +342,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        WorkerPool pool = new WorkerPool(
-                new WorkerPoolAwareConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return TestUtils.getWorkerAffinity(getWorkerCount());
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isEnabled() {
-                        return true;
-                    }
-                },
-                Metrics.disabled()
-        );
+        WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("create table x ( " +
@@ -426,30 +402,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new WorkerPool(
-                new WorkerPoolAwareConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return TestUtils.getWorkerAffinity(getWorkerCount());
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isEnabled() {
-                        return true;
-                    }
-                },
-                Metrics.disabled()
-        );
+        WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("CREATE TABLE 'test1' " +
