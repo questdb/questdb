@@ -6307,18 +6307,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectNoWhere2() throws SqlException {
+    public void testSelectWildcardOnly() throws SqlException {
         assertQuery(
-                "select-virtual 1 + 1 > 2 column from (long_sequence(1))",
-                "select 1+1>2"
-        );
-    }
-
-    @Test
-    public void testSelectNoWhere3() throws SqlException {
-        assertQuery(
-                "select-virtual 1 + 1 > 2 column, rnd_int(1,2,0) rnd_int from (long_sequence(1))",
-                "select 1+1>2, rnd_int(1, 2, 0)"
+                "select-choose x from (select [x] from long_sequence(1))",
+                "select *"
         );
     }
 
@@ -6492,48 +6484,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectMissingFrom() throws Exception {
+    public void testSelectWildcardMissingFrom() throws Exception {
         assertSyntaxError("select * tab", 9, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom2() throws Exception {
-        assertSyntaxError("select *", 7, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom3() throws Exception {
-        assertSyntaxError("select col c", 11, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom4() throws Exception {
-        assertSyntaxError("select *, col c", 14, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom5() throws Exception {
-        assertSyntaxError("select * x, col c", 16, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom6() throws Exception {
-        assertSyntaxError("select col c, * x", 16, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom7() throws Exception {
-        assertSyntaxError("SELECT 1+1>2, rnd_int(1, 2, 0), *", 32, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom8() throws Exception {
-        assertSyntaxError("SELECT 1+1>2, *, rnd_int(1, 2, 0)", 32, "'from' expected");
-    }
-
-    @Test
-    public void testSelectMissingFrom9() throws Exception {
-        assertSyntaxError("SELECT 1+1>2, col c, rnd_int(1, 2, 0)", 36, "'from' expected");
     }
 
     @Test

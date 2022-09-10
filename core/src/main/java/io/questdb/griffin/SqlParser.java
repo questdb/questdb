@@ -939,6 +939,13 @@ public final class SqlParser {
             }
 
             if (tok == null || Chars.equals(tok, ';')) { //token can also be ';' on query boundary
+                if (model.getColumns().size() == 1) {
+                    QueryColumn col = model.getColumns().getQuick(0);
+                    if (col.getAst().token == "*" && col.getAlias() != "*") {
+                        throw err(lexer, tok, "'from' expected");
+                    }
+                }
+
                 QueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
@@ -1603,8 +1610,6 @@ public final class SqlParser {
             lexer.unparseLast();
         }
 
-        boolean hasSeenLiteral = false;
-
         while (true) {
 
             tok = tok(lexer, "column");
@@ -1708,12 +1713,6 @@ public final class SqlParser {
                 expr.token = alias;
             }
             model.addBottomUpColumn(colPosition, col, false);
-
-            hasSeenLiteral |= col.getAst().type == ExpressionNode.LITERAL;
-
-            if (tok == null && hasSeenLiteral) {
-                throw err(lexer, tok, "'from' expected");
-            }
 
             if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparseLast();
