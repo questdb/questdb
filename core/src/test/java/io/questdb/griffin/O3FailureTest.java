@@ -1957,6 +1957,8 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         for (int i = 0; i < 20; i++) {
             try {
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
@@ -1965,6 +1967,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
         }
         fixFailure.set(true);
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
