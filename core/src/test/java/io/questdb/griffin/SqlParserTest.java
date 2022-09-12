@@ -110,6 +110,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectEscapedStringLiteral() throws SqlException {
+        assertQuery(
+                "select-virtual 'test''quotes' test''quotes from (long_sequence(1))",
+                "select 'test''quotes'");
+    }
+
+    @Test
+    public void testSelectEscapedQuotedIdentifier() throws SqlException {
+        assertQuery(
+                "select-virtual 'test' quoted\"\"id from (long_sequence(1))",
+                "select 'test' as \"quoted\"\"id\"");
+    }
+
+    @Test
     public void testPGCastToDate() throws SqlException {
         // '2021-01-26'::date
         assertQuery(
@@ -3305,6 +3319,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
                         .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertMissingClosingQuote() throws Exception {
+        assertSyntaxError("insert into x values ('abc)",
+                22,
+                "unclosed quoted string?",
+                modelOf("x")
+                        .col("a", ColumnType.STRING));
     }
 
     @Test

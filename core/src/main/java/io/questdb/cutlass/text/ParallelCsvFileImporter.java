@@ -633,7 +633,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 path.equals(normalize(configuration.getRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
                 path.equals(normalize(configuration.getSnapshotRoot())) ||
-                path.equals(normalize(configuration.getDetachRoot())) ||
                 path.equals(normalize(configuration.getBackupRoot()));
     }
 
@@ -656,7 +655,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put("_").put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDetachRoot()).concat(tableName);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableName);
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
 

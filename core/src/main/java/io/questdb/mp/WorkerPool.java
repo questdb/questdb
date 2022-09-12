@@ -52,9 +52,18 @@ public class WorkerPool {
     private final ObjList<Closeable> freeOnHalt = new ObjList<>();
     private final Metrics metrics;
 
+    public WorkerPool(WorkerPoolConfiguration configuration) {
+        this(configuration, Metrics.disabled());
+    }
+
     public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
-        this.workerAffinity = configuration.getWorkerAffinity();
+        int[] workerAffinity = configuration.getWorkerAffinity();
+        if (workerAffinity != null && workerAffinity.length > 0) {
+            this.workerAffinity = workerAffinity;
+        } else {
+            this.workerAffinity = Misc.getWorkerAffinity(workerCount);
+        }
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
@@ -64,7 +73,7 @@ public class WorkerPool {
         this.sleepMs = configuration.getSleepTimeout();
         this.metrics = metrics;
 
-        assert workerAffinity.length == workerCount;
+        assert this.workerAffinity.length == workerCount;
 
         this.workerJobs = new ObjList<>(workerCount);
         this.cleaners = new ObjList<>(workerCount);
@@ -128,6 +137,10 @@ public class WorkerPool {
             Misc.freeObjList(workers);
             Misc.freeObjList(freeOnHalt);
         }
+    }
+
+    public void start() {
+        start(null);
     }
 
     public void start(@Nullable Log log) {

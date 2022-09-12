@@ -612,7 +612,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "union all " +
                     "z " +
                     ")", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, false);
+                assertCursor(expected2, factory, false, true, true);
             }
         });
     }

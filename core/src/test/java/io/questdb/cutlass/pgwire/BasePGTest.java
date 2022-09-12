@@ -73,15 +73,10 @@ public class BasePGTest extends AbstractGriffinTest {
             }
         };
 
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration() {
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(workerCount);
             }
 
             @Override
@@ -120,15 +115,15 @@ public class BasePGTest extends AbstractGriffinTest {
         }
     }
 
-    protected Connection getConnection(boolean simple, boolean binary) throws SQLException {
+    protected Connection getConnection(int port, boolean simple, boolean binary) throws SQLException {
         if (simple) {
-            return getConnection(Mode.Simple, binary, -2);
+            return getConnection(Mode.Simple, port, binary, -2);
         } else {
-            return getConnection(Mode.Extended, binary, -2);
+            return getConnection(Mode.Extended, port, binary, -2);
         }
     }
 
-    protected Connection getConnection(boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
+    protected Connection getConnection(int port, boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
@@ -137,10 +132,11 @@ public class BasePGTest extends AbstractGriffinTest {
         properties.setProperty("preferQueryMode", simple ? Mode.Simple.value : Mode.Extended.value);
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
         properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 
-    protected Connection getConnection(Mode mode, boolean binary, int prepareThreshold) throws SQLException {
+    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
@@ -154,7 +150,8 @@ public class BasePGTest extends AbstractGriffinTest {
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
         //use this line to switch to local postgres
         //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 
     @NotNull
@@ -193,7 +190,7 @@ public class BasePGTest extends AbstractGriffinTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 8812;
+                        return 0;  // Bind to ANY port.
                     }
 
                     @Override

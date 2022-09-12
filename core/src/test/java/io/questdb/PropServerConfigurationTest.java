@@ -77,7 +77,7 @@ public class PropServerConfigurationTest {
     public void testAllDefaults() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
-        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
         Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
@@ -105,14 +105,14 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
 
-        Assert.assertEquals(256, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getLimit());
-        Assert.assertEquals(256, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEventCapacity());
-        Assert.assertEquals(256, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getLimit());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEventCapacity());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
         Assert.assertEquals(300000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getTimeout());
         Assert.assertEquals(5000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getQueueTimeout());
-        Assert.assertEquals(256, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
         Assert.assertEquals(IOOperation.READ, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getInitialBias());
-        Assert.assertEquals(256, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getListenBacklog());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSndBufSize());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
@@ -248,7 +248,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("http-server", configuration.getHttpServerConfiguration().getDispatcherConfiguration().getDispatcherLogName());
 
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
-        TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getDetachRoot());
         TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
         TestUtils.assertEquals(new File(root, "snapshot").getAbsolutePath(), configuration.getCairoConfiguration().getSnapshotRoot());
 
@@ -323,6 +322,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
 
         // Pg wire
+        Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getLimit());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getSelectCacheBlockCount());

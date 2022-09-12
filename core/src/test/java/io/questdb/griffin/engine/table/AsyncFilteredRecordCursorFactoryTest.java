@@ -691,7 +691,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     null,
                     null
             );
-            sharedPool.start(null);
+            sharedPool.start();
 
             final WorkerPool stealingPool = new TestWorkerPool(stealingPoolWorkerCount);
 
@@ -730,7 +730,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 }
             });
 
-            stealingPool.start(null);
+            stealingPool.start();
 
             try {
                 doneLatch.await();
@@ -760,7 +760,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     null,
                     null
             );
-            pool.start(null);
+            pool.start();
 
             try {
                 runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {

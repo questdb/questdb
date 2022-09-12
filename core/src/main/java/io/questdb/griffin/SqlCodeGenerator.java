@@ -164,7 +164,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @NotNull
-    public Function compileFilter(ExpressionNode expr, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
+    public Function compileBooleanFilter(
+            ExpressionNode expr,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final Function filter = functionParser.parseFunction(expr, metadata, executionContext);
         if (ColumnType.isBoolean(filter.getType())) {
             return filter;
@@ -355,9 +359,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @Nullable
-    private Function compileFilter(IntrinsicModel intrinsicModel, RecordMetadata readerMeta, SqlExecutionContext executionContext) throws SqlException {
+    private Function compileFilter(
+            IntrinsicModel intrinsicModel,
+            RecordMetadata readerMeta,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         if (intrinsicModel.filter != null) {
-            return compileFilter(intrinsicModel.filter, readerMeta, executionContext);
+            return compileBooleanFilter(intrinsicModel.filter, readerMeta, executionContext);
         }
         return null;
     }
@@ -1086,19 +1094,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @NotNull
-    private RecordCursorFactory generateFilter0(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext, ExpressionNode filter) throws SqlException {
+    private RecordCursorFactory generateFilter0(
+            RecordCursorFactory factory,
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            ExpressionNode filterExpr
+    ) throws SqlException {
         model.setWhereClause(null);
 
-        final Function f;
+        final Function filter;
         try {
-            f = compileFilter(filter, factory.getMetadata(), executionContext);
+            filter = compileBooleanFilter(filterExpr, factory.getMetadata(), executionContext);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
         }
-        if (f.isConstant()) {
+
+        if (filter.isConstant()) {
             try {
-                if (f.getBool(null)) {
+                if (filter.getBool(null)) {
                     return factory;
                 }
                 RecordMetadata metadata = factory.getMetadata();
@@ -1106,13 +1120,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Misc.free(factory);
                 return new EmptyTableRecordCursorFactory(metadata);
             } finally {
-                f.close();
+                filter.close();
             }
         }
 
         final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
-            ObjList<Function> perWorkerFilters = preparePerWorkerFilters(factory.getMetadata(), executionContext, filter, f);
 
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
             final boolean canCompile = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
@@ -1124,7 +1137,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
                         final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                         jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                        jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
+                        jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
                     }
 
                     jitFilter = new CompiledFilter();
@@ -1141,8 +1154,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext.getMessageBus(),
                             factory,
                             bindVarFunctions,
-                            f,
-                            perWorkerFilters,
+                            filter,
+                            compileWorkerFilterConditionally(
+                                    !filter.isReadThreadSafe(),
+                                    executionContext.getSharedWorkerCount(),
+                                    filterExpr,
+                                    factory.getMetadata(),
+                                    executionContext
+                            ),
                             jitFilter,
                             reduceTaskPool,
                             limitLoFunction,
@@ -1165,7 +1184,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
             } catch (Throwable e) {
-                Misc.free(f);
+                Misc.free(filter);
                 Misc.free(factory);
                 throw e;
             }
@@ -1174,14 +1193,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     configuration,
                     executionContext.getMessageBus(),
                     factory,
-                    f,
+                    filter,
                     reduceTaskPool,
-                    perWorkerFilters,
+                    compileWorkerFilterConditionally(
+                            !filter.isReadThreadSafe(),
+                            executionContext.getSharedWorkerCount(),
+                            filterExpr,
+                            factory.getMetadata(),
+                            executionContext
+                    ),
                     limitLoFunction,
                     limitLoPos
             );
         }
-        return new FilteredRecordCursorFactory(factory, f);
+        return new FilteredRecordCursorFactory(factory, filter);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1403,23 +1428,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // check if there are post-filters
-                ExpressionNode filter = slaveModel.getPostJoinWhereClause();
-                if (filter != null) {
+                ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
+                if (filterExpr != null) {
                     if (configuration.isSqlParallelFilterEnabled() && master.supportPageFrameCursor()) {
-                        final Function f = functionParser.parseFunction(filter, master.getMetadata(), executionContext);
-                        ObjList<Function> perWorkerFilters = preparePerWorkerFilters(master.getMetadata(), executionContext, filter, f);
+                        final Function filter = compileBooleanFilter(
+                                filterExpr,
+                                master.getMetadata(),
+                                executionContext
+                        );
+
                         master = new AsyncFilteredRecordCursorFactory(
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
-                                f,
+                                filter,
                                 reduceTaskPool,
-                                perWorkerFilters,
+                                compileWorkerFilterConditionally(
+                                        !filter.isReadThreadSafe(),
+                                        executionContext.getSharedWorkerCount(),
+                                        filterExpr,
+                                        master.getMetadata(),
+                                        executionContext
+                                ),
                                 null,
                                 0
                         );
                     } else {
-                        master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                        master = new FilteredRecordCursorFactory(
+                                master,
+                                functionParser.parseFunction(filterExpr, master.getMetadata(), executionContext)
+                        );
                     }
                 }
             }
@@ -3910,19 +3948,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return latestByColumnCount;
     }
 
-    private ObjList<Function> preparePerWorkerFilters(
+    private @Nullable ObjList<Function> compileWorkerFilterConditionally(
+            boolean condition,
+            int workerCount,
+            ExpressionNode filterExpr,
             RecordMetadata metadata,
-            SqlExecutionContext executionContext,
-            ExpressionNode filter,
-            Function filterFunction
+            SqlExecutionContext executionContext
     ) throws SqlException {
-        if (!filterFunction.isReadThreadSafe()) {
-            ObjList<Function> perWorkerFilters = new ObjList<>();
-            for (int i = 0, c = executionContext.getSharedWorkerCount(); i < c; i++) {
-                final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
-                perWorkerFilters.extendAndSet(i, perWorkerFilter);
+        if (condition) {
+            ObjList<Function> workerFilters = new ObjList<>();
+            for (int i = 0; i < workerCount; i++) {
+                workerFilters.extendAndSet(i, compileBooleanFilter(filterExpr, metadata, executionContext));
             }
-            return perWorkerFilters;
+            return workerFilters;
         }
         return null;
     }

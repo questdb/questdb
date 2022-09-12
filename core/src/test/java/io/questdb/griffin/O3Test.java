@@ -34,7 +34,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -771,6 +774,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testPartitionedOOONullStrSetters() throws Exception {
+        executeVanilla(O3Test::testPartitionedOOONullStrSetters0);
+    }
+
+    @Test
     public void testPartitionedOOONullSettersContended() throws Exception {
         executeWithPool(0, O3Test::testPartitionedOOONullSetters0);
     }
@@ -1244,27 +1252,7 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-
-                @Override
-                public boolean isEnabled() {
-                    return true;
-                }
-            }, Metrics.disabled());
+            WorkerPool pool1 = new WorkerPool((WorkerPoolAwareConfiguration) () -> 1);
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1313,8 +1301,8 @@ public class O3Test extends AbstractO3Test {
 
             pool2.assignCleaner(Path.CLEANER);
 
-            pool1.start(null);
-            pool2.start(null);
+            pool1.start();
+            pool2.start();
 
             haltLatch.await();
 
@@ -1365,6 +1353,43 @@ public class O3Test extends AbstractO3Test {
                 "NaN\tNaN\t20\t2013-02-10T00:06:00.000000Z\n" +
                 "NaN\tNaN\t30\t2013-02-10T00:10:00.000000Z\n" +
                 "NaN\tNaN\t40\t2013-02-10T00:11:00.000000Z\n";
+
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    private static void testPartitionedOOONullStrSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
+            throws SqlException {
+        final int commits = 4;
+        final int rows = 1_000;
+        compiler.compile("create table x (s string, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+            TableWriter.Row r;
+
+            // Here we're trying to make sure that null setters write to the currently active O3 memory.
+            long ts = engine.getConfiguration().getMicrosecondClock().getTicks();
+            for (int i = 0; i < commits; i++) {
+                for (int j = 0; j < rows; j++) {
+                    r = w.newRow(ts);
+                    if (j % 2 == 0) {
+                        r.putStr(0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
+                    }
+                    r.append();
+                    if (j % 100 == 0) {
+                        ts -= 1_000;
+                    } else {
+                        ts += 1;
+                    }
+                }
+                // Setting the lag is important since we want some rows to remain pending after each commit.
+                w.commitWithLag(1_000L);
+            }
+            // Commit pending O3 rows.
+            w.commit();
+        }
+
+        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
+
+        final String expected = "count\n" + (commits * rows) + "\n";
 
         TestUtils.assertEquals(expected, sink);
     }

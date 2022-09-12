@@ -24,16 +24,13 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -345,30 +342,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        WorkerPool pool = new WorkerPool(
-                new WorkerPoolAwareConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return TestUtils.getWorkerAffinity(getWorkerCount());
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean isEnabled() {
-                        return true;
-                    }
-                },
-                Metrics.disabled()
-        );
+        WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("create table x ( " +
@@ -403,6 +377,83 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             try {
                                 RecordCursorFactory factory = factories[finalI];
                                 assertQuery(expected, factory, sqlExecutionContext);
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                haltLatch.countDown();
+                            }
+                        }).start();
+                    }
+
+                    haltLatch.await();
+
+                    Misc.free(compilers);
+                    Misc.free(factories);
+
+                    Assert.assertEquals(0, errors.get());
+                },
+                configuration
+        );
+    }
+
+    @Test
+    public void testEqStrFunctionFactory() throws Exception {
+        final int threadCount = 4;
+        final int workerCount = 4;
+
+        WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
+
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    compiler.compile("CREATE TABLE 'test1' " +
+                                    "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
+                                    "timestamp (timestamp) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+
+                    final int numOfRows = 2000;
+                    for (int i = 0; i < numOfRows; i++) {
+                        final int seconds = i % 60;
+                        final CompiledQuery cq = compiler.compile("INSERT INTO test1 (column1, timestamp) " +
+                                        "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
+                                        + (seconds < 10 ? "0" + seconds : "" + seconds) + "Z')",
+                                sqlExecutionContext
+                        );
+                        try (final OperationFuture fut = cq.execute(null)) {
+                            fut.await();
+                        }
+                    }
+
+                    final String query = "SELECT column1 FROM test1 WHERE to_lowercase(column1) = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'";
+
+                    final SqlCompiler[] compilers = new SqlCompiler[threadCount];
+                    final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        // Each factory should use a dedicated compiler instance, so that they don't
+                        // share the same reduce task local pool in the SqlCodeGenerator.
+                        compilers[i] = new SqlCompiler(engine);
+                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                    }
+
+                    final AtomicInteger errors = new AtomicInteger();
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+                    for (int i = 0; i < threadCount; i++) {
+                        final int finalI = i;
+                        new Thread(() -> {
+                            TestUtils.await(barrier);
+
+                            final RecordCursorFactory factory = factories[finalI];
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
+                                cursor.toTop();
+                                final Record record = cursor.getRecord();
+                                int rowCount = 0;
+                                while (cursor.hasNext()) {
+                                    rowCount++;
+                                    TestUtils.assertEquals("0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", record.getSym(0));
+                                }
+                                Assert.assertEquals(numOfRows, rowCount);
                             } catch (Throwable e) {
                                 e.printStackTrace();
                                 errors.incrementAndGet();

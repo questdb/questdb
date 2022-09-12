@@ -129,8 +129,6 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    CharSequence getDetachRoot();
-
     int getDoubleToStrCastScale();
 
     int getFileOperationRetryCount();

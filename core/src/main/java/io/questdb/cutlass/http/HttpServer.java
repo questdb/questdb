@@ -33,13 +33,17 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.network.IOContextFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
+import io.questdb.network.MutableIOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -112,7 +116,7 @@ public class HttpServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             pool.assign(i, () -> {
                 Misc.free(selectors.getQuick(index));
-                httpContextFactory.closeContextPool();
+                httpContextFactory.close();
                 Misc.free(QueryCache.getInstance());
                 messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
                 queryCacheEventSubSeq.clear();
@@ -303,7 +307,7 @@ public class HttpServer implements Closeable {
             Metrics metrics
     ) {
         final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
-        QueryCache.configure(configuration);
+        QueryCache.configure(configuration, metrics);
         HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
@@ -382,44 +386,9 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable, EagerThreadSetup {
-        private final ThreadLocal<WeakMutableObjectPool<HttpConnectionContext>> contextPool;
-        private boolean closed = false;
-
+    private static class HttpContextFactory extends MutableIOContextFactory<HttpConnectionContext> {
         public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(() ->
-                    new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity()));
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-        }
-
-        @Override
-        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
-            return contextPool.get().pop().of(fd, dispatcher);
-        }
-
-        @Override
-        public void done(HttpConnectionContext context) {
-            if (closed) {
-                Misc.free(context);
-            } else {
-                context.of(-1, null);
-                contextPool.get().push(context);
-                LOG.debug().$("pushed").$();
-            }
-        }
-
-        @Override
-        public void setup() {
-            contextPool.get();
-        }
-
-        private void closeContextPool() {
-            Misc.free(this.contextPool);
-            LOG.info().$("closed").$();
+            super(() -> new HttpConnectionContext(configuration, metrics),  configuration.getConnectionPoolInitialCapacity());
         }
     }
 }

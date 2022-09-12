@@ -40,6 +40,6 @@ public class HealthCheckMetrics {
     }
 
     public long unhandledErrorsCount() {
-        return unhandledErrorCounter.get();
+        return unhandledErrorCounter.getValue();
     }
 }

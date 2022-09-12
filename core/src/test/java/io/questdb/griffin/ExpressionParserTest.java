@@ -133,6 +133,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnquotedStrFail2() {
+        assertFail(
+                "s ~ 'TDF''",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail3() {
+        assertFail(
+                "s ~ 'TDF''A''",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
     public void testAllNoOperator() {
         assertFail(
                 "a all(b)",
@@ -853,6 +871,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testDotLiteralsUnquotedQuoted() throws SqlException {
         x("x.y", "x.\"y\"");
+    }
+
+    @Test
+    public void testDotLiteralsUnquotedQuotedWithEscapedQuote() throws SqlException {
+        x("x.y\"\"z", "x.\"y\"\"z\"");
     }
 
     @Test

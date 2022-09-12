@@ -29,6 +29,7 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Arrays;
 
 public final class Misc {
     public static final String EOL = "\r\n";
@@ -62,6 +63,12 @@ public final class Misc {
         }
     }
 
+    public static int[] getWorkerAffinity(int workerCount) {
+        int[] res = new int[workerCount];
+        Arrays.fill(res, -1);
+        return res;
+    }
+
     private static <T> void freeObjList0(ObjList<T> list) {
         for (int i = 0, n = list.size(); i < n; i++) {
             list.setQuick(i, free(list.getQuick(i)));
@@ -89,6 +96,15 @@ public final class Misc {
         if (list != null) {
             for (int i = 0, n = list.size(); i < n; i++) {
                 free(list.getQuick(i));
+            }
+        }
+    }
+
+    public static void clearObjList(ObjList<? extends Mutable> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            Mutable m = args.getQuick(i);
+            if (m != null) {
+                m.clear();
             }
         }
     }

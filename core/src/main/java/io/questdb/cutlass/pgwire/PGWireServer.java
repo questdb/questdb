@@ -32,11 +32,13 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.WeakMutableObjectPool;
+import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -115,7 +117,7 @@ public class PGWireServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             workerPool.assign(i, () -> {
                 Misc.free(jobContext);
-                contextFactory.closeContextPool();
+                contextFactory.close();
                 engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
                 queryCacheEventSubSeq.clear();
             });
@@ -178,8 +180,7 @@ public class PGWireServer implements Closeable {
                         new PGConnectionContextFactory(
                                 engine,
                                 conf,
-                                workerPool.getWorkerCount(),
-                                sharedWorkerCount
+                                () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), sharedWorkerCount)
                         )
                 ),
                 functionFactoryCache,
@@ -198,47 +199,21 @@ public class PGWireServer implements Closeable {
         Misc.free(dispatcher);
     }
 
-    public static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
-        private final ThreadLocal<WeakMutableObjectPool<PGConnectionContext>> contextPool;
-        private boolean closed = false;
+    public int getPort() {
+        return dispatcher.getPort();
+    }
 
-        public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount, int sharedWorkerCount) {
-            this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(() ->
-                    new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount, sharedWorkerCount)), configuration.getConnectionPoolInitialCapacity()));
-        }
-
-        protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
-            return new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-        }
-
-        @Override
-        public PGConnectionContext newInstance(long fd, IODispatcher<PGConnectionContext> dispatcher) {
-            return contextPool.get().pop().of(fd, dispatcher);
-        }
-
-        @Override
-        public void done(PGConnectionContext context) {
-            if (closed) {
-                Misc.free(context);
-            } else {
-                contextPool.get().push(context);
-                LOG.debug().$("pushed").$();
-            }
-        }
-
-        @Override
-        public void setup() {
-            contextPool.get();
-        }
-
-        private void closeContextPool() {
-            Misc.free(this.contextPool.get());
-            LOG.info().$("closed").$();
+    public static class PGConnectionContextFactory extends MutableIOContextFactory<PGConnectionContext> {
+        public PGConnectionContextFactory(
+                CairoEngine engine,
+                PGWireConfiguration configuration,
+                ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
+        ) {
+            super(() -> new PGConnectionContext(
+                    engine,
+                    configuration,
+                    executionContextObjectFactory.newInstance()
+            ), configuration.getConnectionPoolInitialCapacity());
         }
     }
 }
