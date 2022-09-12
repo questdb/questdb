@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
@@ -240,17 +239,7 @@ public class AbstractO3Test {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-
-                    @Override
-                    public String getPoolName() {
-                        return "vanilla";
-                    }
-                });
+                WorkerPool pool = new WorkerPool(() -> workerCount);
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override

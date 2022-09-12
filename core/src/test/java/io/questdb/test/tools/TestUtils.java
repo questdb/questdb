@@ -1160,11 +1160,6 @@ public final class TestUtils {
             public boolean haltOnError() {
                 return true;
             }
-
-            @Override
-            public String getPoolName() {
-                return "testing";
-            }
         };
         WorkerPool pool = new WorkerPool(config);
         TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);

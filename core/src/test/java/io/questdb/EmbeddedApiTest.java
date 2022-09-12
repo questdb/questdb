@@ -60,7 +60,7 @@ public class EmbeddedApiTest {
         final Log log = LogFactory.getLog("testConcurrentSQLExec");
 
         TestUtils.assertMemoryLeak(() -> {
-            final WorkerPool workerPool = new TestWorkerPool("pool", 2);
+            final WorkerPool workerPool = new TestWorkerPool(2);
 
             Rnd rnd = new Rnd();
             try (

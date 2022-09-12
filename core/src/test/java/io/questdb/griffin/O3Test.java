@@ -1248,17 +1248,7 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public String getPoolName() {
-                    return "apples";
-                }
-            });
+            WorkerPool pool1 = new WorkerPool(() -> 1);
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1282,7 +1272,7 @@ public class O3Test extends AbstractO3Test {
             });
             pool1.assignCleaner(Path.CLEANER);
 
-            final WorkerPool pool2 = new TestWorkerPool("testing", 1);
+            final WorkerPool pool2 = new TestWorkerPool(1);
 
             pool2.assign(new Job() {
                 private boolean toRun = true;

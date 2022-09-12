@@ -1091,17 +1091,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
-                @Override
-                public int getWorkerCount() {
-                    return LineTcpReceiverTest.this.getWorkerCount();
-                }
-
-                @Override
-                public String getPoolName() {
-                    return "line";
-                }
-            }, metrics);
+            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(() -> LineTcpReceiverTest.this.getWorkerCount(), metrics);
             sharedWorkerPool.assignCleaner(Path.CLEANER);
             workerPoolManager.setSharedPool(sharedWorkerPool);
             try (LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics)) {

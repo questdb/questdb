@@ -32,7 +32,6 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2704,17 +2703,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-
-                    @Override
-                    public String getPoolName() {
-                        return "testing";
-                    }
-                });
+                WorkerPool pool = new WorkerPool(() -> workerCount);
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override

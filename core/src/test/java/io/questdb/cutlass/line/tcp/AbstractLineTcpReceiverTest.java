@@ -36,7 +36,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -212,17 +211,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
-            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
-                @Override
-                public int getWorkerCount() {
-                    return AbstractLineTcpReceiverTest.this.getWorkerCount();
-                }
-
-                @Override
-                public String getPoolName() {
-                    return "tests";
-                }
-            }, metrics);
+            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(() -> getWorkerCount(), metrics);
             sharedWorkerPool.assignCleaner(Path.CLEANER);
             if (needMaintenanceJob) {
                 sharedWorkerPool.assign(engine.getEngineMaintenanceJob());

@@ -27,7 +27,6 @@ package org.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -44,17 +43,7 @@ public class PongMain {
         // configuration defines bind address and port
         final IODispatcherConfiguration dispatcherConf = new DefaultIODispatcherConfiguration();
         // worker pool, which would handle jobs
-        final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public String getPoolName() {
-                return "pool";
-            }
-        });
+        final WorkerPool workerPool = new WorkerPool(() -> 1);
         // event loop that accepts connections and publishes network events to event queue
         final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new MutableIOContextFactory<>(PongConnectionContext::new, 8));
         // event queue processor

@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -342,17 +341,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-
-            @Override
-            public String getPoolName() {
-                return "stress";
-            }
-        });
+        WorkerPool pool = new WorkerPool(() -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("create table x ( " +
@@ -412,17 +401,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new WorkerPool((new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-
-            @Override
-            public String getPoolName() {
-                return "streq";
-            }
-        }));
+        WorkerPool pool = new WorkerPool((() -> workerCount));
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("CREATE TABLE 'test1' " +

@@ -54,11 +54,11 @@ import java.util.Properties;
 
 import static org.hamcrest.CoreMatchers.*;
 
-public class PropServerConfigurationTestMain {
+public class PropServerConfigurationTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
-    private final static Log LOG = LogFactory.getLog(PropServerConfigurationTestMain.class);
+    private final static Log LOG = LogFactory.getLog(PropServerConfigurationTest.class);
     private static String root;
 
     @AfterClass
@@ -70,7 +70,7 @@ public class PropServerConfigurationTestMain {
     public static void setupMimeTypes() throws IOException {
         File root = new File(temp.getRoot(), "root");
         TestUtils.copyMimeTypes(root.getAbsolutePath());
-        PropServerConfigurationTestMain.root = root.getAbsolutePath();
+        PropServerConfigurationTest.root = root.getAbsolutePath();
     }
 
     @Test
@@ -402,7 +402,7 @@ public class PropServerConfigurationTestMain {
 
     @Test
     public void testHttpDisabled() throws IOException, ServerConfigurationException, JsonException {
-        try (InputStream is = PropServerConfigurationTestMain.class.getResourceAsStream("/server-http-disabled.conf")) {
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-http-disabled.conf")) {
             Properties properties = new Properties();
             properties.load(is);
             PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
@@ -555,7 +555,7 @@ public class PropServerConfigurationTestMain {
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidConfigKeys() throws IOException, JsonException, ServerConfigurationException {
-        try (InputStream inputStream = PropServerConfigurationTestMain.class.getResourceAsStream("/server.conf")) {
+        try (InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
             properties.load(inputStream);
             properties.setProperty("this.will.throw", "Test");
@@ -620,7 +620,7 @@ public class PropServerConfigurationTestMain {
 
     @Test
     public void testSetAllFromFile() throws IOException, ServerConfigurationException, JsonException {
-        try (InputStream is = PropServerConfigurationTestMain.class.getResourceAsStream("/server.conf")) {
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
             properties.load(is);
 
@@ -876,7 +876,7 @@ public class PropServerConfigurationTestMain {
 
     @Test
     public void testSetAllNetFromFile() throws IOException, ServerConfigurationException, JsonException {
-        try (InputStream is = PropServerConfigurationTestMain.class.getResourceAsStream("/server-net.conf")) {
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-net.conf")) {
             Properties properties = new Properties();
             properties.load(is);
 
@@ -927,7 +927,7 @@ public class PropServerConfigurationTestMain {
 
     @Test
     public void testSetZeroKeepAlive() throws IOException, ServerConfigurationException, JsonException {
-        try (InputStream is = PropServerConfigurationTestMain.class.getResourceAsStream("/server-keep-alive.conf")) {
+        try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-keep-alive.conf")) {
             Properties properties = new Properties();
             properties.load(is);
 

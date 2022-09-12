@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import org.junit.rules.TemporaryFolder;
@@ -67,17 +66,7 @@ public class HttpHealthCheckTestBuilder {
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (CairoEngine engine = new CairoEngine(cairoConfiguration, metrics)) {
-                WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
-                    @Override
-                    public int getWorkerCount() {
-                        return 1;
-                    }
-
-                    @Override
-                    public String getPoolName() {
-                        return "http";
-                    }
-                }, metrics);
+                WorkerPool workerPool = workerPoolManager.getInstance(() -> 1, metrics);
                 if (injectUnhandledError) {
                     final AtomicBoolean alreadyErrored = new AtomicBoolean();
                     workerPool.assign(workerId -> {
