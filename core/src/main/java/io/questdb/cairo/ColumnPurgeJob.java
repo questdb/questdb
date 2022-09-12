@@ -66,6 +66,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final long retryDelayLimit;
     private final long retryDelay;
     private final double retryDelayMultiplier;
+    private final int columnPurgeQueueLimit;
     private ColumnPurgeOperator columnPurgeOperator;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
@@ -84,6 +85,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelay = configuration.getColumnPurgeRetryDelay();
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
         this.columnPurgeRetryLimitDays = configuration.getColumnPurgeRetryLimitDays();
+        this.columnPurgeQueueLimit = configuration.getColumnPurgeQueueLimit();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
@@ -136,29 +138,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         task.nextRunTimestamp = currentTime + task.retryDelay;
     }
 
-    private boolean purge() {
-        boolean useful = false;
-        final long now = clock.getTicks() + 1;
-        while (retryQueue.size() > 0) {
-            ColumnPurgeRetryTask nextTask = retryQueue.peek();
-            if (nextTask.nextRunTimestamp < now) {
-                retryQueue.poll();
-                useful = true;
-                if (!columnPurgeOperator.purge(nextTask)) {
-                    // Re-queue
-                    calculateNextTimestamp(nextTask, now);
-                    retryQueue.add(nextTask);
-                } else {
-                    taskPool.push(nextTask);
-                }
-            } else {
-                // All reruns are in the future.
-                return useful;
-            }
-        }
-        return useful;
-    }
-
     private void commit() {
         try {
             if (writer != null) {
@@ -171,6 +150,16 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     .I$();
             writer = Misc.free(writer);
         }
+    }
+
+    private String internStrObj(CharSequenceObjHashMap<String> stringIntern, CharSequence sym) {
+        String val = stringIntern.get(sym);
+        if (val != null) {
+            return val;
+        }
+        val = Chars.toString(sym);
+        stringIntern.put(val, val);
+        return val;
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
@@ -203,6 +192,29 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
+    private boolean purge() {
+        boolean useful = false;
+        final long now = clock.getTicks() + 1;
+        while (retryQueue.size() > 0) {
+            ColumnPurgeRetryTask nextTask = retryQueue.peek();
+            if (nextTask.nextRunTimestamp < now) {
+                retryQueue.poll();
+                useful = true;
+                if (!columnPurgeOperator.purge(nextTask)) {
+                    // Re-queue
+                    calculateNextTimestamp(nextTask, now);
+                    retryQueue.add(nextTask);
+                } else {
+                    taskPool.push(nextTask);
+                }
+            } else {
+                // All reruns are in the future.
+                return useful;
+            }
+        }
+        return useful;
+    }
+
     private void putTasksFromTableToQueue() {
         try {
             CompiledQuery reloadQuery = sqlCompiler.compile(
@@ -218,7 +230,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     long lastTs = 0;
                     ColumnPurgeRetryTask taskRun = null;
 
-                    while (records.hasNext()) {
+                    CharSequenceObjHashMap<String> stringIntern = new CharSequenceObjHashMap<>();
+                    int count = 0;
+
+                    while (records.hasNext() && count++ < columnPurgeQueueLimit) {
                         long ts = rec.getTimestamp(0);
                         if (ts != lastTs || taskRun == null) {
                             if (taskRun != null) {
@@ -226,8 +241,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             }
                             taskRun = taskPool.pop();
                             lastTs = ts;
-                            String tableName = Chars.toString(rec.getSym(TABLE_NAME_COLUMN));
-                            String columnName = Chars.toString(rec.getSym(COLUMN_NAME_COLUMN));
+                            String tableName = internStrObj(stringIntern, rec.getSym(TABLE_NAME_COLUMN));
+                            String columnName = internStrObj(stringIntern, rec.getSym(COLUMN_NAME_COLUMN));
                             int tableId = rec.getInt(TABLE_ID_COLUMN);
                             long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
@@ -252,6 +267,14 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     }
                     if (taskRun != null) {
                         retryQueue.add(taskRun);
+                    }
+
+                    if (count > columnPurgeQueueLimit) {
+                        // There can be too many tasks in the table so that this code can cause OOM
+                        // and QuestDB will not be able to start at all. Stop here and let the user know
+                        LOG.critical().$("too many Column Purge Tasks in the table some task will be ignored, " +
+                                        "run VACUUM TABLE command to re-trigger for each table [limit=")
+                                .$(columnPurgeQueueLimit).I$();
                     }
                 }
             }

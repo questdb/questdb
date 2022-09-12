@@ -109,6 +109,7 @@ public class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
+    protected static int columnVersionPurgeQueueLimit = -1;
     protected static int defaultTableWriteMode = -1;
     protected static Boolean copyPartitionOnAttach = null;
     protected static String attachableDirSuffix = null;
@@ -324,6 +325,11 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public int getColumnPurgeQueueLimit() {
+                return columnVersionPurgeQueueLimit < 0 ? super.getColumnPurgeQueueLimit() : columnVersionPurgeQueueLimit;
+            }
+
+            @Override
             public boolean isSqlParallelFilterEnabled() {
                 return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
             }
@@ -423,6 +429,7 @@ public class AbstractCairoTest {
         pageFrameReduceQueueCapacity = -1;
         columnPurgeRetryDelayMultiplier = -1;
         columnVersionPurgeQueueCapacity = -1;
+        columnVersionPurgeQueueLimit = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
         sqlCopyBufferSize = 1024 * 1024;

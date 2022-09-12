@@ -134,6 +134,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnPurgeQueueLimit() {
+        return 5_000_000;
+    }
+
+    @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return getColumnPurgeQueueCapacity();
     }
