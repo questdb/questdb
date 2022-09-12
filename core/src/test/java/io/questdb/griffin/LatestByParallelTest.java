@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -36,7 +35,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -59,7 +57,6 @@ public class LatestByParallelTest {
     protected static CharSequence root;
     @Rule
     public TestName testName = new TestName();
-    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     @BeforeClass
     public static void setupStatic() {
@@ -244,32 +241,25 @@ public class LatestByParallelTest {
         }
     }
 
-    protected void executeWithPool(
+    protected static void executeWithPool(
             int workerCount,
             int queueCapacity,
             LatestByRunnable runnable
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = workerPoolManager.getInstance(
-                        new WorkerPoolConfiguration() {
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
 
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount;
+                    }
 
-                            @Override
-                            public String getPoolName() {
-                                return "testing";
-                            }
-                        },
-                        Metrics.disabled()
-                );
+                    @Override
+                    public String getPoolName() {
+                        return "vanilla";
+                    }
+                });
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
@@ -297,7 +287,7 @@ public class LatestByParallelTest {
         });
     }
 
-    protected void execute(
+    protected static void execute(
             @Nullable WorkerPool pool,
             LatestByRunnable runnable,
             CairoConfiguration configuration
@@ -313,22 +303,22 @@ public class LatestByParallelTest {
                     if (pool != null) {
                         pool.assignCleaner(Path.CLEANER);
                         pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
-
+                        pool.start(LOG);
                     }
-                    workerPoolManager.closeAll();
+
                     runnable.run(engine, compiler, sqlExecutionContext);
                     Assert.assertEquals(0, engine.getBusyWriterCount());
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                 } finally {
                     if (pool != null) {
-                        workerPoolManager.closeAll();
+                        pool.close();
                     }
                 }
             }
         }
     }
 
-    protected void executeVanilla(LatestByRunnable code) throws Exception {
+    protected static void executeVanilla(LatestByRunnable code) throws Exception {
         executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
     }
 

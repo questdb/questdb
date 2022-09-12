@@ -848,49 +848,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testTwoTablesCompeteForBuffer() throws Exception {
-        executeVanilla(() -> {
-            WorkerPool pool;
-            final CairoConfiguration cairoConfiguration;
-            final int workerCount = 4;
-            pool = workerPoolManager.getInstance(
-                    new WorkerPoolConfiguration() {
-                        @Override
-                        public int getWorkerCount() {
-                            return workerCount;
-                        }
-
-                        @Override
-                        public String getPoolName() {
-                            return "testing";
-                        }
-                    },
-                    Metrics.disabled()
-            );
-
-            cairoConfiguration = new DefaultCairoConfiguration(root) {
-                @Override
-                public long getDataAppendPageSize() {
-                    return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
-                }
-
-                @Override
-                public int getO3ColumnMemorySize() {
-                    return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
-                }
-            };
-
-            try (
-                    final CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    final SqlCompiler compiler = new SqlCompiler(engine);
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
-            ) {
-                pool.configureAsShared(engine, null, false, false, true);
-                workerPoolManager.setSharedPool(pool);
-                testTwoTablesCompeteForBuffer0(engine, compiler, sqlExecutionContext);
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            }
-        });
+        executeWithPool(4, O3Test::testTwoTablesCompeteForBuffer0);
     }
 
     @Test
@@ -1290,7 +1248,17 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("pool1", 1), Metrics.disabled());
+            WorkerPool pool1 = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "apples";
+                }
+            });
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1314,8 +1282,7 @@ public class O3Test extends AbstractO3Test {
             });
             pool1.assignCleaner(Path.CLEANER);
 
-
-            final WorkerPool pool2 = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("pool2", 1), Metrics.disabled());
+            final WorkerPool pool2 = new TestWorkerPool("testing", 1);
 
             pool2.assign(new Job() {
                 private boolean toRun = true;
@@ -1340,12 +1307,13 @@ public class O3Test extends AbstractO3Test {
 
             pool2.assignCleaner(Path.CLEANER);
 
-            workerPoolManager.startAll(LOG);
-            try {
-                haltLatch.await();
-            } finally {
-                workerPoolManager.closeAll();
-            }
+            pool1.start();
+            pool2.start();
+
+            haltLatch.await();
+
+            pool1.close();
+            pool2.close();
 
             Assert.assertEquals(0, errorCount.get());
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);

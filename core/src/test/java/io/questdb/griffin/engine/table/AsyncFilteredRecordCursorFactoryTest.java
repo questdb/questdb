@@ -118,7 +118,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore("broken")
     public void testDeferredSymbolInFilter2TwoPools() throws Exception {
         withDoublePool((engine, compiler, sqlExecutionContext) -> testDeferredSymbolInFilter0(compiler, sqlExecutionContext));
     }
@@ -682,9 +681,22 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         final Rnd rnd = new Rnd();
 
         assertMemoryLeak(() -> {
-            final WorkerPool sharedPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("p0", sharedPoolWorkerCount), metrics);
-            sharedPool.configureAsShared(engine, null, false, false, true);
-            final WorkerPool stealingPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("p1", stealingPoolWorkerCount), metrics);
+            final WorkerPool sharedPool = new TestWorkerPool("pool0", sharedPoolWorkerCount);
+
+            sharedPool.assignCleaner(Path.CLEANER);
+
+            O3Utils.setupWorkerPool(
+                    sharedPool,
+                    engine,
+                    null,
+                    null
+            );
+            sharedPool.start();
+
+            final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount);
+
+            stealingPool.assignCleaner(Path.CLEANER);
+
             SOCountDownLatch doneLatch = new SOCountDownLatch(1);
 
             stealingPool.assign(new SynchronizedJob() {
@@ -718,12 +730,14 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 }
             });
 
-            workerPoolManager.startAll();
+            stealingPool.start();
+
             try {
                 doneLatch.await();
                 Assert.assertEquals(0, errorCounter.get());
             } finally {
-                workerPoolManager.closeAll();
+                sharedPool.close();
+                stealingPool.close();
             }
         });
     }
@@ -736,9 +750,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
         assertMemoryLeak(() -> {
 
-            WorkerPool pool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(workerCount), metrics);
-            pool.configureAsShared(engine, null, false, false, true);
-            workerPoolManager.startAll();
+            WorkerPool pool = new TestWorkerPool("pool0", workerCount);
+
+            pool.assignCleaner(Path.CLEANER);
+
+            O3Utils.setupWorkerPool(
+                    pool,
+                    engine,
+                    null,
+                    null
+            );
+            pool.start();
+
             try {
                 runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
                     @Override
@@ -755,7 +778,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 e.printStackTrace();
                 throw e;
             } finally {
-                workerPoolManager.closeAll();
+                pool.close();
             }
         });
     }

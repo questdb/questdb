@@ -37,8 +37,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -122,7 +122,17 @@ public class HttpQueryTestBuilder {
                     }
                 };
             }
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(workerCount), metrics);
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return workerCount;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "http";
+                }
+            }, metrics);
             workerPool.assignCleaner(Path.CLEANER);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);

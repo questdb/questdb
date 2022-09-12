@@ -74,7 +74,7 @@ public class ServerMain implements QuietCloseable {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
         final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(config.getWorkerPoolConfiguration(), metrics);
-        sharedPool.configureAsShared(cairoEngine, ffCache, true, true, true);
+        O3Utils.setupWorkerPool(sharedPool, cairoEngine, config.getCairoConfiguration().getCircuitBreakerConfiguration(), ffCache);
         workerPoolManager = new WorkerPoolManager(sharedPool);
 
         // snapshots

@@ -24,12 +24,10 @@
 
 package org.questdb;
 
-import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.*;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -46,8 +44,7 @@ public class PongMain {
         // configuration defines bind address and port
         final IODispatcherConfiguration dispatcherConf = new DefaultIODispatcherConfiguration();
         // worker pool, which would handle jobs
-        WorkerPoolManager workerPoolManager = new WorkerPoolManager();
-        final WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+        final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
             public int getWorkerCount() {
                 return 1;
@@ -55,9 +52,9 @@ public class PongMain {
 
             @Override
             public String getPoolName() {
-                return "benchmarks";
+                return "pool";
             }
-        }, Metrics.disabled());
+        });
         // event loop that accepts connections and publishes network events to event queue
         final IODispatcher<PongConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new MutableIOContextFactory<>(PongConnectionContext::new, 8));
         // event queue processor
@@ -67,7 +64,7 @@ public class PongMain {
         // queue processor job
         workerPool.assign(workerId -> dispatcher.processIOQueue(processor));
         // lets go!
-        workerPoolManager.startAll(LOG);
+        workerPool.start();
     }
 
     private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {

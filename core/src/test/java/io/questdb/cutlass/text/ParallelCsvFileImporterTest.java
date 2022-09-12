@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -2705,23 +2704,17 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = workerPoolManager.getInstance(
-                        new WorkerPoolConfiguration() {
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount;
+                    }
 
-                            @Override
-                            public String getPoolName() {
-                                return "testing";
-                            }
-
-                        },
-                        Metrics.disabled()
-                );
-                pool.assignCleaner(Path.CLEANER);
-                TextImportJob.assignToPool(engine.getMessageBus(), pool);
+                    @Override
+                    public String getPoolName() {
+                        return "testing";
+                    }
+                });
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
@@ -2784,21 +2777,31 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
-    protected void execute(@Nullable WorkerPool pool, TextImportRunnable runnable, CairoConfiguration configuration) throws Exception {
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, pool == null ? 1 : pool.getWorkerCount())
-        ) {
-            if (pool != null) {
-                workerPoolManager.startAll();
-            }
-            runnable.run(engine, compiler, sqlExecutionContext);
-            Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
-            Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
-        } finally {
-            if (pool != null) {
-                workerPoolManager.closeAll();
+    protected static void execute(
+            @Nullable WorkerPool pool,
+            TextImportRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool == null ? 1 : pool.getWorkerCount();
+        try (final CairoEngine engine = new CairoEngine(configuration);
+             final SqlCompiler compiler = new SqlCompiler(engine)) {
+
+            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
+                try {
+                    if (pool != null) {
+                        pool.assignCleaner(Path.CLEANER);
+                        TextImportJob.assignToPool(engine.getMessageBus(), pool);
+                        pool.start(LOG);
+                    }
+
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+                } finally {
+                    if (pool != null) {
+                        pool.close();
+                    }
+                }
             }
         }
     }

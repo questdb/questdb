@@ -24,30 +24,25 @@
 
 package io.questdb.mp;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import io.questdb.Metrics;
 
+public class TestWorkerPool extends WorkerPool {
 
-public class TestWorkerPoolConfiguration implements WorkerPoolConfiguration {
-    private static final AtomicInteger ID = new AtomicInteger(-1);
-    private final String poolName;
-    private final int workerCount;
-
-    public TestWorkerPoolConfiguration(int workerCount) {
-        this("pool" + ID.incrementAndGet(), workerCount);
+    public TestWorkerPool(String poolName, int workerCount) {
+        this(poolName, workerCount, Metrics.disabled());
     }
 
-    public TestWorkerPoolConfiguration(String poolName, int workerCount) {
-        this.poolName = poolName;
-        this.workerCount = workerCount;
-    }
+    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
+        super(new WorkerPoolConfiguration() {
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
 
-    @Override
-    public int getWorkerCount() {
-        return workerCount;
-    }
-
-    @Override
-    public String getPoolName() {
-        return poolName;
+            @Override
+            public String getPoolName() {
+                return poolName;
+            }
+        }, metrics);
     }
 }

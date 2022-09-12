@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -52,7 +51,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0 ) {
                 return -1;
             }
             return super.openRW(name, opts);
@@ -651,81 +650,35 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testOutOfFileHandles() throws Exception {
         counter.set(1536);
+        executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new FilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                counter.incrementAndGet();
+                return super.close(fd);
+            }
 
-        executeVanilla(() -> {
-            final int workerCount = 4;
-            WorkerPool pool = workerPoolManager.getInstance(
-                    new WorkerPoolConfiguration() {
-                        @Override
-                        public int getWorkerCount() {
-                            return workerCount;
-                        }
-
-                        @Override
-                        public String getPoolName() {
-                            return "testing";
-                        }
-                    },
-                    Metrics.disabled()
-            );
-
-            final CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(root) {
-                @Override
-                public long getDataAppendPageSize() {
-                    return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+            @Override
+            public long openAppend(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
                 }
+                return super.openAppend(name);
+            }
 
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return new FilesFacadeImpl() {
-                        @Override
-                        public boolean close(long fd) {
-                            counter.incrementAndGet();
-                            return super.close(fd);
-                        }
-
-                        @Override
-                        public long openAppend(LPSZ name) {
-                            if (counter.decrementAndGet() < 0) {
-                                return -1;
-                            }
-                            return super.openAppend(name);
-                        }
-
-                        @Override
-                        public long openRO(LPSZ name) {
-                            if (counter.decrementAndGet() < 0) {
-                                return -1;
-                            }
-                            return super.openRO(name);
-                        }
-
-                        @Override
-                        public long openRW(LPSZ name, long opts) {
-                            if (counter.decrementAndGet() < 0) {
-                                return -1;
-                            }
-                            return super.openRW(name, opts);
-                        }
-                    };
+            @Override
+            public long openRO(LPSZ name) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
                 }
+                return super.openRO(name);
+            }
 
-                @Override
-                public int getO3ColumnMemorySize() {
-                    return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (counter.decrementAndGet() < 0) {
+                    return -1;
                 }
-            };
-
-            try (
-                    final CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    final SqlCompiler compiler = new SqlCompiler(engine);
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
-            ) {
-                pool.configureAsShared(engine, null, false, false, true);
-                workerPoolManager.setSharedPool(pool);
-                testOutOfFileHandles0(engine, compiler, sqlExecutionContext);
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
+                return super.openRW(name, opts);
             }
         });
     }
@@ -866,7 +819,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(148 + 39); // 148 allocations succeed, then 39 fail
+        counter.set(174 + 45);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -2008,10 +1961,11 @@ public class O3FailureTest extends AbstractO3Test {
         for (int i = 0; i < 20; i++) {
             try {
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
-                Assert.fail("run " + i);
+                Assert.fail();
             } catch (CairoException | CairoError ignored) {
             }
         }
+
         fixFailure.set(true);
 
         assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
@@ -3214,7 +3168,7 @@ public class O3FailureTest extends AbstractO3Test {
             try {
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException | CairoError ignored) {
+            } catch (CairoException ignored) {
             }
         }
 
@@ -3612,7 +3566,18 @@ public class O3FailureTest extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("pool1", 1), Metrics.disabled());
+            WorkerPool pool1 = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pears";
+                }
+            });
+
             pool1.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3635,7 +3600,8 @@ public class O3FailureTest extends AbstractO3Test {
             });
             pool1.assignCleaner(Path.CLEANER);
 
-            final WorkerPool pool2 = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("pool2", 1), Metrics.disabled());
+            final WorkerPool pool2 = new TestWorkerPool("testing", 1);
+
             pool2.assign(new Job() {
                 private boolean toRun = true;
 
@@ -3656,15 +3622,17 @@ public class O3FailureTest extends AbstractO3Test {
                     return false;
                 }
             });
+
             pool2.assignCleaner(Path.CLEANER);
 
-            workerPoolManager.startAll(LOG);
-            try {
-                haltLatch.await();
-            } finally {
-                workerPoolManager.closeAll();
-                Assert.assertTrue(errorCount.get() > 0);
-            }
+            pool1.start();
+            pool2.start();
+
+            haltLatch.await();
+
+            pool1.close();
+            pool2.close();
+            Assert.assertTrue(errorCount.get() > 0);
         }
     }
 
@@ -3676,7 +3644,7 @@ public class O3FailureTest extends AbstractO3Test {
                     return ff;
                 }
             };
-            TestUtils.execute(runnable, configuration, 1);
+            TestUtils.execute(null, runnable, configuration);
         });
     }
 

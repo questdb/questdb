@@ -30,8 +30,8 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.metrics.Scrapable;
-import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolManager;
 import org.junit.rules.TemporaryFolder;
 
@@ -62,7 +62,17 @@ public class HttpMinTestBuilder {
                     .build();
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "minhttp";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)

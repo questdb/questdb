@@ -34,9 +34,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
-import io.questdb.mp.TestWorkerPoolConfiguration;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -53,45 +54,51 @@ public class EmbeddedApiTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
-    private final WorkerPoolManager workerPoolManager = new WorkerPoolManager();
-
     @Test
     public void testConcurrentSQLExec() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final Log log = LogFactory.getLog("testConcurrentSQLExec");
+
         TestUtils.assertMemoryLeak(() -> {
+            final WorkerPool workerPool = new TestWorkerPool("pool", 2);
+
             Rnd rnd = new Rnd();
-            final WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
-            try (final CairoEngine engine = new CairoEngine(configuration)) {
+            try (
+                    final CairoEngine engine = new CairoEngine(configuration)
+            ) {
                 workerPool.assign(new GroupByJob(engine.getMessageBus()));
-                workerPoolManager.startAll();
-                // number of cores is current thread + workers in the pool
-                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
-                try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                workerPool.start(log);
+                try {
+                    // number of cores is current thread + workers in the pool
+                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
-                    compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
+                        compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
 
-                    long timestamp = 0;
-                    try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
-                        for (int i = 0; i < 10_000_000; i++) {
-                            TableWriter.Row row = writer.newRow(timestamp);
-                            row.putDouble(0, rnd.nextDouble());
-                            row.append();
-                            timestamp += 1_000_000;
+                        long timestamp = 0;
+                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
+                            for (int i = 0; i < 10_000_000; i++) {
+                                TableWriter.Row row = writer.newRow(timestamp);
+                                row.putDouble(0, rnd.nextDouble());
+                                row.append();
+                                timestamp += 1_000_000;
+                            }
+                            writer.commit();
                         }
-                        writer.commit();
-                    }
 
-                    try (RecordCursorFactory factory = compiler.compile("select sum(g) from abc", ctx).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(ctx)) {
-                            final Record ignored = cursor.getRecord();
-                            //noinspection StatementWithEmptyBody
-                            while (cursor.hasNext()) {
-                                // access 'record' instance for field values
+                        try (RecordCursorFactory factory = compiler.compile("select sum(g) from abc", ctx).getRecordCursorFactory()) {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                final Record ignored = cursor.getRecord();
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                    // access 'record' instance for field values
+                                }
                             }
                         }
                     }
+                } finally {
+                    workerPool.close();
                 }
-                workerPoolManager.closeAll();
             }
         });
     }

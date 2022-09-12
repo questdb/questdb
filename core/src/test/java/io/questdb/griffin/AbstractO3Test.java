@@ -32,10 +32,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.TestWorkerPoolConfiguration;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
@@ -62,7 +60,6 @@ public class AbstractO3Test {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static int dataAppendPageSize = -1;
-    protected static WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -242,27 +239,20 @@ public class AbstractO3Test {
             FilesFacade ff
     ) throws Exception {
         executeVanilla(() -> {
-            WorkerPool pool;
-            final CairoConfiguration cairoConfiguration;
-            int wc = 2;
             if (workerCount > 0) {
-                wc = workerCount;
-                pool = workerPoolManager.getInstance(
-                        new WorkerPoolConfiguration() {
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount;
+                    }
 
-                            @Override
-                            public String getPoolName() {
-                                return "testing";
-                            }
-                        },
-                        Metrics.disabled()
-                );
+                    @Override
+                    public String getPoolName() {
+                        return "vanilla";
+                    }
+                });
 
-                cairoConfiguration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
@@ -278,9 +268,11 @@ public class AbstractO3Test {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
                 };
+
+                TestUtils.execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
-                cairoConfiguration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
@@ -326,26 +318,7 @@ public class AbstractO3Test {
                         return 0;
                     }
                 };
-                pool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("testing", wc), Metrics.disabled());
-            }
-
-            try (
-                    final CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    final SqlCompiler compiler = new SqlCompiler(engine);
-                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, wc)
-            ) {
-                if (wc < 1) {
-                    pool.configureAsShared(engine, null, false, false, true);
-                }
-                workerPoolManager.setSharedPool(pool);
-                workerPoolManager.startAll(LOG);
-                try {
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                } finally {
-                    workerPoolManager.closeAll();
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                }
+                TestUtils.execute(null, runnable, configuration);
             }
         });
     }
@@ -355,17 +328,12 @@ public class AbstractO3Test {
         assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
-    protected void executeVanilla(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> {
-            TestUtils.execute(code, new DefaultCairoConfiguration(root), 1);
-        });
+    protected static void executeVanilla(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root)));
     }
 
     protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> {
-            DefaultCairoConfiguration config = new DefaultCairoConfiguration(root);
-            TestUtils.execute(code, config, 1, Metrics.enabled());
-        });
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled()));
     }
 
     static void assertO3DataConsistency(

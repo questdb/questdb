@@ -36,7 +36,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -49,6 +48,7 @@ import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
@@ -829,28 +829,41 @@ public final class TestUtils {
     }
 
     public static void execute(
+            @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
             CairoConfiguration configuration,
-            int workerCount,
             Metrics metrics
     ) throws Exception {
+        final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
                 final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
-            runnable.run(engine, compiler, sqlExecutionContext);
+            try {
+                if (pool != null) {
+                    pool.assignCleaner(Path.CLEANER);
+                    O3Utils.setupWorkerPool(pool, engine, null, null);
+                    pool.start(LOG);
+                }
+
+                runnable.run(engine, compiler, sqlExecutionContext);
+            } finally {
+                if (pool != null) {
+                    pool.close();
+                }
+            }
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
     }
 
     public static void execute(
+            @Nullable WorkerPool pool,
             CustomisableRunnable runner,
-            CairoConfiguration configuration,
-            int workerCount
+            CairoConfiguration configuration
     ) throws Exception {
-        execute(runner, configuration, workerCount, Metrics.disabled());
+        execute(pool, runner, configuration, Metrics.disabled());
     }
 
     @NotNull
@@ -1153,12 +1166,12 @@ public final class TestUtils {
                 return "testing";
             }
         };
-        WorkerPool pool = WorkerPoolManager.createUnmanaged(config, Metrics.disabled());
+        WorkerPool pool = new WorkerPool(config);
         TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
         try {
             pool.assign(processingJob);
             pool.freeOnHalt(processingJob);
-            pool.start();
+            pool.start(null);
             task.run();
         } finally {
             pool.close();

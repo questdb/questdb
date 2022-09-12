@@ -24,24 +24,15 @@
 
 package io.questdb.mp;
 
-import io.questdb.MessageBus;
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.async.PageFrameReduceJob;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements QuietCloseable {
-
-    public static final String SHARED_POOL_NAME = "worker";
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
@@ -60,7 +51,11 @@ public class WorkerPool implements QuietCloseable {
     private final ObjList<Closeable> freeOnHalt = new ObjList<>();
     private final Metrics metrics;
 
-    WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
+    public WorkerPool(WorkerPoolConfiguration configuration) {
+        this(configuration, Metrics.disabled());
+    }
+
+    public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         int[] workerAffinity = configuration.getWorkerAffinity();
         if (workerAffinity != null && workerAffinity.length > 0) {
@@ -87,50 +82,6 @@ public class WorkerPool implements QuietCloseable {
         }
     }
 
-    public WorkerPool configureAsShared(
-            CairoEngine cairoEngine,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            boolean withCircuitBreaker,
-            boolean needMaintenanceJob,
-            boolean needPathCleaner
-    ) throws SqlException {
-        final MessageBus messageBus = cairoEngine.getMessageBus();
-        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerCount);
-        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-
-        assign(purgeDiscoveryJob);
-        assign(columnPurgeJob);
-        assign(new O3PartitionJob(messageBus));
-        assign(new O3OpenColumnJob(messageBus));
-        assign(new O3CopyJob(messageBus));
-        assign(new O3CallbackJob(messageBus));
-
-        freeOnHalt(purgeDiscoveryJob);
-        freeOnHalt(columnPurgeJob);
-        if (needMaintenanceJob) {
-            assign(cairoEngine.getEngineMaintenanceJob());
-        }
-        if (needPathCleaner) {
-            assignCleaner(Path.CLEANER);
-        }
-
-        final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
-        final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
-
-        for (int i = 0; i < workerCount; i++) {
-            // create job per worker to allow each worker to have
-            // own shard walk sequence
-            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                    messageBus,
-                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                    withCircuitBreaker ? cairoEngine.getConfiguration().getCircuitBreakerConfiguration() :  null
-            );
-            assign(i, (Job) pageFrameReduceJob);
-            freeOnHalt(pageFrameReduceJob);
-        }
-        return this;
-    }
-
     public String getPoolName() {
         return poolName;
     }
@@ -144,6 +95,7 @@ public class WorkerPool implements QuietCloseable {
      */
     public void assign(Job job) {
         assert !running.get();
+
         for (int i = 0; i < workerCount; i++) {
             workerJobs.getQuick(i).add(job);
         }
@@ -161,6 +113,7 @@ public class WorkerPool implements QuietCloseable {
 
     public void assignCleaner(Closeable cleaner) {
         assert !running.get();
+
         for (int i = 0; i < workerCount; i++) {
             cleaners.getQuick(i).add(cleaner);
         }
@@ -168,6 +121,7 @@ public class WorkerPool implements QuietCloseable {
 
     public void freeOnHalt(Closeable closeable) {
         assert !running.get();
+
         freeOnHalt.add(closeable);
     }
 
@@ -208,6 +162,9 @@ public class WorkerPool implements QuietCloseable {
                 worker.setDaemon(daemons);
                 workers.add(worker);
                 worker.start();
+            }
+            if (log != null) {
+                log.info().$("started").$();
             }
             started.countDown();
         }

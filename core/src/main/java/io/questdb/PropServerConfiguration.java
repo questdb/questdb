@@ -3091,7 +3091,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getPoolName() {
-            return WorkerPool.SHARED_POOL_NAME;
+            return "worker";
         }
 
         @Override

@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.Metrics;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
@@ -343,7 +342,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        WorkerPool pool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+        WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
             public int getWorkerCount() {
                 return workerCount;
@@ -351,14 +350,11 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
             @Override
             public String getPoolName() {
-                return "testing";
+                return "stress";
             }
-        }, Metrics.disabled());
+        });
 
-        workerPoolManager.setSharedPool(pool);
-        workerPoolManager.startAll();
-        TestUtils.execute(
-                (engine, compiler, sqlExecutionContext) -> {
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("create table x ( " +
                                     "v long, " +
                                     "s symbol capacity 4 cache " +
@@ -407,10 +403,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, errors.get());
                 },
-                configuration,
-                workerCount
+                configuration
         );
-        workerPoolManager.closeAll();
     }
 
     @Test
@@ -418,23 +412,19 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        workerPoolManager.getInstance(
-                new WorkerPoolConfiguration() {
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
+        WorkerPool pool = new WorkerPool((new WorkerPoolConfiguration() {
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
 
-                    @Override
-                    public String getPoolName() {
-                        return "testing";
-                    }
-                },
-                Metrics.disabled()
-        );
+            @Override
+            public String getPoolName() {
+                return "streq";
+            }
+        }));
 
-        workerPoolManager.startAll();
-        TestUtils.execute((engine, compiler, sqlExecutionContext) -> {
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
                                     "timestamp (timestamp) PARTITION BY HOUR",
@@ -500,9 +490,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, errors.get());
                 },
-                configuration,
-                workerCount
+                configuration
         );
-        workerPoolManager.closeAll();
     }
 }

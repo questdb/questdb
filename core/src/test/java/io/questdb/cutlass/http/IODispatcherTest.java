@@ -1748,7 +1748,17 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(3), metrics);
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 3;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
+            }, metrics);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -2206,7 +2216,17 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -2813,7 +2833,17 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -3991,7 +4021,17 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -4182,7 +4222,17 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)) {
@@ -4257,7 +4307,17 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -4349,7 +4409,17 @@ public class IODispatcherTest {
                     .build();
             QueryCache.configure(httpConfiguration, metrics);
 
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(1), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "pool";
+                }
+            }, Metrics.disabled());
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
                 @Override
                 public int getSqlPageFrameMaxRows() {
@@ -4409,7 +4479,7 @@ public class IODispatcherTest {
                         }
                     }
                 };
-                workerPool.configureAsShared(engine, null, false, true, true);
+                O3Utils.setupWorkerPool(workerPool, engine, null, null);
                 workerPoolManager.startAll();
                 try {
                     // create table with all column types
@@ -5230,7 +5300,17 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("spc", 2), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "spc";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -5385,7 +5465,17 @@ public class IODispatcherTest {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "spc";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -5537,7 +5627,17 @@ public class IODispatcherTest {
                     false,
                     "HTTP/1.0 "
             );
-            WorkerPool workerPool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration(2), Metrics.disabled());
+            WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "spc";
+                }
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)

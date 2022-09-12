@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1263,20 +1262,17 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = workerPoolManager.getInstance(
-                        new WorkerPoolConfiguration() {
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount - 1;
-                            }
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount -1;
+                    }
 
-                            @Override
-                            public String getPoolName() {
-                                return "testing";
-                            }
-                        },
-                        Metrics.disabled()
-                );
+                    @Override
+                    public String getPoolName() {
+                        return "keyed";
+                    }
+                });
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
@@ -1309,7 +1305,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         pool.assignCleaner(Path.CLEANER);
                         GroupByJob job = new GroupByJob(engine.getMessageBus());
                         pool.assign(job);
-                        workerPoolManager.startAll(LOG);
+                        pool.start(LOG);
                     }
 
                     runnable.run(engine, compiler, sqlExecutionContext);
@@ -1317,7 +1313,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
                 } finally {
                     if (pool != null) {
-                        workerPoolManager.closeAll();
+                        pool.close();
                     }
                 }
             }

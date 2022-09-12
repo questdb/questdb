@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUnboundedByteSink;
@@ -58,6 +59,8 @@ public class LineTcpO3Test extends AbstractCairoTest {
     private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
+
+    private final WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     @BeforeClass
     public static void setUpStatic() {
