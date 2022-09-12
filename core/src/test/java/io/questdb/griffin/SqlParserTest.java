@@ -4743,7 +4743,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT \n" +
                         "a\n" +
                         "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
-                        "select *", // <-- dangling 'select *'
+                        "select * from long_sequence(1)", // <-- dangling 'select * from long_sequence(1)'
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.SYMBOL)
@@ -6307,14 +6307,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectWildcardOnly() throws SqlException {
-        assertQuery(
-                "select-choose x from (select [x] from long_sequence(1))",
-                "select *"
-        );
-    }
-
-    @Test
     public void testSelectOnItsOwn() throws Exception {
         assertSyntaxError("select ", 7, "column expected");
     }
@@ -6484,8 +6476,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectWildcardMissingFrom() throws Exception {
-        assertSyntaxError("select * tab", 9, "'from' expected");
+    public void testSelectWildcardOnly() throws Exception {
+        assertFailure(
+                "select *",
+                "create table tab (seq long)",
+                7,
+                "'from' expected"
+        );
+    }
+
+    @Test
+    public void testSelectWildcardTabNoFrom() throws Exception {
+        assertFailure(
+                "select * tab",
+                "create table tab (seq long)",
+                9,
+                "'from' expected"
+        );
     }
 
     @Test
