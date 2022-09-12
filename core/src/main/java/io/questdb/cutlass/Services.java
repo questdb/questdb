@@ -73,7 +73,7 @@ public final class Services {
                 sharedWorkerCount,
                 functionFactoryCache,
                 snapshotAgent);
-        server.addDefaultEndpoints(
+        HttpServer.addDefaultEndpoints(
                 server,
                 configuration,
                 cairoEngine,

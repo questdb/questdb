@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -60,6 +62,11 @@ public class O3Utils {
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnHalt(purgeDiscoveryJob);
         workerPool.freeOnHalt(columnPurgeJob);
+
+        // Register jobs that help parallel execution of queries and column indexing.
+        workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
+        workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();

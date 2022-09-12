@@ -81,11 +81,6 @@ public class ServerMain implements QuietCloseable {
         final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
         toBeClosed.add(snapshotAgent);
 
-        // Register jobs that help parallel execution of queries and column indexing.
-        sharedPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
-        sharedPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
-        sharedPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
-
         // text import
         TextImportJob.assignToPool(cairoEngine.getMessageBus(), sharedPool);
         if (cairoConfig.getSqlCopyInputRoot() != null) {
@@ -178,8 +173,8 @@ public class ServerMain implements QuietCloseable {
         if (hasStarted.compareAndSet(true, false)) {
             workerPoolManager.closeAll();
             ShutdownFlag.INSTANCE.shutdown();
-            Misc.freeObjList(toBeClosed);
-            toBeClosed.clear();
+            Misc.freeObjListAndClear(toBeClosed);
+            LogFactory.INSTANCE.flushJobsAndClose();
         }
     }
 
@@ -191,7 +186,6 @@ public class ServerMain implements QuietCloseable {
             } catch (Error ignore) {
                 // ignore
             } finally {
-                LogFactory.INSTANCE.flushJobsAndClose();
                 System.err.println("QuestDB is shutdown.");
             }
         }));
@@ -201,8 +195,6 @@ public class ServerMain implements QuietCloseable {
         try {
             new ServerMain(args).start(true);
         } catch (Throwable thr) {
-            System.err.println(thr.getMessage());
-            LogFactory.INSTANCE.flushJobsAndClose();
             thr.printStackTrace();
             System.exit(55);
         }
