@@ -167,7 +167,6 @@ public class Server implements QuietCloseable {
                 addShutdownHook();
             }
             workerPoolManager.startAll(log); // starts QuestDB's workers
-            Os.sleep(5L); // allow threads to start before logging console URLs
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
