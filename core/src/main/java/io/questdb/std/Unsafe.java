@@ -169,10 +169,13 @@ public final class Unsafe {
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
     }
 
-    public static void free(long ptr, long size, int memoryTag) {
-        getUnsafe().freeMemory(ptr);
-        FREE_COUNT.incrementAndGet();
-        recordMemAlloc(-size, memoryTag);
+    public static long free(long ptr, long size, int memoryTag) {
+        if (ptr != 0) {
+            getUnsafe().freeMemory(ptr);
+            FREE_COUNT.incrementAndGet();
+            recordMemAlloc(-size, memoryTag);
+        }
+        return 0;
     }
 
     public static boolean getBool(long address) {

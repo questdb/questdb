@@ -72,17 +72,15 @@ public class TableRegistry extends AbstractPool {
         final CharSequence root = getConfiguration().getRoot();
         final FilesFacade ff = getConfiguration().getFilesFacade();
 
-        try(Path path = new Path().of(root).slash$()) {
+        try (Path path = new Path().of(root).slash$()) {
             final StringSink nameSink = new StringSink();
             int rootLen = path.length();
             ff.iterateDir(path, (name, type) -> {
-                if (Files.isDir(name, type, nameSink) ) {
+                if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
                     if (isWalTable(nameSink, path, ff)) {
                         try (SequencerImpl sequencer = openSequencer(nameSink)) {
-                            // Table name should be immmutable char sequence
-                            String tableName = Chars.toString(nameSink);
-                            callback.onTable(sequencer.getTableId(), tableName, sequencer.lastTxn());
+                            callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
                         }
                     }
                 }
@@ -92,7 +90,7 @@ public class TableRegistry extends AbstractPool {
 
     @FunctionalInterface
     public interface RegisteredTable {
-        void onTable(int tableId, final String tableName, long lastTxn);
+        void onTable(int tableId, final CharSequence tableName, long lastTxn);
     }
 
     public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
