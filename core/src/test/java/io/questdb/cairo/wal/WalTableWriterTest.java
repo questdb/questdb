@@ -510,7 +510,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
             @Override
             public void close() throws IOException {
-
             }
 
             @Override

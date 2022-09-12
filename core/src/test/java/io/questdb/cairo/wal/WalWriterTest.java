@@ -835,8 +835,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                     TableWriter.Row row;
                     boolean countedDown = false;
                     try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                        System.out.println(Thread.currentThread().getName() + " wal=" + walWriter.getWalName() + ", col=" + colName);
-
                         addColumn(walWriter, colName, ColumnType.LONG);
                         removeColumn(walWriter, colName);
                         addColumn(walWriter, colName, ColumnType.STRING);
