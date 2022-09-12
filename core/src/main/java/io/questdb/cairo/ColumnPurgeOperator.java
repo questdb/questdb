@@ -150,6 +150,7 @@ public class ColumnPurgeOperator implements Closeable {
     private void closePurgeLogCompleteFile() {
         if (purgeLogPartitionFd != -1L) {
             ff.close(purgeLogPartitionFd);
+            LOG.info().$("closed purge log complete file [fd=").$(purgeLogPartitionFd).I$();
             purgeLogPartitionFd = -1L;
         }
     }
@@ -327,6 +328,7 @@ public class ColumnPurgeOperator implements Closeable {
         closePurgeLogCompleteFile();
         purgeLogPartitionFd = TableUtils.openRW(ff, path.$(), LOG, purgeLogWriter.getConfiguration().getWriterFileOpenOpts());
         purgeLogPartitionTimestamp = partitionTimestamp;
+        LOG.info().$("reopened purge log partition [path=").$(path).$(", fd=").$(purgeLogPartitionFd).I$();
     }
 
     private void setCompletionTimestamp(LongList completedRecordIds, long timeMicro) {
@@ -350,16 +352,16 @@ public class ColumnPurgeOperator implements Closeable {
                 long rowId = Rows.toLocalRowID(recordId);
                 long offset = rowId * Long.BYTES;
                 if (offset + Long.BYTES > fileSize) {
-                    LOG.error().$("could not purge [writeOffset=").$(offset)
-                            .$(", fileSize=").$(fileSize)
-                            .$(", path=").$(path).I$();
+                    LOG.error().$("could not mark record as purged, offset beyond the file size [writeOffset=").$(offset)
+                            .$(", fileSize=").$(fileSize).$(", fd=")
+                            .$(purgeLogPartitionFd).I$();
                     return;
                 }
                 if (ff.write(purgeLogPartitionFd, longBytes, Long.BYTES, rowId * Long.BYTES) != Long.BYTES) {
-                    LOG.error().$("could not purge [errno=").$(ff.errno())
+                    LOG.error().$("could not mark record as purged [errno=").$(ff.errno())
                             .$(", writeOffset=").$(offset)
-                            .$(", fileSize=").$(fileSize)
-                            .$(", path=").$(path).I$();
+                            .$(", fd=").$(purgeLogPartitionFd)
+                            .$(", fileSize=").$(fileSize).I$();
                     return;
                 }
             }
