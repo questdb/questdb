@@ -166,12 +166,24 @@ public class ServerMainTest {
                         // make sure max files (1) limit is not exceeded
                         int index2 = Chars.indexOf(str, index1 + 1, len, configuration.getArchivedCrashFilePrefix() + "1.log");
                         Assert.assertEquals(-1, index2);
-                        index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix()+"2.log");
+
+                        // at this point we could have renamed file with either index '1' or '2'. This is random and
+                        // depends on the order OS directory listing returns names.
+                        String fileIndexThatRemains = "2.log";
+                        index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
+                        if (index2 == -1) {
+                            // we could have renamed 2 and left 1 behind
+                            fileIndexThatRemains = "1.log";
+                            index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
+                        }
+
                         Assert.assertTrue(index2 > -1 && index2 > index1);
-                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix()+"2.log").$()));
-                        int index3 = Chars.indexOf(str, index2 + 1, len, configuration.getOGCrashFilePrefix()+"3");
+
+                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + fileIndexThatRemains).$()));
+
+                        int index3 = Chars.indexOf(str, index2 + 1, len, configuration.getOGCrashFilePrefix() + "3");
                         Assert.assertEquals(-1, index3);
-                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix()+"3").$()));
+                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + "3").$()));
                         break;
                     } else {
                         Os.pause();
