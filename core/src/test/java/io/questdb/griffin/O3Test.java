@@ -848,7 +848,49 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testTwoTablesCompeteForBuffer() throws Exception {
-        executeWithPool(4, O3Test::testTwoTablesCompeteForBuffer0);
+        executeVanilla(() -> {
+            WorkerPool pool;
+            final CairoConfiguration cairoConfiguration;
+            final int workerCount = 4;
+            pool = workerPoolManager.getInstance(
+                    new WorkerPoolConfiguration() {
+                        @Override
+                        public int getWorkerCount() {
+                            return workerCount;
+                        }
+
+                        @Override
+                        public String getPoolName() {
+                            return "testing";
+                        }
+                    },
+                    Metrics.disabled()
+            );
+
+            cairoConfiguration = new DefaultCairoConfiguration(root) {
+                @Override
+                public long getDataAppendPageSize() {
+                    return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+                }
+
+                @Override
+                public int getO3ColumnMemorySize() {
+                    return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
+                }
+            };
+
+            try (
+                    final CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
+                    final SqlCompiler compiler = new SqlCompiler(engine);
+                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+            ) {
+                pool.configureAsShared(engine, null, false, false, true);
+                workerPoolManager.setSharedPool(pool);
+                testTwoTablesCompeteForBuffer0(engine, compiler, sqlExecutionContext);
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            }
+        });
     }
 
     @Test
@@ -1298,9 +1340,12 @@ public class O3Test extends AbstractO3Test {
 
             pool2.assignCleaner(Path.CLEANER);
 
-            workerPoolManager.startAll();
-            haltLatch.await();
-            workerPoolManager.closeAll();
+            workerPoolManager.startAll(LOG);
+            try {
+                haltLatch.await();
+            } finally {
+                workerPoolManager.closeAll();
+            }
 
             Assert.assertEquals(0, errorCount.get());
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);

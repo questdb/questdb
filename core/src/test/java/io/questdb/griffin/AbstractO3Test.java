@@ -328,9 +328,25 @@ public class AbstractO3Test {
                 };
                 pool = workerPoolManager.getInstance(new TestWorkerPoolConfiguration("testing", wc), Metrics.disabled());
             }
-            pool.assignCleaner(Path.CLEANER);
-            workerPoolManager.setSharedPool(pool);
-            TestUtils.execute(runnable, cairoConfiguration, wc);
+
+            try (
+                    final CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
+                    final SqlCompiler compiler = new SqlCompiler(engine);
+                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, wc)
+            ) {
+                if (wc < 1) {
+                    pool.configureAsShared(engine, null, false, false, true);
+                }
+                workerPoolManager.setSharedPool(pool);
+                workerPoolManager.startAll(LOG);
+                try {
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                } finally {
+                    workerPoolManager.closeAll();
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                }
+            }
         });
     }
 
