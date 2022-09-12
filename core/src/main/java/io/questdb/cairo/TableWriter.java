@@ -1381,7 +1381,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         txWriter.beginPartitionSizeUpdate();
-        LOG.debug().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi).I$();
+        LOG.debug().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi)
+                .$(", tsMin=").$ts(o3TimestampMin).$(" , txMax=").$ts(o3TimestampMax)
+                .I$();
         if (rowAction == ROW_ACTION_OPEN_PARTITION && txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
             // table truncated, open partition file.
             openFirstPartition(o3TimestampMin);

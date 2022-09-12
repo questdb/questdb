@@ -26,6 +26,7 @@ package io.questdb.griffin.wal;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -158,11 +159,11 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
                 try {
                     latch.countDown();
-                    while ((opIndex = nextOperation.incrementAndGet()) < transactions.size()) {
+                    while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.size() == 0) {
                         FuzzTransaction transaction = transactions.getQuick(opIndex);
 
                         // wait until structure version is applied
-                        while (structureVersion.get() < transaction.metadataVersion) {
+                        while (structureVersion.get() < transaction.metadataVersion && errors.size() == 0) {
                             Os.sleep(5);
                         }
 
@@ -187,16 +188,19 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                     Path.clearThreadLocals();
                 }
             });
-            thread.start();
             threads[i] = thread;
+            thread.start();
         }
 
         Thread applyThread = new Thread(() -> {
             try {
                 int i = 0;
-                while(done.get() == 0) {
+                ApplyWal2TableJob job = new ApplyWal2TableJob(engine);
+                while(done.get() == 0 && errors.size() == 0) {
                     Unsafe.getUnsafe().loadFence();
-                    drainWalQueue();
+                    while (job.run(0)) {
+                        // run until empty
+                    }
                     Os.sleep(1);
                     i++;
                 }
@@ -220,6 +224,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
         done.incrementAndGet();
         Misc.freeObjList(writers);
+
         for(Throwable e : errors) {
             throw new RuntimeException(e);
         }

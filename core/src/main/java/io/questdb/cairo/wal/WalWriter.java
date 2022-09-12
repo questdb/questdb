@@ -267,6 +267,9 @@ public class WalWriter implements TableWriterFrontend {
         if (inTransaction() || hasDirtyColumns(currentTxnStartRowNum)) {
             setAppendPosition(currentTxnStartRowNum);
             rowCount = currentTxnStartRowNum;
+            txnMinTimestamp = Long.MAX_VALUE;
+            txnMaxTimestamp = -1;
+            txnOutOfOrder = false;
         }
     }
 

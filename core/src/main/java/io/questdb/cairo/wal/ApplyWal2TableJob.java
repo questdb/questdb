@@ -67,8 +67,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             SqlToOperation sqlToOperation
     ) {
         SequencerStructureChangeCursor cursor = reusableStructureChangeCursor.get();
-        long lastTxn = -1;
-        long lastCommittedTxn;
+        long lastTxn;
+        long lastCommittedTxn = -1;
         do {
             // This is work steeling, security context is checked on writing to the WAL
             // and can be ignored here
@@ -96,7 +96,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         } while (lastCommittedTxn < lastTxn);
 
         reusableStructureChangeCursor.set(cursor);
-        return lastTxn;
+        return lastCommittedTxn;
     }
 
     @Override
