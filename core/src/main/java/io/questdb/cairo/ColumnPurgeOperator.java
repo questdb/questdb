@@ -328,7 +328,7 @@ public class ColumnPurgeOperator implements Closeable {
         closePurgeLogCompleteFile();
         purgeLogPartitionFd = TableUtils.openRW(ff, path.$(), LOG, purgeLogWriter.getConfiguration().getWriterFileOpenOpts());
         purgeLogPartitionTimestamp = partitionTimestamp;
-        LOG.info().$("reopened purge log partition [path=").$(path).$(", fd=").$(purgeLogPartitionFd).I$();
+        LOG.info().$("reopened purge log complete file [path=").$(path).$(", fd=").$(purgeLogPartitionFd).I$();
     }
 
     private void setCompletionTimestamp(LongList completedRecordIds, long timeMicro) {
@@ -352,9 +352,11 @@ public class ColumnPurgeOperator implements Closeable {
                 long rowId = Rows.toLocalRowID(recordId);
                 long offset = rowId * Long.BYTES;
                 if (offset + Long.BYTES > fileSize) {
-                    LOG.error().$("could not mark record as purged, offset beyond the file size [writeOffset=").$(offset)
+                    LOG.critical().$("could not mark record as purged, offset beyond the file size [writeOffset=").$(offset)
                             .$(", fileSize=").$(fileSize).$(", fd=")
                             .$(purgeLogPartitionFd).I$();
+                    // Re-open of the file next run in case something went wrong.
+                    purgeLogPartitionTimestamp = -1;
                     return;
                 }
                 if (ff.write(purgeLogPartitionFd, longBytes, Long.BYTES, rowId * Long.BYTES) != Long.BYTES) {
@@ -362,6 +364,8 @@ public class ColumnPurgeOperator implements Closeable {
                             .$(", writeOffset=").$(offset)
                             .$(", fd=").$(purgeLogPartitionFd)
                             .$(", fileSize=").$(fileSize).I$();
+                    // Re-open of the file next run in case something went wrong.
+                    purgeLogPartitionTimestamp = -1;
                     return;
                 }
             }
