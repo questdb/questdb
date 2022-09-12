@@ -215,8 +215,12 @@ public class TableRegistry extends AbstractPool {
     }
 
     private boolean releaseEntries(long deadline) {
-        Iterator<Entry> iterator = seqRegistry.values().iterator();
+        if (seqRegistry.size() == 0) {
+            // nothing to release
+            return true;
+        }
         boolean removed = false;
+        final Iterator<Entry> iterator = seqRegistry.values().iterator();
         while (iterator.hasNext()) {
             final Entry sequencer = iterator.next();
             if (deadline >= sequencer.releaseTime) {
@@ -230,8 +234,12 @@ public class TableRegistry extends AbstractPool {
     }
 
     private boolean releaseWalWriters(long deadline) {
-        Iterator<WalWriterPool> iterator = walRegistry.values().iterator();
+        if (walRegistry.size() == 0) {
+            // nothing to release
+            return true;
+        }
         boolean removed = false;
+        final Iterator<WalWriterPool> iterator = walRegistry.values().iterator();
         while (iterator.hasNext()) {
             final WalWriterPool pool = iterator.next();
             removed = pool.releaseAll(deadline);
