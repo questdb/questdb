@@ -43,7 +43,7 @@ import io.questdb.std.*;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class Server implements QuietCloseable {
+public class ServerMain implements QuietCloseable {
 
     private final PropServerConfiguration config;
     private final Log log;
@@ -51,15 +51,15 @@ public class Server implements QuietCloseable {
     private final AtomicBoolean hasStarted = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
 
-    public Server(String... args) throws SqlException {
+    public ServerMain(String... args) throws SqlException {
         this(Bootstrap.withArgs(args));
     }
 
-    public Server(Bootstrap bootstrap) throws SqlException {
+    public ServerMain(Bootstrap bootstrap) throws SqlException {
         this(bootstrap.getConfig(), bootstrap.getMetrics(), bootstrap.getLog());
     }
 
-    public Server(PropServerConfiguration config, Metrics metrics, Log log) throws SqlException {
+    public ServerMain(PropServerConfiguration config, Metrics metrics, Log log) throws SqlException {
         this.config = config;
         this.log = log;
 
@@ -199,7 +199,7 @@ public class Server implements QuietCloseable {
 
     public static void main(String[] args) throws Exception {
         try {
-            new Server(args).start(true);
+            new ServerMain(args).start(true);
         } catch (Throwable thr) {
             System.err.println(thr.getMessage());
             LogFactory.INSTANCE.flushJobsAndClose();

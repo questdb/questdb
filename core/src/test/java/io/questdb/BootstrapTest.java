@@ -46,14 +46,14 @@ public class BootstrapTest {
     public static final TemporaryFolder temp = new TemporaryFolder();
     private static CharSequence root;
 
-    private static final File siteDir = new File(Server.class.getResource("/io/questdb/site/").getFile());
+    private static final File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
     private static boolean publicZipStubCreated = false;
 
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         //fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests 
-        URL resource = Server.class.getResource("/io/questdb/site/public.zip");
+        URL resource = ServerMain.class.getResource("/io/questdb/site/public.zip");
         if (resource == null) {
             File publicZip = new File(siteDir, "public.zip");
             try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(publicZip))) {
@@ -237,8 +237,8 @@ public class BootstrapTest {
     @Test
     public void testServerMain() throws Exception {
         createDummyConfiguration();
-        try (Server server = new Server("-d", root.toString())) {
-            server.start();
+        try (ServerMain serverMain = new ServerMain("-d", root.toString())) {
+            serverMain.start();
         }
     }
 

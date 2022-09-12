@@ -15,7 +15,7 @@ Environment=QDB_PACKAGE=ami-market
 ExecStart=/usr/bin/java \
     --add-exports java.base/jdk.internal.math=io.questdb \
     -p /usr/local/bin/questdb.jar \
-    -m io.questdb/io.questdb.Server \
+    -m io.questdb/io.questdb.ServerMain \
     -DQuestDB-Runtime-66535 \
     -ea -Dnoebug \
     -XX:+UnlockExperimentalVMOptions \
