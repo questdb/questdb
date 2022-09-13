@@ -24,16 +24,11 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,12 +40,14 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
     private final Function filter;
     private final ObjList<Function> perWorkerFilters;
     private final AtomicIntegerArray perWorkerLocks;
+    private final IntList preTouchColumnTypes;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd = new Rnd();
 
     public AsyncFilterAtom(
             @NotNull Function filter,
-            @Nullable ObjList<Function> perWorkerFilters
+            @Nullable ObjList<Function> perWorkerFilters,
+            @Nullable IntList preTouchColumnTypes
     ) {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
@@ -59,6 +56,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
         } else {
             perWorkerLocks = null;
         }
+        this.preTouchColumnTypes = preTouchColumnTypes;
     }
 
     @Override
@@ -116,5 +114,66 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
             return;
         }
         perWorkerLocks.set(filterId, 0);
+    }
+
+    /**
+     * Pre-touches fixed-size columns, if the feature is configured.
+     * <p>
+     * The idea is to access the memory to page fault and, thus, warm up the pages
+     * in parallel, on multiple threads, instead of relying on the "query owner" thread
+     * to do it later serially.
+     */
+    public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
+        if (preTouchColumnTypes == null) {
+            return;
+        }
+        for (long p = 0; p < rows.size(); p++) {
+            long r = rows.get(p);
+            record.setRowIndex(r);
+            for (int i = 0; i < preTouchColumnTypes.size(); i++) {
+                int columnType = preTouchColumnTypes.getQuick(i);
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.BOOLEAN:
+                        record.getBool(i);
+                        break;
+                    case ColumnType.BYTE:
+                        record.getByte(i);
+                        break;
+                    case ColumnType.SHORT:
+                        record.getShort(i);
+                        break;
+                    case ColumnType.INT:
+                    case ColumnType.SYMBOL: // We're interested in pre-touching the page only, so we read symbol key only.
+                        record.getInt(i);
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        record.getLong(i);
+                        break;
+                    case ColumnType.FLOAT:
+                        record.getFloat(i);
+                        break;
+                    case ColumnType.DOUBLE:
+                        record.getDouble(i);
+                        break;
+                    case ColumnType.LONG256:
+                        record.getLong256A(i);
+                        break;
+                    case ColumnType.GEOBYTE:
+                        record.getGeoByte(i);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        record.getGeoShort(i);
+                        break;
+                    case ColumnType.GEOINT:
+                        record.getGeoInt(i);
+                        break;
+                    case ColumnType.GEOLONG:
+                        record.getGeoLong(i);
+                        break;
+                }
+            }
+        }
     }
 }
