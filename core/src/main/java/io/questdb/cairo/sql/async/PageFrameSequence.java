@@ -90,7 +90,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * frame sequence from the queues. This method is not thread safe.
      */
     public void await() {
-        LOG.debug()
+        LOG.info()
                 .$("awaiting completion [shard=").$(shard)
                 .$(", id=").$(id)
                 .$(", frameCount=").$(frameCount)
@@ -151,7 +151,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // factory is closed without using cursor
         if (collectSubSeq != null) {
             messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
-            LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
+            LOG.info().$("removed [seq=").$(collectSubSeq).I$();
             collectSubSeq.clear();
         }
         if (localTask != null) {
@@ -200,7 +200,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 // control to the caller of this method. However, this sequence
                 // will be unsubscribed asynchronously.
                 messageBus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
-                LOG.debug()
+                LOG.info()
                         .$("added [shard=").$(shard)
                         .$(", id=").$(id)
                         .$(", seqCurrent=").$(collectSubSeq.current())
@@ -347,7 +347,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 cursor = reducePubSeq.next();
                 if (cursor > -1) {
                     reduceQueue.get(cursor).of(this, i);
-                    LOG.debug()
+                    LOG.info()
                             .$("dispatched [shard=").$(shard)
                             .$(", id=").$(getId())
                             .$(", frameIndex=").$(i)
@@ -453,7 +453,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      */
     public void toTop() {
         if (frameCount > 0) {
-            LOG.debug().$("toTop [shard=").$(shard)
+            LOG.info().$("toTop [shard=").$(shard)
                     .$(", id=").$(id)
                     .I$();
 

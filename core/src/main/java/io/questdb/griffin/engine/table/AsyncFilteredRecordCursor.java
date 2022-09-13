@@ -67,7 +67,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        LOG.debug()
+        LOG.info()
                 .$("closing [shard=").$(frameSequence.getShard())
                 .$(", frameIndex=").$(frameIndex)
                 .$(", frameCount=").$(frameLimit)
@@ -189,7 +189,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 this.cursor = frameSequence.next();
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
+                    LOG.info()
                             .$("collected [shard=").$(frameSequence.getShard())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
