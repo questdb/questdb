@@ -24,6 +24,9 @@
 
 package io.questdb.std;
 
+import io.questdb.metrics.Gauge;
+import io.questdb.metrics.NullGauge;
+
 import java.io.Closeable;
 
 public class AssociativeCache<V> implements Closeable, Mutable {
@@ -37,9 +40,14 @@ public class AssociativeCache<V> implements Closeable, Mutable {
     private final int bmask;
     private final int blocks;
     private final int bshift;
+    private final Gauge cachedGauge;
+
+    public AssociativeCache(int blocks, int rows) {
+        this(blocks, rows, NullGauge.INSTANCE);
+    }
 
     @SuppressWarnings("unchecked")
-    public AssociativeCache(int blocks, int rows) {
+    public AssociativeCache(int blocks, int rows, Gauge cachedGauge) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
         rows = Math.max(MIN_ROWS, Numbers.ceilPow2(rows));
 
@@ -52,16 +60,22 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         this.rmask = rows - 1;
         this.bmask = this.blocks - 1;
         this.bshift = Numbers.msb(this.blocks);
+        this.cachedGauge = cachedGauge;
     }
 
     @Override
     public void clear() {
+        long freed = 0;
         for (int i = 0, n = keys.length; i < n; i++) {
             if (keys[i] != null) {
                 keys[i] = null;
-                free(i);
+                if (values[i] != null) {
+                    values[i] = Misc.free(values[i]);
+                    freed++;
+                }
             }
         }
+        cachedGauge.add(-freed);
     }
 
     @Override
@@ -84,7 +98,11 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         }
         V value = values[index];
         values[index] = null;
-        // do not null value to avoid creating another immutable key
+        if (value != null) {
+            // The value is present, so we're removing.
+            cachedGauge.dec();
+        }
+        // We do not null the key reference to avoid creating another immutable key.
         return value;
     }
 
@@ -92,16 +110,35 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         final int lo = lo(key);
 
         if (Chars.equalsNc(key, keys[lo])) {
+            // Present entry case.
             if (values[lo] != value) {
-                Misc.free(values[lo]);
+                if (values[lo] == null) {
+                    // The value was previously cleared by poll(), so we're inserting.
+                    cachedGauge.inc();
+                } else {
+                    // We're replacing the value with another one, no need to change the gauge.
+                    Misc.free(values[lo]);
+                }
                 values[lo] = value;
             }
             return null;
         }
 
+        // New entry case.
+
         final CharSequence outgoingKey = keys[lo + bmask];
         if (outgoingKey != null) {
-            free(lo + bmask);
+            int idx = lo + bmask;
+            if (values[idx] == null) {
+                // The value for the outgoing key was previously cleared by poll(), so we're inserting.
+                cachedGauge.inc();
+            } else {
+                // We're replacing the value with another one, no need to change the gauge.
+                values[idx] = Misc.free(values[idx]);
+            }
+        } else {
+            // The block has empty entries, so we're inserting.
+            cachedGauge.inc();
         }
 
         System.arraycopy(keys, lo, keys, lo + 1, bmask);
@@ -114,10 +151,6 @@ public class AssociativeCache<V> implements Closeable, Mutable {
         values[lo] = value;
 
         return outgoingKey;
-    }
-
-    private void free(int lo) {
-        values[lo] = Misc.free(values[lo]);
     }
 
     private int getIndex(CharSequence key) {

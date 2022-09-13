@@ -4346,7 +4346,7 @@ public class IODispatcherTest {
                     .withHttpProtocolVersion("HTTP/1.1 ")
                     .withOnPeerDisconnect(peerDisconnectLatch::countDown)
                     .build();
-            QueryCache.configure(httpConfiguration);
+            QueryCache.configure(httpConfiguration, metrics);
 
             WorkerPool workerPool = new TestWorkerPool(1);
 
@@ -7067,7 +7067,7 @@ public class IODispatcherTest {
                 .withServerKeepAlive(serverKeepAlive)
                 .withHttpProtocolVersion(httpProtocolVersion)
                 .build();
-        QueryCache.configure(httpConfiguration);
+        QueryCache.configure(httpConfiguration, metrics);
         return httpConfiguration;
     }
 

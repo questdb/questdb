@@ -22,37 +22,10 @@
  *
  ******************************************************************************/
 
+package io.questdb.network;
 
-package io.questdb.metrics;
+import io.questdb.std.Mutable;
 
-import io.questdb.std.str.CharSink;
-
-import java.util.concurrent.atomic.LongAdder;
-
-class CounterImpl implements Counter {
-    private final CharSequence name;
-    private final LongAdder counter;
-
-    CounterImpl(CharSequence name) {
-        this.name = name;
-        this.counter = new LongAdder();
-    }
-
-    @Override
-    public void add(long value) {
-        counter.add(value);
-    }
-
-    @Override
-    public long getValue() {
-        return counter.sum();
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
-        PrometheusFormatUtils.appendCounterType(name, sink);
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
-        PrometheusFormatUtils.appendNewLine(sink);
-    }
+public interface MutableIOContext<T extends MutableIOContext<T>> extends IOContext, Mutable {
+    T of(long fd, IODispatcher<T> dispatcher);
 }

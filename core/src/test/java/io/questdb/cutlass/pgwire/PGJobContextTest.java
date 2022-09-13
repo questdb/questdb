@@ -4253,11 +4253,6 @@ nodejs code:
         assertMemoryLeak(() -> {
             final PGWireConfiguration conf = new Port0PGWireConfiguration() {
                 @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
                 public int getWorkerCount() {
                     return 4;
                 }
@@ -4272,6 +4267,7 @@ nodejs code:
                     snapshotAgent,
                     metrics
             )) {
+                Assert.assertNotNull(server);
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -6410,6 +6406,21 @@ create table tab as (
     }
 
     @Test
+    public void testInsertStringWithEscapedQuote() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement s = connection.createStatement()) {
+                s.execute("create table t ( s string)");
+                s.executeUpdate("insert into t values ('o''brien ''''')");
+
+                sink.clear();
+                try (ResultSet resultSet = s.executeQuery("select * from t")) {
+                    assertResultSet("s[VARCHAR]\no'brien ''\n", sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTransaction() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             connection.setAutoCommit(false);
@@ -6445,10 +6456,10 @@ create table tab as (
             SOCountDownLatch queryStartedCount,
             SOCountDownLatch queryScheduledCount
     ) {
-        return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount, sharedWorkerCount) {
-            @Override
-            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
-                return new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+        return new PGWireServer.PGConnectionContextFactory(
+                engine,
+                conf,
+                () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
                     @Override
                     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                         return new QueryFutureUpdateListener() {
@@ -6467,8 +6478,7 @@ create table tab as (
                             }
                         };
                     }
-                };
-            }
+                }) {
         };
     }
 
@@ -6479,11 +6489,6 @@ create table tab as (
             @Override
             public Rnd getRandom() {
                 return new Rnd();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override
@@ -6663,11 +6668,6 @@ create table tab as (
             }
 
             @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
             public int getWorkerCount() {
                 return workerCount;
             }
@@ -6687,6 +6687,7 @@ create table tab as (
                         createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
+            Assert.assertNotNull(server);
             pool.start(LOG);
             int iteration = 0;
 

@@ -102,7 +102,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putByte(byte b) {
+    public void putByte(byte value) {
         throw new UnsupportedOperationException();
     }
 

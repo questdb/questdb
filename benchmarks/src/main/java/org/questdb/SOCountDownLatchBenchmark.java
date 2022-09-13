@@ -24,8 +24,9 @@
 
 package org.questdb;
 
-import io.questdb.log.*;
+import io.questdb.mp.SOCountDownLatch;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -33,20 +34,18 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.concurrent.TimeUnit;
 
-@State(Scope.Thread)
+@State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class LogBenchmark {
+public class SOCountDownLatchBenchmark {
 
-    private static final Log LOG;
-    private long counter = 0;
+    private final static int SIZE = 1024;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(LogBenchmark.class.getSimpleName())
-                .warmupIterations(2)
-                .measurementIterations(2)
-                .addProfiler("gc")
+                .include(SOCountDownLatchBenchmark.class.getSimpleName())
+                .warmupIterations(1)
+                .measurementIterations(3)
                 .forks(1)
                 .build();
 
@@ -54,33 +53,46 @@ public class LogBenchmark {
     }
 
     @Benchmark
-    public void testLogOneInt() {
-        LOG.info().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    public void testBaseline(Blackhole bh) {
+        SOCountDownLatch latch = new SOCountDownLatch(2);
+        Thread thA = new Thread(() -> {
+            for (int i = 0; i < SIZE; i++) {
+                bh.consume(i);
+            }
+            latch.countDown();
+        });
+        Thread thB = new Thread(() -> {
+            for (int i = 0; i < SIZE; i++) {
+                bh.consume(i);
+            }
+            latch.countDown();
+        });
+        thA.start();
+        thB.start();
+        latch.await();
     }
 
     @Benchmark
-    public void testLogOneIntBlocking() {
-        LOG.infoW().$("brown fox jumped over ").$(counter++).$(" fence").$();
-    }
-
-    @Benchmark
-    public void testLogOneIntDisabled() {
-        LOG.debug().$("brown fox jumped over ").$(counter++).$(" fence").$();
-    }
-
-    @Benchmark
-    public void testBaseline() {
-    }
-
-    static {
-        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
-            LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
-            w.setLocation("log-bench1.log");
-            return w;
-        }));
-        LogFactory.INSTANCE.bind();
-        LogFactory.INSTANCE.startThread();
-
-        LOG = LogFactory.getLog(LogBenchmark.class);
+    public void testLatchPingPong() {
+        SOCountDownLatch latchA = new SOCountDownLatch(SIZE);
+        SOCountDownLatch latchB = new SOCountDownLatch(SIZE);
+        SOCountDownLatch latch = new SOCountDownLatch(2);
+        Thread thA = new Thread(() -> {
+            for (int i = 0; i < SIZE; i++) {
+                latchA.countDown();
+            }
+            latchB.await();
+            latch.countDown();
+        });
+        Thread thB = new Thread(() -> {
+            latchA.await();
+            for (int i = 0; i < SIZE; i++) {
+                latchB.countDown();
+            }
+            latch.countDown();
+        });
+        thA.start();
+        thB.start();
+        latch.await();
     }
 }

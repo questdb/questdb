@@ -56,7 +56,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
  * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
-public class PGConnectionContext implements IOContext, Mutable, WriterSource {
+public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionContext> implements WriterSource {
 
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
@@ -111,12 +111,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private static final String WRITER_LOCK_REASON = "pgConnection";
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
-    private final long recvBuffer;
-    private final long sendBuffer;
+    private long recvBuffer;
+    private long sendBuffer;
     private final int recvBufferSize;
     private final CharacterStore characterStore;
     private BindVariableService bindVariableService;
-    private final long sendBufferLimit;
+    private long sendBufferLimit;
     private final int sendBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
@@ -155,7 +155,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
-    private boolean requireInitialMessage = false;
+    private boolean requireInitialMessage = true;
     private long recvBufferWriteOffset = 0;
     private long totalReceived = 0;
     private long recvBufferReadOffset = 0;
@@ -174,14 +174,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndUpdate typesAndUpdate = null;
     private boolean typesAndSelectIsCached = true;
     private boolean typesAndUpdateIsCached = false;
-    private long fd;
     private CharSequence queryText;
     //command tag used when returning row count to client,
     //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
     private CharSequence queryTag;
     private CharSequence username;
     private boolean authenticationRequired = true;
-    private IODispatcher<PGConnectionContext> dispatcher;
     private Rnd rnd;
     private long rowCount;
     private boolean completed = true;
@@ -207,11 +205,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.nf = configuration.getNetworkFacade();
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-        this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        this.sendBufferPtr = sendBuffer;
-        this.sendBufferLimit = sendBuffer + sendBufferSize;
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
@@ -237,6 +231,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
+        this.queryTag = TAG_OK;
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -333,36 +328,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     @Override
     public void close() {
-        // we're about to close the context, so no need to return pending factory to cache
+        // We're about to close the context, so no need to return pending factory to cache.
         typesAndSelectIsCached = false;
         typesAndUpdateIsCached = false;
         clear();
-        // fd == -1 is only when context is closed
-        // when context is initialized fd == 0
-        if (this.fd != -1) {
-            this.fd = -1;
-            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
-            Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            Misc.free(path);
-            Misc.free(utf8Sink);
-            Misc.free(circuitBreaker);
-        }
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public boolean invalid() {
-        return fd == -1;
-    }
-
-    @Override
-    public IODispatcher<PGConnectionContext> getDispatcher() {
-        return dispatcher;
+        this.fd = -1;
+        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+        Misc.free(path);
+        Misc.free(utf8Sink);
+        Misc.free(circuitBreaker);
+        freeBuffers();
     }
 
     @Override
@@ -448,12 +423,30 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
-        this.fd = clientFd;
-        sqlExecutionContext.with(clientFd);
-        this.dispatcher = dispatcher;
-        clear();
-        return this;
+    @Override
+    public PGConnectionContext of(long fd, IODispatcher<PGConnectionContext> dispatcher) {
+        PGConnectionContext r = super.of(fd, dispatcher);
+        sqlExecutionContext.with(fd);
+        if (fd == -1) {
+            // The context is about to be returned to the pool, so we should release the memory.
+            freeBuffers();
+        } else {
+            // The context is obtained from the pool, so we should initialize the memory.
+            if (recvBuffer == 0) {
+                this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            }
+            if (sendBuffer == 0) {
+                this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+                this.sendBufferPtr = sendBuffer;
+                this.sendBufferLimit = sendBuffer + sendBufferSize;
+            }
+        }
+        return r;
+    }
+
+    private void freeBuffers() {
+        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
     }
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
@@ -2293,7 +2286,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
         prepareForNewQuery();
         CharacterStoreEntry e = characterStore.newEntry();
 

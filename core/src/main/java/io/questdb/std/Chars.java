@@ -45,6 +45,11 @@ public final class Chars {
         }
     }
 
+    public static long asciiStrCpy(final CharSequence value, final long address) {
+        asciiStrCpy(value, value.length(), address);
+        return address;
+    }
+
     public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
@@ -679,6 +684,19 @@ public final class Chars {
     public static String toString(CharSequence cs, int start, int end) {
         final CharSink b = Misc.getThreadLocalBuilder();
         b.put(cs, start, end);
+        return b.toString();
+    }
+
+    public static String toString(CharSequence cs, int start, int end, char unescape) {
+        final CharSink b = Misc.getThreadLocalBuilder();
+        final int lastChar = end - 1;
+        for (int i = start; i < end; i++) {
+            char c = cs.charAt(i);
+            b.put(c);
+            if (c == unescape && i < lastChar && cs.charAt(i + 1) == unescape) {
+                i++;
+            }
+        }
         return b.toString();
     }
 
