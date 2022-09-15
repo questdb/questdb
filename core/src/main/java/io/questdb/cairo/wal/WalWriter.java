@@ -43,6 +43,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
@@ -148,7 +149,7 @@ public class WalWriter implements TableWriterFrontend {
 
                 txn = tableRegistry.nextStructureTxn(tableName, getStructureVersion(), operation);
                 if (txn == Sequencer.NO_TXN) {
-                    applyStructureChanges();
+                    applyStructureChanges(Long.MAX_VALUE);
                 }
             } while (txn == Sequencer.NO_TXN);
 
@@ -316,8 +317,13 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     public boolean goActive() {
+        return goActive(Long.MAX_VALUE);
+    }
+
+    @TestOnly
+    public boolean goActive(long maxStructureVersion) {
         try {
-            applyStructureChanges();
+            applyStructureChanges(maxStructureVersion);
             return true;
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, wal will be closed [table=").$(tableName)
@@ -378,7 +384,8 @@ public class WalWriter implements TableWriterFrontend {
 
             try {
                 int timestampIndex = metadata.getTimestampIndex();
-                LOG.debug().$("rolling uncommitted rows to new segment [wal=").$(Files.SEPARATOR).$(segmentId + 1)
+                LOG.info().$("rolling uncommitted rows to new segment [wal=")
+                        .$(path).$(Files.SEPARATOR).$(segmentId + 1)
                         .$(", rowCount=").$(uncommittedRows).I$();
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -509,25 +516,28 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void applyStructureChanges() {
+    private void applyStructureChanges(long maxStructureVersion) {
         try {
             structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, getStructureVersion());
             if (structureChangeCursor == null) {
                 // nothing to do
                 return;
             }
-            while (structureChangeCursor.hasNext()) {
+            long metadataVersion;
+            while (structureChangeCursor.hasNext() && (metadataVersion = getStructureVersion()) < maxStructureVersion) {
                 AlterOperation alterOperation = structureChangeCursor.next();
-                long metadataVersion = getStructureVersion();
                 try {
                     alterOperation.apply(walMetadataUpdater, true);
                 } catch (SqlException e) {
                     distressed = true;
-                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+                    throw CairoException.critical(0)
+                            .put("could not apply table definition changes to the current transaction. ")
+                            .put(e.getFlyweightMessage());
                 }
                 if (metadataVersion >= getStructureVersion()) {
                     distressed = true;
-                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction, version unchanged");
+                    throw CairoException.critical(0)
+                            .put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
         } finally {
@@ -770,7 +780,7 @@ public class WalWriter implements TableWriterFrontend {
         do {
             txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
             if (txn == Sequencer.NO_TXN) {
-                applyStructureChanges();
+                applyStructureChanges(Long.MAX_VALUE);
             }
         } while (txn == Sequencer.NO_TXN);
         return txn;
@@ -1022,7 +1032,7 @@ public class WalWriter implements TableWriterFrontend {
         if (rowCount > 0) {
             long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
             try {
-                Vect.memset(address, (byte) varColSize, -1);
+                Vect.memset(address, varColSize,-1);
             } finally {
                 ff.munmap(address, varColSize, MEM_TAG);
             }

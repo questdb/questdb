@@ -144,7 +144,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private static SequencerStructureChangeCursor applyOutstandingWalTransactions(
-            TableWriter writer, CairoEngine engine,
+            TableWriter writer,
+            CairoEngine engine,
             SqlToOperation sqlToOperation,
             @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
     ) {

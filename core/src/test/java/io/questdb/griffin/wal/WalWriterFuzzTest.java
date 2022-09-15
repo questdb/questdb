@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -49,8 +50,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
-    @Ignore
-    public void testWalAddRemoveCommitFuzz() throws Exception {
+    public void testWalAddRemoveCommitFuzzO3() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameWal = testName.getMethodName() + "_wal";
             String tableNameWal2 = testName.getMethodName() + "_wal2";
@@ -72,6 +72,56 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         IntervalUtils.parseFloorPartialDate("2022-02-27T17"),
                         100_000,
                         true,
+                        0.05,
+                        0.2,
+                        0.1,
+                        0.005,
+                        0.05,
+                        0.05,
+                        1000,
+                        20,
+                        10000
+                );
+            }
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId2 = metadata.getTableId();
+            }
+
+            applyNonWal(transactions, tableNameNoWal, tableId2);
+
+            applyWal(transactions, tableNameWal, tableId1, 3);
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+
+            applyWalParallel(transactions, tableNameWal2, tableId1, 4);
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNameWal = testName.getMethodName() + "_wal";
+            String tableNameWal2 = testName.getMethodName() + "_wal2";
+            String tableNameNoWal = testName.getMethodName() + "_nonwal";
+
+            createInitialTable(tableNameWal, true);
+            createInitialTable(tableNameWal2, true);
+            createInitialTable(tableNameNoWal, false);
+
+            ObjList<FuzzTransaction> transactions;
+            int tableId1, tableId2;
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId1 = metadata.getTableId();
+                transactions = FuzzTransactionGenerator.generateSet(
+                        metadata,
+                        new Rnd(),
+                        IntervalUtils.parseFloorPartialDate("2022-02-24T17"),
+                        IntervalUtils.parseFloorPartialDate("2022-02-27T17"),
+                        100_000,
+                        false,
                         0.05,
                         0.2,
                         0.1,
@@ -163,8 +213,16 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         FuzzTransaction transaction = transactions.getQuick(opIndex);
 
                         // wait until structure version is applied
-                        while (structureVersion.get() < transaction.metadataVersion && errors.size() == 0) {
-                            Os.sleep(5);
+                        while (structureVersion.get() < transaction.structureVersion && errors.size() == 0) {
+                            Os.sleep(1);
+                        }
+
+                        if (!walWriter.goActive(transaction.structureVersion)) {
+                            throw CairoException.critical(0).put("cannot apply structure change");
+                        }
+                        if (walWriter.getStructureVersion() != transaction.structureVersion) {
+                            throw CairoException.critical(0)
+                                    .put("cannot update wal writer to correct structure version");
                         }
 
                         boolean increment = false;
@@ -195,14 +253,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         Thread applyThread = new Thread(() -> {
             try {
                 int i = 0;
-                ApplyWal2TableJob job = new ApplyWal2TableJob(engine);
-                while(done.get() == 0 && errors.size() == 0) {
-                    Unsafe.getUnsafe().loadFence();
-                    while (job.run(0)) {
-                        // run until empty
+                try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
+                    while (done.get() == 0 && errors.size() == 0) {
+                        Unsafe.getUnsafe().loadFence();
+                        while (job.run(0)) {
+                            // run until empty
+                        }
+                        Os.sleep(1);
+                        i++;
                     }
-                    Os.sleep(1);
-                    i++;
                 }
                 LOG.info().$("finished apply thread after iterations: ").$(i).$();
             } catch (Throwable e) {
