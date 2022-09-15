@@ -34,8 +34,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, Closeable {
+
+    public static final LongAdder PRE_TOUCH_BLACKHOLE = new LongAdder();
 
     private final Function filter;
     private final ObjList<Function> perWorkerFilters;
@@ -60,6 +63,12 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
     }
 
     @Override
+    public void close() {
+        Misc.free(filter);
+        Misc.freeObjList(perWorkerFilters);
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         filter.init(symbolTableSource, executionContext);
         if (perWorkerFilters != null) {
@@ -71,12 +80,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                 executionContext.setCloneSymbolTables(current);
             }
         }
-    }
-
-    @Override
-    public void close() {
-        Misc.free(filter);
-        Misc.freeObjList(perWorkerFilters);
     }
 
     public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -127,6 +130,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
         if (preTouchColumnTypes == null) {
             return;
         }
+        // We use a LongAdder as a blackhole to make sure that the JVM JIT compiler keeps the load instructions in place.
+        long sum = 0;
         for (long p = 0; p < rows.size(); p++) {
             long r = rows.get(p);
             record.setRowIndex(r);
@@ -134,46 +139,52 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                 int columnType = preTouchColumnTypes.getQuick(i);
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BOOLEAN:
-                        record.getBool(i);
+                        sum += record.getBool(i) ? 1 : 0;
                         break;
                     case ColumnType.BYTE:
-                        record.getByte(i);
+                        sum += record.getByte(i);
                         break;
                     case ColumnType.SHORT:
-                        record.getShort(i);
+                        sum += record.getShort(i);
                         break;
                     case ColumnType.INT:
                     case ColumnType.SYMBOL: // We're interested in pre-touching the page only, so we read symbol key only.
-                        record.getInt(i);
+                        sum += record.getInt(i);
                         break;
                     case ColumnType.LONG:
                     case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
-                        record.getLong(i);
+                        sum += record.getLong(i);
                         break;
                     case ColumnType.FLOAT:
-                        record.getFloat(i);
+                        sum += record.getFloat(i);
                         break;
                     case ColumnType.DOUBLE:
-                        record.getDouble(i);
+                        sum += record.getDouble(i);
                         break;
                     case ColumnType.LONG256:
-                        record.getLong256A(i);
+                        Long256 l256 = record.getLong256A(i);
+                        sum += l256.getLong0();
+                        sum += l256.getLong1();
+                        sum += l256.getLong2();
+                        sum += l256.getLong3();
                         break;
                     case ColumnType.GEOBYTE:
-                        record.getGeoByte(i);
+                        sum += record.getGeoByte(i);
                         break;
                     case ColumnType.GEOSHORT:
-                        record.getGeoShort(i);
+                        sum += record.getGeoShort(i);
                         break;
                     case ColumnType.GEOINT:
-                        record.getGeoInt(i);
+                        sum += record.getGeoInt(i);
                         break;
                     case ColumnType.GEOLONG:
-                        record.getGeoLong(i);
+                        sum += record.getGeoLong(i);
                         break;
                 }
             }
         }
+        // Flush the accumulated sum to the blackhole.
+        PRE_TOUCH_BLACKHOLE.add(sum);
     }
 }
