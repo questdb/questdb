@@ -2040,7 +2040,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("col10", ColumnType.SYMBOL);
                 }
                 try (
-                        Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+                        Path path = getPath(tableName);
                         MemoryMARW mem = Vm.getMARWInstance(
                                 FilesFacadeImpl.INSTANCE,
                                 path,
@@ -2068,6 +2068,12 @@ public class TableReaderTest extends AbstractCairoTest {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
             }
         });
+    }
+
+    private static Path getPath(String tableName) {
+        final Path path = new Path().of(engine.getConfiguration().getRoot());
+        TableUtils.createTablePath(path, tableName);
+        return path.concat(TableUtils.META_FILE_NAME).$();
     }
 
     @Test

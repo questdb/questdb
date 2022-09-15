@@ -275,7 +275,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             if (
                                     TableUtils.isValidTableName(tableName, tableName.length())
-                                            && ff.exists(path.of(configuration.getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$())
+                                            && ff.exists(TableUtils.createTablePath(path.of(configuration.getRoot()), tableName).concat(TableUtils.META_FILE_NAME).$())
                             ) {
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                                 LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
@@ -283,7 +283,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                                 TableReader reader = engine.getReaderForStatement(executionContext, tableName, "snapshot");
                                 snapshotReaders.add(reader);
 
-                                path.trimTo(snapshotLen).concat(tableName).slash$();
+                                TableUtils.createTablePath(path.trimTo(snapshotLen), tableName).slash$();
                                 if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
                                     throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
                                 }

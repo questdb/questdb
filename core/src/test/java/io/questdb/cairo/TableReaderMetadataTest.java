@@ -161,7 +161,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         expected.put("zall.sym", -1);
 
         String tableName = "all";
-        try (Path path = new Path().of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+        try (Path path = getMetaFilePath(root, tableName);
              TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
@@ -169,6 +169,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         }
     }
 
+    private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
+        final Path path = new Path().of(root);
+        TableUtils.createTablePath(path, tableName);
+        return path.concat(TableUtils.META_FILE_NAME).$();
+    }
     @Test
     public void testDeleteTwoAddOneColumn() throws Exception {
         final String expected = "int:INT\n" +
@@ -404,9 +409,9 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (Path path = new Path().of(root).concat(tableName)) {
+            try (Path path = getMetaFilePath(root, tableName)) {
                 int tableId;
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
                     tableId = metadata.getId();
                     for (ColumnManipulator manipulator : manipulators) {
                         long structVersion;
@@ -440,7 +445,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 }
 
                 // Check that table has same tableId.
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
                     Assert.assertEquals(tableId, metadata.getId());
                 }
             }

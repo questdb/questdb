@@ -92,7 +92,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                         null,
                         -1,
                         null);
-        path = new Path().put(configuration.getRoot()).concat(tableName);
+        path = TableUtils.createTablePath(new Path().put(configuration.getRoot()), tableName);
         tablePathLen = path.length();
     }
 
@@ -279,7 +279,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             new Thread(() -> {
 
                 final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
-                Path path2 = new Path().put(configuration.getRoot()).concat(tableName);
+                Path path2 = TableUtils.createTablePath(new Path().put(configuration.getRoot()), tableName);
                 try {
                     for (int i = 0; i < 5; i++) {
                         try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
@@ -381,7 +381,8 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // drop index thread
             new Thread(() -> {
-                Path path2 = new Path().put(configuration.getRoot()).concat(tableName);
+                Path path2 = new Path().put(configuration.getRoot());
+                TableUtils.createTablePath(path2, tableName);
                 try {
                     CompiledQuery cc = compiler2.compile(dropIndexStatement(), sqlExecutionContext2);
                     startBarrier.await();
@@ -577,10 +578,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
-        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
-                (String) configuration.getRoot(),
-                tableName
-        );
+        final java.nio.file.Path tablePath = TableUtils.createTablePath(configuration.getRoot(), tableName);
         try (Stream<?> stream = Files.find(
                 tablePath,
                 Integer.MAX_VALUE,

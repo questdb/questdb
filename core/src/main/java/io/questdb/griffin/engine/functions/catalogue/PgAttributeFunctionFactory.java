@@ -170,7 +170,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                         final long type = ff.findType(findFileStruct);
                         if (Files.isDir(pUtf8NameZ, type)) {
                             path.trimTo(plimit);
-                            path.concat(pUtf8NameZ);
+                            TableUtils.createTablePath(path, pUtf8NameZ);
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 foundMetadataFile = true;
                                 metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);

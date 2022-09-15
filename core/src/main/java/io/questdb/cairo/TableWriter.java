@@ -250,8 +250,12 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
-        this.path = new Path().of(root).concat(tableName);
-        this.other = new Path().of(root).concat(tableName);
+        this.path = new Path().of(root);
+        this.other = new Path().of(root);
+
+        TableUtils.createTablePath(this.path, tableName);
+        TableUtils.createTablePath(this.other, tableName);
+
         this.rootLen = path.length();
         try {
             if (lock) {
@@ -636,7 +640,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(tableName);
+        Path detachedPath = TableUtils.createTablePath(Path.PATH.get().of(configuration.getRoot()), tableName);
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachPartitionSuffix()).slash$();
         int detachedRootLen = detachedPath.length();
@@ -838,7 +842,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION_DIR;
             }
 
-            detachedPath.of(configuration.getRoot()).concat(tableName);
+            TableUtils.createTablePath(detachedPath.of(configuration.getRoot()), tableName);
             int detachedRootLen = detachedPath.length();
             // detachedPath: detached partition folder
             if (!ff.exists(detachedPath.slash$())) {

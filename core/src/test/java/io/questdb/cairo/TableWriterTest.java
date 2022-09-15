@@ -59,6 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
+    public static final String PRODUCT_FS = TableUtils.fsTableName(PRODUCT);
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
 
@@ -1274,7 +1275,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public long openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, PRODUCT + ".lock")) {
+                    if (Chars.endsWith(name, PRODUCT_FS + ".lock")) {
                         ran = true;
                         return -1;
                     }
@@ -1764,8 +1765,10 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (
                     MemoryCMARW mem = Vm.getCMARWInstance();
-                    Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
+                    Path path = new Path().of(root)
             ) {
+                TableUtils.createTablePath(path, "all");
+                path.concat(TableUtils.TODO_FILE_NAME).$();
                 mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
@@ -2077,7 +2080,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (Path path = new Path()) {
-                Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
+                Assert.assertTrue(FF.remove(TableUtils.createTablePath(path.of(root),"all").concat(TableUtils.TXN_FILE_NAME).$()));
                 try {
                     new TableWriter(configuration, "all", metrics);
                     Assert.fail();
@@ -2801,24 +2804,24 @@ public class TableWriterTest extends AbstractCairoTest {
                 // create random directories
                 FilesFacade ff = configuration.getFilesFacade();
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
+                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("default").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 new TableWriter(configuration, PRODUCT, metrics).close();
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("default").slash$();
                 Assert.assertTrue(ff.exists(path));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
+                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
                 Assert.assertTrue(ff.exists(path));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
                 Assert.assertFalse(ff.exists(path));
             }
         });
@@ -3294,7 +3297,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private int getDirCount() {
         AtomicInteger count = new AtomicInteger();
         try (Path path = new Path()) {
-            FF.iterateDir(path.of(root).concat(PRODUCT).$(), (pUtf8NameZ, type) -> {
+            FF.iterateDir(path.of(root).concat(PRODUCT_FS).$(), (pUtf8NameZ, type) -> {
                 if (type == Files.DT_DIR) {
                     count.incrementAndGet();
                 }
@@ -3904,7 +3907,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.renameColumn("supplier", "sup");
 
                 try (Path path = new Path()) {
-                    path.of(root).concat(model.getName());
+                    path.of(root);
+                    TableUtils.createTablePath(path, model.getName());
                     final int plen = path.length();
                     if (columnTypeTag == ColumnType.SYMBOL) {
                         Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.v").$()));
@@ -4344,7 +4348,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (Path vp = new Path()) {
             for (i = 0; i < 10000; i++) {
-                vp.of(root).concat(PRODUCT).slash();
+                vp.of(root).concat(PRODUCT_FS).slash();
                 fmt.format(vmem.getLong(i * 8L), enGb, "UTC", vp);
                 if (!FF.exists(vp.$())) {
                     Assert.fail();

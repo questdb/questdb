@@ -2608,7 +2608,9 @@ public class SqlCompiler implements Closeable {
         }
         tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
         CharSequence tableName = tok;
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableName), configuration);
+        path.of(configuration.getRoot());
+        TableUtils.createTablePath(path, tableName);
+        rebuildIndex.of(path, configuration);
 
         tok = SqlUtil.fetchNext(lexer);
         CharSequence columnName = null;
@@ -2655,7 +2657,7 @@ public class SqlCompiler implements Closeable {
 
     private boolean removeTableDirectory(CreateTableModel model) {
         int errno;
-        if ((errno = engine.removeDirectory(path, model.getName().token)) == 0) {
+        if ((errno = engine.removeDirectory(path, TableUtils.fsTableName(model.getName().token))) == 0) {
             return true;
         }
         LOG.error()
@@ -3239,11 +3241,12 @@ public class SqlCompiler implements Closeable {
         private transient SqlExecutionContext currentExecutionContext;
         private final FindVisitor sqlDatabaseBackupOnFind = (pUtf8NameZ, type) -> {
             if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
+                final CharSequence fileName = TableUtils.FsToUserTableName(fileNameSink);
                 try {
-                    backupTable(fileNameSink, currentExecutionContext);
+                    backupTable(fileName, currentExecutionContext);
                 } catch (CairoException e) {
                     LOG.error()
-                            .$("could not backup [path=").$(fileNameSink)
+                            .$("could not backup [path=").$(fileName)
                             .$(", e=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .$(']').$();
@@ -3310,9 +3313,9 @@ public class SqlCompiler implements Closeable {
                     }
                 }
 
-                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(tableName).$();
+                TableUtils.createTablePath(srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()), tableName).$();
                 try {
-                    dstPath.trimTo(renameRootLen).concat(tableName).$();
+                    TableUtils.createTablePath(dstPath.trimTo(renameRootLen), tableName).$();
                     TableUtils.renameOrFail(ff, srcPath, dstPath);
                     LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(dstPath).$(']').$();
                 } finally {
@@ -3324,7 +3327,7 @@ public class SqlCompiler implements Closeable {
                         .$(", ex=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .$(']').$();
-                srcPath.of(cachedTmpBackupRoot).concat(tableName).slash$();
+                TableUtils.createTablePath(srcPath.of(cachedTmpBackupRoot), tableName).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
                     LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
@@ -3342,7 +3345,7 @@ public class SqlCompiler implements Closeable {
         }
 
         private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-            srcPath.of(backupRoot).concat(tableName).slash$();
+            TableUtils.createTablePath(srcPath.of(backupRoot), tableName).slash$();
 
             if (ff.exists(srcPath)) {
                 throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');

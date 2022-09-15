@@ -296,7 +296,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
-        rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+        TableUtils.createTablePath(rootPath.trimTo(rootPathLen), tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
             if (txReader.unsafeLoad(true)) {
                 if (txReader.getTxn() < txn) {
@@ -540,7 +540,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         CharSequence lockedReason = lock(securityContext, tableName, "removeTable");
         if (null == lockedReason) {
             try {
-                path.of(configuration.getRoot()).concat(tableName).$();
+                path.of(configuration.getRoot());
+                TableUtils.createTablePath(path, tableName);
+                path.$();
                 int errno;
                 if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
                     LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
@@ -629,8 +631,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             throw CairoException.nonCritical().put("Rename failed. Table '").put(tableName).put("' does not exist");
         }
 
-        path.of(root).concat(tableName).$();
-        otherPath.of(root).concat(to).$();
+        path.of(root);
+        TableUtils.createTablePath(path, tableName);
+        path.$();
+        otherPath.of(root);
+        TableUtils.createTablePath(otherPath, to);
+        otherPath.$();
 
         if (ff.exists(otherPath)) {
             LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).$("']").$();

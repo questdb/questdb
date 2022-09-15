@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -123,7 +124,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                     Path walPath = new Path()
             ) {
-                walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
+                TableUtils.createTablePath(walPath.of(configuration.getRoot()), "wal_all").concat("default");
                 long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
@@ -174,7 +175,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                     Path walPath = new Path()
             ) {
-                walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
+                TableUtils.createTablePath(walPath.of(configuration.getRoot()), "wal_all").concat("default");
                 long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 

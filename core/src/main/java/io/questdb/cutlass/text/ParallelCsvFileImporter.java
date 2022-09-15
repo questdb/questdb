@@ -295,7 +295,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.importRoot = tmpPath.of(inputWorkRoot).concat(tableName).toString();
+        this.importRoot = TableUtils.createTablePath(tmpPath.of(inputWorkRoot), tableName).toString();
         this.inputFileName = inputFileName;
         this.timestampColumn = timestampColumn;
         this.partitionBy = partitionBy;
@@ -654,8 +654,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int index = taskDistribution.getQuick(i * 3);
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
-                final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put("_").put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableName);
+
+                final Path srcPath = TableUtils.createTablePath(localImportJob.getTmpPath1().of(importRoot), tableName).put("_").put(index).put("_"); //todo: fix this
+                final Path dstPath = TableUtils.createTablePath(localImportJob.getTmpPath2().of(configuration.getRoot()), tableName);
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
 
@@ -1143,7 +1144,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         int queuedCount = 0;
         int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
-            tmpPath.of(importRoot).concat(tableName).put("_").put(t);
+            TableUtils.createTablePath(tmpPath.of(importRoot), tableName).put("_").put(t).put("_");//todo: fix this1
 
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txFile.unsafeLoadAll();

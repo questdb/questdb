@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
@@ -128,7 +129,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
 
         FilesFacade filesFacade = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            path.concat(configuration.getRoot()).concat("table1").concat(META_FILE_NAME).$();
+            TableUtils.createTablePath(path.concat(configuration.getRoot()), "table1").concat(META_FILE_NAME).$();
             filesFacade.remove(path);
         }
         assertSql(

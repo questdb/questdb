@@ -108,7 +108,7 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public long openRW(LPSZ name, long opts) {
             long fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
+            if (Chars.endsWith(name, TableUtils.fsTableName("x") + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
                 theFd = fd;
             }
             return fd;
@@ -664,7 +664,7 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         long fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                        if (Chars.endsWith(name, TableUtils.fsTableName("x") + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
                             if (counter.decrementAndGet() == 0) {
                                 theFd = fd;
                             }
@@ -3196,6 +3196,7 @@ public class O3FailureTest extends AbstractO3Test {
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ignored) {
+                System.err.println("!");
             }
         }
 

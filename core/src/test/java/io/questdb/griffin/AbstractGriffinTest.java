@@ -1422,7 +1422,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     ) throws NumericException, SqlException {
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
-                Path path = new Path().of(configuration.getRoot()).concat(tableModel.getTableName())
+                Path path = TableUtils.createTablePath(new Path().of(configuration.getRoot()), tableModel.getTableName())
         ) {
             TableUtils.createTable(configuration, mem, path, tableModel, tableId);
             compiler.compile(

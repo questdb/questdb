@@ -64,8 +64,7 @@ public class WalReader implements Closeable {
         this.rowCount = rowCount;
 
         ff = configuration.getFilesFacade();
-        path = new Path();
-        path.of(configuration.getRoot()).concat(tableName).concat(walName);
+        path = TableUtils.createTablePath(new Path().of(configuration.getRoot()), tableName).concat(walName);
         rootLen = path.length();
 
         try {

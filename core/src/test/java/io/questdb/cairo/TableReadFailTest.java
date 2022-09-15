@@ -87,7 +87,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 final int N = 1000;
 
                 // home path at txn file
-                path.of(configuration.getRoot()).concat("x").concat(TableUtils.TXN_FILE_NAME).$();
+                TableUtils.createTablePath(path.of(configuration.getRoot()), "x").concat(TableUtils.TXN_FILE_NAME).$();
 
                 try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
                     for (int i = 0; i < N; i++) {

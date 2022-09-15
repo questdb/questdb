@@ -92,7 +92,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.tableName = Chars.toString(tableName);
         this.messageBus = messageBus;
         this.path = new Path();
-        this.path.of(configuration.getRoot()).concat(this.tableName);
+        this.path.of(configuration.getRoot());
+        TableUtils.createTablePath(this.path, this.tableName);
         this.rootLen = path.length();
         path.trimTo(rootLen);
         try {

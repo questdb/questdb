@@ -493,11 +493,11 @@ public class TextImportTask {
 
         public void run(Path path) {
             final FilesFacade ff = cfg.getFilesFacade();
-            path.of(importRoot).concat(table);
+            TableUtils.createTablePath(path.of(importRoot), table);
             int plen = path.length();
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
-                path.put("_").put(i);
+                path.put("_").put(i).put("_");
                 int tableLen = path.length();
                 try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
                     path.trimTo(tableLen);
@@ -569,7 +569,7 @@ public class TextImportTask {
 
         public void run(Path path) {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
-            path.of(root).concat(tableStructure.getTableName()).put("_").put(index);
+            TableUtils.createTablePath(path.of(root), tableStructure.getTableName()).put("_").put(index).put("_");
             int plen = path.length();
             PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
@@ -644,7 +644,7 @@ public class TextImportTask {
         public void run() {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             tableNameSink.clear();
-            tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
+            tableNameSink.put(tableStructure.getTableName()).put('_').put('_').put(index);
             final int columnCount = metadata.getColumnCount();
             try (TableWriter w = new TableWriter(configuration,
                     tableNameSink,
@@ -835,7 +835,7 @@ public class TextImportTask {
 
             this.utf8Sink = utf8Sink;
             tableNameSink.clear();
-            tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
+            tableNameSink.put(TableUtils.fsTableName(targetTableStructure.getTableName())).put('_').put(index);
 
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();

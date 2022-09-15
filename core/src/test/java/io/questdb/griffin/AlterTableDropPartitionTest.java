@@ -261,7 +261,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
             assertPartitionResult("count\n44\n", "2020-01-01");
 
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName)) {
+            try (Path path = TableUtils.createTablePath(new Path().of(engine.getConfiguration().getRoot()), tableName)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
                 Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
                 if (Os.type == Os.WINDOWS) {
@@ -746,7 +746,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     }
 
                     // Delete partition folder
-                    File dir = new File(Paths.get(root.toString(), src.getName(), folderToDelete).toString());
+                    File dir = new File(TableUtils.createTablePartitionPath(root.toString(), src.getName(), folderToDelete).toString());
                     deleteDir(dir);
 
                     if (opened) {

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -334,8 +335,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                     );
 
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot());
-                        path.concat("test").$();
+                        TableUtils.createTablePath(path.of(configuration.getRoot()), "test").$();
                         Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 

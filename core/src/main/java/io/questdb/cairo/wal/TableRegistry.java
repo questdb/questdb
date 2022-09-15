@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.AbstractPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.PoolClosedException;
@@ -78,9 +75,10 @@ public class TableRegistry extends AbstractPool {
             ff.iterateDir(path, (name, type) -> {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
-                    if (isWalTable(nameSink, path, ff)) {
-                        try (SequencerImpl sequencer = openSequencer(nameSink)) {
-                            callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
+                    final CharSequence nameStr = TableUtils.FsToUserTableName(nameSink);
+                    if (isWalTable(nameStr, path, ff)) {
+                        try (SequencerImpl sequencer = openSequencer(nameStr)) {
+                            callback.onTable(sequencer.getTableId(), nameStr, sequencer.lastTxn());
                         }
                     }
                 }
@@ -157,7 +155,7 @@ public class TableRegistry extends AbstractPool {
     }
 
     private static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
-        root.concat(tableName).concat(SEQ_DIR);
+        TableUtils.createTablePath(root, tableName).concat(SEQ_DIR);
         return ff.exists(root.$());
     }
 
@@ -410,5 +408,53 @@ public class TableRegistry extends AbstractPool {
                 }
             }
         }
+    }
+
+    public static class TableNameRegistry {
+        private static class TableNameEntry {
+            String tableName;
+            int tableId;
+            boolean isWal;
+            public TableNameEntry(final String tableName, int tableId, boolean isWal) {
+                this.tableName = tableName;
+                this.tableId = tableId;
+                this.isWal = isWal;
+            }
+        }
+
+        private final ConcurrentHashMap<TableNameEntry> tableNameEntries = new ConcurrentHashMap<>();
+        public boolean registerTableName(final String tableName, int tableId, boolean isWal) {
+            TableNameEntry entry = tableNameEntries.get(tableName);
+            if (entry != null) {
+                return false;
+            }
+
+            tableNameEntries.computeIfAbsent(tableName, (key) -> new TableNameEntry(tableName, tableId, isWal));
+            return true;
+        }
+
+       public boolean registerTableName(final @Nullable Path root, final String tableName, int tableId, boolean isWal) {
+            TableNameEntry entry = tableNameEntries.get(tableName);
+            if (entry != null) {
+                return false;
+            }
+
+            entry = tableNameEntries.computeIfAbsent(tableName, (key) -> new TableNameEntry(tableName, tableId, isWal));
+            if (root != null) {
+                TableUtils.adjustTableName(root, entry.tableName, entry.tableId, entry.isWal);
+            }
+            return true;
+        }
+
+        // path should be initialised with root
+        public boolean appendTableName(final Path root, final CharSequence tableName) {
+            TableNameEntry entry = tableNameEntries.get(tableName);
+            if (entry == null) {
+                return false;
+            }
+            TableUtils.adjustTableName(root, entry.tableName, entry.tableId, entry.isWal);
+            return true;
+        }
+
     }
 }

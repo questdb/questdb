@@ -153,9 +153,11 @@ public class EngineMigration {
             ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                 if (Files.isDir(pUtf8NameZ, type)) {
                     path.trimTo(rootLen);
+                    TableUtils.createTablePath(path, pUtf8NameZ);
                     path.concat(pUtf8NameZ);
+
                     copyPath.trimTo(rootLen);
-                    copyPath.concat(pUtf8NameZ);
+                    TableUtils.createTablePath(copyPath, pUtf8NameZ);
                     final int plen = path.length();
                     path.concat(TableUtils.META_FILE_NAME);
 

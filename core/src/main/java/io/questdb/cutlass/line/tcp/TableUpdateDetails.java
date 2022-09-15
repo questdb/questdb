@@ -334,7 +334,8 @@ public class TableUpdateDetails implements Closeable {
                 if (symbolNameTemp == null || symIndex < 0) {
                     throw CairoException.critical(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
                 }
-                path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
+                path.of(engine.getConfiguration().getRoot());
+                TableUtils.createTablePath(path, tableNameUtf16);
                 SymbolCache symCache;
                 final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
                 if (lastUnusedSymbolCacheIndex > -1) {

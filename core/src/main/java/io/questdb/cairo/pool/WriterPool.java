@@ -256,7 +256,9 @@ public class WriterPool extends AbstractPool {
 
                 if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
-                    TableUtils.lockName(path.trimTo(rootLen).concat(name));
+                    path.trimTo(rootLen);
+                    TableUtils.createTablePath(path, name);
+                    TableUtils.lockName(path);
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
@@ -513,7 +515,9 @@ public class WriterPool extends AbstractPool {
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, String lockReason) {
         assertLockReasonIsNone(lockReason);
-        TableUtils.lockName(path.trimTo(rootLen).concat(tableName));
+        path.trimTo(rootLen);
+        TableUtils.createTablePath(path, tableName);
+        TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();

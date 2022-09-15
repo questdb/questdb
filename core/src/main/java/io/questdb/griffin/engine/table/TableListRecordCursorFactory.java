@@ -131,7 +131,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
-                    return sink;
+                    return sink.subSequence(0, sink.length() - 1);
                 }
                 return null;
             }

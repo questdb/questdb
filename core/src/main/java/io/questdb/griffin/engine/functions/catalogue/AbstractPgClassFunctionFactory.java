@@ -237,7 +237,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                 final long type = ff.findType(findFileStruct);
                 if (Files.isDir(pUtf8NameZ, type, sink)) {
                     path.trimTo(plimit);
-                    if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
+                    if (ff.exists(TableUtils.createTablePath(path, pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
                         // open metadata file and read id
                         long fd = ff.openRO(path);
                         if (fd > -1) {
@@ -376,7 +376,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public CharSequence getStr(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return sink;
+                    return TableUtils.FsToUserTableName(sink);
                 }
                 return null;
             }
@@ -394,7 +394,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public int getStrLen(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return sink.length();
+                    return TableUtils.FsToUserTableName(sink).length();
                 }
                 return -1;
             }
@@ -403,7 +403,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             private CharSequence getName(StringSink sink) {
                 sink.clear();
                 if (Chars.utf8DecodeZ(ff.findName(findFileStruct), sink)) {
-                    return sink;
+                    return TableUtils.FsToUserTableName(sink);
                 } else {
                     return null;
                 }

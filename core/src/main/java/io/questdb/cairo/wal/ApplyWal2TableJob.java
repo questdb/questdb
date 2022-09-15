@@ -153,7 +153,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
             Path tempPath = Path.PATH.get();
-            tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName());
+            TableUtils.createTablePath(tempPath.of(engine.getConfiguration().getRoot()), writer.getTableName());
             int rootLen = tempPath.length();
 
             while (sequencerCursor.hasNext()) {

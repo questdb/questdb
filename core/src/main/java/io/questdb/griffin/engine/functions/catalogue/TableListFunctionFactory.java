@@ -204,7 +204,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return sink;
+                        return sink.subSequence(0, sink.length() - 1);
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);
@@ -236,14 +236,14 @@ public class TableListFunctionFactory implements FunctionFactory {
                 }
 
                 public boolean open(CharSequence tableName) {
-
+                    tableName = TableUtils.FsToUserTableName(tableName);
                     if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, sysTablePrefix))) {
                         return false;
                     }
 
                     int pathLen = path.length();
                     try {
-                        path.chop$().concat(tableName).concat(META_FILE_NAME).$();
+                        TableUtils.createTablePath(path.chop$(), tableName).concat(META_FILE_NAME).$();
                         metaReader.deferredInit(path.$(), "<noname>", ColumnType.VERSION);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch

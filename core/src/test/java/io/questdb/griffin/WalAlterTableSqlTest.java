@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -101,8 +102,8 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
             );
 
             try (Path path = new Path(); Path other = new Path()) {
-                path.of(configuration.getRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+                TableUtils.createTablePath(path.of(configuration.getRoot()), tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
+                TableUtils.createTablePath(other.of(configuration.getRoot()), tableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
             }
 

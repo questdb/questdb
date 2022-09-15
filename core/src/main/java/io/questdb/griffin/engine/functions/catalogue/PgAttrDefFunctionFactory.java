@@ -158,7 +158,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                         final long type = ff.findType(findFileStruct);
                         if (Files.isDir(pUtf8NameZ, type)) {
                             path.trimTo(plimit);
-                            if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
+                            if (ff.exists(TableUtils.createTablePath(path, pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
                                 long fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {

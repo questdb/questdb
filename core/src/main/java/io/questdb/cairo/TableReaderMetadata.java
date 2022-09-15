@@ -229,7 +229,8 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
 
     public void readSafe(CharSequence dbRoot, String tableName, MillisecondClock millisecondClock, long timeout) {
         long deadline = millisecondClock.getTicks() + timeout;
-        this.path.of(dbRoot).concat(tableName);
+        this.path.of(dbRoot);
+        TableUtils.createTablePath(this.path, tableName);
         int rootLen = this.path.length();
         this.path.concat(TableUtils.META_FILE_NAME).$();
         boolean existenceChecked = false;

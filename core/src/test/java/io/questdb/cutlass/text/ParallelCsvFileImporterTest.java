@@ -1375,6 +1375,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
+        String tab41 = "tab41";
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
@@ -1383,14 +1384,14 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, File.separator + "tab41" + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
+                if (Chars.contains(path, File.separator + TableUtils.fsTableName(tab41) + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
             }
         };
 
-        testImportThrowsException(ff, "tab41", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create partition directory");
+        testImportThrowsException(ff, tab41, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create partition directory");
     }
 
     private void assertImportFailsWith(String tableName, FilesFacade brokenFf, String expectedError) throws Exception {
@@ -1876,7 +1877,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         }
 
-        ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot, "tableName"));
+        ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot, TableUtils.fsTableName("tableName")));
         Assert.assertEquals(list(expectedChunks), actualChunks);
     }
 
@@ -1943,7 +1944,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
-        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat("tabex3").slash$()) {
+        try (Path p = TableUtils.createTablePath(Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot"), "tabex3").slash$()) {
             FilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
         }
 
@@ -1952,27 +1953,32 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenIntermediateTableDirectoryIsMangled() throws Exception {
+        String tab33 = "tab33";
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, "tab33_0")) {
+                if (Chars.endsWith(path, TableUtils.fsTableName(TableUtils.fsTableName(tab33) + "_0"))) {
                     return true;
                 }
                 return super.exists(path);
             }
         };
 
-        testImportThrowsException(ff, "tab33", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`name is reserved [tableName=tab33_0]`]");
+        testImportThrowsException(ff, tab33, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`name is reserved [tableName=" + TableUtils.fsTableName("tab33")+"_0]`]");
     }
 
     @Test
     public void testImportFileFailsWhenIntermediateTableDirectoryExistAndCantBeDeleted() throws Exception {
+        String tab34 = "tab34";
+        String tab34_0 = TableUtils.fsTableName(tab34) + "_0_";
         FilesFacade ff = new FilesFacadeImpl() {
+
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, "tab34_0")) {
+                System.err.println("path: " + path);
+                if (Chars.endsWith(path, tab34_0)) {
                     return true;
-                } else if (Chars.endsWith(path, "tab34_0" + File.separator + "_txn")) {
+                } else if (Chars.endsWith(path, tab34_0 + File.separator + "_txn")) {
                     return true;
                 }
                 return super.exists(path);
@@ -1980,20 +1986,21 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             @Override
             public int rmdir(Path name) {
-                if (Chars.endsWith(name, "tab34_0")) {
+                if (Chars.endsWith(name, tab34_0)) {
                     return -1;
                 }
                 return super.rmdir(name);
             }
         };
 
-        testImportThrowsException(ff, "tab34", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`[-1] Table remove failed [tableName=tab34_0]`]");
+        testImportThrowsException(ff, tab34, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`[-1] Table remove failed [tableName=tab34__0]`]");
     }
 
     @Test
     public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
+        String tab35 = "tab35";
         FilesFacade ff = new FilesFacadeImpl() {
-            final String tempDir = inputWorkRoot + File.separator + "tab35";
+            final String tempDir = inputWorkRoot + File.separator + TableUtils.fsTableName(tab35);
 
             @Override
             public boolean exists(LPSZ path) {
@@ -2013,7 +2020,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tab35", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove work dir");
+        testImportThrowsException(ff, tab35, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove work dir");
     }
 
     @Test
