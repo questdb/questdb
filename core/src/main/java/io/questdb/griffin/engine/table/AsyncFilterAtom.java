@@ -120,7 +120,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
     }
 
     /**
-     * Pre-touches fixed-size columns, if the feature is configured.
+     * Pre-touches column values for the filtered rows, if the feature is configured.
      * <p>
      * The idea is to access the memory to page fault and, thus, warm up the pages
      * in parallel, on multiple threads, instead of relying on the "query owner" thread
@@ -148,7 +148,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                         sum += record.getShort(i);
                         break;
                     case ColumnType.INT:
-                    case ColumnType.SYMBOL: // We're interested in pre-touching the page only, so we read symbol key only.
+                    case ColumnType.SYMBOL: // We're interested in pre-touching pages, so we read the symbol key only.
                         sum += record.getInt(i);
                         break;
                     case ColumnType.LONG:
@@ -180,6 +180,20 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                         break;
                     case ColumnType.GEOLONG:
                         sum += record.getGeoLong(i);
+                        break;
+                    case ColumnType.STRING:
+                        CharSequence cs = record.getStr(i);
+                        if (cs !=null && cs.length() > 0) {
+                            // Touch the first page of the string contents only.
+                            sum += cs.charAt(0);
+                        }
+                        break;
+                    case ColumnType.BINARY:
+                        BinarySequence bs = record.getBin(i);
+                        if (bs != null && bs.length() > 0) {
+                            // Touch the first page of the binary contents only.
+                            sum += bs.byteAt(0);
+                        }
                         break;
                 }
             }
