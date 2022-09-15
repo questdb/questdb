@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.std.fastdouble.FastDouble;
+import io.questdb.std.fastdouble.FastFloat;
 import io.questdb.std.str.CharSink;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
@@ -54,7 +56,6 @@ public final class Numbers {
     private static final int MAX_SMALL_BIN_EXP = 62;
     private static final int MIN_SMALL_BIN_EXP = -(63 / 3);
     private static final long[] pow10;
-    private static final long LONG_OVERFLOW_MAX = Long.MAX_VALUE / 10;
     private static final long INT_OVERFLOW_MAX = Integer.MAX_VALUE / 10;
     private final static String NaN = "NaN";
     private static final String INFINITY = "Infinity";
@@ -587,192 +588,12 @@ public final class Numbers {
         return 63 - Long.numberOfLeadingZeros(value);
     }
 
-    /**
-     * Clinger's fast path:
-     * <a href="https://www.researchgate.net/publication/2295884_How_to_Read_Floating_Point_Numbers_Accurately">source</a>
-     */
     public static double parseDouble(CharSequence sequence) throws NumericException {
-        int lim = sequence.length();
-
-        if (lim == 0) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(0) == '-';
-        int i;
-        if (negative) {
-            i = 1;
-        } else {
-            i = 0;
-        }
-
-        if (i >= lim) {
-            throw NumericException.INSTANCE;
-        }
-
-        switch (sequence.charAt(i)) {
-            case 'N':
-                return parseConst(sequence, i, lim, NaN, Double.NaN);
-            case 'I':
-                return parseConst(sequence, i, lim, INFINITY, negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY);
-            default:
-                break;
-        }
-
-        long val = 0;
-        int dp = -1;
-        int dpe = lim;
-        int exp = 0;
-        int dexp = -1; //exponent position
-
-        out:
-        for (; i < lim; i++) {
-            final int c = sequence.charAt(i);
-            switch (c) {
-                case '.':
-                    dp = i;
-                    continue;
-                case 'E':
-                case 'e':
-                    dexp = i;
-                    exp = parseInt(sequence, i + 1, lim);
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                case 'D':
-                case 'd':
-                    if (i + 1 < lim || i == 0) {
-                        throw NumericException.INSTANCE;
-                    }
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                default:
-                    if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
-                    }
-
-                    if (val < LONG_OVERFLOW_MAX) {
-                        // val * 10 + (c - '0')
-                        val = (val << 3) + (val << 1) + (c - '0');
-                    } else if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break;
-            }
-        }
-
-        if (dp == -1 && dexp == -1) {
-            dp = lim;//implicit decimal point
-        }
-
-        if (dp != -1) {
-            int adjust = dp < lim && dpe > dp ? 1 : 0;
-            exp = exp - (dpe - dp - adjust);
-        }
-
-        if (exp > 308) {
-            exp = 308;
-        } else if (exp < -308) {
-            exp = -308;
-        }
-
-        double v = exp > -1 ? val * pow10d[exp] : val / pow10d[-exp];
-        return negative ? -v : v;
+        return FastDouble.parseFloatingPointLiteral(sequence, 0, sequence.length());
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
-        int lim = sequence.length();
-
-        int p = 0;
-        if (lim == p) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-        if (negative) {
-            p++;
-        }
-
-        if (p >= lim) {
-            throw NumericException.INSTANCE;
-        }
-
-
-        switch (sequence.charAt(p)) {
-            case 'N':
-                return parseFloatConst(sequence, p, lim, NaN, Float.NaN);
-            case 'I':
-                return parseFloatConst(sequence, p, lim, INFINITY, negative ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY);
-            default:
-                break;
-        }
-
-        int val = 0;
-        int dp = -1;
-        int dpe = lim;
-        int exp = 0;
-        int dexp = -1; //exponent position
-
-        out:
-        for (int i = p; i < lim; i++) {
-            int c = sequence.charAt(i);
-            switch (c) {
-                case '.':
-                    dp = i;
-                    continue;
-                case 'E':
-                case 'e':
-                    dexp = i;
-                    exp = parseInt(sequence, i + 1, lim);
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                case 'F':
-                case 'f':
-                    if (i == 0 || i + 1 < lim) {
-                        throw NumericException.INSTANCE;
-                    }
-
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                default:
-                    if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
-                    }
-
-                    if (val < INT_OVERFLOW_MAX) {
-                        // val * 10 + (c - '0')
-                        val = (val << 3) + (val << 1) + (c - '0');
-                    } else if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break;
-            }
-        }
-
-        if (dp == -1 && dexp == -1) {
-            dp = lim;//implicit decimal point
-        }
-
-        if (dp != -1) {
-            int adjust = dp < lim && dpe > dp ? 1 : 0;
-            exp = exp - (dpe - dp - adjust);
-        }
-
-        if (exp > 38) {
-            exp = 38;
-        } else if (exp < -38) {
-            exp = -38;
-        }
-
-        float v = exp > 0 ? val * pow10f[exp] : val / pow10f[-exp];
-        return negative ? -v : v;
+        return FastFloat.parseFloatingPointLiteral(sequence, 0, sequence.length());
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {
