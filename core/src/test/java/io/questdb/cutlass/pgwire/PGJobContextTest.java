@@ -24,7 +24,10 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -8026,6 +8029,19 @@ create table tab as (
                     StringSink sink = new StringSink();
                     assertResultSet("cnt[BIGINT]\n2\n", sink, result);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDeallocateStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final Connection connection = getConnection(server.getPort(), false, true);
+            ) {
+                connection.prepareStatement("DEALLOCATE foo;").execute();
+                connection.prepareStatement("DEALLOCATE bar;").execute();
             }
         });
     }

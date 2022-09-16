@@ -67,6 +67,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_UPDATE = "UPDATE";
+    public static final String TAG_DEALLOCATE = "DEALLOCATE";
     // create as select tag
     public static final String TAG_CTAS = "CTAS";
     public static final char STATUS_IN_TRANSACTION = 'T';
@@ -1976,6 +1977,18 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareCloseComplete();
     }
 
+    private void processDeallocate(CharSequence statementName) {
+        if (statementName != null) {
+            final int index = namedStatementMap.keyIndex(statementName);
+            // do not freak out if client is closing statement we don't have
+            // we could have reported error to client before statement was created
+            if (index < 0) {
+                namedStatementWrapperPool.push(namedStatementMap.valueAt(index));
+                namedStatementMap.removeAt(index);
+            }
+        }
+    }
+
     private void processCompiledQuery(CompiledQuery cq) throws SqlException {
         sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
 
@@ -2023,6 +2036,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 break;
             case CompiledQuery.SET:
                 queryTag = TAG_SET;
+                break;
+            case CompiledQuery.DEALLOCATE:
+                queryTag = TAG_DEALLOCATE;
+                processDeallocate(cq.getStatementName());
                 break;
             case CompiledQuery.BEGIN:
                 queryTag = TAG_BEGIN;
