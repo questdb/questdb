@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import java.util.Arrays;
+
 public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
@@ -81,6 +83,27 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
     protected void move(int from, int to) {
         keys[to] = keys[from];
         erase(from);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LowerCaseCharSequenceHashSet that = (LowerCaseCharSequenceHashSet) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (CharSequence key : keys) {
+            if (key != null && that.excludes(key)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        return Arrays.hashCode(keys);
     }
 
     private void rehash() {

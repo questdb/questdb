@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSequenceHashMap {
     private T[] values;
@@ -98,6 +99,40 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     private void putAt0(int index, CharSequence key, T value) {
         values[index] = value;
         putAt0(index, key);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LowerCaseCharSequenceObjHashMap<?> that = (LowerCaseCharSequenceObjHashMap<?>) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (CharSequence key : keys) {
+            if (key == null) {
+                continue;
+            }
+            if (that.excludes(key)) {
+                return false;
+            }
+            Object value = get(key);
+            if (value != null) {
+                Object thatValue = that.get(key);
+                if (!Objects.equals(value, thatValue)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = super.hashCode();
+        result = 31 * result + Arrays.hashCode(keys);
+        result = 31 * result + Arrays.hashCode(values);
+        return result;
     }
 
     @SuppressWarnings("unchecked")

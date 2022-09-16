@@ -103,6 +103,40 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
     }
 
     @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LowerCaseCharSequenceIntHashMap that = (LowerCaseCharSequenceIntHashMap) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (CharSequence key : keys) {
+            if (key == null) {
+                continue;
+            }
+            if (that.excludes(key)) {
+                return false;
+            }
+            int value = get(key);
+            if (value != noEntryValue) {
+                int thatValue = that.get(key);
+                if (value != thatValue) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = super.hashCode();
+        result = 31 * result + Arrays.hashCode(keys);
+        result = 31 * result + Arrays.hashCode(values);
+        return result;
+    }
+
+    @Override
     protected void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
