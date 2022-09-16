@@ -39,7 +39,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     private InsertOperation insertOperation;
     private UpdateOperation updateOperation;
     private AlterOperation alterOperation;
-    private AlterOperation deallocateOperation;
     private TextLoader textLoader;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
