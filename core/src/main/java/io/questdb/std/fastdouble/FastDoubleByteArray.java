@@ -147,7 +147,14 @@ final public class FastDoubleByteArray {
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
-    private static double parseDecFloatLiteral(byte[] str, int index, int startIndex, int endIndex, boolean isNegative, boolean hasLeadingZero) throws NumericException {
+    private static double parseDecFloatLiteral(
+            byte[] str,
+            int index,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            boolean hasLeadingZero
+    ) throws NumericException {
         // Parse significand
         // -----------------
         // Note: a multiplication by a constant is cheaper than an
@@ -221,8 +228,11 @@ final public class FastDoubleByteArray {
         // Skip trailing whitespace and check if FloatingPointLiteral is complete
         // ------------------------
         index = skipWhitespace(str, index, endIndex);
-        if (illegal || index < endIndex
-                || !hasLeadingZero && digitCount == 0) {
+        if (illegal
+                || index < endIndex
+                || !hasLeadingZero
+                && digitCount == 0
+        ) {
             throw NumericException.INSTANCE;
         }
 

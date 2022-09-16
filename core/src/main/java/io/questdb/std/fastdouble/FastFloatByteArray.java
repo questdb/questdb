@@ -1,5 +1,5 @@
 /*
- * @(#)AbstractFloatValueFromCharSequenceParser.java
+ * @(#)FastFloatByteArray.java
  * Copyright © 2022. Werner Randelshofer, Switzerland. MIT License.
  */
 
@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
-abstract class FastFloatByteArray {
+public final class FastFloatByteArray {
 
     /**
      * Parses a {@code FloatingPointLiteral} production with optional leading and trailing

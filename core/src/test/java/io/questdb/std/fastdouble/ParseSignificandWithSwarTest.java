@@ -100,7 +100,7 @@ public class ParseSignificandWithSwarTest {
         // as mentioned here  https://kholdstare.github.io/technical/2020/05/26/faster-integer-parsing.html
 
 
-        long asciiFloat = (long) FastDoubleSwar.readLongFromByteArrayLittleEndian.get(str, 0);
+        final long asciiFloat = FastDoubleSwar.getChunk(str, 0);
 
         // Create a mask, that contains 0x80 at every '.' character and 0x00 everywhere else.
         long masked = asciiFloat ^ DECIMAL_POINT_MASK;

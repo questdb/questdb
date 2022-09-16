@@ -36,7 +36,6 @@ public final class FastFloatParser {
      * Don't let anyone instantiate this class.
      */
     private FastFloatParser() {
-
     }
 
     /**

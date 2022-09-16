@@ -44,8 +44,8 @@ public class EightDigitsSwarTest extends AbstractEightDigitsTest {
                 0x8080808080808080L;
         if (det != 0L) {
             result = -1;
-        } else {// The last 2 multiplications in this algorithm are independent of each
-// other.
+        } else {
+            // The last 2 multiplications in this algorithm are independent of each other.
             long mask = 0x000000FF_000000FFL;
             val = (val * 0xa_01L) >>> 8;// 1+(10<<8)
             val = (((val & mask) * 0x000F4240_00000064L)//100 + (1000000 << 32)
@@ -89,6 +89,5 @@ public class EightDigitsSwarTest extends AbstractEightDigitsTest {
         } else {
             assertEquals(expected, actual);
         }
-
     }
 }

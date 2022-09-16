@@ -1125,9 +1125,4 @@ class FastDoubleMath {
             this.low = low;
         }
     }
-
-    public static long clamp(long value, long min, long max) {
-        //noinspection ManualMinMaxCalculation
-        return value < min ? min : (value > max ? max : value);
-    }
 }
