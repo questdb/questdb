@@ -35,6 +35,11 @@ import java.util.Objects;
 
 import static io.questdb.griffin.SqlKeywords.isAndKeyword;
 
+/**
+ * Important note: Make sure to update clear, equals and hashCode methods when
+ * you're adding new fields to this class. Instances of QueryModel are reused across
+ * query compilation, so making sure that we reset all fields correctly is important.
+ */
 public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
