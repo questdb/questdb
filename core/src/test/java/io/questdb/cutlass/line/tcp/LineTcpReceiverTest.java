@@ -31,7 +31,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.Services;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
@@ -42,7 +41,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -1091,17 +1091,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(() -> LineTcpReceiverTest.this.getWorkerCount(), metrics);
-            sharedWorkerPool.assignCleaner(Path.CLEANER);
-            workerPoolManager.setSharedPool(sharedWorkerPool);
-            try (LineTcpReceiver ignored = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics)) {
+            try (LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool)) {
                 long startEpochMs = System.currentTimeMillis();
-                workerPoolManager.startAll(LOG);
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
+                sharedWorkerPool.start(LOG);
 
                 try {
                     final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
                     for (int n = 0; n < senders.length; n++) {
                         senders[n] = senderSupplier.get();
+                        ;
                         StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
                         sb.append("location\ttemp\ttimestamp\n");
                         expectedSbs[n] = sb;
@@ -1176,7 +1175,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     } while (nRowsWritten < nRows);
                     LOG.info().$(nRowsWritten).$(" rows written").$();
                 } finally {
-                    workerPoolManager.closeAll();
+                    sharedWorkerPool.close();
                 }
             } finally {
                 engine.setPoolListener(null);

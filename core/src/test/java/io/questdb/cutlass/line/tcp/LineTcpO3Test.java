@@ -24,12 +24,10 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.Services;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -38,9 +36,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.Net;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -59,8 +59,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
     private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
-
-    private final WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -99,7 +97,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
         configuration = serverConf.getCairoConfiguration();
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
-        metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
@@ -162,43 +159,41 @@ public class LineTcpO3Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
-            WorkerPool sharedWorkerPool = workerPoolManager.getInstance(sharedWorkerPoolConfiguration, metrics);
-            workerPoolManager.setSharedPool(sharedWorkerPool);
+
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
-            try (LineTcpReceiver receiver = Services.createLineTcpReceiver(lineConfiguration, workerPoolManager, engine, metrics)) {
-                try (
-                        SqlCompiler compiler = new SqlCompiler(engine);
-                        SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                ) {
-                    SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
-                            haltLatch.countDown();
-                        }
-                    });
+            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
+            try (
+                    LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
+                        haltLatch.countDown();
+                    }
+                });
 
-                    sharedWorkerPool.assignCleaner(Path.CLEANER);
-                    workerPoolManager.startAll();
-                    TestUtils.assertConnect(clientFd, ilpSockAddr);
-                    readGzResource(ilpResourceName);
-                    Net.send(clientFd, resourceAddress, resourceSize);
-                    Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
+                sharedWorkerPool.assignCleaner(Path.CLEANER);
+                sharedWorkerPool.start(LOG);
+                TestUtils.assertConnect(clientFd, ilpSockAddr);
+                readGzResource(ilpResourceName);
+                Net.send(clientFd, resourceAddress, resourceSize);
+                Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 
-                    haltLatch.await();
+                haltLatch.await();
 
-                    TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
-                    readGzResource("selectAll1");
-                    DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
-                    expectedSink.clear(resourceSize);
-                    TestUtils.assertEquals(expectedSink.toString(), sink);
-                    Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
-
-                } finally {
-                    workerPoolManager.closeAll();
-                    engine.setPoolListener(null);
-                    Net.close(clientFd);
-                    Net.freeSockAddr(ilpSockAddr);
-                }
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
+                readGzResource("selectAll1");
+                DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
+                expectedSink.clear(resourceSize);
+                TestUtils.assertEquals(expectedSink.toString(), sink);
+                Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
+            } finally {
+                engine.setPoolListener(null);
+                Net.close(clientFd);
+                Net.freeSockAddr(ilpSockAddr);
+                sharedWorkerPool.close();
             }
         });
     }

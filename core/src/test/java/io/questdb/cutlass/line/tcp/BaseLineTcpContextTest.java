@@ -31,7 +31,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -120,7 +119,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
-        return WorkerPoolManager.createUnmanaged(new WorkerPoolConfiguration() {
+        return new WorkerPool(new WorkerPoolConfiguration() {
             @Override
             public int getWorkerCount() {
                 return workerCount;
