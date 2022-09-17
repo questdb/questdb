@@ -79,6 +79,18 @@ public final class FastDoubleParser {
     }
 
     /**
+     * Convenience method for calling {@link #parseDouble(long, int, int)}.
+     *
+     * @param str the string to be parsed, a memory pointer to array with characters
+     *            in ISO-8859-1, ASCII or UTF-8 encoding
+     * @return the parsed double value
+     * @throws NumericException if the string can not be parsed
+     */
+    public static double parseDouble(long str, int len) throws NumericException {
+        return parseDouble(str, 0, len);
+    }
+
+    /**
      * Parses a {@code FloatingPointLiteral} from a {@code byte}-Array and converts it
      * into a {@code double} value.
      * <p>
@@ -93,6 +105,23 @@ public final class FastDoubleParser {
      */
     public static double parseDouble(byte[] str, int offset, int length) throws NumericException {
         return FastDoubleByteArray.parseFloatingPointLiteral(str, offset, length);
+    }
+
+    /**
+     * Parses a {@code FloatingPointLiteral} from a bytes in native memory and converts it
+     * into a {@code double} value.
+     * <p>
+     * See {@link io.questdb.std.fastdouble} for the syntax of {@code FloatingPointLiteral}.
+     *
+     * @param str    the string to be parsed, a memory pointer to array of characters
+     *               in ISO-8859-1, ASCII or UTF-8 encoding
+     * @param offset The index of the first byte to parse
+     * @param length The number of bytes to parse
+     * @return the parsed double value
+     * @throws NumericException if the string can not be parsed
+     */
+    public static double parseDouble(long str, int offset, int length) throws NumericException {
+        return FastDoubleMem.parseFloatingPointLiteral(str, offset, length);
     }
 
     /**

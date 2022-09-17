@@ -10,9 +10,6 @@ import io.questdb.std.NumericException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends AbstractLexicallyGeneratedTest {
-    protected double parse(String str) throws NumericException {
-        return FastDoubleParser.parseDouble(str);
-    }
 
     @Override
     protected void testAgainstJdk(String str) {

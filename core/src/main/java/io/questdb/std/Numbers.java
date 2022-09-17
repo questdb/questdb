@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.fastdouble.FastDouble;
+import io.questdb.std.fastdouble.FastDoubleMem;
 import io.questdb.std.fastdouble.FastFloat;
 import io.questdb.std.str.CharSink;
 //#if jdk.version==8
@@ -590,6 +591,10 @@ public final class Numbers {
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
         return FastDouble.parseFloatingPointLiteral(sequence, 0, sequence.length());
+    }
+
+    public static double parseDouble(long str, int len) throws NumericException {
+        return FastDoubleMem.parseFloatingPointLiteral(str, 0, len);
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {

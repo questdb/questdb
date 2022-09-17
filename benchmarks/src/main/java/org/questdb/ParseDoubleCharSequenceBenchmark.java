@@ -24,10 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -44,6 +42,8 @@ import java.util.concurrent.TimeUnit;
 public class ParseDoubleCharSequenceBenchmark {
     private final static List<String> doubles = new ArrayList<>();
     private static final int N = 100;
+    private static final DirectByteCharSequence flyweight = new DirectByteCharSequence();
+    private final long mem = Unsafe.malloc(8 * 1024, MemoryTag.NATIVE_DEFAULT);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -60,26 +60,56 @@ public class ParseDoubleCharSequenceBenchmark {
     public void setup() {
         Os.init();
         doubles.clear();
-        Rnd rnd= new Rnd();
+        Rnd rnd = new Rnd();
+        long p = mem;
         for (int i = 0; i < N; i++) {
-            doubles.add(Double.toString(rnd.nextDouble()));
+            String s = Double.toString(rnd.nextDouble());
+            doubles.add(s);
+            Unsafe.getUnsafe().putInt(p, s.length());
+            Chars.asciiStrCpy(s, p + 4);
+            p += s.length() + 4;
         }
+    }
+
+    @Benchmark
+    public double testDoubleParseDouble() {
+        double sum = 0;
+        for (int i = 0; i < N; i++) {
+            sum += Double.parseDouble(doubles.get(i));
+        }
+        return sum;
     }
 
     @Benchmark
     public double testNumbersParseDouble() throws NumericException {
         double sum = 0;
-        for (int i = 0; i<N; i++) {
+        for (int i = 0; i < N; i++) {
             sum += Numbers.parseDouble(doubles.get(i));
         }
         return sum;
     }
 
     @Benchmark
-    public double testDoubleParseDouble() {
+    public double testNumbersParseDoubleMem() throws NumericException {
+        long p = mem;
         double sum = 0;
-        for (int i = 0; i<N; i++) {
-            sum += Double.parseDouble(doubles.get(i));
+        for (int i = 0; i < N; i++) {
+            int len = Unsafe.getUnsafe().getInt(p);
+            sum += Numbers.parseDouble(p + 4, len);
+            p += 4 + len;
+        }
+        return sum;
+    }
+
+    @Benchmark
+    public double testNumbersParseDoubleMemCs() throws NumericException {
+        long p = mem;
+        double sum = 0;
+        for (int i = 0; i < N; i++) {
+            int len = Unsafe.getUnsafe().getInt(p);
+            flyweight.of(p + 4, p + 4 + len);
+            sum += Numbers.parseDouble(flyweight);
+            p += 4 + len;
         }
         return sum;
     }

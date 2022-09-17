@@ -5,6 +5,8 @@
 
 package io.questdb.std.fastdouble;
 
+import io.questdb.std.Chars;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -238,7 +240,7 @@ public abstract class AbstractFastXParserTest {
                 new TestData("parseFloatValue(): Significand with trailing whitespace", "3   ", 0, 4, 0, 4, 3d, 3f, true),
                 new TestData("parseFloatValue(): Empty String", "", 0, 0, 0, 0, 0d, 0f, false),
                 new TestData("parseFloatValue(): Blank String", "   ", 0, 3, 0, 3, 0d, 0f, false),
-                new TestData("parseFloatValue(): Very long non-blank String", "a".repeat(66), 0, 66, 0, 66, 0d, 0f, false),
+                new TestData("parseFloatValue(): Very long non-blank String", Chars.repeat("a", 66).toString(), 0, 66, 0, 66, 0d, 0f, false),
                 new TestData("parseFloatValue(): Plus Sign", "+", 0, 1, 0, 1, 0d, 0f, false),
                 new TestData("parseFloatValue(): Negative Sign", "-", 0, 1, 0, 1, 0d, 0f, false),
                 new TestData("parseFloatValue(): Infinity", "Infinity", 0, 8, 0, 8, Double.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, true),

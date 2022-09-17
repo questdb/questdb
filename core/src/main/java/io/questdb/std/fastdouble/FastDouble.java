@@ -29,11 +29,6 @@ import io.questdb.std.NumericException;
 /**
  * Parses a {@code FloatingPointLiteral} from a {@link CharSequence}.
  * <p>
- * This class should have a type parameter for the return value of its parse
- * methods. Unfortunately Java does not support type parameters for primitive
- * types. As a workaround we use {@code long}. A {@code long} has enough bits to
- * fit a {@code double} value or a {@code float} value.
- * <p>
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
@@ -54,7 +49,7 @@ public class FastDouble {
      * @param str    a string containing a {@code FloatingPointLiteralWithWhiteSpace}
      * @param offset start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
      * @param length length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @return the bit pattern of the parsed value, if the input is legal;
+     * @return the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
     public static double parseFloatingPointLiteral(CharSequence str, int offset, int length) throws NumericException {
@@ -132,8 +127,8 @@ public class FastDouble {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
-     * @return the bit pattern of the parsed value, if the input is legal;
-     * otherwise, {@code -1L}.
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException is the input is illegal.
      */
     private static double parseDecFloatLiteral(
             final CharSequence str,
@@ -278,8 +273,8 @@ public class FastDouble {
      * @param startIndex the start index of the string
      * @param endIndex   the end index of the string
      * @param isNegative if the resulting number is negative
-     * @return the bit pattern of the parsed value, if the input is legal;
-     * otherwise, {@code -1L}.
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException if the input is illegal.
      */
     private static double parseHexFloatLiteral(
             CharSequence str,
@@ -436,7 +431,7 @@ public class FastDouble {
         ) {
             index = skipWhitespace(str, index + 8, endIndex);
             if (index == endIndex) {
-                return negative ? negativeInfinity() : positiveInfinity();
+                return negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
             }
         }
         throw NumericException.INSTANCE;
@@ -468,7 +463,7 @@ public class FastDouble {
 
             index = skipWhitespace(str, index + 3, endIndex);
             if (index == endIndex) {
-                return nan();
+                return Double.NaN;
             }
         }
         throw NumericException.INSTANCE;
@@ -505,18 +500,6 @@ public class FastDouble {
                 | (long) str.charAt(offset + 7) << 48;
 
         return FastDoubleSwar.tryToParseEightDigitsUtf16(first, second);
-    }
-
-    static double nan() {
-        return Double.NaN;
-    }
-
-    static double negativeInfinity() {
-        return Double.NEGATIVE_INFINITY;
-    }
-
-    static double positiveInfinity() {
-        return Double.POSITIVE_INFINITY;
     }
 
     static double valueOfFloatLiteral(

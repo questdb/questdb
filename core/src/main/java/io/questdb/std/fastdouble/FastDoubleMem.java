@@ -25,16 +25,17 @@
 package io.questdb.std.fastdouble;
 
 import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 
 import java.nio.charset.StandardCharsets;
 
 /**
- * Parses a {@code FloatingPointLiteral} from a {@code byte} array.
+ * Parses a {@code FloatingPointLiteral} from a byte array in native memory.
  * <p>
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
-final public class FastDoubleByteArray {
+final public class FastDoubleMem {
 
     /**
      * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
@@ -54,9 +55,9 @@ final public class FastDoubleByteArray {
      * @return the parsed value, if the input is legal;
      * @throws NumericException is the input is illegal.
      */
-    public static double parseFloatingPointLiteral(byte[] str, int offset, int length) throws NumericException {
+    public static double parseFloatingPointLiteral(long str, int offset, int length) throws NumericException {
         final int endIndex = offset + length;
-        if (offset < 0 || endIndex > str.length) {
+        if (offset < 0) {
             throw NumericException.INSTANCE;
         }
 
@@ -66,13 +67,13 @@ final public class FastDoubleByteArray {
         if (index == endIndex) {
             throw NumericException.INSTANCE;
         }
-        byte ch = str[index];
+        byte ch = Unsafe.getUnsafe().getByte(str + index);
 
         // Parse optional sign
         // -------------------
         final boolean isNegative = ch == '-';
         if (isNegative || ch == '+') {
-            ch = ++index < endIndex ? str[index] : 0;
+            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             if (ch == 0) {
                 throw NumericException.INSTANCE;
             }
@@ -90,7 +91,7 @@ final public class FastDoubleByteArray {
         // ---------------------------
         final boolean hasLeadingZero = ch == '0';
         if (hasLeadingZero) {
-            ch = ++index < endIndex ? str[index] : 0;
+            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             if (ch == 'x' || ch == 'X') {
                 return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative);
             }
@@ -111,9 +112,9 @@ final public class FastDoubleByteArray {
      * @param endIndex end index (exclusive) of the optional white space
      * @return index after the optional white space
      */
-    private static int skipWhitespace(byte[] str, int index, int endIndex) {
+    private static int skipWhitespace(long str, int index, int endIndex) {
         for (; index < endIndex; index++) {
-            if ((str[index] & 0xff) > ' ') {
+            if ((Unsafe.getUnsafe().getByte(str + index) & 0xff) > ' ') {
                 break;
             }
         }
@@ -143,7 +144,7 @@ final public class FastDoubleByteArray {
      * @throws NumericException if the input is illegal.
      */
     private static double parseDecFloatLiteral(
-            byte[] str,
+            long str,
             int index,
             int startIndex,
             int endIndex,
@@ -160,7 +161,7 @@ final public class FastDoubleByteArray {
         boolean illegal = false;
         byte ch = 0;
         for (; index < endIndex; index++) {
-            ch = str[index];
+            ch = Unsafe.getUnsafe().getByte(str + index);
             if (isDigit(ch)) {
                 // This might overflow, we deal with it later.
                 significand = 10 * significand + ch - '0';
@@ -195,10 +196,10 @@ final public class FastDoubleByteArray {
         // ---------------------
         int expNumber = 0;
         if (ch == 'e' || ch == 'E') {
-            ch = ++index < endIndex ? str[index] : 0;
+            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             boolean neg_exp = ch == '-';
             if (neg_exp || ch == '+') {
-                ch = ++index < endIndex ? str[index] : 0;
+                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             }
             illegal |= !isDigit(ch);
             do {
@@ -206,7 +207,7 @@ final public class FastDoubleByteArray {
                 if (expNumber < FastDoubleUtils.MAX_EXPONENT_NUMBER) {
                     expNumber = 10 * expNumber + ch - '0';
                 }
-                ch = ++index < endIndex ? str[index] : 0;
+                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             } while (isDigit(ch));
             if (neg_exp) {
                 expNumber = -expNumber;
@@ -239,7 +240,7 @@ final public class FastDoubleByteArray {
         if (digitCount > 19) {
             significand = 0;
             for (index = significandStartIndex; index < significandEndIndex; index++) {
-                ch = str[index];
+                ch = Unsafe.getUnsafe().getByte(str + index);
                 if (ch == '.') {
                     skipCountInTruncatedDigits++;
                 } else {
@@ -292,7 +293,7 @@ final public class FastDoubleByteArray {
      * @throws NumericException if the input is illegal.
      */
     private static double parseHexFloatingPointLiteral(
-            byte[] str,
+            long str,
             int index,
             int startIndex,
             int endIndex,
@@ -309,7 +310,7 @@ final public class FastDoubleByteArray {
         boolean illegal = false;
         byte ch = 0;
         for (; index < endIndex; index++) {
-            ch = str[index];
+            ch = Unsafe.getUnsafe().getByte(str + index);
             // Table look up is faster than a sequence of if-else-branches.
             int hexValue = ch < 0 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];
             if (hexValue >= 0) {
@@ -347,10 +348,10 @@ final public class FastDoubleByteArray {
         int expNumber = 0;
         final boolean hasExponent = (ch == 'p') || (ch == 'P');
         if (hasExponent) {
-            ch = ++index < endIndex ? str[index] : 0;
+            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             boolean neg_exp = ch == '-';
             if (neg_exp || ch == '+') {
-                ch = ++index < endIndex ? str[index] : 0;
+                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             }
             illegal |= !isDigit(ch);
             do {
@@ -358,7 +359,7 @@ final public class FastDoubleByteArray {
                 if (expNumber < FastDoubleUtils.MAX_EXPONENT_NUMBER) {
                     expNumber = 10 * expNumber + ch - '0';
                 }
-                ch = ++index < endIndex ? str[index] : 0;
+                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             } while (isDigit(ch));
             if (neg_exp) {
                 expNumber = -expNumber;
@@ -388,7 +389,7 @@ final public class FastDoubleByteArray {
         if (digitCount > 16) {
             significand = 0;
             for (index = significandStartIndex; index < significandEndIndex; index++) {
-                ch = str[index];
+                ch = Unsafe.getUnsafe().getByte(str + index);
                 // Table look up is faster than a sequence of if-else-branches.
                 int hexValue = ch < 0 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];
                 if (hexValue >= 0) {
@@ -426,16 +427,16 @@ final public class FastDoubleByteArray {
      * @return a positive or negative infinity value
      * @throws NumberFormatException on parsing failure
      */
-    private static double parseInfinity(byte[] str, int index, int endIndex, boolean negative) throws NumericException {
+    private static double parseInfinity(long str, int index, int endIndex, boolean negative) throws NumericException {
         if (index + 7 < endIndex
-                && str[index] == 'I'
-                && str[index + 1] == 'n'
-                && str[index + 2] == 'f'
-                && str[index + 3] == 'i'
-                && str[index + 4] == 'n'
-                && str[index + 5] == 'i'
-                && str[index + 6] == 't'
-                && str[index + 7] == 'y'
+                && Unsafe.getUnsafe().getByte(str + index) == 'I'
+                && Unsafe.getUnsafe().getByte(str + index + 1) == 'n'
+                && Unsafe.getUnsafe().getByte(str + index + 2) == 'f'
+                && Unsafe.getUnsafe().getByte(str + index + 3) == 'i'
+                && Unsafe.getUnsafe().getByte(str + index + 4) == 'n'
+                && Unsafe.getUnsafe().getByte(str + index + 5) == 'i'
+                && Unsafe.getUnsafe().getByte(str + index + 6) == 't'
+                && Unsafe.getUnsafe().getByte(str + index + 7) == 'y'
         ) {
             index = skipWhitespace(str, index + 8, endIndex);
             if (index == endIndex) {
@@ -463,11 +464,11 @@ final public class FastDoubleByteArray {
      * @return a NaN value
      * @throws NumberFormatException on parsing failure
      */
-    private static double parseNaN(byte[] str, int index, int endIndex) throws NumericException {
+    private static double parseNaN(long str, int index, int endIndex) throws NumericException {
         if (index + 2 < endIndex
                 // && str[index] == 'N'
-                && str[index + 1] == 'a'
-                && str[index + 2] == 'N') {
+                && Unsafe.getUnsafe().getByte(str + index + 1) == 'a'
+                && Unsafe.getUnsafe().getByte(str + index + 2) == 'N') {
 
             index = skipWhitespace(str, index + 3, endIndex);
             if (index == endIndex) {
@@ -482,12 +483,12 @@ final public class FastDoubleByteArray {
         return FastDoubleVector.tryToParseEightHexDigitsUtf8(str, offset);
     }*/
 
-    private static int tryToParseEightDigits(byte[] str, int offset) {
-        return FastDoubleSwar.tryToParseEightDigitsUtf8(str, offset);
+    private static int tryToParseEightDigits(long str, int offset) {
+        return FastDoubleSwar.tryToParseEightDigitsUtf8(Unsafe.getUnsafe().getLong(str + offset));
     }
 
     static double valueOfFloatLiteral(
-            byte[] str,
+            long str,
             int startIndex,
             int endIndex,
             boolean isNegative,
@@ -503,13 +504,23 @@ final public class FastDoubleByteArray {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Double.isNaN(d) ? Double.parseDouble(
-                new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1)
-        ) : d;
+        return dealWithNaN(d, str, startIndex, endIndex);
+    }
+
+    private static double dealWithNaN(double value, long str, int startIndex, int endIndex) {
+        if (Double.isNaN(value)) {
+            int len = endIndex - startIndex;
+            byte[] b = new byte[len];
+            for (int i = 0; i < len; i++) {
+                b[i] = Unsafe.getUnsafe().getByte(str + startIndex + i);
+            }
+            return Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
+        }
+        return value;
     }
 
     static double valueOfHexLiteral(
-            byte[] str,
+            long str,
             int startIndex,
             int endIndex,
             boolean isNegative,
@@ -525,8 +536,6 @@ final public class FastDoubleByteArray {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Double.isNaN(d) ? Double.parseDouble(
-                new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1)
-        ) : d;
+        return dealWithNaN(d, str, startIndex, endIndex);
     }
 }

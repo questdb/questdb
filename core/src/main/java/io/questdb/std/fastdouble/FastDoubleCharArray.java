@@ -29,11 +29,6 @@ import io.questdb.std.NumericException;
 /**
  * Parses a {@code FloatingPointLiteral} from a {@code char} array.
  * <p>
- * This class should have a type parameter for the return value of its parse
- * methods. Unfortunately Java does not support type parameters for primitive
- * types. As a workaround we use {@code long}. A {@code long} has enough bits to
- * fit a {@code double} value or a {@code float} value.
- * <p>
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
@@ -79,8 +74,8 @@ public final class FastDoubleCharArray {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
-     * @return the bit pattern of the parsed value, if the input is legal;
-     * otherwise, {@code -1L}.
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException if the input is illegal
      */
     private static double parseDecFloatLiteral(char[] str, int index, int startIndex, int endIndex, boolean isNegative, boolean hasLeadingZero) throws NumericException {
         // Parse significand
@@ -205,8 +200,8 @@ public final class FastDoubleCharArray {
      * @param str    a string containing a {@code FloatingPointLiteralWithWhiteSpace}
      * @param offset start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
      * @param length length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @return the bit pattern of the parsed value, if the input is legal;
-     * otherwise, {@code -1L}.
+     * @return if the input is legal;
+     * @throws NumericException is the input is illegal.
      */
     public static double parseFloatingPointLiteral(char[] str, int offset, int length) throws NumericException {
         final int endIndex = offset + length;
@@ -273,8 +268,8 @@ public final class FastDoubleCharArray {
      * @param startIndex the start index of the string
      * @param endIndex   the end index of the string
      * @param isNegative if the resulting number is negative
-     * @return the bit pattern of the parsed value, if the input is legal;
-     * otherwise, {@code -1L}.
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException if the input is illegal.
      */
     private static double parseHexFloatLiteral(
             char[] str,
@@ -431,7 +426,7 @@ public final class FastDoubleCharArray {
         ) {
             index = skipWhitespace(str, index + 8, endIndex);
             if (index == endIndex) {
-                return negative ? negativeInfinity() : positiveInfinity();
+                return negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
             }
         }
         throw NumericException.INSTANCE;
@@ -463,7 +458,7 @@ public final class FastDoubleCharArray {
 
             index = skipWhitespace(str, index + 3, endIndex);
             if (index == endIndex) {
-                return nan();
+                return Double.NaN;
             }
         }
         throw NumericException.INSTANCE;
@@ -471,18 +466,6 @@ public final class FastDoubleCharArray {
 
     private static int tryToParseEightDigits(char[] str, int offset) {
         return FastDoubleSwar.tryToParseEightDigitsUtf16(str, offset);
-    }
-
-    private static double nan() {
-        return Double.NaN;
-    }
-
-    private static double negativeInfinity() {
-        return Double.NEGATIVE_INFINITY;
-    }
-
-    private static double positiveInfinity() {
-        return Double.POSITIVE_INFINITY;
     }
 
     private static double valueOfFloatLiteral(
@@ -505,7 +488,6 @@ public final class FastDoubleCharArray {
         return Double.isNaN(d) ? Double.parseDouble(new String(str, startIndex, endIndex - startIndex)) : d;
     }
 
-
     private static double valueOfHexLiteral(
             char[] str, int startIndex, int endIndex, boolean isNegative, long significand, int exponent,
             boolean isSignificandTruncated, int exponentOfTruncatedSignificand) {
@@ -513,5 +495,4 @@ public final class FastDoubleCharArray {
                 exponentOfTruncatedSignificand);
         return Double.isNaN(d) ? Double.parseDouble(new String(str, startIndex, endIndex - startIndex)) : d;
     }
-
 }

@@ -47,7 +47,7 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         return compatibleAdapter.probe(text);
     }
 
