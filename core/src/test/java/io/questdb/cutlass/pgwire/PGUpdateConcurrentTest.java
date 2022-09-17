@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
@@ -108,53 +109,50 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server1 = createPGServer(1)) {
-                workerPoolManager.startAll();
-                try {
-                    try (
-                            Connection connection = getConnection(server1.getPort(), false, true);
-                            PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
-                                    " (select timestamp_sequence(0, 1000000) ts," +
-                                    " 0 as x" +
-                                    " from long_sequence(5))" +
-                                    " timestamp(ts)" +
-                                    " partition by DAY")
-                    ) {
-                        create.execute();
-                    }
-
-                    TableWriter lockedWriter = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            "testUpdateTimeout",
-                            "test");
-
-                    try (
-                            Connection connection = getConnection(server1.getPort(), false, true);
-                            PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? WHERE x != 4")
-                    ) {
-                        update.setInt(1, 4);
-
-                        try {
-                            update.executeUpdate();
-                            Assert.fail();
-                        } catch (PSQLException ex) {
-                            TestUtils.assertContains(ex.getMessage(), "Timeout expired");
-                        }
-
-                        lockedWriter.close();
-                        update.setInt(1, 5);
-                        update.executeUpdate();
-                    }
-
-                    assertSql("testUpdateTimeout", "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t5\n" +
-                            "1970-01-01T00:00:01.000000Z\t5\n" +
-                            "1970-01-01T00:00:02.000000Z\t5\n" +
-                            "1970-01-01T00:00:03.000000Z\t5\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n");
-                } finally {
-                    workerPoolManager.closeAll();
+            try (
+                    PGWireServer server1 = createPGServer(1);
+                    WorkerPool workerPool = server1.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
+                    PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " 0 as x" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts)" +
+                            " partition by DAY");
+                    create.execute();
+                    create.close();
                 }
+
+                TableWriter lockedWriter = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        "testUpdateTimeout",
+                        "test");
+
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? WHERE x != 4");
+                    update.setInt(1, 4);
+
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "Timeout expired");
+                    }
+
+                    lockedWriter.close();
+                    update.setInt(1, 5);
+                    update.executeUpdate();
+                    update.close();
+                }
+
+                assertSql("testUpdateTimeout", "ts\tx\n" +
+                        "1970-01-01T00:00:00.000000Z\t5\n" +
+                        "1970-01-01T00:00:01.000000Z\t5\n" +
+                        "1970-01-01T00:00:02.000000Z\t5\n" +
+                        "1970-01-01T00:00:03.000000Z\t5\n" +
+                        "1970-01-01T00:00:04.000000Z\t5\n");
             }
         });
     }
@@ -164,94 +162,90 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         assertMemoryLeak(() -> {
             writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
             writerAsyncCommandMaxTimeout = 90_000L;
-            try (PGWireServer server1 = createPGServer(1)) {
-                workerPoolManager.startAll();
-                try {
-                    try (final Connection connection = getConnection(server1.getPort(), false, true)) {
-                        PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
-                                " (select timestamp_sequence(0, 60 * 1000000L) ts," +
-                                " 0 as x" +
-                                " from long_sequence(2000))" +
-                                " timestamp(ts)" +
-                                " partition by DAY");
-                        create.execute();
-                        create.close();
-                    }
-
-                    TableWriter lockedWriter = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            "testUpdateTimeout",
-                            "test");
-
-                    // Non-simple connection
-                    try (final Connection connection = getConnection(server1.getPort(), false, true, 1L)) {
-                        PreparedStatement update = connection.prepareStatement("" +
-                                "UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
-                        update.setQueryTimeout(1);
-                        update.setInt(1, 4);
-
-                        try {
-                            update.executeUpdate();
-                            Assert.fail();
-                        } catch (PSQLException ex) {
-                            TestUtils.assertContains(ex.getMessage(), "timeout");
-                        }
-
-                        lockedWriter.close();
-
-                        // Check that timeout of 1ms is too tough anyway to execute even with writer closed
-                        try {
-                            update.executeUpdate();
-                            Assert.fail();
-                        } catch (PSQLException ex) {
-                            TestUtils.assertContains(ex.getMessage(), "timeout");
-                        }
-                    }
-
-                    lockedWriter = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            "testUpdateTimeout",
-                            "test");
-
-                    // Simple connection
-                    try (final Connection connection = getConnection(server1.getPort(), true, true, 1L)) {
-                        PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
-                        update.setQueryTimeout(1);
-                        update.setInt(1, 4);
-
-                        try {
-                            update.executeUpdate();
-                            Assert.fail();
-                        } catch (PSQLException ex) {
-                            TestUtils.assertContains(ex.getMessage(), "timeout");
-                        }
-
-                        lockedWriter.close();
-
-                        // Check that timeout of 1ms is too tough anyway to execute even with writer closed
-                        try {
-                            update.executeUpdate();
-                            Assert.fail();
-                        } catch (PSQLException ex) {
-                            TestUtils.assertContains(ex.getMessage(), "timeout");
-                        }
-                    }
-
-                    // Connection with default timeout
-                    try (final Connection connection = getConnection(server1.getPort(), false, true)) {
-                        PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
-                        update.setInt(1, 5);
-                        update.executeUpdate();
-                    }
-
-                    assertSql("select count() from testUpdateTimeout where x = 5",
-                            "count\n" +
-                                    "2000\n");
-                } finally {
-                    workerPoolManager.closeAll();
+            try (
+                    PGWireServer server1 = createPGServer(1);
+                    WorkerPool workerPool = server1.getWorkerPool()) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
+                    PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
+                            " (select timestamp_sequence(0, 60 * 1000000L) ts," +
+                            " 0 as x" +
+                            " from long_sequence(2000))" +
+                            " timestamp(ts)" +
+                            " partition by DAY");
+                    create.execute();
+                    create.close();
                 }
-            } finally {
-                workerPoolManager.closeAll();
+
+                TableWriter lockedWriter = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        "testUpdateTimeout",
+                        "test");
+
+                // Non-simple connection
+                try (final Connection connection = getConnection(server1.getPort(), false, true, 1L)) {
+                    PreparedStatement update = connection.prepareStatement("" +
+                            "UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    update.setQueryTimeout(1);
+                    update.setInt(1, 4);
+
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
+                    }
+
+                    lockedWriter.close();
+
+                    // Check that timeout of 1ms is too tough anyway to execute even with writer closed
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
+                    }
+                }
+
+                lockedWriter = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        "testUpdateTimeout",
+                        "test");
+
+                // Simple connection
+                try (final Connection connection = getConnection(server1.getPort(), true, true, 1L)) {
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    update.setQueryTimeout(1);
+                    update.setInt(1, 4);
+
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
+                    }
+
+                    lockedWriter.close();
+
+                    // Check that timeout of 1ms is too tough anyway to execute even with writer closed
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
+                    }
+                }
+
+                // Connection with default timeout
+                try (final Connection connection = getConnection(server1.getPort(), false, true)) {
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    update.setInt(1, 5);
+                    update.executeUpdate();
+                }
+
+                assertSql("select count() from testUpdateTimeout where x = 5",
+                        "count\n" +
+                                "2000\n");
             }
         });
     }
@@ -292,19 +286,20 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            final PGWireServer pgServer = createPGServer(2);
-            workerPoolManager.startAll(LOG);
-            try {
-                try (
-                        Connection connection = getConnection(pgServer.getPort(), false, true);
-                        PreparedStatement create = connection.prepareStatement("create table up as" +
-                                " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
-                                " 0 as x" +
-                                " from long_sequence(5))" +
-                                " timestamp(ts)" +
-                                (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""))
-                ) {
+            try (
+                    final PGWireServer pgServer = createPGServer(2);
+                    WorkerPool workerPool = pgServer.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
+                    PreparedStatement create = connection.prepareStatement("create table up as" +
+                            " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
+                            " 0 as x" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts)" +
+                            (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
                     create.execute();
+                    create.close();
                 }
 
                 Thread tick = new Thread(() -> {
@@ -386,9 +381,6 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                 for (int i = 0; i < threads.size(); i++) {
                     threads.get(i).join();
                 }
-            } finally {
-                workerPoolManager.closeAll();
-                pgServer.close();
             }
 
             if (exceptions.size() != 0) {

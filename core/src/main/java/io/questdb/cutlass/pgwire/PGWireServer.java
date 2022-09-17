@@ -39,6 +39,7 @@ import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 
 import static io.questdb.network.IODispatcher.*;
@@ -50,6 +51,7 @@ public class PGWireServer implements QuietCloseable {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
     private final Metrics metrics;
+    private final WorkerPool workerPool;
 
     public PGWireServer(
             PGWireConfiguration configuration,
@@ -65,6 +67,7 @@ public class PGWireServer implements QuietCloseable {
                 contextFactory
         );
         this.metrics = engine.getMetrics();
+        this.workerPool = workerPool;
 
         workerPool.assign(dispatcher);
 
@@ -118,6 +121,11 @@ public class PGWireServer implements QuietCloseable {
                 queryCacheEventSubSeq.clear();
             });
         }
+    }
+
+    @TestOnly
+    public WorkerPool getWorkerPool() {
+        return workerPool;
     }
 
     @Override

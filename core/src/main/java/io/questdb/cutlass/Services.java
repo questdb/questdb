@@ -167,8 +167,8 @@ public final class Services {
     @Nullable
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics,
@@ -182,11 +182,51 @@ public final class Services {
         return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
     }
 
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                functionFactoryCache,
+                snapshotAgent,
+                new PGWireServer.PGConnectionContextFactory(
+                        cairoEngine,
+                        configuration,
+                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                )
+        );
+    }
+
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            PGWireServer.PGConnectionContextFactory contextFactory
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
+    }
+
     @Nullable
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
@@ -213,42 +253,34 @@ public final class Services {
 
     @Nullable
     public static LineTcpReceiver createLineTcpReceiver(
-            LineTcpReceiverConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
+            LineTcpReceiverConfiguration config,
             CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
             Metrics metrics
     ) {
-        if (!configuration.isEnabled()) {
+        if (!config.isEnabled()) {
             return null;
         }
 
-        final WorkerPool ioPool = workerPoolManager.getInstance(configuration.getIOWorkerPoolConfiguration(), metrics);
-        final WorkerPool writerPool = workerPoolManager.getInstance(configuration.getWriterWorkerPoolConfiguration(), metrics);
-        return new LineTcpReceiver(configuration, cairoEngine, ioPool, writerPool);
+        final WorkerPool ioPool = workerPoolManager.getInstance(config.getIOWorkerPoolConfiguration(), metrics);
+        final WorkerPool writerPool = workerPoolManager.getInstance(config.getWriterWorkerPoolConfiguration(), metrics);
+        return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
     }
 
     @Nullable
     public static AbstractLineProtoUdpReceiver createLineUdpReceiver(
-            LineUdpReceiverConfiguration lineConfiguration,
-            WorkerPool sharedPool,
-            CairoEngine cairoEngine
+            LineUdpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPool sharedPool
     ) {
-        if (!lineConfiguration.isEnabled()) {
+        if (!config.isEnabled()) {
             return null;
         }
 
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-            return new LinuxMMLineUdpReceiver(
-                    lineConfiguration,
-                    cairoEngine,
-                    sharedPool
-            );
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, sharedPool);
         }
-        return new LineUdpReceiver(
-                lineConfiguration,
-                cairoEngine,
-                sharedPool
-        );
+        return new LineUdpReceiver(config, cairoEngine, sharedPool);
     }
 
     private Services() {

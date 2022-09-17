@@ -1,5 +1,6 @@
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
@@ -14,11 +15,12 @@ public class PGFunctionsTest extends BasePGTest {
     @Test
     public void testListTablesDoesntLeakMetaFds() throws Exception {
         assertMemoryLeak(() -> {
-            try(final PGWireServer server = createPGServer(2)) {
-                workerPoolManager.startAll();
-                try (
-                        final Connection connection = getConnection(server.getPort(), true, true)
-                ) {
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), true, true)) {
                     try (CallableStatement st1 = connection.prepareCall("create table a (i int)")) {
                         st1.execute();
                     }
@@ -33,8 +35,6 @@ public class PGFunctionsTest extends BasePGTest {
                     long openFilesAfter = FilesFacadeImpl.INSTANCE.getOpenFileCount();
 
                     Assert.assertEquals(openFilesBefore, openFilesAfter);
-                } finally {
-                    workerPoolManager.closeAll();
                 }
             }
         });

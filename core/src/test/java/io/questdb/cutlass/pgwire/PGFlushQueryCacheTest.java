@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.mp.MPSequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Before;
@@ -56,8 +57,11 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     @Test
     public void testFlushQueryCache() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(2)) {
-                workerPoolManager.startAll();
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
@@ -84,8 +88,6 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     statement.execute("SELECT flush_query_cache()");
 
                     assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()));
-                } finally {
-                    workerPoolManager.closeAll();
                 }
             }
         });
@@ -94,8 +96,9 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     @Test
     public void testFlushUpdateCache() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(2)) {
-                workerPoolManager.startAll();
+            try (final PGWireServer server = createPGServer(2);
+                 final WorkerPool workerPool = server.getWorkerPool()) {
+                workerPool.start(LOG);
                 try (
                         Connection connection = getConnection(server.getPort(), false, true);
                         Statement statement = connection.createStatement()
@@ -124,8 +127,6 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     statement.execute("SELECT flush_query_cache()");
 
                     assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue()));
-                } finally {
-                    workerPoolManager.closeAll();
                 }
             }
         });

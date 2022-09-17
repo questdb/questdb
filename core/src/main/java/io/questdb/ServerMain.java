@@ -116,8 +116,8 @@ public class ServerMain implements QuietCloseable {
         if (config.getPGWireConfiguration().isEnabled()) {
             toBeClosed.add(Services.createPGWireServer(
                     config.getPGWireConfiguration(),
-                    workerPoolManager,
                     cairoEngine,
+                    workerPoolManager,
                     ffCache,
                     snapshotAgent,
                     metrics
@@ -127,16 +127,16 @@ public class ServerMain implements QuietCloseable {
         // ilp/tcp
         toBeClosed.add(Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
-                workerPoolManager,
                 cairoEngine,
+                workerPoolManager,
                 metrics
         ));
 
         // ilp/udp
         toBeClosed.add(Services.createLineUdpReceiver(
                 config.getLineUdpReceiverConfiguration(),
-                sharedPool,
-                cairoEngine
+                cairoEngine,
+                sharedPool
         ));
 
         // telemetry
