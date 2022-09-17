@@ -29,19 +29,20 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolManager;
 import org.junit.rules.TemporaryFolder;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class HttpMinTestBuilder {
 
+    private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private TemporaryFolder temp;
     private Scrapable scrapable;
-
-    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
 
     public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
         this.temp = temp;
@@ -60,8 +61,10 @@ public class HttpMinTestBuilder {
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .build();
 
+            final WorkerPool workerPool = new TestWorkerPool(1);
+
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 1, Metrics.disabled());
+
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
@@ -80,11 +83,12 @@ public class HttpMinTestBuilder {
 
                 QueryCache.configure(httpConfiguration, Metrics.disabled());
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
+
                 try {
                     code.run(engine);
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });

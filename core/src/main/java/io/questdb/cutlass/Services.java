@@ -46,14 +46,15 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public final class Services {
 
     @Nullable
     public static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
@@ -62,8 +63,32 @@ public final class Services {
             return null;
         }
 
-        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
-        final int sharedWorkerCount = workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount();
+        WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
+        return createHttpServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount(),
+                functionFactoryCache,
+                snapshotAgent,
+                metrics
+        );
+    }
+
+    @Nullable
+    public static HttpServer createHttpServer(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
         final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
         QueryCache.configure(configuration, metrics);
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
@@ -89,8 +114,8 @@ public final class Services {
     @Nullable
     public static HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
@@ -98,6 +123,19 @@ public final class Services {
         }
 
         final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
+        return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
+    }
+
+    @Nullable
+    public static HttpServer createMinHttpServer(
+            HttpMinServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            Metrics metrics
+    ) {
+        if (configuration.isEnabled()) {
+        }
+
         final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
         server.bind(new HttpRequestProcessorFactory() {
             @Override

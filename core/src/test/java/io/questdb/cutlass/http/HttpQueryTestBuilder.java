@@ -37,8 +37,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -68,8 +68,6 @@ public class HttpQueryTestBuilder {
     private String copyInputRoot;
     private MicrosecondClock microsecondClock;
 
-    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
-
     public int getWorkerCount() {
         return this.workerCount;
     }
@@ -87,6 +85,9 @@ public class HttpQueryTestBuilder {
             if (metrics == null) {
                 metrics = Metrics.enabled();
             }
+
+            final WorkerPool workerPool = new TestWorkerPool(workerCount, metrics);
+            workerPool.assignCleaner(Path.CLEANER);
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
@@ -121,8 +122,6 @@ public class HttpQueryTestBuilder {
                     }
                 };
             }
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> workerCount, metrics);
-            workerPool.assignCleaner(Path.CLEANER);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -130,7 +129,6 @@ public class HttpQueryTestBuilder {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
                     telemetryJob = new TelemetryJob(engine);
-                    workerPool.assign(telemetryJob);
                 }
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -226,11 +224,13 @@ public class HttpQueryTestBuilder {
 
                 QueryCache.configure(httpConfiguration, metrics);
 
-                workerPoolManager.startAll(LOG);
+                workerPool.start(LOG);
+
                 try {
                     code.run(engine);
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
+
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
                     }

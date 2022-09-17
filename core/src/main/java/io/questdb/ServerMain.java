@@ -97,8 +97,8 @@ public class ServerMain implements QuietCloseable {
         // http
         toBeClosed.add(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
-                workerPoolManager,
                 cairoEngine,
+                workerPoolManager,
                 ffCache,
                 snapshotAgent,
                 metrics
@@ -107,8 +107,8 @@ public class ServerMain implements QuietCloseable {
         // http min
         toBeClosed.add(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                workerPoolManager,
                 cairoEngine,
+                workerPoolManager,
                 metrics
         ));
 

@@ -24,16 +24,15 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
@@ -51,6 +50,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
@@ -112,11 +112,10 @@ public class IODispatcherTest {
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
-    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
-
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
-            model.col("j", ColumnType.SYMBOL);
+            model
+                    .col("j", ColumnType.SYMBOL);
             CairoTestUtils.create(model);
         }
 
@@ -210,6 +209,7 @@ public class IODispatcherTest {
                     }
                     serverHaltLatch.countDown();
                 }).start();
+
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -320,6 +320,7 @@ public class IODispatcherTest {
                 }).start();
 
                 try {
+
                     long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
                     long fd = Net.socketTcp(true);
                     try {
@@ -412,6 +413,7 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
+
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
@@ -420,6 +422,7 @@ public class IODispatcherTest {
                     }
                     serverHaltLatch.countDown();
                 }).start();
+
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -751,55 +754,53 @@ public class IODispatcherTest {
 
         final String baseDir = temp.getRoot().getAbsolutePath();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = createHttpServer(
-                        new DefaultHttpServerConfiguration(
-                                new DefaultHttpContextConfiguration() {
-                                    @Override
-                                    public MillisecondClock getClock() {
-                                        return StationaryMillisClock.INSTANCE;
-                                    }
-                                }
-                        ),
-                        workerPoolManager,
+                        new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+                            @Override
+                            public MillisecondClock getClock() {
+                                return StationaryMillisClock.INSTANCE;
+                            }
+                        }),
                         cairoEngine,
+                        workerPool,
                         metrics
                 )) {
 
-            workerPoolManager.startAll(LOG);
-            try {
-                // upload file
-                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
+            workerPool.start(LOG);
 
-                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
-                    StringSink sink = new StringSink();
-                    reader.getMetadata().toJson(sink);
-                    TestUtils.assertEquals(expectedTableMetadata, sink);
-                }
+            // upload file
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-                final String selectAsJsonScript = ">474554202f657865633f71756572793d25304125304125323773616d706c652e637376253237266c696d69743d302532433130303026636f756e743d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
-                        "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
-                        "<0d0a303166300d0a\n" +
-                        "<7b227175657279223a225c6e5c6e2773616d706c652e63737627222c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536227d2c7b226e616d65223a226631222c2274797065223a2243484152227d5d2c2264617461736574223a5b5b22307835633530346564343332636235313133386263663039616135653861343130646434613165323034656638346266656431626531366466626131623232303630222c2261225d2c5b22307831396631646632633765653662343634373230616432386539303361656461316135616438373830616663323266306239363038323762643466636636353664222c2262225d2c5b22307839653665313936333762623632356138666633643035326237633266653537646337386335356131356432353864373763343364356139633136306230333834222c2270225d2c5b22307863623933373839373730383963373733633037343034356232306564653263646363336136666635363266346536346235316232306335323035323334353235222c2277225d2c5b22307864323361653962326535633638636166326335363633616635626132373637396463336233636237383163346463363938616262643137643633653332653966222c2274225d5d2c22636f756e74223a357d\n" +
-                        "<0d0a30300d0a\n" +
-                        "<0d0a";
-
-                // select * from 'sample.csv'
-                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
-
-                final String downloadAsCsvScript = ">474554202f6578703f71756572793d25304125304125323773616d706c652e63737625323720485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a206e617669676174650d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e382c6170706c69636174696f6e2f7369676e65642d65786368616e67653b763d62330d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
-                        "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a20746578742f6373763b20636861727365743d7574662d380d0a436f6e74656e742d446973706f736974696f6e3a206174746163686d656e743b2066696c656e616d653d22717565737464622d71756572792d302e637376220d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
-                        "<0d0a303136390d0a\n" +
-                        "<226630222c226631220d0a3078356335303465643433326362353131333862636630396161356538613431306464346131653230346566383462666564316265313664666261316232323036302c610d0a3078313966316466326337656536623436343732306164323865393033616564613161356164383738306166633232663062393630383237626434666366363536642c620d0a3078396536653139363337626236323561386666336430353262376332666535376463373863353561313564323538643737633433643561396331363062303338342c700d0a3078636239333738393737303839633737336330373430343562323065646532636463633361366666353632663465363462353162323063353230353233343532352c770d0a3078643233616539623265356336386361663263353636336166356261323736373964633362336362373831633464633639386162626431376436336533326539662c740d0a\n" +
-                        "<0d0a30300d0a\n" +
-                        "<0d0a";
-
-                // download select * from 'sample.csv' as csv
-                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, downloadAsCsvScript, "127.0.0.1", 9001);
-            } finally {
-                workerPoolManager.closeAll();
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                StringSink sink = new StringSink();
+                reader.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expectedTableMetadata, sink);
             }
+
+            final String selectAsJsonScript = ">474554202f657865633f71756572793d25304125304125323773616d706c652e637376253237266c696d69743d302532433130303026636f756e743d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
+                    "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
+                    "<0d0a303166300d0a\n" +
+                    "<7b227175657279223a225c6e5c6e2773616d706c652e63737627222c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536227d2c7b226e616d65223a226631222c2274797065223a2243484152227d5d2c2264617461736574223a5b5b22307835633530346564343332636235313133386263663039616135653861343130646434613165323034656638346266656431626531366466626131623232303630222c2261225d2c5b22307831396631646632633765653662343634373230616432386539303361656461316135616438373830616663323266306239363038323762643466636636353664222c2262225d2c5b22307839653665313936333762623632356138666633643035326237633266653537646337386335356131356432353864373763343364356139633136306230333834222c2270225d2c5b22307863623933373839373730383963373733633037343034356232306564653263646363336136666635363266346536346235316232306335323035323334353235222c2277225d2c5b22307864323361653962326535633638636166326335363633616635626132373637396463336233636237383163346463363938616262643137643633653332653966222c2274225d5d2c22636f756e74223a357d\n" +
+                    "<0d0a30300d0a\n" +
+                    "<0d0a";
+
+            // select * from 'sample.csv'
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
+
+            final String downloadAsCsvScript = ">474554202f6578703f71756572793d25304125304125323773616d706c652e63737625323720485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a206e617669676174650d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e382c6170706c69636174696f6e2f7369676e65642d65786368616e67653b763d62330d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
+                    "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a20746578742f6373763b20636861727365743d7574662d380d0a436f6e74656e742d446973706f736974696f6e3a206174746163686d656e743b2066696c656e616d653d22717565737464622d71756572792d302e637376220d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
+                    "<0d0a303136390d0a\n" +
+                    "<226630222c226631220d0a3078356335303465643433326362353131333862636630396161356538613431306464346131653230346566383462666564316265313664666261316232323036302c610d0a3078313966316466326337656536623436343732306164323865393033616564613161356164383738306166633232663062393630383237626434666366363536642c620d0a3078396536653139363337626236323561386666336430353262376332666535376463373863353561313564323538643737633433643561396331363062303338342c700d0a3078636239333738393737303839633737336330373430343562323065646532636463633361366666353632663465363462353162323063353230353233343532352c770d0a3078643233616539623265356336386361663263353636336166356261323736373964633362336362373831633464633639386162626431376436336533326539662c740d0a\n" +
+                    "<0d0a30300d0a\n" +
+                    "<0d0a";
+
+            // download select * from 'sample.csv' as csv
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, downloadAsCsvScript, "127.0.0.1", 9001);
+        } finally {
+            workerPool.close();
         }
     }
 
@@ -824,6 +825,7 @@ public class IODispatcherTest {
 
         final String baseDir = temp.getRoot().getAbsolutePath();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = createHttpServer(
@@ -833,31 +835,30 @@ public class IODispatcherTest {
                                 return StationaryMillisClock.INSTANCE;
                             }
                         }),
-                        workerPoolManager,
                         cairoEngine,
+                        workerPool,
                         metrics
                 )) {
 
-            workerPoolManager.startAll(LOG);
-            try {
-                // upload file
-                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
+            workerPool.start(LOG);
 
-                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
-                    StringSink sink = new StringSink();
-                    reader.getMetadata().toJson(sink);
-                    TestUtils.assertEquals(expectedTableMetadata, sink);
-                }
+            // upload file
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-                final String selectAsJsonScript = ">474554202f657865633f71756572793d25323773616d706c652e63737625323726636f756e743d66616c736526636f6c733d66302532436631267372633d76697320485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37392e302e333934352e313330205361666172692f3533372e33360d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a5365632d46657463682d4d6f64653a20636f72730d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a436f6f6b69653a205f67613d4741312e312e323132343933323030312e313537333832343636393b205f6769643d4741312e312e3339323836373839362e313538303132333336350d0a0d0a\n" +
-                        "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
-                        "<0d0a303165630d0a\n";
-
-                // select * from 'sample.csv' and limit columns to f0,f1
-                NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
-            } finally {
-                workerPoolManager.closeAll();
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                StringSink sink = new StringSink();
+                reader.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expectedTableMetadata, sink);
             }
+
+            final String selectAsJsonScript = ">474554202f657865633f71756572793d25323773616d706c652e63737625323726636f756e743d66616c736526636f6c733d66302532436631267372633d76697320485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37392e302e333934352e313330205361666172692f3533372e33360d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a5365632d46657463682d4d6f64653a20636f72730d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a436f6f6b69653a205f67613d4741312e312e323132343933323030312e313537333832343636393b205f6769643d4741312e312e3339323836373839362e313538303132333336350d0a0d0a\n" +
+                    "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
+                    "<0d0a303165630d0a\n";
+
+            // select * from 'sample.csv' and limit columns to f0,f1
+            NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
+        } finally {
+            workerPool.close();
         }
     }
 
@@ -1748,7 +1749,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 3, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -1777,84 +1778,85 @@ public class IODispatcherTest {
                     }
                 });
                 workerPool.assignCleaner(Path.CLEANER);
-                workerPoolManager.startAll(LOG);
-                try {
-                    // send multipart request to server
-                    final String request = "POST /upload HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "User-Agent: curl/7.64.0\r\n" +
-                            "Accept: */*\r\n" +
-                            "Content-Length: 437760673\r\n" +
-                            "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                            "Expect: 100-continue\r\n" +
-                            "\r\n" +
-                            "--------------------------27d997ca93d2689d\r\n" +
-                            "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                            "Content-Type: application/octet-stream\r\n" +
-                            "\r\n" +
-                            "[\r\n" +
-                            "  {\r\n" +
-                            "    \"name\": \"date\",\r\n" +
-                            "    \"type\": \"DATE\",\r\n" +
-                            "    \"pattern\": \"d MMMM y.\",\r\n" +
-                            "    \"locale\": \"ru-RU\"\r\n" +
-                            "  }\r\n" +
-                            "]\r\n" +
-                            "\r\n" +
-                            "--------------------------27d997ca93d2689d\r\n" +
-                            "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                            "Content-Type: application/octet-stream\r\n" +
-                            "\r\n" +
-                            "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                            "B00008,2017-02-01 00:30:00,,,\r\n" +
-                            "B00008,2017-02-01 00:40:00,,,\r\n" +
-                            "B00009,2017-02-01 00:30:00,,,\r\n" +
-                            "B00013,2017-02-01 00:11:00,,,\r\n" +
-                            "B00013,2017-02-01 00:41:00,,,\r\n" +
-                            "B00013,2017-02-01 00:00:00,,,\r\n" +
-                            "B00013,2017-02-01 00:53:00,,,\r\n" +
-                            "B00013,2017-02-01 00:44:00,,,\r\n" +
-                            "B00013,2017-02-01 00:05:00,,,\r\n" +
-                            "B00013,2017-02-01 00:54:00,,,\r\n" +
-                            "B00014,2017-02-01 00:45:00,,,\r\n" +
-                            "B00014,2017-02-01 00:45:00,,,\r\n" +
-                            "B00014,2017-02-01 00:46:00,,,\r\n" +
-                            "B00014,2017-02-01 00:54:00,,,\r\n" +
-                            "B00014,2017-02-01 00:45:00,,,\r\n" +
-                            "B00014,2017-02-01 00:45:00,,,\r\n" +
-                            "B00014,2017-02-01 00:45:00,,,\r\n" +
-                            "B00014,2017-02-01 00:26:00,,,\r\n" +
-                            "B00014,2017-02-01 00:55:00,,,\r\n" +
-                            "B00014,2017-02-01 00:47:00,,,\r\n" +
-                            "B00014,2017-02-01 00:05:00,,,\r\n" +
-                            "B00014,2017-02-01 00:58:00,,,\r\n" +
-                            "B00014,2017-02-01 00:33:00,,,\r\n" +
-                            "B00014,2017-02-01 00:45:00,,,\r\n" +
-                            "\r\n" +
-                            "--------------------------27d997ca93d2689d--";
+                workerPool.start(LOG);
+
+                // send multipart request to server
+                final String request = "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--";
 
 
-                    NetworkFacade nf = new NetworkFacadeImpl() {
-                        int totalSent = 0;
+                NetworkFacade nf = new NetworkFacadeImpl() {
+                    int totalSent = 0;
 
-                        @Override
-                        public int send(long fd, long buffer, int bufferLen) {
-                            if (bufferLen > 0) {
-                                int result = super.send(fd, buffer, 1);
-                                totalSent += result;
+                    @Override
+                    public int send(long fd, long buffer, int bufferLen) {
+                        if (bufferLen > 0) {
+                            int result = super.send(fd, buffer, 1);
+                            totalSent += result;
 
-                                // start delaying after 800 bytes
+                            // start delaying after 800 bytes
 
-                                if (totalSent > 20) {
-                                    LockSupport.parkNanos(10000);
-                                    totalSent = 0;
-                                }
-                                return result;
+                            if (totalSent > 20) {
+                                LockSupport.parkNanos(10000);
+                                totalSent = 0;
                             }
-                            return 0;
+                            return result;
                         }
-                    };
+                        return 0;
+                    }
+                };
 
+                try {
                     sendAndReceive(
                             nf,
                             request,
@@ -1864,7 +1866,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });
@@ -2206,7 +2208,7 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 2, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -2239,7 +2241,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
 
                 try {
                     // create table with all column types
@@ -2325,7 +2327,7 @@ public class IODispatcherTest {
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });
@@ -2813,7 +2815,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 1, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -2846,8 +2848,10 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
+
                 try {
+
                     // send multipart request to server
                     final String request = "GET /query?limit=0%2C1000&count=true&src=con&query=select%20npe()%20from%20long_sequence(1)&timings=true HTTP/1.1\r\n" +
                             "Host: localhost:9000\r\n" +
@@ -2906,7 +2910,7 @@ public class IODispatcherTest {
                         nf.close(fd);
                     }
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });
@@ -3991,7 +3995,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 1, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -4024,7 +4028,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
 
                 try {
 
@@ -4068,7 +4072,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });
@@ -4182,7 +4186,7 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 2, Metrics.disabled());
+            final WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)) {
@@ -4213,7 +4217,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
 
                 try {
                     // create table with all column types
@@ -4244,7 +4248,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });
@@ -4257,7 +4261,7 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 2, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
@@ -4289,7 +4293,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
 
                 try {
                     // create table with all column types
@@ -4322,7 +4326,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });
@@ -4349,7 +4353,8 @@ public class IODispatcherTest {
                     .build();
             QueryCache.configure(httpConfiguration, metrics);
 
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 1, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(1);
+
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
                 @Override
                 public int getSqlPageFrameMaxRows() {
@@ -4409,8 +4414,16 @@ public class IODispatcherTest {
                         }
                     }
                 };
-                O3Utils.setupWorkerPool(workerPool, engine);
-                workerPoolManager.startAll();
+
+                O3Utils.setupWorkerPool(
+                        workerPool,
+                        engine,
+                        null,
+                        null
+                );
+
+                workerPool.start(LOG);
+
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
@@ -4462,7 +4475,7 @@ public class IODispatcherTest {
                     // number of rows before query is interrupted
                     Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
                 } finally {
-                    workerPoolManager.closeAll();
+                    workerPool.close();
                 }
             }
         });
@@ -5229,11 +5242,12 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 2, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5247,7 +5261,8 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
+
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
@@ -5370,10 +5385,9 @@ public class IODispatcherTest {
                             Net.freeSockAddr(sockAddr);
                         }
                     } finally {
+                        workerPool.close();
                         Files.remove(path);
                     }
-                } finally {
-                    workerPoolManager.closeAll();
                 }
             }
         });
@@ -5385,10 +5399,10 @@ public class IODispatcherTest {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 2, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5402,7 +5416,8 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll(LOG);
+                workerPool.start(LOG);
+
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
@@ -5515,8 +5530,8 @@ public class IODispatcherTest {
                             LOG.info().$("closed [fd=").$(fd).$(']').$();
                         }
                     } finally {
+                        workerPool.close();
                         Files.remove(path);
-                        workerPoolManager.closeAll();
                     }
                 }
             }
@@ -5537,10 +5552,10 @@ public class IODispatcherTest {
                     false,
                     "HTTP/1.0 "
             );
-            WorkerPool workerPool = workerPoolManager.getInstance(() -> 2, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5554,7 +5569,8 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPoolManager.startAll();
+                workerPool.start(LOG);
+
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
@@ -5707,10 +5723,10 @@ public class IODispatcherTest {
                             }
                         } finally {
                             Net.freeSockAddr(sockAddr);
+                            workerPool.close();
                         }
                     } finally {
                         Files.remove(path);
-                        workerPoolManager.closeAll();
                     }
                 }
             }
@@ -7515,16 +7531,17 @@ public class IODispatcherTest {
         }
     }
 
-    private static HttpServer createHttpServer(
+    public static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
-            WorkerPoolManager workerPoolManager,
             CairoEngine cairoEngine,
+            WorkerPool workerPool,
             Metrics metrics
     ) {
         return Services.createHttpServer(
                 configuration,
-                workerPoolManager,
                 cairoEngine,
+                workerPool,
+                workerPool.getWorkerCount(),
                 null,
                 null,
                 metrics

@@ -32,8 +32,8 @@ import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import org.junit.rules.TemporaryFolder;
 
@@ -50,8 +50,6 @@ public class HttpHealthCheckTestBuilder {
     private TemporaryFolder temp;
     private boolean injectUnhandledError;
 
-    private WorkerPoolManager workerPoolManager = new WorkerPoolManager();
-
     public void run(HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
@@ -64,34 +62,38 @@ public class HttpHealthCheckTestBuilder {
 
             QueryCache.configure(httpConfiguration, metrics);
 
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-            try (CairoEngine engine = new CairoEngine(cairoConfiguration, metrics)) {
-                WorkerPool workerPool = workerPoolManager.getInstance(() -> 1, metrics);
-                if (injectUnhandledError) {
-                    final AtomicBoolean alreadyErrored = new AtomicBoolean();
-                    workerPool.assign(workerId -> {
-                        if (!alreadyErrored.getAndSet(true)) {
-                            throw new NullPointerException("you'd better not handle me");
-                        }
-                        return false;
-                    });
-                }
-                try (HttpServer ignored = Services.createMinHttpServer(httpConfiguration, workerPoolManager, engine, metrics)) {
+            WorkerPool workerPool = new TestWorkerPool(1, metrics);
 
-                    if (injectUnhandledError && metrics.isEnabled()) {
-                        for (int i = 0; i < 40; i++) {
-                            if (metrics.healthCheck().unhandledErrorsCount() > 0) {
-                                break;
-                            }
-                            Os.sleep(50);
+            if (injectUnhandledError) {
+                final AtomicBoolean alreadyErrored = new AtomicBoolean();
+                workerPool.assign(workerId -> {
+                    if (!alreadyErrored.getAndSet(true)) {
+                        throw new NullPointerException("you'd better not handle me");
+                    }
+                    return false;
+                });
+            }
+
+            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
+            try (
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)
+            ) {
+                workerPool.start(LOG);
+
+                if (injectUnhandledError && metrics.isEnabled()) {
+                    for (int i = 0; i < 40; i++) {
+                        if (metrics.healthCheck().unhandledErrorsCount() > 0) {
+                            break;
                         }
+                        Os.sleep(50);
                     }
-                    workerPoolManager.startAll(LOG);
-                    try {
-                        code.run(engine);
-                    } finally {
-                        workerPoolManager.closeAll();
-                    }
+                }
+
+                try {
+                    code.run(engine);
+                } finally {
+                    workerPool.close();
                 }
             }
         });
