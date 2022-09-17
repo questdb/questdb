@@ -39,14 +39,14 @@ import java.io.*;
 public class BootstrapTest extends AbstractBootstrapTest {
 
     @Test
-    public void testBadArgs() throws IOException {
+    public void testBadArgs() {
         assertFail("Root directory name expected (-d <root-path>)");
         assertFail("Root directory name expected (-d <root-path>)", "-d");
         assertFail("Root directory name expected (-d <root-path>)", "does not exist");
     }
 
     @Test
-    public void testServerConfFileDoesNotExist() throws IOException {
+    public void testServerConfFileDoesNotExist() {
         String configFolder = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(configFolder);
         File f = new File(configFolder);

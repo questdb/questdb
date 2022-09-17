@@ -54,7 +54,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
             properties.setProperty("password", "quest");
             properties.setProperty("sslmode", "disable");
             properties.setProperty("binaryTransfer", "true");
-            final String url = "jdbc:postgresql://127.0.0.1:8812/qdb";
+            final String url = "jdbc:postgresql://127.0.0.1:8822/qdb";
             final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getCairoEngine(), 1)
                     .with(
                             AllowAllCairoSecurityContext.INSTANCE,

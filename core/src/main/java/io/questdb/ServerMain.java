@@ -169,10 +169,10 @@ public class ServerMain implements QuietCloseable {
     @Override
     public void close() {
         if (hasStarted.compareAndSet(true, false)) {
-            workerPoolManager.closeAll();
             ShutdownFlag.INSTANCE.shutdown();
-            Misc.freeObjListAndClear(toBeClosed);
+            workerPoolManager.closeAll();
             LogFactory.INSTANCE.flushJobsAndClose();
+            Misc.freeObjListAndClear(toBeClosed);
         }
     }
 

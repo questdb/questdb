@@ -62,12 +62,6 @@ public abstract class AbstractBootstrapTest {
             }
             publicZipStubCreated = true;
         }
-        try {
-            root = temp.newFolder("dbRoot").getAbsolutePath();
-            TestUtils.createTestPath(root);
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
     }
 
     @AfterClass
@@ -78,24 +72,43 @@ public abstract class AbstractBootstrapTest {
                 publicZip.delete();
             }
         }
+    }
+
+    @Before
+    public void setUp() {
+        try {
+            root = temp.newFolder("dbRoot").getAbsolutePath();
+            TestUtils.createTestPath(root);
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError();
+        }
+    }
+
+    @After
+    public void tearDown() {
         TestUtils.removeTestPath(root);
         temp.delete();
     }
 
     static void createDummyConfiguration() throws Exception {
-        String config = root.toString() + Files.SEPARATOR + "conf";
-        TestUtils.createTestPath(config);
-        String file = config + Files.SEPARATOR + "server.conf";
+        final String confPath = root.toString() + Files.SEPARATOR + "conf";
+        TestUtils.createTestPath(confPath);
+        String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
-            writer.println("");
+            writer.println("shared.worker.count=1");
+            writer.println("line.tcp.net.bind.to=0.0.0.0:9019");
+            writer.println("line.tcp.io.worker.count=0");
+            writer.println("http.bind.to=0.0.0.0:9010");
+            writer.println("line.udp.bind.to=0.0.0.0:9019");
+            writer.println("pg.net.bind.to=0.0.0.0:8822");
         }
-        file = config + Files.SEPARATOR + "mime.types";
+        file = confPath + Files.SEPARATOR + "mime.types";
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
             writer.println("");
         }
     }
 
-    void assertFail(String message, String... args) throws IOException {
+    void assertFail(String message, String... args) {
         try {
             Bootstrap.withArgs(args);
             Assert.fail();

@@ -178,7 +178,6 @@ public final class Services {
         }
 
         final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
-        final int sharedWorkerCount = workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount();
         return new PGWireServer(
                 configuration,
                 cairoEngine,
@@ -188,7 +187,11 @@ public final class Services {
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,
-                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), sharedWorkerCount)
+                        () -> new SqlExecutionContextImpl(
+                                cairoEngine,
+                                workerPool.getWorkerCount(),
+                                workerPoolManager.getSharedWorkerCount()
+                        )
                 )
         );
     }
