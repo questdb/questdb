@@ -37,17 +37,20 @@ public class ServerMainTest extends AbstractBootstrapTest {
     public void testServerMain() throws Exception {
         createDummyConfiguration();
         for (int i = 0; i < 5; i++) {
-            try (ServerMain serverMain = new ServerMain("-d", root.toString())) {
-                Assert.assertNotNull(serverMain.getConfiguration());
-                Assert.assertNotNull(serverMain.getWorkerPoolManager());
-                Assert.assertFalse(serverMain.hasStarted());
-                serverMain.start();
+            final ServerMain serverMain = new ServerMain("-d", root.toString());
+            Assert.assertNotNull(serverMain.getConfiguration());
+            Assert.assertNotNull(serverMain.getWorkerPoolManager());
+            Assert.assertFalse(serverMain.hasStarted());
+            serverMain.start(false);
+            try {
                 Assert.assertTrue(serverMain.hasStarted());
                 try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                     Os.pause();
                 }
+            } finally {
+                serverMain.close();
             }
-            Os.sleep(100L);
+            Os.pause();
         }
     }
 }
