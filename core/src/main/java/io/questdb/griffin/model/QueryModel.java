@@ -36,9 +36,10 @@ import java.util.Objects;
 import static io.questdb.griffin.SqlKeywords.isAndKeyword;
 
 /**
- * Important note: Make sure to update clear, equals and hashCode methods when
- * you're adding new fields to this class. Instances of QueryModel are reused across
- * query compilation, so making sure that we reset all fields correctly is important.
+ * Important note: Make sure to update clear, equals and hashCode methods, as well as
+ * the unit tests, when you're adding a new field to this class. Instances of QueryModel
+ * are reused across query compilation, so making sure that we reset all fields correctly
+ * is important.
  */
 public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
@@ -1413,17 +1414,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     @Override
     public int hashCode() {
-        int joinModelsHash = super.hashCode();
+        int hash = super.hashCode();
         // joinModels always contain this as the first element, so we need to hash them manually.
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            joinModelsHash = 31 * joinModelsHash + Objects.hash(joinModels.getQuick(i));
+            hash = 31 * hash + Objects.hash(joinModels.getQuick(i));
         }
         // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
         for (ExpressionNode node : sqlNodeStack) {
-            joinModelsHash = 31 * joinModelsHash + Objects.hash(node);
+            hash = 31 * hash + Objects.hash(node);
         }
-        return Objects.hash(
-                joinModelsHash,
+        return 31 * hash + Objects.hash(
                 bottomUpColumns, topDownNameSet, topDownColumns,
                 aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
                 bottomUpColumnNames, orderBy,
