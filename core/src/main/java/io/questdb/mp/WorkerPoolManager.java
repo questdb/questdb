@@ -24,34 +24,32 @@
 
 package io.questdb.mp;
 
+import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPoolManager {
+
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
-    private WorkerPool sharedPool;
+
+    private final WorkerPool sharedPool;
     private final AtomicBoolean hasStarted = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
+    private final StringSink sink = new StringSink();
 
     public WorkerPoolManager() {
         this.sharedPool = null;
     }
 
     public WorkerPoolManager(WorkerPool sharedPool) {
-        this.sharedPool = sharedPool;
-    }
-
-    public void setSharedPool(WorkerPool sharedPool) {
-        if (hasStarted.get()) {
-            throw new IllegalStateException("can only set the shared pool before start");
-        }
         this.sharedPool = sharedPool;
     }
 
@@ -80,6 +78,14 @@ public class WorkerPoolManager {
         String poolName = config.getPoolName();
         WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
+            int workerCount = config.getWorkerCount();
+            if (workerCount < 1) {
+                sink.clear();
+                sink.put("Pool [").put(poolName)
+                        .put("] has wrong number of workers: ").put(workerCount)
+                        .put(" (there is no shared pool)");
+                throw new Bootstrap.BootstrapException(sink.toString());
+            }
             pool = new WorkerPool(config, metrics);
             pool.assignCleaner(Path.CLEANER);
             dedicatedPools.put(poolName, pool);
@@ -89,10 +95,6 @@ public class WorkerPoolManager {
                 .$("] -> DEDICATED")
                 .$();
         return pool;
-    }
-
-    public void startAll() {
-        startAll(null);
     }
 
     public void startAll(Log sharedPoolLog) {
@@ -133,12 +135,7 @@ public class WorkerPoolManager {
                         .$(", workers=").$(sharedPool.getWorkerCount())
                         .I$();
                 sharedPool.close();
-                sharedPool = null;
             }
         }
-    }
-
-    public static WorkerPool createUnmanaged(WorkerPoolConfiguration config, Metrics metrics) {
-        return new WorkerPool(config, metrics);
     }
 }

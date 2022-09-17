@@ -47,7 +47,7 @@ public class ServerMain implements QuietCloseable {
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
     private final AtomicBoolean hasStarted = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
-    private final CairoEngine cairoEngine;
+    private final CairoEngine engine;
 
     public ServerMain(String... args) throws SqlException {
         this(Bootstrap.withArgs(args));
@@ -63,27 +63,27 @@ public class ServerMain implements QuietCloseable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        cairoEngine = new CairoEngine(cairoConfig, metrics);
-        toBeClosed.add(cairoEngine);
+        engine = new CairoEngine(cairoConfig, metrics);
+        toBeClosed.add(engine);
 
         // setup shared worker pool, plus dedicated pools
         final FunctionFactoryCache ffCache = new FunctionFactoryCache(
                 cairoConfig,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
-        final WorkerPool sharedPool = WorkerPoolManager.createUnmanaged(config.getWorkerPoolConfiguration(), metrics);
-        O3Utils.setupWorkerPool(sharedPool, cairoEngine, config.getCairoConfiguration().getCircuitBreakerConfiguration(), ffCache);
+        final WorkerPool sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
+        O3Utils.setupWorkerPool(sharedPool, engine, config.getCairoConfiguration().getCircuitBreakerConfiguration(), ffCache);
         workerPoolManager = new WorkerPoolManager(sharedPool);
 
         // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
+        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(engine);
         toBeClosed.add(snapshotAgent);
 
         // text import
-        TextImportJob.assignToPool(cairoEngine.getMessageBus(), sharedPool);
+        TextImportJob.assignToPool(engine.getMessageBus(), sharedPool);
         if (cairoConfig.getSqlCopyInputRoot() != null) {
             final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
-                    cairoEngine,
+                    engine,
                     // save CPU resources for collecting and processing jobs
                     Math.max(1, sharedPool.getWorkerCount() - 2),
                     ffCache
@@ -95,7 +95,7 @@ public class ServerMain implements QuietCloseable {
         // http
         toBeClosed.add(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
-                cairoEngine,
+                engine,
                 workerPoolManager,
                 ffCache,
                 snapshotAgent,
@@ -105,7 +105,7 @@ public class ServerMain implements QuietCloseable {
         // http min
         toBeClosed.add(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                cairoEngine,
+                engine,
                 workerPoolManager,
                 metrics
         ));
@@ -114,7 +114,7 @@ public class ServerMain implements QuietCloseable {
         if (config.getPGWireConfiguration().isEnabled()) {
             toBeClosed.add(Services.createPGWireServer(
                     config.getPGWireConfiguration(),
-                    cairoEngine,
+                    engine,
                     workerPoolManager,
                     ffCache,
                     snapshotAgent,
@@ -125,7 +125,7 @@ public class ServerMain implements QuietCloseable {
         // ilp/tcp
         toBeClosed.add(Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
-                cairoEngine,
+                engine,
                 workerPoolManager,
                 metrics
         ));
@@ -133,13 +133,13 @@ public class ServerMain implements QuietCloseable {
         // ilp/udp
         toBeClosed.add(Services.createLineUdpReceiver(
                 config.getLineUdpReceiverConfiguration(),
-                cairoEngine,
+                engine,
                 sharedPool
         ));
 
         // telemetry
         if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, ffCache);
+            final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
             toBeClosed.add(telemetryJob);
             if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                 sharedPool.assign(telemetryJob);
@@ -176,8 +176,20 @@ public class ServerMain implements QuietCloseable {
         }
     }
 
+    public PropServerConfiguration getConfiguration() {
+        return config;
+    }
+
     public CairoEngine getCairoEngine() {
-        return cairoEngine;
+        return engine;
+    }
+
+    public WorkerPoolManager getWorkerPoolManager() {
+        return workerPoolManager;
+    }
+
+    public boolean hasStarted() {
+        return hasStarted.get();
     }
 
     private void addShutdownHook() {
