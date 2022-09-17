@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
@@ -97,6 +98,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         configuration = serverConf.getCairoConfiguration();
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
+        metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
