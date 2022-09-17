@@ -58,7 +58,7 @@ public class WorkerPoolManager {
     }
 
     public int getSharedWorkerCount() {
-        return sharedPool != null ? sharedPool.getWorkerCount() : -1;
+        return sharedPool != null ? sharedPool.getWorkerCount() : 0;
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {

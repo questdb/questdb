@@ -150,7 +150,7 @@ public class WorkerPool implements QuietCloseable {
                             if (log != null) {
                                 log.info().$("cleaned [name=").$(poolName)
                                         .$(", worker=").$(index)
-                                        .$(" of ").$(workerCount)
+                                        .$(", total=").$(workerCount)
                                         .I$();
                             }
                         },
