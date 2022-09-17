@@ -54,7 +54,7 @@ public class ServerMain implements QuietCloseable {
     }
 
     public ServerMain(Bootstrap bootstrap) throws SqlException {
-        this(bootstrap.getConfig(), bootstrap.getMetrics(), bootstrap.getLog());
+        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog());
     }
 
     public ServerMain(PropServerConfiguration config, Metrics metrics, Log log) throws SqlException {

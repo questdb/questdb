@@ -209,7 +209,7 @@ public class Bootstrap {
         }
     }
 
-    public PropServerConfiguration getConfig() {
+    public PropServerConfiguration getConfiguration() {
         return config;
     }
 
@@ -441,7 +441,6 @@ public class Bootstrap {
                                             .$(", max=").$(maxFiles)
                                             .I$();
                                 }
-
                             }
                         }
                     }

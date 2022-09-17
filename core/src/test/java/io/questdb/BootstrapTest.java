@@ -26,71 +26,17 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.*;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
-import org.junit.rules.TemporaryFolder;
 
 import java.io.*;
-import java.net.URL;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.util.Properties;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 
-public class BootstrapTest {
-
-    @ClassRule
-    public static final TemporaryFolder temp = new TemporaryFolder();
-    private static CharSequence root;
-
-    private static final File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
-    private static boolean publicZipStubCreated = false;
-
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        //fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests 
-        URL resource = ServerMain.class.getResource("/io/questdb/site/public.zip");
-        if (resource == null) {
-            File publicZip = new File(siteDir, "public.zip");
-            try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(publicZip))) {
-                ZipEntry entry = new ZipEntry("test.txt");
-                zip.putNextEntry(entry);
-                zip.write("test".getBytes());
-                zip.closeEntry();
-            }
-            publicZipStubCreated = true;
-        }
-        try {
-            root = temp.newFolder("dbRoot").getAbsolutePath();
-            TestUtils.createTestPath(root);
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        if (publicZipStubCreated) {
-            File publicZip = new File(siteDir, "public.zip");
-            if (publicZip.exists()) {
-                publicZip.delete();
-            }
-        }
-        TestUtils.removeTestPath(root);
-        temp.delete();
-    }
+public class BootstrapTest extends AbstractBootstrapTest {
 
     @Test
     public void testBadArgs() throws IOException {
@@ -117,7 +63,7 @@ public class BootstrapTest {
             Assert.assertFalse(Files.exists(path.concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
             Bootstrap bootstrap = Bootstrap.withArgs("-d", root.toString());
             Assert.assertNotNull(bootstrap.getLog());
-            Assert.assertNotNull(bootstrap.getConfig());
+            Assert.assertNotNull(bootstrap.getConfiguration());
             Assert.assertNotNull(bootstrap.getMetrics());
             bootstrap.extractSite();
             Assert.assertTrue(Files.exists(path.trimTo(plen).concat("public").concat("version.txt").$()));
@@ -240,62 +186,5 @@ public class BootstrapTest {
         Assert.assertEquals("m", optHash.get("$5"));
         Assert.assertNull(optHash.get("-a"));
         Assert.assertNull(optHash.get("a"));
-    }
-
-    @Test
-    public void testServerMain() throws Exception {
-        createDummyConfiguration();
-        try (ServerMain serverMain = new ServerMain("-d", root.toString())) {
-            serverMain.start();
-
-            Properties properties = new Properties();
-            properties.setProperty("user", "admin");
-            properties.setProperty("password", "quest");
-            properties.setProperty("sslmode", "disable");
-            properties.setProperty("binaryTransfer", "true");
-            final String url = "jdbc:postgresql://127.0.0.1:8812/qdb";
-            final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getCairoEngine(), 1)
-                    .with(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            null,
-                            null,
-                            -1,
-                            null);
-
-            try (Connection connection = DriverManager.getConnection(url, properties)) {
-                connection.prepareStatement("create table xyz(a int)").execute();
-                try (TableWriter ignored = serverMain.getCairoEngine().getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing"
-                )) {
-                    connection.prepareStatement("drop table xyz").execute();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
-                    Assert.assertEquals("00000", e.getSQLState());
-                }
-            }
-        }
-    }
-
-    private static void createDummyConfiguration() throws Exception {
-        String config = root.toString() + Files.SEPARATOR + "conf";
-        TestUtils.createTestPath(config);
-        String file = config + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
-            writer.println("");
-        }
-        file = config + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
-            writer.println("");
-        }
-    }
-
-    private void assertFail(String message, String... args) throws IOException {
-        try {
-            Bootstrap.withArgs(args);
-            Assert.fail();
-        } catch (Bootstrap.BootstrapException thr) {
-            TestUtils.assertContains(thr.getMessage(), message);
-        }
     }
 }
