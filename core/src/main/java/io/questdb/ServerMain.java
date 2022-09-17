@@ -41,7 +41,7 @@ import io.questdb.std.*;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ServerMain implements QuietCloseable {
+public class ServerMain {
     private final PropServerConfiguration config;
     private final Log log;
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
@@ -166,7 +166,6 @@ public class ServerMain implements QuietCloseable {
         }
     }
 
-    @Override
     public void close() {
         if (hasStarted.compareAndSet(true, false)) {
             ShutdownFlag.INSTANCE.shutdown();
