@@ -148,7 +148,10 @@ public class WorkerPool implements QuietCloseable {
                                 Misc.free(cl.getQuick(j));
                             }
                             if (log != null) {
-                                log.info().$("cleaned [worker=").$(index).$(']').$();
+                                log.info().$("cleaned [name=").$(poolName)
+                                        .$(", worker=").$(index)
+                                        .$(" of ").$(workerCount)
+                                        .I$();
                             }
                         },
                         haltOnError,

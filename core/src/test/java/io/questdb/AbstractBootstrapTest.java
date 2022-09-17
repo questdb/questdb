@@ -34,6 +34,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
+import java.util.Properties;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -90,6 +91,17 @@ public abstract class AbstractBootstrapTest {
         temp.delete();
     }
 
+    static final Properties PG_CONNECTION_PROPERTIES = new Properties();
+
+    static {
+        PG_CONNECTION_PROPERTIES.setProperty("user", "admin");
+        PG_CONNECTION_PROPERTIES.setProperty("password", "quest");
+        PG_CONNECTION_PROPERTIES.setProperty("sslmode", "disable");
+        PG_CONNECTION_PROPERTIES.setProperty("binaryTransfer", "true");
+    }
+
+    final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
+
     static void createDummyConfiguration() throws Exception {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
@@ -100,6 +112,7 @@ public abstract class AbstractBootstrapTest {
             writer.println("line.tcp.io.worker.count=0");
             writer.println("http.bind.to=0.0.0.0:9010");
             writer.println("line.udp.bind.to=0.0.0.0:9019");
+            writer.println("line.udp.receive.buffer.size=" + 1024 * 4);
             writer.println("pg.net.bind.to=0.0.0.0:8822");
         }
         file = confPath + Files.SEPARATOR + "mime.types";
