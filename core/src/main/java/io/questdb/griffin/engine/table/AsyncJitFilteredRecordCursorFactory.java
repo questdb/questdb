@@ -71,7 +71,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull CompiledFilter compiledFilter,
             @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
-            int limitLoPos
+            int limitLoPos,
+            boolean preTouchColumns
     ) {
         super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
@@ -81,7 +82,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
         MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
-        this.filterAtom = new AsyncJitFilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions);
+        IntList preTouchColumnTypes = null;
+        if (preTouchColumns) {
+            preTouchColumnTypes = new IntList();
+            for (int i = 0, n = base.getMetadata().getColumnCount(); i < n; i++) {
+                int columnType = base.getMetadata().getColumnType(i);
+                preTouchColumnTypes.add(columnType);
+            }
+        }
+        this.filterAtom = new AsyncJitFilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions, preTouchColumnTypes);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -222,6 +231,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 0
         );
         rows.setPos(hi);
+
+        // Pre-touch fixed-size columns, if asked.
+        atom.preTouchColumns(record, rows);
     }
 
     private static class AsyncJitFilterAtom extends AsyncFilterAtom {
@@ -235,9 +247,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
                 MemoryCARW bindVarMemory,
-                ObjList<Function> bindVarFunctions
+                ObjList<Function> bindVarFunctions,
+                @Nullable IntList preTouchColumnTypes
         ) {
-            super(filter, perWorkerFilters);
+            super(filter, perWorkerFilters, preTouchColumnTypes);
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
