@@ -39,16 +39,11 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
-    @TestOnly
-    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        setupWorkerPool(workerPool, cairoEngine, null, null);
-    }
     public static void setupWorkerPool(
             WorkerPool workerPool,
             CairoEngine cairoEngine,

@@ -195,18 +195,8 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
         }
 
         @Override
-        public boolean haltOnError() {
-            return false;
-        }
-
-        @Override
         public String getPoolName() {
             return "ilptcp";
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
         }
     };
 }

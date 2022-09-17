@@ -46,7 +46,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 public final class Services {
 
@@ -133,7 +132,8 @@ public final class Services {
             WorkerPool workerPool,
             Metrics metrics
     ) {
-        if (configuration.isEnabled()) {
+        if (!configuration.isEnabled()) {
+            return null;
         }
 
         final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
@@ -162,64 +162,6 @@ public final class Services {
             });
         }
         return server;
-    }
-
-    @Nullable
-    public static PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics,
-            PGWireServer.PGConnectionContextFactory contextFactory
-    ) {
-        if (!configuration.isEnabled()) {
-            return null;
-        }
-
-        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
-    }
-
-    public static PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
-    ) {
-        if (!configuration.isEnabled()) {
-            return null;
-        }
-
-        return new PGWireServer(
-                configuration,
-                cairoEngine,
-                workerPool,
-                functionFactoryCache,
-                snapshotAgent,
-                new PGWireServer.PGConnectionContextFactory(
-                        cairoEngine,
-                        configuration,
-                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                )
-        );
-    }
-
-    public static PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            PGWireServer.PGConnectionContextFactory contextFactory
-    ) {
-        if (!configuration.isEnabled()) {
-            return null;
-        }
-
-        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
     }
 
     @Nullable

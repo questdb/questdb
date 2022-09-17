@@ -31,10 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.Services;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -4417,7 +4414,7 @@ nodejs code:
             };
 
             final WorkerPool workerPool = new TestWorkerPool(4, metrics);
-            try (final PGWireServer server = Services.createPGWireServer(
+            try (final PGWireServer server = createPGWireServer(
                     conf,
                     engine,
                     workerPool,
@@ -6780,7 +6777,7 @@ create table tab as (
 
         final WorkerPool workerPool = new TestWorkerPool(2, metrics);
 
-        return Services.createPGWireServer(
+        return createPGWireServer(
                 conf,
                 engine,
                 workerPool,
@@ -6965,7 +6962,7 @@ create table tab as (
         WorkerPool pool = new WorkerPool(conf, metrics);
         pool.assign(engine.getEngineMaintenanceJob());
         try (
-                final PGWireServer server = Services.createPGWireServer(
+                final PGWireServer server = createPGWireServer(
                         conf,
                         engine,
                         pool,

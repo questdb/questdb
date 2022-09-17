@@ -41,7 +41,6 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     private final CharSequence questDbVersion;
     private final CharSequence commitHash;
     private final CharSequence jdkVersion;
-
     private final String buildKey;
 
     public BuildInformationHolder() {

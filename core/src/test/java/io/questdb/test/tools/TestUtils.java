@@ -49,6 +49,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 import org.junit.Assert;
 
 import java.io.*;
@@ -842,7 +843,7 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    O3Utils.setupWorkerPool(pool, engine);
+                    setupWorkerPool(pool, engine);
                     pool.start(LOG);
                 }
 
@@ -855,6 +856,10 @@ public final class TestUtils {
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
+    }
+
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
     }
 
     public static void execute(

@@ -32,8 +32,6 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -44,12 +42,12 @@ import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements QuietCloseable {
-
     private final PropServerConfiguration config;
     private final Log log;
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
     private final AtomicBoolean hasStarted = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
+    private final CairoEngine cairoEngine;
 
     public ServerMain(String... args) throws SqlException {
         this(Bootstrap.withArgs(args));
@@ -65,7 +63,7 @@ public class ServerMain implements QuietCloseable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        final CairoEngine cairoEngine = new CairoEngine(cairoConfig, metrics);
+        cairoEngine = new CairoEngine(cairoConfig, metrics);
         toBeClosed.add(cairoEngine);
 
         // setup shared worker pool, plus dedicated pools
@@ -176,6 +174,10 @@ public class ServerMain implements QuietCloseable {
             Misc.freeObjListAndClear(toBeClosed);
             LogFactory.INSTANCE.flushJobsAndClose();
         }
+    }
+
+    public CairoEngine getCairoEngine() {
+        return cairoEngine;
     }
 
     private void addShutdownHook() {

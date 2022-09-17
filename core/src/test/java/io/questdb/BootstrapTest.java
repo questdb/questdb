@@ -26,6 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.*;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
@@ -36,6 +40,10 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.*;
 import java.net.URL;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.Properties;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -239,6 +247,33 @@ public class BootstrapTest {
         createDummyConfiguration();
         try (ServerMain serverMain = new ServerMain("-d", root.toString())) {
             serverMain.start();
+
+            Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("sslmode", "disable");
+            properties.setProperty("binaryTransfer", "true");
+            final String url = "jdbc:postgresql://127.0.0.1:8812/qdb";
+            final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getCairoEngine(), 1)
+                    .with(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            null,
+                            null,
+                            -1,
+                            null);
+
+            try (Connection connection = DriverManager.getConnection(url, properties)) {
+                connection.prepareStatement("create table xyz(a int)").execute();
+                try (TableWriter ignored = serverMain.getCairoEngine().getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing"
+                )) {
+                    connection.prepareStatement("drop table xyz").execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
+                    Assert.assertEquals("00000", e.getSQLState());
+                }
+            }
         }
     }
 

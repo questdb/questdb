@@ -24,10 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.Services;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.*;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -40,6 +39,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -51,13 +51,54 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public class BasePGTest extends AbstractGriffinTest {
 
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            PGWireServer.PGConnectionContextFactory contextFactory
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
+    }
+
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {
-        return Services.createPGWireServer(
+        return createPGWireServer(
                 configuration,
                 engine,
                 new TestWorkerPool(configuration.getWorkerCount(), metrics),
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent
+        );
+    }
+
+    @TestOnly
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                functionFactoryCache,
+                snapshotAgent,
+                new PGWireServer.PGConnectionContextFactory(
+                        cairoEngine,
+                        configuration,
+                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                )
         );
     }
 
