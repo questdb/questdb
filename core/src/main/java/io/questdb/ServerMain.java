@@ -32,6 +32,7 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -195,6 +196,8 @@ public class ServerMain {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 System.err.println("QuestDB is shutting down...");
+                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.sum());
+
                 close();
             } catch (Error ignore) {
                 // ignore

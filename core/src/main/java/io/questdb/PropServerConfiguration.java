@@ -260,6 +260,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int columnPurgeRetryLimitDays;
     private final long columnPurgeRetryDelay;
     private final boolean sqlParallelFilterEnabled;
+    private final boolean sqlParallelFilterPreTouchEnabled;
     private final int cairoPageFrameReduceShardCount;
     private final int replaceFunctionBufferMaxSize;
     private final int cairoSqlCopyQueueCapacity;
@@ -747,6 +748,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
+            this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, false);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
             this.cairoPageFrameReduceTaskPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY, 4);
 
@@ -2630,6 +2632,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelFilterPreTouchEnabled() {
+            return sqlParallelFilterPreTouchEnabled;
         }
     }
 
