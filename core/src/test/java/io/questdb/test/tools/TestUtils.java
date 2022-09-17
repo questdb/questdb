@@ -842,8 +842,7 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine, null, null);
+                    O3Utils.setupWorkerPool(pool, engine);
                     pool.start(LOG);
                 }
 

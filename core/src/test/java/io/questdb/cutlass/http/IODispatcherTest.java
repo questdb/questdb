@@ -4409,7 +4409,7 @@ public class IODispatcherTest {
                         }
                     }
                 };
-                O3Utils.setupWorkerPool(workerPool, engine, null, null);
+                O3Utils.setupWorkerPool(workerPool, engine);
                 workerPoolManager.startAll();
                 try {
                     // create table with all column types

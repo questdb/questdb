@@ -6899,7 +6899,7 @@ create table tab as (
         };
 
         WorkerPool pool = workerPoolManager.getInstance(conf, metrics);
-        O3Utils.setupWorkerPool(pool, engine, null , null);
+        O3Utils.setupWorkerPool(pool, engine);
         workerPoolManager.setSharedPool(pool);
         pool.assign(engine.getEngineMaintenanceJob());
         try (
