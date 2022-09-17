@@ -474,6 +474,33 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }, 4, 4);
     }
 
+    @Test
+    public void testPreTouchColumns() throws Exception {
+        withPool((engine, compiler, sqlExecutionContext) -> {
+            enableColumnPreTouch = true;
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+
+            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
+            final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
+
+            assertQuery(compiler,
+                    "c1\tc2\tc3\tc4\n" +
+                            "foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163\n" +
+                            "foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911\n" +
+                            "foobar\t1970-01-01T00:42:39.700000Z\t0.3457641654104435\t0.5880171472078374\n" +
+                            "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
+                            "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n",
+                    sql,
+                    "c2",
+                    sqlExecutionContext,
+                    true,
+                    true,
+                    false,
+                    true
+            );
+        });
+    }
+
     private void resetTaskCapacities() {
         // Tests that involve LIMIT clause may lead to only a fraction of the page frames being
         // reduced and/or collected before the factory gets closed. When that happens, row id and
