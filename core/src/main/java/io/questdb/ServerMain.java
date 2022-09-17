@@ -81,6 +81,11 @@ public class ServerMain implements QuietCloseable {
         final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
         toBeClosed.add(snapshotAgent);
 
+        // Register jobs that help parallel execution of queries and column indexing.
+        sharedPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
+        sharedPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
+        sharedPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
+
         // text import
         TextImportJob.assignToPool(cairoEngine.getMessageBus(), sharedPool);
         if (cairoConfig.getSqlCopyInputRoot() != null) {
