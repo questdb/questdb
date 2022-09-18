@@ -67,6 +67,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_UPDATE = "UPDATE";
+    public static final String TAG_DEALLOCATE = "DEALLOCATE";
     // create as select tag
     public static final String TAG_CTAS = "CTAS";
     public static final char STATUS_IN_TRANSACTION = 'T';
@@ -111,12 +112,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private static final String WRITER_LOCK_REASON = "pgConnection";
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
-    private long recvBuffer;
-    private long sendBuffer;
     private final int recvBufferSize;
     private final CharacterStore characterStore;
-    private BindVariableService bindVariableService;
-    private long sendBufferLimit;
     private final int sendBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
@@ -125,7 +122,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final boolean dumpNetworkTraffic;
     private final String serverVersion;
     private final PGAuthenticator authenticator;
-    private SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
     private final IntList bindVariableTypes = new IntList();
     private final IntList selectColumnTypes = new IntList();
@@ -149,6 +145,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     //pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList bindSelectColumnFormats;
     private final BatchCallback batchCallback;
+    private long recvBuffer;
+    private long sendBuffer;
+    private BindVariableService bindVariableService;
+    private long sendBufferLimit;
+    private SqlExecutionContextImpl sqlExecutionContext;
     private WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     //list of pair: column types (with format flag stored in first bit) AND additional type flag
@@ -304,7 +305,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         clearWriters();
         clearRecvBuffer();
         typesAndInsertCache.clear();
-        namedStatementMap.clear();
+        evictNamedStatementWrappersAndClear();
         namedPortalMap.clear();
         bindVariableService.clear();
         bindVariableTypes.clear();
@@ -317,6 +318,38 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         typesAndUpdateIsCached = false;
         statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
+    }
+
+    private void evictNamedStatementWrappersAndClear() {
+        if (namedStatementMap.size() > 0) {
+            ObjList<CharSequence> names = namedStatementMap.keys();
+            for (int i = 0, n = names.size(); i < n; i++) {
+                CharSequence name = names.getQuick(i);
+                namedStatementWrapperPool.push(namedStatementMap.get(name));
+            }
+            namedStatementMap.clear();
+        }
+    }
+
+    @Override
+    public PGConnectionContext of(long fd, IODispatcher<PGConnectionContext> dispatcher) {
+        PGConnectionContext r = super.of(fd, dispatcher);
+        sqlExecutionContext.with(fd);
+        if (fd == -1) {
+            // The context is about to be returned to the pool, so we should release the memory.
+            freeBuffers();
+        } else {
+            // The context is obtained from the pool, so we should initialize the memory.
+            if (recvBuffer == 0) {
+                this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            }
+            if (sendBuffer == 0) {
+                this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+                this.sendBufferPtr = sendBuffer;
+                this.sendBufferLimit = sendBuffer + sendBufferSize;
+            }
+        }
+        return r;
     }
 
     public void clearWriters() {
@@ -421,32 +454,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             sendAndReset();
             clearRecvBuffer();
         }
-    }
-
-    @Override
-    public PGConnectionContext of(long fd, IODispatcher<PGConnectionContext> dispatcher) {
-        PGConnectionContext r = super.of(fd, dispatcher);
-        sqlExecutionContext.with(fd);
-        if (fd == -1) {
-            // The context is about to be returned to the pool, so we should release the memory.
-            freeBuffers();
-        } else {
-            // The context is obtained from the pool, so we should initialize the memory.
-            if (recvBuffer == 0) {
-                this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            }
-            if (sendBuffer == 0) {
-                this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-                this.sendBufferPtr = sendBuffer;
-                this.sendBufferLimit = sendBuffer + sendBufferSize;
-            }
-        }
-        return r;
-    }
-
-    private void freeBuffers() {
-        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
     }
 
     public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
@@ -1418,6 +1425,16 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
+    private void freeBuffers() {
+        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+    }
+
+    private void freeFactory() {
+        currentFactory = null;
+        typesAndSelect = Misc.free(typesAndSelect);
+    }
+
     private void freeUpdateCommand(UpdateOperation op) {
         // Create a copy of sqlExecutionContext here
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
@@ -1647,13 +1664,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareDescribePortalResponse();
     }
 
-    private void prepareQueryCanceled(CharSequence message) {
-        prepareErrorResponse(-1, message);
-        LOG.info()
-                .$("query cancelled [msg=`").$(message).$('`')
-                .I$();
-    }
-
     private void prepareError(int position, CharSequence message, long errno) {
         prepareErrorResponse(position, message);
         if (errno == CairoException.NON_CRITICAL) {
@@ -1751,6 +1761,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void prepareParseComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
         responseAsciiSink.putIntDirect(INT_BYTES_X);
+    }
+
+    private void prepareQueryCanceled(CharSequence message) {
+        prepareErrorResponse(-1, message);
+        LOG.info()
+                .$("query cancelled [msg=`").$(message).$('`')
+                .I$();
     }
 
     void prepareReadyForQuery() {
@@ -1932,27 +1949,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         syncActions.add(SYNC_BIND);
     }
 
-    private void freeFactory() {
-        currentFactory = null;
-        typesAndSelect = Misc.free(typesAndSelect);
-    }
-
     private void processClose(long lo, long msgLimit) throws BadProtocolException {
         final byte type = Unsafe.getUnsafe().getByte(lo);
         switch (type) {
             case 'S':
                 lo = lo + 1;
                 final long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
-                final CharSequence statementName = getStatementName(lo, hi);
-                if (statementName != null) {
-                    final int index = namedStatementMap.keyIndex(statementName);
-                    // do not freak out if client is closing statement we don't have
-                    // we could have reported error to client before statement was created
-                    if (index < 0) {
-                        namedStatementWrapperPool.push(namedStatementMap.valueAt(index));
-                        namedStatementMap.removeAt(index);
-                    }
-                }
+                removeNamedStatement(getStatementName(lo, hi));
                 break;
             case 'P':
                 lo = lo + 1;
@@ -2023,6 +2026,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 break;
             case CompiledQuery.SET:
                 queryTag = TAG_SET;
+                break;
+            case CompiledQuery.DEALLOCATE:
+                queryTag = TAG_DEALLOCATE;
+                removeNamedStatement(cq.getStatementName());
                 break;
             case CompiledQuery.BEGIN:
                 queryTag = TAG_BEGIN;
@@ -2387,6 +2394,18 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
         recvBufferWriteOffset += n;
         return n;
+    }
+
+    private void removeNamedStatement(CharSequence statementName) {
+        if (statementName != null) {
+            final int index = namedStatementMap.keyIndex(statementName);
+            // do not freak out if client is closing statement we don't have
+            // we could have reported error to client before statement was created
+            if (index < 0) {
+                namedStatementWrapperPool.push(namedStatementMap.valueAt(index));
+                namedStatementMap.removeAt(index);
+            }
+        }
     }
 
     private void reportError(int position, CharSequence flyweightMessage, long errno)
