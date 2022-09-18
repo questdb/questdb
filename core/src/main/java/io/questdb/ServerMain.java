@@ -40,11 +40,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ServerMain {
+public class ServerMain implements QuietCloseable {
     private final PropServerConfiguration config;
     private final Log log;
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
@@ -68,7 +69,6 @@ public class ServerMain {
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         engine = new CairoEngine(cairoConfig, metrics);
-        toBeClosed.add(engine);
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -80,12 +80,14 @@ public class ServerMain {
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) throws SqlException {
+                sharedPool.assignCleaner(Path.CLEANER);
                 O3Utils.setupWorkerPool(
                         sharedPool,
                         engine,
                         config.getCairoConfiguration().getCircuitBreakerConfiguration(),
                         ffCache
                 );
+
                 final MessageBus messageBus = engine.getMessageBus();
 
                 // register jobs that help parallel execution of queries and column indexing.
@@ -166,6 +168,7 @@ public class ServerMain {
                 workerPoolManager
         ));
 
+        toBeClosed.add(engine); // last to be closed
         System.gc(); // GC 1
         log.advisoryW().$("Bootstrap complete, ready to start").$();
     }
@@ -186,12 +189,13 @@ public class ServerMain {
         }
     }
 
+    @Override
     public void close() {
         if (hasStarted.compareAndSet(true, false)) {
             ShutdownFlag.INSTANCE.shutdown();
             workerPoolManager.closeAll();
-            LogFactory.INSTANCE.flushJobsAndClose();
             Misc.freeObjListAndClear(toBeClosed);
+            LogFactory.INSTANCE.flushJobsAndClose();
         }
     }
 

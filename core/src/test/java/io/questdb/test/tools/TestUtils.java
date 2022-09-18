@@ -858,6 +858,7 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        workerPool.assignCleaner(Path.CLEANER);
         O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
     }
 

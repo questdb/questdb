@@ -35,7 +35,6 @@ import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 public class O3Utils {
@@ -61,7 +60,6 @@ public class O3Utils {
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnHalt(purgeDiscoveryJob);
         workerPool.freeOnHalt(columnPurgeJob);
-        workerPool.assignCleaner(Path.CLEANER);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();

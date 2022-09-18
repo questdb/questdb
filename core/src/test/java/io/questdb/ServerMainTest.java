@@ -34,22 +34,20 @@ import java.sql.DriverManager;
 public class ServerMainTest extends AbstractBootstrapTest {
 
     @Test
-    @Ignore("mmm threading issue, cannot reproduce it in my environment, will need to switch to Intel Mac")
     public void testServerMain() throws Exception {
         createDummyConfiguration();
-        final ServerMain serverMain = new ServerMain("-d", root.toString());
-        Assert.assertNotNull(serverMain.getConfiguration());
-        Assert.assertNotNull(serverMain.getCairoEngine());
-        Assert.assertNotNull(serverMain.getWorkerPoolManager());
-        Assert.assertFalse(serverMain.hasStarted());
-        serverMain.start(false);
-        try {
+        assertMemoryLeak(() -> {
+            final ServerMain serverMain = new ServerMain("-d", root.toString());
+            Assert.assertNotNull(serverMain.getConfiguration());
+            Assert.assertNotNull(serverMain.getCairoEngine());
+            Assert.assertNotNull(serverMain.getWorkerPoolManager());
+            Assert.assertFalse(serverMain.hasStarted());
+            serverMain.start();
             Assert.assertTrue(serverMain.hasStarted());
             try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                 Os.pause();
             }
-        } finally {
             serverMain.close();
-        }
+        });
     }
 }

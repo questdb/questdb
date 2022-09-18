@@ -24,7 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.network.Net;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -63,6 +65,12 @@ public abstract class AbstractBootstrapTest {
             }
             publicZipStubCreated = true;
         }
+        try {
+            root = temp.newFolder("QDB_DATA").getAbsolutePath();
+            TestUtils.createTestPath(root);
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError();
+        }
     }
 
     @AfterClass
@@ -73,20 +81,6 @@ public abstract class AbstractBootstrapTest {
                 publicZip.delete();
             }
         }
-    }
-
-    @Before
-    public void setUp() {
-        try {
-            root = temp.newFolder("dbRoot").getAbsolutePath();
-            TestUtils.createTestPath(root);
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
-    }
-
-    @After
-    public void tearDown() {
         TestUtils.removeTestPath(root);
         temp.delete();
     }
@@ -107,13 +101,40 @@ public abstract class AbstractBootstrapTest {
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
-            writer.println("shared.worker.count=1");
-            writer.println("line.tcp.net.bind.to=0.0.0.0:9019");
-            writer.println("line.tcp.io.worker.count=0");
+
+            // enable services
+            writer.println("http.enabled=true");
+            writer.println("http.min.enabled=true");
+            writer.println("pg.enabled=true");
+            writer.println("line.tcp.enabled=true");
+            writer.println("line.udp.enabled=true");
+
+            // disable services
+            writer.println("http.query.cache.enabled=false");
+            writer.println("pg.select.cache.enabled=false");
+            writer.println("pg.insert.cache.enabled=false");
+            writer.println("pg.update.cache.enabled=false");
+            writer.println("cairo.wal.enabled.default=false");
+            writer.println("metrics.enabled=false");
+            writer.println("telemetry.enabled=false");
+
+            // configure end points
             writer.println("http.bind.to=0.0.0.0:9010");
+            writer.println("http.min.net.bind.to=0.0.0.0:9011");
+            writer.println("pg.net.bind.to=0.0.0.0:8822");
+            writer.println("line.tcp.net.bind.to=0.0.0.0:9019");
             writer.println("line.udp.bind.to=0.0.0.0:9019");
             writer.println("line.udp.receive.buffer.size=" + 1024 * 4);
-            writer.println("pg.net.bind.to=0.0.0.0:8822");
+
+            // configure worker pools
+            writer.println("shared.worker.count=1");
+            writer.println("http.worker.count=0");
+            writer.println("http.min.worker.count=0");
+            writer.println("http.connection.pool.initial.capacity=4");
+            writer.println("pg.worker.count=0");
+            writer.println("line.tcp.writer.worker.count=0");
+            writer.println("line.tcp.io.worker.count=0");
+
         }
         file = confPath + Files.SEPARATOR + "mime.types";
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
@@ -127,6 +148,47 @@ public abstract class AbstractBootstrapTest {
             Assert.fail();
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
+        }
+    }
+
+    static void assertMemoryLeak(TestUtils.LeakProneCode runnable) throws Exception {
+        Path.clearThreadLocals();
+        long mem = Unsafe.getMemUsed();
+        long[] memoryUsageByTag = new long[MemoryTag.SIZE];
+        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+            memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
+        }
+
+        Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
+        long fileCount = Files.getOpenFileCount();
+        Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
+
+        int addrInfoCount = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
+
+        int sockAddrCount = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
+
+        runnable.run();
+        Path.clearThreadLocals();
+        if (fileCount != Files.getOpenFileCount()) {
+            Assert.assertEquals("file descriptors " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+        }
+
+        // Checks that the same tag used for allocation and freeing native memory
+        long memAfter = Unsafe.getMemUsed();
+        Assert.assertTrue(memAfter == 0);
+
+        int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue(addrInfoCountAfter > -1);
+        if (addrInfoCount != addrInfoCountAfter) {
+            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
+        }
+
+        int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue(sockAddrCountAfter > -1);
+        if (sockAddrCount != sockAddrCountAfter) {
+            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
         }
     }
 }
