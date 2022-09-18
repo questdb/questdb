@@ -102,7 +102,7 @@ public abstract class AbstractBootstrapTest {
         PG_CONNECTION_PROPERTIES.setProperty("binaryTransfer", "true");
     }
 
-    final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
+    //final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
 
     static void createDummyConfiguration() throws Exception {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
