@@ -34,11 +34,11 @@ import java.sql.DriverManager;
 public class ServerMainTest extends AbstractBootstrapTest {
 
     @Test
-    @Ignore("flaky, not sure why yet")
     public void testServerMain() throws Exception {
         createDummyConfiguration();
         final ServerMain serverMain = new ServerMain("-d", root.toString());
         Assert.assertNotNull(serverMain.getConfiguration());
+        Assert.assertNotNull(serverMain.getCairoEngine());
         Assert.assertNotNull(serverMain.getWorkerPoolManager());
         Assert.assertFalse(serverMain.hasStarted());
         serverMain.start(false);

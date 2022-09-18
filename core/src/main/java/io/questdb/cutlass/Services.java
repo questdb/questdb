@@ -67,7 +67,7 @@ public final class Services {
                 configuration,
                 cairoEngine,
                 workerPool,
-                workerPoolManager.hasSharedPool() ? workerPoolManager.getSharedWorkerCount() : workerPool.getWorkerCount(),
+                workerPoolManager.getSharedWorkerCount(),
                 functionFactoryCache,
                 snapshotAgent,
                 metrics
@@ -216,16 +216,16 @@ public final class Services {
     public static AbstractLineProtoUdpReceiver createLineUdpReceiver(
             LineUdpReceiverConfiguration config,
             CairoEngine cairoEngine,
-            WorkerPool sharedPool
+            WorkerPoolManager workerPoolManager
     ) {
         if (!config.isEnabled()) {
             return null;
         }
 
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, sharedPool);
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
         }
-        return new LineUdpReceiver(config, cairoEngine, sharedPool);
+        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
     }
 
     private Services() {

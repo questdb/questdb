@@ -32,7 +32,9 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -49,16 +51,17 @@ public class ServerMain {
     private final AtomicBoolean hasStarted = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
     private final CairoEngine engine;
+    private final FunctionFactoryCache ffCache;
 
     public ServerMain(String... args) throws SqlException {
         this(Bootstrap.withArgs(args));
     }
 
-    public ServerMain(Bootstrap bootstrap) throws SqlException {
+    public ServerMain(final Bootstrap bootstrap) throws SqlException {
         this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog());
     }
 
-    public ServerMain(PropServerConfiguration config, Metrics metrics, Log log) throws SqlException {
+    public ServerMain(final PropServerConfiguration config, final Metrics metrics, final Log log) throws SqlException {
         this.config = config;
         this.log = log;
 
@@ -67,31 +70,56 @@ public class ServerMain {
         engine = new CairoEngine(cairoConfig, metrics);
         toBeClosed.add(engine);
 
-        // setup shared worker pool, plus dedicated pools
-        final FunctionFactoryCache ffCache = new FunctionFactoryCache(
+        // create function factory cache
+        ffCache = new FunctionFactoryCache(
                 cairoConfig,
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
-        final WorkerPool sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
-        O3Utils.setupWorkerPool(sharedPool, engine, config.getCairoConfiguration().getCircuitBreakerConfiguration(), ffCache);
-        workerPoolManager = new WorkerPoolManager(sharedPool);
+
+        // create the worker pool manager, with a configured shared pool
+        workerPoolManager = new WorkerPoolManager(config, metrics) {
+            @Override
+            protected void configureSharedPool(WorkerPool sharedPool) throws SqlException {
+                O3Utils.setupWorkerPool(
+                        sharedPool,
+                        engine,
+                        config.getCairoConfiguration().getCircuitBreakerConfiguration(),
+                        ffCache
+                );
+                final MessageBus messageBus = engine.getMessageBus();
+
+                // register jobs that help parallel execution of queries and column indexing.
+                sharedPool.assign(new ColumnIndexerJob(messageBus));
+                sharedPool.assign(new GroupByJob(messageBus));
+                sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+
+                // text import
+                TextImportJob.assignToPool(messageBus, sharedPool);
+                if (cairoConfig.getSqlCopyInputRoot() != null) {
+                    final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                            engine,
+                            // save CPU resources for collecting and processing jobs
+                            Math.max(1, sharedPool.getWorkerCount() - 2),
+                            ffCache
+                    );
+                    sharedPool.assign(textImportRequestJob);
+                    sharedPool.freeOnHalt(textImportRequestJob);
+                }
+
+                // telemetry
+                if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
+                    final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
+                    toBeClosed.add(telemetryJob);
+                    if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
+                        sharedPool.assign(telemetryJob);
+                    }
+                }
+            }
+        };
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(engine);
         toBeClosed.add(snapshotAgent);
-
-        // text import
-        TextImportJob.assignToPool(engine.getMessageBus(), sharedPool);
-        if (cairoConfig.getSqlCopyInputRoot() != null) {
-            final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
-                    engine,
-                    // save CPU resources for collecting and processing jobs
-                    Math.max(1, sharedPool.getWorkerCount() - 2),
-                    ffCache
-            );
-            sharedPool.assign(textImportRequestJob);
-            sharedPool.freeOnHalt(textImportRequestJob);
-        }
 
         // http
         toBeClosed.add(Services.createHttpServer(
@@ -135,17 +163,8 @@ public class ServerMain {
         toBeClosed.add(Services.createLineUdpReceiver(
                 config.getLineUdpReceiverConfiguration(),
                 engine,
-                sharedPool
+                workerPoolManager
         ));
-
-        // telemetry
-        if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-            final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-            toBeClosed.add(telemetryJob);
-            if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                sharedPool.assign(telemetryJob);
-            }
-        }
 
         System.gc(); // GC 1
         log.advisoryW().$("Bootstrap complete, ready to start").$();
@@ -160,7 +179,7 @@ public class ServerMain {
             if (addShutdownHook) {
                 addShutdownHook();
             }
-            workerPoolManager.startAll(log); // starts QuestDB's workers
+            workerPoolManager.startAll(log);
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();

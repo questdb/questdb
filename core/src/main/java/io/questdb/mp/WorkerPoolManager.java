@@ -24,74 +24,63 @@
 
 package io.questdb.mp;
 
-import io.questdb.Bootstrap;
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class WorkerPoolManager {
+public abstract class WorkerPoolManager {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
 
     private final WorkerPool sharedPool;
     private final AtomicBoolean hasStarted = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
-    private final StringSink sink = new StringSink();
 
-    public WorkerPoolManager() {
-        this.sharedPool = null;
+    public WorkerPoolManager(ServerConfiguration config, Metrics metrics) throws SqlException {
+        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
+        configureSharedPool(sharedPool);
     }
 
-    public WorkerPoolManager(WorkerPool sharedPool) {
-        this.sharedPool = sharedPool;
-    }
+    protected abstract void configureSharedPool(final WorkerPool sharedPool) throws SqlException;
 
-    public boolean hasSharedPool() {
-        return sharedPool != null;
+    public WorkerPool getSharedPool() {
+        return sharedPool;
     }
 
     public int getSharedWorkerCount() {
-        return sharedPool != null ? sharedPool.getWorkerCount() : 0;
+        return sharedPool.getWorkerCount();
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {
         if (hasStarted.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
+
         if (config.getWorkerCount() < 1) {
-            WorkerPool pool = sharedPool;
-            if (pool != null) {
-                LOG.info().$("Using pool [name=").$(config.getPoolName())
-                        .$(", workers=").$(pool.getWorkerCount())
-                        .$("] -> SHARED")
-                        .$();
-                return pool;
-            }
+            LOG.info().$("Using pool [name=").$(sharedPool.getPoolName())
+                    .$(", workers=").$(sharedPool.getWorkerCount())
+                    .$("] -> SHARED")
+                    .$();
+            return sharedPool;
         }
+
         String poolName = config.getPoolName();
         WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
-            int workerCount = config.getWorkerCount();
-            if (workerCount < 1) {
-                sink.clear();
-                sink.put("Pool [").put(poolName)
-                        .put("] has wrong number of workers: ").put(workerCount)
-                        .put(" (there is no shared pool)");
-                throw new Bootstrap.BootstrapException(sink.toString());
-            }
             pool = new WorkerPool(config, metrics);
             pool.assignCleaner(Path.CLEANER);
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("Using pool [name=").$(poolName)
-                .$(", workers=").$(config.getWorkerCount())
+                .$(", workers=").$(pool.getWorkerCount())
                 .$("] -> DEDICATED")
                 .$();
         return pool;
@@ -99,12 +88,10 @@ public class WorkerPoolManager {
 
     public void startAll(Log sharedPoolLog) {
         if (hasStarted.compareAndSet(false, true)) {
-            if (sharedPool != null) {
-                sharedPool.start(sharedPoolLog);
-                LOG.info().$("Started shared pool [name=").$(sharedPool.getPoolName())
-                        .$(", workers=").$(sharedPool.getWorkerCount())
-                        .I$();
-            }
+            sharedPool.start(sharedPoolLog);
+            LOG.info().$("Started shared pool [name=").$(sharedPool.getPoolName())
+                    .$(", workers=").$(sharedPool.getWorkerCount())
+                    .I$();
 
             ObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
@@ -130,12 +117,11 @@ public class WorkerPoolManager {
                 pool.close();
             }
             dedicatedPools.clear();
-            if (sharedPool != null) {
-                LOG.info().$("Closing shared pool [name=").$(sharedPool.getPoolName())
-                        .$(", workers=").$(sharedPool.getWorkerCount())
-                        .I$();
-                sharedPool.close();
-            }
+
+            LOG.info().$("Closing shared pool [name=").$(sharedPool.getPoolName())
+                    .$(", workers=").$(sharedPool.getWorkerCount())
+                    .I$();
+            sharedPool.close();
         }
     }
 }
