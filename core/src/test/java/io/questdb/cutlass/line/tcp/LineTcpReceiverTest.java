@@ -1100,7 +1100,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
                     for (int n = 0; n < senders.length; n++) {
                         senders[n] = senderSupplier.get();
-                        ;
                         StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
                         sb.append("location\ttemp\ttimestamp\n");
                         expectedSbs[n] = sb;
