@@ -37,17 +37,17 @@ public class ServerMainTest extends AbstractBootstrapTest {
     public void testServerMain() throws Exception {
         createDummyConfiguration();
         assertMemoryLeak(() -> {
-            final ServerMain serverMain = new ServerMain("-d", root.toString());
-            Assert.assertNotNull(serverMain.getConfiguration());
-            Assert.assertNotNull(serverMain.getCairoEngine());
-            Assert.assertNotNull(serverMain.getWorkerPoolManager());
-            Assert.assertFalse(serverMain.hasStarted());
-            serverMain.start();
-            Assert.assertTrue(serverMain.hasStarted());
-            try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
-                Os.pause();
+            try(final ServerMain serverMain = new ServerMain("-d", root.toString())) {
+                Assert.assertNotNull(serverMain.getConfiguration());
+                Assert.assertNotNull(serverMain.getCairoEngine());
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertFalse(serverMain.hasStarted());
+                serverMain.start();
+                Assert.assertTrue(serverMain.hasStarted());
+                try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                    Os.pause();
+                }
             }
-            serverMain.close();
         });
     }
 }
