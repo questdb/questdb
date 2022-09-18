@@ -43,4 +43,17 @@ public class ServerMainTest extends AbstractBootstrapTest {
             TestUtils.assertContains("start was not called at all", err.getMessage());
         }
     }
+
+    @Test
+    public void testServerMainStart() throws Exception {
+        createDummyConfiguration();
+        try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
+            Assert.assertNotNull(serverMain.getConfiguration());
+            Assert.assertNotNull(serverMain.getCairoEngine());
+            Assert.assertNotNull(serverMain.getWorkerPoolManager());
+            Assert.assertFalse(serverMain.hasStarted());
+            Assert.assertFalse(serverMain.hasBeenClosed());
+            serverMain.start(false);
+        }
+    }
 }

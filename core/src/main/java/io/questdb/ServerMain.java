@@ -81,13 +81,14 @@ public class ServerMain implements QuietCloseable {
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) throws SqlException {
+                sharedPool.assign(engine.getEngineMaintenanceJob());
+                sharedPool.assignCleaner(Path.CLEANER);
                 O3Utils.setupWorkerPool(
                         sharedPool,
                         engine,
                         config.getCairoConfiguration().getCircuitBreakerConfiguration(),
                         ffCache
                 );
-                sharedPool.assignCleaner(Path.CLEANER);
                 final MessageBus messageBus = engine.getMessageBus();
 
                 // register jobs that help parallel execution of queries and column indexing.

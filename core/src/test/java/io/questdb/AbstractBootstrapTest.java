@@ -65,12 +65,6 @@ public abstract class AbstractBootstrapTest {
             }
             publicZipStubCreated = true;
         }
-        try {
-            root = temp.newFolder("QDB_DATA").getAbsolutePath();
-            TestUtils.createTestPath(root);
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
     }
 
     @AfterClass
@@ -81,6 +75,20 @@ public abstract class AbstractBootstrapTest {
                 publicZip.delete();
             }
         }
+    }
+
+    @Before
+    public void setUp() {
+        try {
+            root = temp.newFolder("QDB_DATA").getAbsolutePath();
+            TestUtils.createTestPath(root);
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError();
+        }
+    }
+
+    @After
+    public void tearDown() {
         TestUtils.removeTestPath(root);
         temp.delete();
     }
