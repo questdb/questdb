@@ -33,7 +33,6 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements QuietCloseable {
-
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
     private final int[] workerAffinity;
@@ -178,12 +177,10 @@ public class WorkerPool implements QuietCloseable {
         if (running.compareAndSet(true, false)) {
             started.await();
             for (int i = 0; i < workerCount; i++) {
-                Worker worker = workers.getQuick(i);
-                if (worker != null) {
-                    worker.halt();
-                }
+                workers.getQuick(i).halt();
             }
             halted.await();
+
             Misc.freeObjList(workers);
             Misc.freeObjList(freeOnHalt);
         }

@@ -24,30 +24,23 @@
 
 package io.questdb;
 
-import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
-
-import java.sql.Connection;
-import java.sql.DriverManager;
 
 
 public class ServerMainTest extends AbstractBootstrapTest {
 
     @Test
-    public void testServerMain() throws Exception {
+    public void testServerMainStartNotCalled() throws Exception {
         createDummyConfiguration();
-        assertMemoryLeak(() -> {
-            try(final ServerMain serverMain = new ServerMain("-d", root.toString())) {
-                Assert.assertNotNull(serverMain.getConfiguration());
-                Assert.assertNotNull(serverMain.getCairoEngine());
-                Assert.assertNotNull(serverMain.getWorkerPoolManager());
-                Assert.assertFalse(serverMain.hasStarted());
-                serverMain.start();
-                Assert.assertTrue(serverMain.hasStarted());
-                try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
-                    Os.pause();
-                }
-            }
-        });
+        try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
+            Assert.assertNotNull(serverMain.getConfiguration());
+            Assert.assertNotNull(serverMain.getCairoEngine());
+            Assert.assertNotNull(serverMain.getWorkerPoolManager());
+            Assert.assertFalse(serverMain.hasStarted());
+            Assert.assertFalse(serverMain.hasBeenClosed());
+        } catch (IllegalStateException err) {
+            TestUtils.assertContains("start was not called at all", err.getMessage());
+        }
     }
 }

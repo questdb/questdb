@@ -57,7 +57,7 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testGetInstance0() throws SqlException {
+    public void testGetInstanceDefaultPool() throws SqlException {
         final int workerCount = 2;
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
@@ -77,7 +77,7 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testGetInstance1() throws SqlException {
+    public void testGetInstanceDedicatedPool() throws SqlException {
         final int workerCount = 2;
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
@@ -98,7 +98,7 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testGetInstance2() throws SqlException {
+    public void testGetInstanceDedicatedPoolGetAgain() throws SqlException {
         final int workerCount = 2;
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
@@ -124,28 +124,7 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testGetInstance3() throws SqlException {
-        final int workerCount = 2;
-        final String poolName = "pool";
-        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-
-            @Override
-            public String getPoolName() {
-                return poolName;
-            }
-        }, METRICS);
-        Assert.assertFalse(workerPoolManager.getSharedPool() == workerPool);
-        Assert.assertEquals(workerCount, workerPool.getWorkerCount());
-        Assert.assertEquals(poolName, workerPool.getPoolName());
-    }
-
-    @Test
-    public void testGetInstance4() throws SqlException {
+    public void testGetInstanceFailsAsStartAllWasCalled() throws SqlException {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
         workerPoolManager.startAll(null);
         try {
@@ -166,6 +145,15 @@ public class WorkerPoolManagerTest {
         } finally {
             workerPoolManager.closeAll();
         }
+    }
+
+    @Test
+    public void testStartCloseAreOneOff() throws SqlException {
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
+        workerPoolManager.startAll(null);
+        workerPoolManager.startAll(null);
+        workerPoolManager.closeAll();
+        workerPoolManager.closeAll();
     }
 
     private static WorkerPoolManager createWorkerPoolManager(int workerCount) throws SqlException {

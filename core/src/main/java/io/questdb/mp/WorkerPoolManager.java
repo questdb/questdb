@@ -42,6 +42,7 @@ public abstract class WorkerPoolManager {
 
     private final WorkerPool sharedPool;
     private final AtomicBoolean hasStarted = new AtomicBoolean();
+    private final AtomicBoolean isClosed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
 
     public WorkerPoolManager(ServerConfiguration config, Metrics metrics) throws SqlException {
@@ -60,7 +61,7 @@ public abstract class WorkerPoolManager {
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {
-        if (hasStarted.get()) {
+        if (hasStarted.get() || isClosed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
 
@@ -106,7 +107,7 @@ public abstract class WorkerPoolManager {
     }
 
     public void closeAll() {
-        if (hasStarted.compareAndSet(true, false)) {
+        if (isClosed.compareAndSet(false, true)) {
             ObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.getQuick(i);

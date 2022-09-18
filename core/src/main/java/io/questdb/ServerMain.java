@@ -50,6 +50,7 @@ public class ServerMain implements QuietCloseable {
     private final Log log;
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
     private final AtomicBoolean hasStarted = new AtomicBoolean();
+    private final AtomicBoolean hasBeenClosed = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
@@ -80,14 +81,13 @@ public class ServerMain implements QuietCloseable {
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) throws SqlException {
-                sharedPool.assignCleaner(Path.CLEANER);
                 O3Utils.setupWorkerPool(
                         sharedPool,
                         engine,
                         config.getCairoConfiguration().getCircuitBreakerConfiguration(),
                         ffCache
                 );
-
+                sharedPool.assignCleaner(Path.CLEANER);
                 final MessageBus messageBus = engine.getMessageBus();
 
                 // register jobs that help parallel execution of queries and column indexing.
@@ -191,11 +191,15 @@ public class ServerMain implements QuietCloseable {
 
     @Override
     public void close() {
-        if (hasStarted.compareAndSet(true, false)) {
+        if (hasBeenClosed.compareAndSet(false, true)) {
             ShutdownFlag.INSTANCE.shutdown();
             workerPoolManager.closeAll();
             Misc.freeObjListAndClear(toBeClosed);
             LogFactory.INSTANCE.flushJobsAndClose();
+            // leave hasStarted as is, to disable start
+        }
+        if (!hasStarted.get()) {
+            throw new IllegalStateException("start was not called at all");
         }
     }
 
@@ -215,12 +219,15 @@ public class ServerMain implements QuietCloseable {
         return hasStarted.get();
     }
 
+    public boolean hasBeenClosed() {
+        return hasBeenClosed.get();
+    }
+
     private void addShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 System.err.println("QuestDB is shutting down...");
                 System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.sum());
-
                 close();
             } catch (Error ignore) {
                 // ignore
