@@ -47,7 +47,7 @@ public class WalEventReader implements Closeable {
 
     @Override
     public void close() {
-        // WalReaderEvents is re-usable after close, don't assign nulls
+        // WalEventReader is re-usable after close, don't assign nulls
         Misc.free(eventMem);
     }
 
