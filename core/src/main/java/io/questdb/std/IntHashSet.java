@@ -25,7 +25,6 @@
 package io.questdb.std;
 
 import java.util.Arrays;
-import java.util.Objects;
 
 
 public class IntHashSet extends AbstractIntHashSet {
@@ -158,7 +157,13 @@ public class IntHashSet extends AbstractIntHashSet {
 
     @Override
     public int hashCode() {
-        return Objects.hash(list);
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += keys[i];
+            }
+        }
+        return hashCode;
     }
 
     private void rehash() {

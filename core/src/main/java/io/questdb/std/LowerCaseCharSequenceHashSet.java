@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import java.util.Arrays;
-
 public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
@@ -103,7 +101,13 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
 
     @Override
     public int hashCode() {
-        return Arrays.hashCode(keys);
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += Chars.hashCode(keys[i]);
+            }
+        }
+        return hashCode;
     }
 
     private void rehash() {

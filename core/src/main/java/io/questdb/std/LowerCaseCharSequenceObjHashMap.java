@@ -129,10 +129,13 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
 
     @Override
     public int hashCode() {
-        int result = super.hashCode();
-        result = 31 * result + Arrays.hashCode(keys);
-        result = 31 * result + Arrays.hashCode(values);
-        return result;
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += Chars.hashCode(keys[i]) ^ Objects.hashCode(values[i]);
+            }
+        }
+        return hashCode;
     }
 
     @SuppressWarnings("unchecked")
