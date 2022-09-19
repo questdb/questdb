@@ -44,6 +44,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolManager;
+import io.questdb.mp.WorkerPoolManager.Requester;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -68,7 +69,7 @@ public final class Services {
         return createHttpServer(
                 configuration,
                 cairoEngine,
-                workerPoolManager.getInstance(configuration, metrics),
+                workerPoolManager.getInstance(configuration, metrics, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
                 functionFactoryCache,
                 snapshotAgent,
@@ -127,7 +128,11 @@ public final class Services {
         // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
         // - DEDICATED (1 worker) when ^ ^ is not set and host has > 16 cpus
         // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
+        final WorkerPool workerPool = workerPoolManager.getInstance(
+                configuration,
+                metrics,
+                Requester.HTTP_MIN_SERVER
+        );
         return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
     }
 
@@ -186,7 +191,11 @@ public final class Services {
         // The pool is:
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
+        final WorkerPool workerPool = workerPoolManager.getInstance(
+                configuration,
+                metrics,
+                Requester.PG_WIRE_SERVER
+        );
         return new PGWireServer(
                 configuration,
                 cairoEngine,
@@ -227,8 +236,16 @@ public final class Services {
         // - DEDICATED (1 worker) when ^ ^ is not set
         // - SHARED otherwise
 
-        final WorkerPool ioPool = workerPoolManager.getInstance(config.getIOWorkerPoolConfiguration(), metrics);
-        final WorkerPool writerPool = workerPoolManager.getInstance(config.getWriterWorkerPoolConfiguration(), metrics);
+        final WorkerPool ioPool = workerPoolManager.getInstance(
+                config.getIOWorkerPoolConfiguration(),
+                metrics,
+                Requester.LINE_TCP_IO
+        );
+        final WorkerPool writerPool = workerPoolManager.getInstance(
+                config.getWriterWorkerPoolConfiguration(),
+                metrics,
+                Requester.LINE_TCP_WRITER
+        );
         return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
     }
 

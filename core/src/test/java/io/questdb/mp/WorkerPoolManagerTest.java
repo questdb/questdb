@@ -70,7 +70,7 @@ public class WorkerPoolManagerTest {
             public String getPoolName() {
                 return "pool";
             }
-        }, METRICS);
+        }, METRICS, WorkerPoolManager.Requester.OTHER);
         Assert.assertTrue(workerPoolManager.getSharedPool() == workerPool);
         Assert.assertEquals(workerCount, workerPool.getWorkerCount());
         Assert.assertEquals("worker", workerPool.getPoolName());
@@ -91,7 +91,7 @@ public class WorkerPoolManagerTest {
             public String getPoolName() {
                 return poolName;
             }
-        }, METRICS);
+        }, METRICS, WorkerPoolManager.Requester.OTHER);
         Assert.assertFalse(workerPoolManager.getSharedPool() == workerPool);
         Assert.assertEquals(workerCount, workerPool.getWorkerCount());
         Assert.assertEquals(poolName, workerPool.getPoolName());
@@ -113,9 +113,9 @@ public class WorkerPoolManagerTest {
                 return poolName;
             }
         };
-        WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS);
+        WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS, WorkerPoolManager.Requester.OTHER);
         Assert.assertFalse(workerPoolManager.getSharedPool() == workerPool0);
-        WorkerPool workerPool1 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS);
+        WorkerPool workerPool1 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS, WorkerPoolManager.Requester.OTHER);
         Assert.assertTrue(workerPool0 == workerPool1);
         Assert.assertEquals(workerCount, workerPool0.getWorkerCount());
         Assert.assertEquals(poolName, workerPool0.getPoolName());
@@ -138,7 +138,7 @@ public class WorkerPoolManagerTest {
                 public String getPoolName() {
                     return null;
                 }
-            }, METRICS);
+            }, METRICS, WorkerPoolManager.Requester.OTHER);
             Assert.fail();
         } catch (IllegalStateException err) {
             TestUtils.assertContains("can only get instance before start", err.getMessage());

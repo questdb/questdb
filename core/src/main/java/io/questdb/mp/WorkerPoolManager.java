@@ -38,6 +38,28 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class WorkerPoolManager implements QuietCloseable {
 
+    public enum Requester {
+
+        HTTP_SERVER("http"),
+        HTTP_MIN_SERVER("min-http"),
+        PG_WIRE_SERVER("pg-wire"),
+        LINE_TCP_IO("line-tcp-io"),
+        LINE_TCP_WRITER("line-tcp-writer"),
+        OTHER("other")
+        ;
+
+        private final String requester;
+
+        Requester(String requester) {
+            this.requester = requester;
+        }
+
+        @Override
+        public String toString() {
+            return requester;
+        }
+    }
+
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
 
     private final WorkerPool sharedPool;
@@ -51,7 +73,6 @@ public abstract class WorkerPoolManager implements QuietCloseable {
     }
 
     /**
-     *
      * @param sharedPool A reference to the SHARED pool
      */
     protected abstract void configureSharedPool(final WorkerPool sharedPool);
@@ -64,14 +85,15 @@ public abstract class WorkerPoolManager implements QuietCloseable {
         return sharedPool.getWorkerCount();
     }
 
-    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {
+    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics, @NotNull Requester requester) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
 
         if (config.getWorkerCount() < 1) {
-            LOG.info().$("Using pool [name=").$(sharedPool.getPoolName())
+            LOG.info().$("using pool [name=").$(sharedPool.getPoolName())
                     .$(", workers=").$(sharedPool.getWorkerCount())
+                    .$(", requester=").$(requester)
                     .$("] -> SHARED")
                     .$();
             return sharedPool;
@@ -84,7 +106,7 @@ public abstract class WorkerPoolManager implements QuietCloseable {
             pool.assignCleaner(Path.CLEANER);
             dedicatedPools.put(poolName, pool);
         }
-        LOG.info().$("Using pool [name=").$(poolName)
+        LOG.info().$("using pool [name=").$(poolName)
                 .$(", workers=").$(pool.getWorkerCount())
                 .$("] -> DEDICATED")
                 .$();
@@ -94,7 +116,7 @@ public abstract class WorkerPoolManager implements QuietCloseable {
     public void start(Log sharedPoolLog) {
         if (running.compareAndSet(false, true)) {
             sharedPool.start(sharedPoolLog);
-            LOG.info().$("Started shared pool [name=").$(sharedPool.getPoolName())
+            LOG.info().$("started shared pool [name=").$(sharedPool.getPoolName())
                     .$(", workers=").$(sharedPool.getWorkerCount())
                     .I$();
 
@@ -103,7 +125,7 @@ public abstract class WorkerPoolManager implements QuietCloseable {
                 CharSequence name = poolNames.get(i);
                 WorkerPool pool = dedicatedPools.get(name);
                 pool.start(sharedPoolLog);
-                LOG.info().$("Started dedicated pool [name=").$(name)
+                LOG.info().$("started dedicated pool [name=").$(name)
                         .$(", workers=").$(pool.getWorkerCount())
                         .I$();
             }
@@ -117,14 +139,14 @@ public abstract class WorkerPoolManager implements QuietCloseable {
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.getQuick(i);
                 WorkerPool pool = dedicatedPools.get(name);
-                LOG.info().$("Closing dedicated pool [name=").$(name)
+                LOG.info().$("closing dedicated pool [name=").$(name)
                         .$(", workers=").$(pool.getWorkerCount())
                         .I$();
                 pool.close();
             }
             dedicatedPools.clear();
 
-            LOG.info().$("Closing shared pool [name=").$(sharedPool.getPoolName())
+            LOG.info().$("closing shared pool [name=").$(sharedPool.getPoolName())
                     .$(", workers=").$(sharedPool.getWorkerCount())
                     .I$();
             sharedPool.close();

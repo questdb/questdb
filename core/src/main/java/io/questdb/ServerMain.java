@@ -187,7 +187,7 @@ public class ServerMain implements QuietCloseable {
 
         toBeClosed.add(engine); // last to be closed
         System.gc(); // GC 1
-        log.advisoryW().$("Bootstrap complete, ready to start").$();
+        log.advisoryW().$("bootstrap complete").$();
     }
 
     public void start() {
