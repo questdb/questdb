@@ -24,7 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 
@@ -37,19 +36,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
             createDummyConfiguration();
         } catch (Exception e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    @Test
-    public void testServerMainStartNotCalled() {
-        try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
-            Assert.assertNotNull(serverMain.getConfiguration());
-            Assert.assertNotNull(serverMain.getCairoEngine());
-            Assert.assertNotNull(serverMain.getWorkerPoolManager());
-            Assert.assertFalse(serverMain.hasStarted());
-            Assert.assertFalse(serverMain.hasBeenClosed());
-        } catch (IllegalStateException err) {
-            TestUtils.assertContains("start was not called at all", err.getMessage());
         }
     }
 
