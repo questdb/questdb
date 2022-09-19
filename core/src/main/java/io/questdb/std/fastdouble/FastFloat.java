@@ -100,13 +100,6 @@ public final class FastFloat {
         }
 
         return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero);
-        /*
-        if (FALL_BACK_TO_BIGDECIMAL) {
-            return parseDecFloatLiteralBigDecimal(str, index, offset, endIndex, isNegative, hasLeadingZero);
-        } else {
-            return parseDecFloatLiteralDecimal(str, index, offset, endIndex, isNegative, hasLeadingZero);
-        }
-        */
     }
 
     private static boolean isDigit(char c) {
@@ -209,7 +202,7 @@ public final class FastFloat {
 
         // Skip optional FloatTypeSuffix
         // ------------------------
-        if (index < endIndex && (/*ch == 'd' || ch == 'D' || */ ch == 'f' || ch == 'F')) {
+        if (index < endIndex && (ch == 'f' || ch == 'F')) {
             index++;
         }
 
@@ -307,17 +300,6 @@ public final class FastFloat {
             } else if (hexValue == FastDoubleUtils.DECIMAL_POINT_CLASS) {
                 illegal |= virtualIndexOfPoint >= 0;
                 virtualIndexOfPoint = index;
-                /*
-                for (;index < endIndex - 8; index += 8) {
-                    long parsed = tryToParseEightHexDigits(str, index + 1);
-                    if (parsed >= 0) {
-                        // This might overflow, we deal with it later.
-                        digits = (digits << 32) + parsed;
-                    } else {
-                        break;
-                    }
-                }
-                */
             } else {
                 break;
             }

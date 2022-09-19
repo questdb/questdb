@@ -775,35 +775,6 @@ class FastDoubleMath {
     }
 
     /**
-     * Computes {@code uint128 product = (uint64)x * (uint64)y}.
-     * <p>
-     * References:
-     * <dl>
-     *     <dt>Getting the high part of 64 bit integer multiplication</dt>
-     *     <dd><a href="https://stackoverflow.com/questions/28868367/getting-the-high-part-of-64-bit-integer-multiplication">
-     *         stackoverflow</a></dd>
-     * </dl>
-     *
-     * @param x uint64 factor x
-     * @param y uint64 factor y
-     * @return uint128 product of x and y
-     */
-    static UInt128 fullMultiplication(long x, long y) {//before Java 18
-        long x0 = x & 0xffffffffL, x1 = x >>> 32;
-        long y0 = y & 0xffffffffL, y1 = y >>> 32;
-        long p11 = x1 * y1, p01 = x0 * y1;
-        long p10 = x1 * y0, p00 = x0 * y0;
-
-        // 64-bit product + two 32-bit values
-        long middle = p10 + (p00 >>> 32) + (p01 & 0xffffffffL);
-        return new UInt128(
-                // 64-bit product + two 32-bit values
-                p11 + (middle >>> 32) + (p01 >>> 32),
-                // Add LOW PART and lower half of MIDDLE PART
-                (middle << 32) | (p00 & 0xffffffffL));
-    }
-
-    /**
      * Tries to compute {@code significand * 10^power} exactly using
      * a fast algorithm; and if {@code isNegative} is true, negate the result.
      * <p>
@@ -887,9 +858,16 @@ class FastDoubleMath {
         // We want the most significant 64 bits of the product. We know
         // this will be non-zero because the most significant bit of digits is
         // 1.
-        UInt128 product = fullMultiplication(significand, factorMantissa);
-        long lower = product.low;
-        long upper = product.high;
+        //before Java 18
+        long x01 = significand & 0xffffffffL, x11 = significand >>> 32;
+        long y01 = factorMantissa & 0xffffffffL, y11 = factorMantissa >>> 32;
+        long p111 = x11 * y11, p011 = x01 * y11;
+        long p101 = x11 * y01, p001 = x01 * y01;
+
+        // 64-bit product + two 32-bit values
+        long middle1 = p101 + (p001 >>> 32) + (p011 & 0xffffffffL);
+        long lower = (middle1 << 32) | (p001 & 0xffffffffL);
+        long upper = p111 + (middle1 >>> 32) + (p011 >>> 32);
         // We know that upper has at most one leading zero because
         // both i and factor_mantissa have a leading one. This means
         // that the result is at least as large as ((1<<63)*(1<<63))/(1<<64).
@@ -909,15 +887,21 @@ class FastDoubleMath {
                     MANTISSA_128[power - DOUBLE_MIN_EXPONENT_POWER_OF_TEN];
             // next, we compute the 64-bit x 128-bit multiplication, getting a 192-bit
             // result (three 64-bit values)
-            product = fullMultiplication(significand, factorMantissaLow);
-            long productLow = product.low;
-            long productMiddle2 = product.high;
+            //before Java 18
+            long x0 = significand & 0xffffffffL, x1 = significand >>> 32;
+            long y0 = factorMantissaLow & 0xffffffffL, y1 = factorMantissaLow >>> 32;
+            long p11 = x1 * y1, p01 = x0 * y1;
+            long p10 = x1 * y0, p00 = x0 * y0;
+
+            // 64-bit product + two 32-bit values
+            long middle = p10 + (p00 >>> 32) + (p01 & 0xffffffffL);
+            long productLow = (middle << 32) | (p00 & 0xffffffffL);
+            long productMiddle2 = p11 + (middle >>> 32) + (p01 >>> 32);
             long productHigh = upper;
             long productMiddle = lower + productMiddle2;
             if (Long.compareUnsigned(productMiddle, lower) < 0) {
                 productHigh++; // overflow carry
             }
-
 
             // we want to check whether mantissa *i + i would affect our result
             // This does happen, e.g. with 7.3177701707893310e+15
@@ -1115,14 +1099,5 @@ class FastDoubleMath {
             outDouble = Double.NaN;
         }
         return outDouble;
-    }
-
-    static class UInt128 {
-        final long high, low;
-
-        private UInt128(long high, long low) {
-            this.high = high;
-            this.low = low;
-        }
     }
 }

@@ -213,9 +213,16 @@ class FastFloatMath {
         // We want the most significant 64 bits of the product. We know
         // this will be non-zero because the most significant bit of i is
         // 1.
-        FastDoubleMath.UInt128 product = fullMultiplication(digits, factorMantissa);
-        long lower = product.low;
-        long upper = product.high;
+        //before Java 18
+        long x01 = digits & 0xffffffffL, x11 = digits >>> 32;
+        long y01 = factorMantissa & 0xffffffffL, y11 = factorMantissa >>> 32;
+        long p111 = x11 * y11, p011 = x01 * y11;
+        long p101 = x11 * y01, p001 = x01 * y01;
+
+        // 64-bit product + two 32-bit values
+        long middle1 = p101 + (p001 >>> 32) + (p011 & 0xffffffffL);
+        long lower = (middle1 << 32) | (p001 & 0xffffffffL);
+        long upper = p111 + (middle1 >>> 32) + (p011 >>> 32);
         // We know that upper has at most one leading zero because
         // both i and factor_mantissa have a leading one. This means
         // that the result is at least as large as ((1<<63)*(1<<63))/(1<<64).
@@ -235,9 +242,16 @@ class FastFloatMath {
                     MANTISSA_128[power - DOUBLE_MIN_EXPONENT_POWER_OF_TEN];
             // next, we compute the 64-bit x 128-bit multiplication, getting a 192-bit
             // result (three 64-bit values)
-            product = fullMultiplication(digits, factor_mantissa_low);
-            long product_low = product.low;
-            long product_middle2 = product.high;
+            //before Java 18
+            long x0 = digits & 0xffffffffL, x1 = digits >>> 32;
+            long y0 = factor_mantissa_low & 0xffffffffL, y1 = factor_mantissa_low >>> 32;
+            long p11 = x1 * y1, p01 = x0 * y1;
+            long p10 = x1 * y0, p00 = x0 * y0;
+
+            // 64-bit product + two 32-bit values
+            long middle = p10 + (p00 >>> 32) + (p01 & 0xffffffffL);
+            long product_low = (middle << 32) | (p00 & 0xffffffffL);
+            long product_middle2 = p11 + (middle >>> 32) + (p01 >>> 32);
             long product_high = upper;
             long product_middle = lower + product_middle2;
             if (Long.compareUnsigned(product_middle, lower) < 0) {

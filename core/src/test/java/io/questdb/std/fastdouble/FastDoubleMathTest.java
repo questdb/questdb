@@ -27,13 +27,27 @@ import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 public class FastDoubleMathTest {
     @Test
     public void testFullMultiplication() {
-        FastDoubleMath.UInt128 actual = FastDoubleMath.fullMultiplication(0x123456789ABCDEF0L, 0x10L);
-        assertEquals(1L, actual.high);
-        assertEquals(0x23456789abcdef00L, actual.low);
+        //before Java 18
+        long x01 = 0x123456789ABCDEF0L & 0xffffffffL, x11 = 0x123456789ABCDEF0L >>> 32;
+        long y01 = 0x10L & 0xffffffffL;
+        long p111 = 0;
+        long p101 = x11 * y01, p001 = x01 * y01;
 
-        actual = FastDoubleMath.fullMultiplication(0x123456789ABCDEF0L, -0x10L);
-        assertEquals(0x123456789abcdeeeL, actual.high);
-        assertEquals(0xdcba987654321100L, actual.low);
+        // 64-bit product + two 32-bit values
+        long middle1 = p101 + (p001 >>> 32);
+        assertEquals(1L, p111 + (middle1 >>> 32));
+        assertEquals(0x23456789abcdef00L, (middle1 << 32) | (p001 & 0xffffffffL));
+
+        //before Java 18
+        long x0 = 0x123456789ABCDEF0L & 0xffffffffL, x1 = 0x123456789ABCDEF0L >>> 32;
+        long y0 = -0x10L & 0xffffffffL, y1 = -0x10L >>> 32;
+        long p11 = x1 * y1, p01 = x0 * y1;
+        long p10 = x1 * y0, p00 = x0 * y0;
+
+        // 64-bit product + two 32-bit values
+        long middle = p10 + (p00 >>> 32) + (p01 & 0xffffffffL);
+        assertEquals(0x123456789abcdeeeL, p11 + (middle >>> 32) + (p01 >>> 32));
+        assertEquals(0xdcba987654321100L, (middle << 32) | (p00 & 0xffffffffL));
     }
 
     /**

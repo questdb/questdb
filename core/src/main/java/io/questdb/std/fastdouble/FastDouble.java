@@ -95,13 +95,6 @@ public class FastDouble {
         }
 
         return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero);
-        /*
-        if (FALL_BACK_TO_BIGDECIMAL) {
-            return parseDecFloatLiteralBigDecimal(str, index, offset, endIndex, isNegative, hasLeadingZero);
-        } else {
-            return parseDecFloatLiteralDecimal(str, index, offset, endIndex, isNegative, hasLeadingZero);
-        }
-        */
     }
 
     private static boolean isDigit(char c) {
@@ -204,7 +197,7 @@ public class FastDouble {
 
         // Skip optional FloatTypeSuffix
         // ------------------------
-        if (index < endIndex && (ch == 'd' || ch == 'D' /*|| ch == 'f' || ch == 'F'*/)) {
+        if (index < endIndex && (ch == 'd' || ch == 'D')) {
             index++;
         }
 
