@@ -117,6 +117,10 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.sqlExecutionContext = sqlExecutionContext;
     }
 
+    public @Nullable SqlExecutionContext getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
+
     public @Nullable String getSqlStatement() {
         return sqlStatement;
     }

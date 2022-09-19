@@ -185,6 +185,11 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
+    public ObjList<CharSequence> getNamedVariables() {
+        return namedVariables.keys();
+    }
+
+    @Override
     public void setBin(CharSequence name, BinarySequence value) throws SqlException {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {

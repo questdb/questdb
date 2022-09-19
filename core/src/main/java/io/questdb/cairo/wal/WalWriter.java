@@ -508,7 +508,7 @@ public class WalWriter implements TableWriterFrontend {
 
     private long applyNonStructuralOperation(AbstractOperation operation) {
         try {
-            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement());
+            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
             return getTableTxn();
         } catch (Throwable th) {
             rollback();

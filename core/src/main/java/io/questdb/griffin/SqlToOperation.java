@@ -35,13 +35,12 @@ import java.io.Closeable;
 
 public class SqlToOperation implements Closeable {
     private final SqlCompiler compiler;
+    private final BindVariableService bindVariableService;
     private final SqlExecutionContext sqlExecutionContext;
 
     public SqlToOperation(CairoEngine engine) {
-        final BindVariableService bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        bindVariableService.clear();
-
         compiler = new SqlCompiler(engine);
+        bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
@@ -62,6 +61,10 @@ public class SqlToOperation implements Closeable {
         final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
         updateOperation.withContext(sqlExecutionContext);
         return updateOperation;
+    }
+
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     @Override

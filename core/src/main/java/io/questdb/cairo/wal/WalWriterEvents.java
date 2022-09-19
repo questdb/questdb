@@ -24,10 +24,15 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -37,6 +42,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 class WalWriterEvents implements Closeable {
     private final FilesFacade ff;
     private final MemoryMARW eventMem = Vm.getMARWInstance();
+    private final StringSink sink = new StringSink();
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
     private IntList initialSymbolCounts;
     private long txn = 0;
@@ -61,27 +67,25 @@ class WalWriterEvents implements Closeable {
     }
 
     private void writeSymbolMapDiffs() {
-        int columns = txnSymbolMaps.size();
+        final int columns = txnSymbolMaps.size();
         for (int i = 0; i < columns; i++) {
             final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
             if (symbolMap != null) {
-                int initialCount = initialSymbolCounts.get(i);
-
-                if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
+                final int initialCount = initialSymbolCounts.get(i);
+                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
                     eventMem.putInt(i);
                     eventMem.putInt(initialCount);
 
-                    int size = symbolMap.size();
+                    final int size = symbolMap.size();
                     eventMem.putInt(size);
 
                     for (int j = 0; j < size; j++) {
-                        CharSequence symbol = symbolMap.keys().getQuick(j);
-                        int value = symbolMap.get(symbol);
+                        final CharSequence symbol = symbolMap.keys().getQuick(j);
+                        final int value = symbolMap.get(symbol);
 
                         eventMem.putInt(value);
                         eventMem.putStr(symbol);
                     }
-
                     eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
                 }
             }
@@ -104,25 +108,109 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
-    long sql(int cmdType, CharSequence sql) {
+    long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
         long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
         eventMem.putInt(cmdType); //byte would be enough probably
         eventMem.putStr(sql);
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        writeIndexedVariables(bindVariableService);
+        writeNamedVariables(bindVariableService);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
         return txn++;
     }
 
+    private void writeIndexedVariables(BindVariableService bindVariableService) {
+        final int count = bindVariableService.getIndexedVariableCount();
+        eventMem.putInt(count);
+
+        for (int i = 0; i < count; i++) {
+            writeFunction(bindVariableService.getFunction(i));
+        }
+    }
+
+    private void writeNamedVariables(BindVariableService bindVariableService) {
+        final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
+        final int count = namedVariables.size();
+        eventMem.putInt(count);
+
+        for (int i = 0; i < count; i++) {
+            final CharSequence name = namedVariables.get(i);
+            eventMem.putStr(name);
+            sink.clear();
+            sink.put(':').put(name);
+            writeFunction(bindVariableService.getFunction(sink));
+        }
+    }
+
+    private void writeFunction(Function function) {
+        final short type = ColumnType.tagOf(function.getType());
+        eventMem.putShort(type);
+
+        switch (type) {
+            case ColumnType.BOOLEAN:
+                eventMem.putBool(function.getBool(null));
+                break;
+            case ColumnType.BYTE:
+                eventMem.putByte(function.getByte(null));
+                break;
+            case ColumnType.GEOBYTE:
+                eventMem.putByte(function.getGeoByte(null));
+                break;
+            case ColumnType.SHORT:
+                eventMem.putShort(function.getShort(null));
+                break;
+            case ColumnType.GEOSHORT:
+                eventMem.putShort(function.getGeoShort(null));
+                break;
+            case ColumnType.CHAR:
+                eventMem.putChar(function.getChar(null));
+                break;
+            case ColumnType.INT:
+                eventMem.putInt(function.getInt(null));
+                break;
+            case ColumnType.GEOINT:
+                eventMem.putInt(function.getGeoInt(null));
+                break;
+            case ColumnType.FLOAT:
+                eventMem.putFloat(function.getFloat(null));
+                break;
+            case ColumnType.LONG:
+                eventMem.putLong(function.getLong(null));
+                break;
+            case ColumnType.GEOLONG:
+                eventMem.putLong(function.getGeoLong(null));
+                break;
+            case ColumnType.DATE:
+                eventMem.putLong(function.getDate(null));
+                break;
+            case ColumnType.TIMESTAMP:
+                eventMem.putLong(function.getTimestamp(null));
+                break;
+            case ColumnType.DOUBLE:
+                eventMem.putDouble(function.getDouble(null));
+                break;
+            case ColumnType.STRING:
+                eventMem.putStr(function.getStr(null));
+                break;
+            case ColumnType.BINARY:
+                eventMem.putBin(function.getBin(null));
+                break;
+            default:
+                throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+        }
+    }
+
     void startTxn() {
-        int columns = txnSymbolMaps.size();
-        for (int i = 0; i < columns; i++) {
+        final int numOfColumns = txnSymbolMaps.size();
+        for (int i = 0; i < numOfColumns; i++) {
             final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
             if (symbolMap != null) {
-                int initialCount = initialSymbolCounts.get(i);
+                final int initialCount = initialSymbolCounts.get(i);
                 if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
-                    int size = symbolMap.size();
+                    final int size = symbolMap.size();
                     initialSymbolCounts.setQuick(i, initialCount + size);
                     symbolMap.clear();
                 }

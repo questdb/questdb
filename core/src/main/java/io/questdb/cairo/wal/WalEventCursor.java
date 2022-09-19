@@ -25,8 +25,13 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
 
@@ -54,7 +59,7 @@ public class WalEventCursor {
         type = WalTxnType.NONE;
     }
 
-    public boolean setPosition(long segmentTxn) {
+    boolean setPosition(long segmentTxn) {
         reset();
 
         if (segmentTxn > -1) {
@@ -66,8 +71,8 @@ public class WalEventCursor {
                     return false;
                 }
                 nextOffset = length + nextOffset;
-                txn = readLong();
 
+                txn = readLong();
                 if (txn == segmentTxn) {
                     readRecord();
                     return true;
@@ -177,11 +182,12 @@ public class WalEventCursor {
 
     public class SqlInfo {
         private int cmdType;
-        private CharSequence sql;
+        private final StringSink sql = new StringSink();
 
         private void read() {
             cmdType = readInt();
-            sql = readStr();
+            sql.clear();
+            sql.put(readStr());
         }
 
         public int getCmdType() {
@@ -191,6 +197,142 @@ public class WalEventCursor {
         public CharSequence getSql() {
             return sql;
         }
+
+        public void populateBindVariableService(BindVariableService bindVariableService) {
+            bindVariableService.clear();
+            try {
+                populateIndexedVariables(bindVariableService);
+                populateNamedVariables(bindVariableService);
+            } catch (SqlException e) {
+                throw CairoException.critical(0).put(e.getMessage());
+            }
+        }
+
+        private void populateIndexedVariables(BindVariableService bindVariableService) throws SqlException {
+            final int count = readInt();
+            for (int i = 0; i < count; i++) {
+                final short type = readShort();
+                switch (type) {
+                    case ColumnType.BOOLEAN:
+                        bindVariableService.setBoolean(i, readBool());
+                        break;
+                    case ColumnType.BYTE:
+                        bindVariableService.setByte(i, readByte());
+                        break;
+                    case ColumnType.SHORT:
+                        bindVariableService.setShort(i, readShort());
+                        break;
+                    case ColumnType.CHAR:
+                        bindVariableService.setChar(i, readChar());
+                        break;
+                    case ColumnType.INT:
+                        bindVariableService.setInt(i, readInt());
+                        break;
+                    case ColumnType.FLOAT:
+                        bindVariableService.setFloat(i, readFloat());
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        bindVariableService.setLong(i, readLong());
+                        break;
+                    case ColumnType.DOUBLE:
+                        bindVariableService.setDouble(i, readDouble());
+                        break;
+                    case ColumnType.STRING:
+                        bindVariableService.setStr(i, readStr());
+                        break;
+                    case ColumnType.BINARY:
+                        bindVariableService.setBin(i, readBin());
+                        break;
+                    case ColumnType.GEOBYTE:
+                        bindVariableService.setGeoHash(i, readByte(), ColumnType.GEOBYTE);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        bindVariableService.setGeoHash(i, readShort(), ColumnType.GEOSHORT);
+                        break;
+                    case ColumnType.GEOINT:
+                        bindVariableService.setGeoHash(i, readInt(), ColumnType.GEOINT);
+                        break;
+                    case ColumnType.GEOLONG:
+                        bindVariableService.setGeoHash(i, readLong(), ColumnType.GEOLONG);
+                        break;
+                    default:
+                        throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+                }
+            }
+        }
+
+        private void populateNamedVariables(BindVariableService bindVariableService) throws SqlException {
+            final int count = readInt();
+            for (int i = 0; i < count; i++) {
+                // garbage, string intern?
+                final CharSequence name = readStr().toString();
+                final short type = readShort();
+                switch (type) {
+                    case ColumnType.BOOLEAN:
+                        bindVariableService.setBoolean(name, readBool());
+                        break;
+                    case ColumnType.BYTE:
+                        bindVariableService.setByte(name, readByte());
+                        break;
+                    case ColumnType.SHORT:
+                        bindVariableService.setShort(name, readShort());
+                        break;
+                    case ColumnType.CHAR:
+                        bindVariableService.setChar(name, readChar());
+                        break;
+                    case ColumnType.INT:
+                        bindVariableService.setInt(name, readInt());
+                        break;
+                    case ColumnType.FLOAT:
+                        bindVariableService.setFloat(name, readFloat());
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        bindVariableService.setLong(name, readLong());
+                        break;
+                    case ColumnType.DOUBLE:
+                        bindVariableService.setDouble(name, readDouble());
+                        break;
+                    case ColumnType.STRING:
+                        bindVariableService.setStr(name, readStr());
+                        break;
+                    case ColumnType.BINARY:
+                        bindVariableService.setBin(name, readBin());
+                        break;
+                    case ColumnType.GEOBYTE:
+                        bindVariableService.setGeoHash(name, readByte(), ColumnType.GEOBYTE);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        bindVariableService.setGeoHash(name, readShort(), ColumnType.GEOSHORT);
+                        break;
+                    case ColumnType.GEOINT:
+                        bindVariableService.setGeoHash(name, readInt(), ColumnType.GEOINT);
+                        break;
+                    case ColumnType.GEOLONG:
+                        bindVariableService.setGeoHash(name, readLong(), ColumnType.GEOLONG);
+                        break;
+                    default:
+                        throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+                }
+            }
+        }
+    }
+
+    private double readDouble() {
+        checkMemSize(Double.BYTES);
+        final double value = eventMem.getDouble(offset);
+        offset += Double.BYTES;
+        return value;
+    }
+
+    private float readFloat() {
+        checkMemSize(Float.BYTES);
+        final float value = eventMem.getFloat(offset);
+        offset += Float.BYTES;
+        return value;
     }
 
     private long readLong() {
@@ -204,6 +346,20 @@ public class WalEventCursor {
         checkMemSize(Integer.BYTES);
         final int value = eventMem.getInt(offset);
         offset += Integer.BYTES;
+        return value;
+    }
+
+    private short readShort() {
+        checkMemSize(Short.BYTES);
+        final short value = eventMem.getShort(offset);
+        offset += Short.BYTES;
+        return value;
+    }
+
+    private char readChar() {
+        checkMemSize(Character.BYTES);
+        final char value = eventMem.getChar(offset);
+        offset += Character.BYTES;
         return value;
     }
 
@@ -223,12 +379,22 @@ public class WalEventCursor {
 
     private CharSequence readStr() {
         checkMemSize(Integer.BYTES);
-        final int strLength = eventMem.getInt(offset);
+        final int strLength = eventMem.getStrLen(offset);
         final long storageLength = Vm.getStorageLength(strLength);
 
         checkMemSize(storageLength);
         final CharSequence value = eventMem.getStr(offset);
         offset += storageLength;
+        return value;
+    }
+
+    private BinarySequence readBin() {
+        checkMemSize(Long.BYTES);
+        final long binLength = eventMem.getBinLen(offset);
+
+        checkMemSize(binLength);
+        final BinarySequence value = eventMem.getBin(offset);
+        offset += binLength + Long.BYTES;
         return value;
     }
 

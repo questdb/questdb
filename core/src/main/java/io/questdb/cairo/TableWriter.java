@@ -1350,6 +1350,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private void processWalSql(WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
+        sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
         try {
             switch(cmdType) {
                 case CMD_ALTER_TABLE:
@@ -5115,8 +5116,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType == -ColumnType.SYMBOL) {
                     // Scroll the cursor, don't apply, symbol is deleted
-                    while (symbolMapDiff.nextEntry() != null) {
-                    }
+                    while (symbolMapDiff.nextEntry() != null);
                     continue;
                 }
 
