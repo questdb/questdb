@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Chars;
 import org.jetbrains.annotations.Nullable;
 
 public class CompiledQueryImpl implements CompiledQuery {
@@ -52,6 +53,8 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
+    // prepared statement name for DEALLOCATE operation
+    private CharSequence statementName;
 
     public CompiledQueryImpl(CairoEngine engine) {
         updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
@@ -129,6 +132,11 @@ public class CompiledQueryImpl implements CompiledQuery {
     @Override
     public long getAffectedRowsCount() {
         return affectedRowsCount;
+    }
+
+    @Override
+    public CharSequence getStatementName() {
+        return statementName;
     }
 
     public CompiledQuery of(short type) {
@@ -251,5 +259,10 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofSnapshotComplete() {
         return of(SNAPSHOT_DB_COMPLETE);
+    }
+
+    CompiledQuery ofDeallocate(CharSequence statementName) {
+        this.statementName = Chars.toString(statementName);
+        return of(DEALLOCATE);
     }
 }

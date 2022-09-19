@@ -95,6 +95,7 @@ public abstract class AbstractCairoTest {
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static Boolean enableParallelFilter = null;
+    protected static Boolean enableColumnPreTouch = null;
     protected static int queryCacheEventQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
@@ -115,7 +116,6 @@ public abstract class AbstractCairoTest {
     protected static int defaultTableWriteMode = -1;
     protected static Boolean copyPartitionOnAttach = null;
     protected static String attachableDirSuffix = null;
-
 
     private static TelemetryConfiguration telemetryConfiguration;
     @Rule
@@ -341,6 +341,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public boolean isSqlParallelFilterPreTouchEnabled() {
+                return enableColumnPreTouch != null ? enableColumnPreTouch : super.isSqlParallelFilterPreTouchEnabled();
+            }
+
+            @Override
             public int getColumnPurgeTaskPoolCapacity() {
                 return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
             }
@@ -433,6 +438,7 @@ public abstract class AbstractCairoTest {
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         enableParallelFilter = null;
+        enableColumnPreTouch = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
         queryCacheEventQueueCapacity = -1;

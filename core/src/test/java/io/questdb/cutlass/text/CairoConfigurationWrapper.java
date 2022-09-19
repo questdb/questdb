@@ -803,6 +803,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelFilterPreTouchEnabled() {
+        return conf.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
     public int getSqlCopyLogRetentionDays() {
         return conf.getSqlCopyLogRetentionDays();
     }

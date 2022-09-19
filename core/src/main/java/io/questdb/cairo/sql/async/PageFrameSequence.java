@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
