@@ -26,31 +26,35 @@ package io.questdb.mp;
 
 import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class WorkerPoolManager {
+public abstract class WorkerPoolManager implements QuietCloseable {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
 
     private final WorkerPool sharedPool;
-    private final AtomicBoolean hasStarted = new AtomicBoolean();
-    private final AtomicBoolean isClosed = new AtomicBoolean();
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
 
-    public WorkerPoolManager(ServerConfiguration config, Metrics metrics) throws SqlException {
+    public WorkerPoolManager(ServerConfiguration config, Metrics metrics) {
         sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
-        configureSharedPool(sharedPool);
+        configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
     }
 
-    protected abstract void configureSharedPool(final WorkerPool sharedPool) throws SqlException;
+    /**
+     *
+     * @param sharedPool A reference to the SHARED pool
+     */
+    protected abstract void configureSharedPool(final WorkerPool sharedPool);
 
     public WorkerPool getSharedPool() {
         return sharedPool;
@@ -61,7 +65,7 @@ public abstract class WorkerPoolManager {
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics) {
-        if (hasStarted.get() || isClosed.get()) {
+        if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
 
@@ -87,8 +91,8 @@ public abstract class WorkerPoolManager {
         return pool;
     }
 
-    public void startAll(Log sharedPoolLog) {
-        if (hasStarted.compareAndSet(false, true)) {
+    public void start(Log sharedPoolLog) {
+        if (running.compareAndSet(false, true)) {
             sharedPool.start(sharedPoolLog);
             LOG.info().$("Started shared pool [name=").$(sharedPool.getPoolName())
                     .$(", workers=").$(sharedPool.getWorkerCount())
@@ -106,8 +110,9 @@ public abstract class WorkerPoolManager {
         }
     }
 
-    public void closeAll() {
-        if (isClosed.compareAndSet(false, true)) {
+    @Override
+    public void close() {
+        if (closed.compareAndSet(false, true)) {
             ObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.getQuick(i);

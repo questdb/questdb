@@ -33,7 +33,8 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements QuietCloseable {
-    private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
     private final int workerCount;
     private final int[] workerAffinity;
     private final SOCountDownLatch started = new SOCountDownLatch(1);
@@ -93,7 +94,7 @@ public class WorkerPool implements QuietCloseable {
      * @param job instance of job
      */
     public void assign(Job job) {
-        assert !running.get();
+        assert !running.get() && !closed.get();
 
         for (int i = 0; i < workerCount; i++) {
             workerJobs.getQuick(i).add(job);
@@ -101,17 +102,17 @@ public class WorkerPool implements QuietCloseable {
     }
 
     public void assign(int worker, Job job) {
-        assert worker > -1 && worker < workerCount;
+        assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         workerJobs.getQuick(worker).add(job);
     }
 
     public void assign(int worker, Closeable cleaner) {
-        assert worker > -1 && worker < workerCount;
+        assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         cleaners.getQuick(worker).add(cleaner);
     }
 
     public void assignCleaner(Closeable cleaner) {
-        assert !running.get();
+        assert !running.get() && !closed.get();
 
         for (int i = 0; i < workerCount; i++) {
             cleaners.getQuick(i).add(cleaner);
@@ -119,7 +120,7 @@ public class WorkerPool implements QuietCloseable {
     }
 
     public void freeOnHalt(Closeable closeable) {
-        assert !running.get();
+        assert !running.get() && !closed.get();
 
         freeOnHalt.add(closeable);
     }
@@ -133,7 +134,7 @@ public class WorkerPool implements QuietCloseable {
     }
 
     public void start(@Nullable Log log) {
-        if (running.compareAndSet(false, true)) {
+        if (!closed.get() && running.compareAndSet(false, true)) {
             for (int i = 0; i < workerCount; i++) {
                 final int index = i;
                 Worker worker = new Worker(
@@ -174,12 +175,20 @@ public class WorkerPool implements QuietCloseable {
 
     @Override
     public void close() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            for (int i = 0; i < workerCount; i++) {
-                workers.getQuick(i).halt();
+        if (closed.compareAndSet(false, true)) {
+            boolean await = running.get();
+            if (await) {
+                started.await();
             }
-            halted.await();
+            for (int i = 0; i < workerCount; i++) {
+                Worker worker = workers.getQuiet(i);
+                if (worker != null) {
+                    worker.halt();
+                }
+            }
+            if (await) {
+                halted.await();
+            }
 
             Misc.freeObjList(workers);
             Misc.freeObjList(freeOnHalt);

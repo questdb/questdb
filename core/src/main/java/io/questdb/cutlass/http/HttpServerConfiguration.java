@@ -44,7 +44,4 @@ public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMi
     WaitProcessorConfiguration getWaitProcessorConfiguration();
 
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    @Override
-    boolean isEnabled();
 }

@@ -2849,11 +2849,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getSleepThreshold() {
             return lineTcpWriterWorkerSleepThreshold;
         }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
-        }
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
@@ -2885,11 +2880,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepThreshold() {
             return lineTcpIOWorkerSleepThreshold;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
         }
     }
 
@@ -3097,7 +3087,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getPoolName() {
-            return "worker";
+            return "worker"; // name of the SHARED pool
         }
 
         @Override

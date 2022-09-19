@@ -31,7 +31,7 @@ import org.junit.*;
 public class ServerMainTest extends AbstractBootstrapTest {
 
     @Test
-    @Ignore("this is fubar, not sure why")
+    @Ignore("this cannot be run reliably in CI")
     public void testServerMainStartNotCalled() throws Exception {
         createDummyConfiguration();
         try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
@@ -46,7 +46,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    @Ignore("this is fubar, not sure why")
+    @Ignore("this cannot be run reliably in CI")
     public void testServerMainStart() throws Exception {
         createDummyConfiguration();
         try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {

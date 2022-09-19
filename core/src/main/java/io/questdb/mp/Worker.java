@@ -200,5 +200,4 @@ public class Worker extends Thread {
         System.err.println(criticalErrorLine);
         e.printStackTrace();
     }
-
 }

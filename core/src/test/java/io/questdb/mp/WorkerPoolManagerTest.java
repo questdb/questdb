@@ -126,7 +126,7 @@ public class WorkerPoolManagerTest {
     @Test
     public void testGetInstanceFailsAsStartAllWasCalled() throws SqlException {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
-        workerPoolManager.startAll(null);
+        workerPoolManager.start(null);
         try {
             workerPoolManager.getInstance(new WorkerPoolConfiguration() {
                 @Override
@@ -143,17 +143,17 @@ public class WorkerPoolManagerTest {
         } catch (IllegalStateException err) {
             TestUtils.assertContains("can only get instance before start", err.getMessage());
         } finally {
-            workerPoolManager.closeAll();
+            workerPoolManager.close();
         }
     }
 
     @Test
     public void testStartCloseAreOneOff() throws SqlException {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
-        workerPoolManager.startAll(null);
-        workerPoolManager.startAll(null);
-        workerPoolManager.closeAll();
-        workerPoolManager.closeAll();
+        workerPoolManager.start(null);
+        workerPoolManager.start(null);
+        workerPoolManager.close();
+        workerPoolManager.close();
     }
 
     private static WorkerPoolManager createWorkerPoolManager(int workerCount) throws SqlException {

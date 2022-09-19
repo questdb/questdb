@@ -62,11 +62,13 @@ public final class Services {
             return null;
         }
 
-        WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
+        // The pool is:
+        // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
+        // - SHARED otherwise
         return createHttpServer(
                 configuration,
                 cairoEngine,
-                workerPool,
+                workerPoolManager.getInstance(configuration, metrics),
                 workerPoolManager.getSharedWorkerCount(),
                 functionFactoryCache,
                 snapshotAgent,
@@ -121,6 +123,10 @@ public final class Services {
             return null;
         }
 
+        // The pool is:
+        // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
+        // - DEDICATED (1 worker) when ^ ^ is not set and host has > 16 cpus
+        // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
         return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
     }
@@ -177,6 +183,9 @@ public final class Services {
             return null;
         }
 
+        // The pool is:
+        // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
+        // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(configuration, metrics);
         return new PGWireServer(
                 configuration,
@@ -207,6 +216,17 @@ public final class Services {
             return null;
         }
 
+        // The ioPool is:
+        // - DEDICATED when PropertyKey.LINE_TCP_IO_WORKER_COUNT is > 0
+        // - DEDICATED (2 worker) when ^ ^ is not set and host has 8 < cpus < 17
+        // - DEDICATED (6 worker) when ^ ^ is not set and host has > 16 cpus
+        // - SHARED otherwise
+
+        // The writerPool is:
+        // - DEDICATED when PropertyKey.LINE_TCP_WRITER_WORKER_COUNT is > 0
+        // - DEDICATED (1 worker) when ^ ^ is not set
+        // - SHARED otherwise
+
         final WorkerPool ioPool = workerPoolManager.getInstance(config.getIOWorkerPoolConfiguration(), metrics);
         final WorkerPool writerPool = workerPoolManager.getInstance(config.getWriterWorkerPoolConfiguration(), metrics);
         return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
@@ -222,6 +242,7 @@ public final class Services {
             return null;
         }
 
+        // The pool is always the SHARED pool
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
         }

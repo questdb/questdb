@@ -48,9 +48,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ServerMain implements QuietCloseable {
     private final PropServerConfiguration config;
     private final Log log;
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
-    private final AtomicBoolean hasStarted = new AtomicBoolean();
-    private final AtomicBoolean hasBeenClosed = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
@@ -80,42 +80,46 @@ public class ServerMain implements QuietCloseable {
         // create the worker pool manager, with a configured shared pool
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
-            protected void configureSharedPool(WorkerPool sharedPool) throws SqlException {
-                sharedPool.assign(engine.getEngineMaintenanceJob());
-                sharedPool.assignCleaner(Path.CLEANER);
-                O3Utils.setupWorkerPool(
-                        sharedPool,
-                        engine,
-                        config.getCairoConfiguration().getCircuitBreakerConfiguration(),
-                        ffCache
-                );
-                final MessageBus messageBus = engine.getMessageBus();
-
-                // register jobs that help parallel execution of queries and column indexing.
-                sharedPool.assign(new ColumnIndexerJob(messageBus));
-                sharedPool.assign(new GroupByJob(messageBus));
-                sharedPool.assign(new LatestByAllIndexedJob(messageBus));
-
-                // text import
-                TextImportJob.assignToPool(messageBus, sharedPool);
-                if (cairoConfig.getSqlCopyInputRoot() != null) {
-                    final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+            protected void configureSharedPool(WorkerPool sharedPool) {
+                try {
+                    sharedPool.assign(engine.getEngineMaintenanceJob());
+                    sharedPool.assignCleaner(Path.CLEANER);
+                    O3Utils.setupWorkerPool(
+                            sharedPool,
                             engine,
-                            // save CPU resources for collecting and processing jobs
-                            Math.max(1, sharedPool.getWorkerCount() - 2),
+                            config.getCairoConfiguration().getCircuitBreakerConfiguration(),
                             ffCache
                     );
-                    sharedPool.assign(textImportRequestJob);
-                    sharedPool.freeOnHalt(textImportRequestJob);
-                }
+                    final MessageBus messageBus = engine.getMessageBus();
 
-                // telemetry
-                if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
-                    final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                    toBeClosed.add(telemetryJob);
-                    if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                        sharedPool.assign(telemetryJob);
+                    // register jobs that help parallel execution of queries and column indexing.
+                    sharedPool.assign(new ColumnIndexerJob(messageBus));
+                    sharedPool.assign(new GroupByJob(messageBus));
+                    sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+
+                    // text import
+                    TextImportJob.assignToPool(messageBus, sharedPool);
+                    if (cairoConfig.getSqlCopyInputRoot() != null) {
+                        final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                                engine,
+                                // save CPU resources for collecting and processing jobs
+                                Math.max(1, sharedPool.getWorkerCount() - 2),
+                                ffCache
+                        );
+                        sharedPool.assign(textImportRequestJob);
+                        sharedPool.freeOnHalt(textImportRequestJob);
                     }
+
+                    // telemetry
+                    if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
+                        final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
+                        toBeClosed.add(telemetryJob);
+                        if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
+                            sharedPool.assign(telemetryJob);
+                        }
+                    }
+                } catch (Throwable thr) {
+                    throw new Bootstrap.BootstrapException(thr);
                 }
             }
         };
@@ -125,49 +129,62 @@ public class ServerMain implements QuietCloseable {
         toBeClosed.add(snapshotAgent);
 
         // http
-        toBeClosed.add(Services.createHttpServer(
+        final QuietCloseable httpServer = Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
                 ffCache,
                 snapshotAgent,
                 metrics
-        ));
+        );
+        if (httpServer != null) {
+            toBeClosed.add(httpServer);
+        }
 
         // http min
-        toBeClosed.add(Services.createMinHttpServer(
+        final QuietCloseable httpMinServer = Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
-        ));
+        );
+        if (httpMinServer != null) {
+            toBeClosed.add(httpMinServer);
+        }
 
         // pg wire
-        if (config.getPGWireConfiguration().isEnabled()) {
-            toBeClosed.add(Services.createPGWireServer(
-                    config.getPGWireConfiguration(),
-                    engine,
-                    workerPoolManager,
-                    ffCache,
-                    snapshotAgent,
-                    metrics
-            ));
+        final QuietCloseable pgWireServer = Services.createPGWireServer(
+                config.getPGWireConfiguration(),
+                engine,
+                workerPoolManager,
+                ffCache,
+                snapshotAgent,
+                metrics
+        );
+        if (pgWireServer != null) {
+            toBeClosed.add(pgWireServer);
         }
 
         // ilp/tcp
-        toBeClosed.add(Services.createLineTcpReceiver(
+        final QuietCloseable lineTcpReceiver = Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
-        ));
+        );
+        if (lineTcpReceiver != null) {
+            toBeClosed.add(lineTcpReceiver);
+        }
 
         // ilp/udp
-        toBeClosed.add(Services.createLineUdpReceiver(
+        final QuietCloseable lineUdpReceiver = Services.createLineUdpReceiver(
                 config.getLineUdpReceiverConfiguration(),
                 engine,
                 workerPoolManager
-        ));
+        );
+        if (lineUdpReceiver != null) {
+            toBeClosed.add(lineUdpReceiver);
+        }
 
         toBeClosed.add(engine); // last to be closed
         System.gc(); // GC 1
@@ -179,11 +196,11 @@ public class ServerMain implements QuietCloseable {
     }
 
     public void start(boolean addShutdownHook) {
-        if (hasStarted.compareAndSet(false, true)) {
+        if (!closed.get() && running.compareAndSet(false, true)) {
             if (addShutdownHook) {
                 addShutdownHook();
             }
-            workerPoolManager.startAll(log);
+            workerPoolManager.start(log);
             Bootstrap.logWebConsoleUrls(config, log);
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
@@ -192,14 +209,14 @@ public class ServerMain implements QuietCloseable {
 
     @Override
     public void close() {
-        if (hasBeenClosed.compareAndSet(false, true)) {
+        if (closed.compareAndSet(false, true)) {
             ShutdownFlag.INSTANCE.shutdown();
-            workerPoolManager.closeAll();
+            workerPoolManager.close();
             Misc.freeObjListAndClear(toBeClosed);
             LogFactory.INSTANCE.flushJobsAndClose();
             // leave hasStarted as is, to disable start
         }
-        if (!hasStarted.get()) {
+        if (!running.get()) {
             throw new IllegalStateException("start was not called at all");
         }
     }
@@ -217,11 +234,11 @@ public class ServerMain implements QuietCloseable {
     }
 
     public boolean hasStarted() {
-        return hasStarted.get();
+        return running.get();
     }
 
     public boolean hasBeenClosed() {
-        return hasBeenClosed.get();
+        return closed.get();
     }
 
     private void addShutdownHook() {
