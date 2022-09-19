@@ -45,6 +45,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
 import static io.questdb.cutlass.text.TextImportTask.getStatusName;
@@ -60,6 +61,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final LongList partitionsToRemove = new LongList();
     private final TextImportExecutionContext textImportExecutionContext;
     private final StringSink stringSink = new StringSink();
+    private final AtomicBoolean closed = new AtomicBoolean();
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -112,12 +114,14 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() throws IOException {
-        this.parallelImporter = Misc.free(parallelImporter);
-        this.serialImporter = Misc.free(serialImporter);
-        this.writer = Misc.free(this.writer);
-        this.sqlCompiler = Misc.free(sqlCompiler);
-        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
-        this.path = Misc.free(path);
+        if (closed.compareAndSet(false, true)) {
+            this.parallelImporter = Misc.free(parallelImporter);
+            this.serialImporter = Misc.free(serialImporter);
+            this.writer = Misc.free(this.writer);
+            this.sqlCompiler = Misc.free(sqlCompiler);
+            this.sqlExecutionContext = Misc.free(sqlExecutionContext);
+            this.path = Misc.free(path);
+        }
     }
 
     void enforceLogRetention() {

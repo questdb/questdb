@@ -48,6 +48,8 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class TelemetryJob extends SynchronizedJob implements QuietCloseable {
     public final static CharSequence tableName = "telemetry";
     public final static CharSequence configTableName = "telemetry_config";
@@ -60,6 +62,7 @@ public class TelemetryJob extends SynchronizedJob implements QuietCloseable {
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
     private final SCSequence tempSequence = new SCSequence();
+    private final AtomicBoolean closed = new AtomicBoolean();
     private boolean enabled;
     private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
@@ -129,13 +132,15 @@ public class TelemetryJob extends SynchronizedJob implements QuietCloseable {
 
     @Override
     public void close() {
-        if (enabled) {
-            runSerially();
-            newRow(Telemetry.SYSTEM_EVENT_DOWN);
-            writer.commit();
-            writer = Misc.free(writer);
+        if (closed.compareAndSet(false, true)) {
+            if (enabled) {
+                runSerially();
+                newRow(Telemetry.SYSTEM_EVENT_DOWN);
+                writer.commit();
+                writer = Misc.free(writer);
+            }
+            configWriter = Misc.free(configWriter);
         }
-        configWriter = Misc.free(configWriter);
     }
 
     @Override

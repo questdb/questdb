@@ -42,6 +42,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.PriorityQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnPurgeJob.class);
@@ -66,6 +67,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final long retryDelayLimit;
     private final long retryDelay;
     private final double retryDelayMultiplier;
+    private final AtomicBoolean closed = new AtomicBoolean();
     private ColumnPurgeOperator columnPurgeOperator;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
@@ -111,10 +113,12 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        this.writer = Misc.free(this.writer);
-        this.sqlCompiler = Misc.free(sqlCompiler);
-        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
-        this.columnPurgeOperator = Misc.free(columnPurgeOperator);
+        if (closed.compareAndSet(false, true)) {
+            this.writer = Misc.free(this.writer);
+            this.sqlCompiler = Misc.free(sqlCompiler);
+            this.sqlExecutionContext = Misc.free(sqlExecutionContext);
+            this.columnPurgeOperator = Misc.free(columnPurgeOperator);
+        }
     }
 
     @TestOnly
