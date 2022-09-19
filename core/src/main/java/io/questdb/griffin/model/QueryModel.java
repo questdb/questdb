@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -155,7 +156,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel unionModel;
     private int setOperationType;
     private int modelPosition = 0;
-    private int orderByAdviceMnemonic;
+    private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
     private int tableId = -1;
     private boolean isUpdateModel;
     private int modelType = ExecutionModel.QUERY;
@@ -318,7 +319,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderByAdvice.clear();
         orderByDirectionAdvice.clear();
         orderByPosition = 0;
-        orderByAdviceMnemonic = 0;
+        orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         isSelectTranslation = false;
         groupBy.clear();
         dependencies.clear();
