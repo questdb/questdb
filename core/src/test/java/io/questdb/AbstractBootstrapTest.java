@@ -135,13 +135,12 @@ public abstract class AbstractBootstrapTest {
             writer.println("line.udp.receive.buffer.size=" + 1024 * 4);
 
             // configure worker pools
-            writer.println("shared.worker.count=1");
-            writer.println("http.worker.count=0");
-            writer.println("http.min.worker.count=0");
-            writer.println("http.connection.pool.initial.capacity=4");
-            writer.println("pg.worker.count=0");
-            writer.println("line.tcp.writer.worker.count=0");
-            writer.println("line.tcp.io.worker.count=0");
+            writer.println("shared.worker.count=2");
+            writer.println("http.worker.count=1");
+            writer.println("http.min.worker.count=1");
+            writer.println("pg.worker.count=1");
+            writer.println("line.tcp.writer.worker.count=1");
+            writer.println("line.tcp.io.worker.count=1");
         }
         file = confPath + Files.SEPARATOR + "mime.types";
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
@@ -160,42 +159,19 @@ public abstract class AbstractBootstrapTest {
 
     static void assertMemoryLeak(TestUtils.LeakProneCode runnable) throws Exception {
         Path.clearThreadLocals();
-        long mem = Unsafe.getMemUsed();
-        long[] memoryUsageByTag = new long[MemoryTag.SIZE];
-        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-            memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
-        }
-
-        Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
-        long fileCount = Files.getOpenFileCount();
-        Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
-
-        int addrInfoCount = Net.getAllocatedAddrInfoCount();
-        Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
-
-        int sockAddrCount = Net.getAllocatedSockAddrCount();
-        Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
+        Assert.assertTrue(Unsafe.getMemUsed() >= 0);
+        Assert.assertTrue(Files.getOpenFileCount() >= 0);
+        final int addrInfoCount = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue(addrInfoCount >= 0);
+        final int sockAddrCount = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue(sockAddrCount >= 0);
 
         runnable.run();
+
         Path.clearThreadLocals();
-        if (fileCount != Files.getOpenFileCount()) {
-            Assert.assertEquals("file descriptors " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
-        }
-
-        // Checks that the same tag used for allocation and freeing native memory
-        long memAfter = Unsafe.getMemUsed();
-        Assert.assertTrue(memAfter == 0);
-
-        int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
-        Assert.assertTrue(addrInfoCountAfter > -1);
-        if (addrInfoCount != addrInfoCountAfter) {
-            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
-        }
-
-        int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
-        Assert.assertTrue(sockAddrCountAfter > -1);
-        if (sockAddrCount != sockAddrCountAfter) {
-            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
-        }
+        Assert.assertEquals(0, Files.getOpenFileCount());
+        Assert.assertEquals(0, Unsafe.getMemUsed());
+        Assert.assertEquals(addrInfoCount, Net.getAllocatedAddrInfoCount());
+        Assert.assertEquals(sockAddrCount, Net.getAllocatedSockAddrCount());
     }
 }

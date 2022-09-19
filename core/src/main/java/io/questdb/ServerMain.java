@@ -69,6 +69,7 @@ public class ServerMain implements QuietCloseable {
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         engine = new CairoEngine(cairoConfig, metrics);
+        toBeClosed.add(engine);
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -185,7 +186,6 @@ public class ServerMain implements QuietCloseable {
             toBeClosed.add(lineUdpReceiver);
         }
 
-        toBeClosed.add(engine); // last to be closed
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
     }
