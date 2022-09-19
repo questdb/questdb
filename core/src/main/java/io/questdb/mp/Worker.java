@@ -104,7 +104,6 @@ public class Worker extends Thread {
                 } else {
                     if (log != null) {
                         log.info().$("os scheduled worker started [name=").$(getName()).I$();
-
                     }
                 }
                 setupJobs();

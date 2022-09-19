@@ -31,7 +31,6 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -55,15 +54,15 @@ public class ServerMain implements QuietCloseable {
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
 
-    public ServerMain(String... args) throws SqlException {
+    public ServerMain(String... args) {
         this(Bootstrap.withArgs(args));
     }
 
-    public ServerMain(final Bootstrap bootstrap) throws SqlException {
+    public ServerMain(final Bootstrap bootstrap) {
         this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog());
     }
 
-    public ServerMain(final PropServerConfiguration config, final Metrics metrics, final Log log) throws SqlException {
+    public ServerMain(final PropServerConfiguration config, final Metrics metrics, final Log log) {
         this.config = config;
         this.log = log;
 
@@ -77,7 +76,7 @@ public class ServerMain implements QuietCloseable {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
 
-        // create the worker pool manager, with a configured shared pool
+        // create the worker pool manager, and configure the shared pool
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
@@ -217,6 +216,7 @@ public class ServerMain implements QuietCloseable {
             // leave hasStarted as is, to disable start
         }
         if (!running.get()) {
+            // if you instantiate ServerMain it is for the purpose of running, i.e. calling start
             throw new IllegalStateException("start was not called at all");
         }
     }

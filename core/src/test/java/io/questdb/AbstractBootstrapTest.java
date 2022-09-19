@@ -142,7 +142,6 @@ public abstract class AbstractBootstrapTest {
             writer.println("pg.worker.count=0");
             writer.println("line.tcp.writer.worker.count=0");
             writer.println("line.tcp.io.worker.count=0");
-
         }
         file = confPath + Files.SEPARATOR + "mime.types";
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {

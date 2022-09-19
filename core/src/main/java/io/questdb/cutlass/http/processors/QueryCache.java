@@ -31,15 +31,17 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Gauge;
 import io.questdb.std.AssociativeCache;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 
-import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class QueryCache implements Closeable {
+public final class QueryCache implements QuietCloseable {
 
     private static final Log LOG = LogFactory.getLog(QueryCache.class);
     private static ThreadLocal<QueryCache> TL_QUERY_CACHE;
     private final AssociativeCache<RecordCursorFactory> cache;
+    private AtomicBoolean closed = new AtomicBoolean();
 
     public QueryCache(int blocks, int rows, Gauge cachedQueriesGauge) {
         this.cache = new AssociativeCache<>(blocks, rows, cachedQueriesGauge);
@@ -60,8 +62,10 @@ public final class QueryCache implements Closeable {
 
     @Override
     public void close() {
-        cache.close();
-        LOG.info().$("closed").$();
+        if (closed.compareAndSet(false, true)) {
+            cache.close();
+            LOG.info().$("closed").$();
+        }
     }
 
     public RecordCursorFactory poll(CharSequence sql) {
@@ -88,6 +92,9 @@ public final class QueryCache implements Closeable {
     }
 
     private void log(CharSequence action, CharSequence sql) {
-        LOG.info().$(action).$(" [thread=").$(Thread.currentThread().getName()).$(", sql=").utf8(sql).$(']').$();
+        LOG.info().$(action)
+                .$(" [thread=").$(Thread.currentThread().getName())
+                .$(", sql=").utf8(sql)
+                .I$();
     }
 }

@@ -30,10 +30,18 @@ import org.junit.*;
 
 public class ServerMainTest extends AbstractBootstrapTest {
 
+    @Before
+    public void setUp() {
+        super.setUp();
+        try {
+            createDummyConfiguration();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     @Test
-    @Ignore("this cannot be run reliably in CI")
-    public void testServerMainStartNotCalled() throws Exception {
-        createDummyConfiguration();
+    public void testServerMainStartNotCalled() {
         try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
             Assert.assertNotNull(serverMain.getConfiguration());
             Assert.assertNotNull(serverMain.getCairoEngine());
@@ -46,16 +54,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    @Ignore("this cannot be run reliably in CI")
     public void testServerMainStart() throws Exception {
-        createDummyConfiguration();
-        try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
-            Assert.assertNotNull(serverMain.getConfiguration());
-            Assert.assertNotNull(serverMain.getCairoEngine());
-            Assert.assertNotNull(serverMain.getWorkerPoolManager());
-            Assert.assertFalse(serverMain.hasStarted());
-            Assert.assertFalse(serverMain.hasBeenClosed());
-            serverMain.start(false);
-        }
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
+                Assert.assertNotNull(serverMain.getConfiguration());
+                Assert.assertNotNull(serverMain.getCairoEngine());
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertFalse(serverMain.hasStarted());
+                Assert.assertFalse(serverMain.hasBeenClosed());
+                serverMain.start(false);
+            }
+        });
     }
 }
