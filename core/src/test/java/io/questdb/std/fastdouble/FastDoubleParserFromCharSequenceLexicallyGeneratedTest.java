@@ -5,9 +5,10 @@
 
 package io.questdb.std.fastdouble;
 
+import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.Assert.assertEquals;
 
 public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends AbstractLexicallyGeneratedTest {
 
@@ -17,6 +18,10 @@ public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends Abst
         boolean isExpectedToFail = false;
         try {
             expected = Double.parseDouble(str);
+            // our double parser rejects 'f' suffix
+            if (Chars.endsWith(str, 'F') || Chars.endsWith(str, 'f')) {
+                isExpectedToFail = true;
+            }
         } catch (NumberFormatException t) {
             isExpectedToFail = true;
         }
@@ -31,9 +36,8 @@ public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends Abst
 
         assertEquals(isExpectedToFail, actualFailed);
         if (!isExpectedToFail) {
-            assertEquals(expected, actual, "str=" + str);
-            assertEquals(Double.doubleToLongBits(expected), Double.doubleToLongBits(actual),
-                    "longBits of " + expected);
+            assertEquals("str=" + str, expected, actual, 0.001);
+            assertEquals("longBits of " + expected, Double.doubleToLongBits(expected), Double.doubleToLongBits(actual));
         }
     }
 }

@@ -9,7 +9,7 @@ import io.questdb.std.NumericException;
 
 import java.nio.charset.StandardCharsets;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.Assert.assertEquals;
 
 public class FastFloatParserFromByteArrayLexicallyGeneratedTest extends AbstractLexicallyGeneratedTest {
     @Override
@@ -26,16 +26,15 @@ public class FastFloatParserFromByteArrayLexicallyGeneratedTest extends Abstract
         boolean actualFailed = false;
         try {
             actual = FastFloatParser.parseFloat(str.getBytes(StandardCharsets.ISO_8859_1));
-            assertEquals(expected, actual, "str=" + str);
+            assertEquals("str=" + str, expected, actual, 0.001);
         } catch (NumericException t) {
             actualFailed = true;
         }
 
         assertEquals(isExpectedToFail, actualFailed);
         if (!isExpectedToFail) {
-            assertEquals(expected, actual, "str=" + str);
-            assertEquals(Float.floatToIntBits(expected), Float.floatToIntBits(actual),
-                    "intBits of " + expected);
+            assertEquals("str=" + str, expected, actual, 0.001);
+            assertEquals("intBits of " + expected, Float.floatToIntBits(expected), Float.floatToIntBits(actual));
         }
     }
 }

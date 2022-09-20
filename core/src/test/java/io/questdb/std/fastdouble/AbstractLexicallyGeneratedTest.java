@@ -5,16 +5,10 @@
 
 package io.questdb.std.fastdouble;
 
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DynamicNode;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.Test;
 
 import java.util.Random;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
-
-import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 /**
  * The purpose of the tests in this class is to discover new cases, where
@@ -42,111 +36,90 @@ abstract class AbstractLexicallyGeneratedTest {
      */
     public static final long SEED = System.nanoTime();
 
-    @TestFactory
-    @Disabled
-    Stream<DynamicTest> dynamicTestsRandomStringFrom1SyntaxRuleWithoutWhitespace() {
+    @Test
+    public void testRandomStringFrom1SyntaxRuleWithoutWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
-        return IntStream.range(0, 100).mapToObj(i -> {
+        IntStream.range(0, 100).forEach(i -> {
                     String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(1, rng);
-                    return dynamicTest(i + ": " + str,
-                            () -> testAgainstJdk(str));
+                    testAgainstJdk(str);
                 }
         );
     }
 
-    @TestFactory
-    @Disabled
-    Stream<DynamicTest> dynamicTestsRandomStringFrom2SyntaxRuleWithoutWhitespace() {
+    @Test
+    public void testRandomStringFrom2SyntaxRuleWithoutWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
-        return IntStream.range(0, 10_000).mapToObj(i -> {
+        IntStream.range(0, 10_000).forEach(i -> {
                     String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(2, rng);
-                    return dynamicTest(i + ": " + str,
-                            () -> testAgainstJdk(str));
+                    testAgainstJdk(str);
                 }
         );
     }
 
-    @TestFactory
-    @Disabled
-    Stream<DynamicTest> dynamicTestsRandomStringFrom3SyntaxRuleWithoutWhitespace() {
+    @Test
+    public void testRandomStringFrom3SyntaxRuleWithoutWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
-        return IntStream.range(0, 10_000).mapToObj(i -> {
+        IntStream.range(0, 10_000).forEach(i -> {
                     String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(3, rng);
-                    return dynamicTest(i + ": " + str,
-                            () -> testAgainstJdk(str));
+                    testAgainstJdk(str);
                 }
         );
     }
 
-    @TestFactory
-    @Disabled
-    Stream<DynamicTest> dynamicTestsRandomStringFrom4SyntaxRuleWithoutWhitespace() {
+    @Test
+    public void testRandomStringFrom4SyntaxRuleWithoutWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
-        return IntStream.range(0, 10_000).mapToObj(i -> {
+        IntStream.range(0, 10_000).forEach(i -> {
                     String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(4, rng);
-                    return dynamicTest(i + ": " + str,
-                            () -> testAgainstJdk(str));
+                    testAgainstJdk(str);
                 }
         );
     }
 
-    @TestFactory
-    @Disabled
-    Stream<DynamicTest> dynamicTestsRandomStringFrom10SyntaxRuleWithoutWhitespace() {
+    @Test
+    public void testRandomStringFrom10SyntaxRuleWithoutWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
-        return IntStream.range(0, 10_000).mapToObj(i -> {
+        IntStream.range(0, 10_000).forEach(i -> {
                     String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(10, rng);
-                    return dynamicTest(i + ": " + str,
-                            () -> testAgainstJdk(str));
+                    testAgainstJdk(str);
                 }
         );
     }
 
-    @TestFactory
-    @Disabled
-    Stream<DynamicTest> dynamicTestsRandomStringsOfIncreasingLengthWithWhitespace() {
+    @Test
+    public void testRandomStringsOfIncreasingLengthWithWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
-        return IntStream.range(1, 100).mapToObj(i -> {
+        IntStream.range(1, 100).forEach(i -> {
                     String str = gen.produceRandomInputStringFromLexicalRuleWithWhitespace(i, rng);
-                    return dynamicTest(i + ": " + str,
-                            () -> testAgainstJdk(str));
+                    testAgainstJdk(str);
                 }
         );
     }
 
-    @TestFactory
-    @Disabled
-    Stream<DynamicNode> dynamicTestsAsciiCharacterInputsUpTo4Characters() {
+    @Test
+    public void testAsciiCharacterInputsUpTo4Characters() {
         int maxLength = 4;
         Random rng = new Random();
-        return IntStream.range(0, 10_000).mapToObj(i -> {
+        IntStream.range(0, 10_000).forEach(i -> {
             char[] ch = new char[4];
             int n = rng.nextInt(maxLength) + 1;
             for (int j = 0; j < n; j++) {
                 ch[j] = nextAsciiChar(rng);
             }
             StringBuilder str = new StringBuilder();
-            StringBuilder title = new StringBuilder(Integer.toString(n));
-            title.append(':');
             for (int j = 0; j < 4; j++) {
                 char c = ch[j];
                 if (c >= ' ') {
-                    if (Character.isISOControl(c) || Character.isWhitespace(c)) {
-                        title.append("&#x").append(Integer.toHexString(c)).append(';');
-                        str.append(c);
-                    } else {
-                        title.append(c);
-                        str.append(c);
-                    }
+                    str.append(c);
                 }
             }
-            return dynamicTest(title.toString(), () -> testAgainstJdk(str.toString()));
+            testAgainstJdk(str.toString());
         });
     }
 
@@ -164,6 +137,4 @@ abstract class AbstractLexicallyGeneratedTest {
      * @param str the given input string
      */
     protected abstract void testAgainstJdk(String str);
-
-
 }

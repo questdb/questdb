@@ -32,7 +32,7 @@ import io.questdb.std.NumericException;
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
-public final class FastDoubleCharArray {
+final class FastDoubleCharArray {
 
     private static boolean isDigit(char c) {
         return '0' <= c && c <= '9';
@@ -203,7 +203,7 @@ public final class FastDoubleCharArray {
      * @return if the input is legal;
      * @throws NumericException is the input is illegal.
      */
-    public static double parseFloatingPointLiteral(char[] str, int offset, int length) throws NumericException {
+    static double parseFloatingPointLiteral(char[] str, int offset, int length) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
             throw NumericException.INSTANCE;

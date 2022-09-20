@@ -46,7 +46,7 @@ package io.questdb.std.fastdouble;
  *     <dd><a href="https://arxiv.org/pdf/2101.11408.pdf">arxiv.org</a></dd>
  * </dl>
  */
-public final class FastDoubleUtils {
+final class FastDoubleUtils {
     final static long MINIMAL_NINETEEN_DIGIT_INTEGER = 1000_00000_00000_00000L;
     /**
      * The decimal exponent of a double has a range of -324 to +308.

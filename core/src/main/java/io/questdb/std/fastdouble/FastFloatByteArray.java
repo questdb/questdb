@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets;
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
-public final class FastFloatByteArray {
+final class FastFloatByteArray {
 
     /**
      * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
@@ -40,7 +40,7 @@ public final class FastFloatByteArray {
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
-    public static float parseFloatingPointLiteral(byte[] str, int offset, int length) throws NumericException {
+    static float parseFloatingPointLiteral(byte[] str, int offset, int length) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
             throw NumericException.INSTANCE;

@@ -26,7 +26,6 @@ package io.questdb;
 
 import io.questdb.log.LogError;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -48,9 +47,6 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class FilesTest {
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
-
-    // Kick static LOG inits to not mess with assertMemoryLeak measurments inside the tests
-    private final DateFormat IGNORED = DateFormatUtils.PG_DATE_FORMAT;
 
     @Test
     public void testAllocate() throws Exception {
@@ -239,7 +235,6 @@ public class FilesTest {
     public void testHardLinkFailuresSrcDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
-            dbRoot.mkdirs();
             Path srcFilePath = null;
             Path hardLinkFilePath = null;
             try {
@@ -521,7 +516,7 @@ public class FilesTest {
     private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
-            dbRoot.mkdirs();
+//            Assert.assertTrue(dbRoot.mkdirs());
             Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
             Path hardLinkFilePath = null;
             try {

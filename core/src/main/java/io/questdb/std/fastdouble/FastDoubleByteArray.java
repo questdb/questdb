@@ -34,7 +34,7 @@ import java.nio.charset.StandardCharsets;
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
-final public class FastDoubleByteArray {
+final class FastDoubleByteArray {
 
     /**
      * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
@@ -54,7 +54,7 @@ final public class FastDoubleByteArray {
      * @return the parsed value, if the input is legal;
      * @throws NumericException is the input is illegal.
      */
-    public static double parseFloatingPointLiteral(byte[] str, int offset, int length) throws NumericException {
+    static double parseFloatingPointLiteral(byte[] str, int offset, int length) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
             throw NumericException.INSTANCE;

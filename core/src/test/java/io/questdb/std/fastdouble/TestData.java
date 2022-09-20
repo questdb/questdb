@@ -5,7 +5,7 @@
 
 package io.questdb.std.fastdouble;
 
-final class TestData {
+public final class TestData {
     private final String title;
     private final String input;
     private final int charOffset;
@@ -16,13 +16,13 @@ final class TestData {
     private final float expectedFloatValue;
     private final boolean valid;
 
-    TestData(String title,
-             String input,
-             int charOffset, int charLength,
-             int byteOffset, int byteLength,
-             double expectedDoubleValue,
-             float expectedFloatValue,
-             boolean valid) {
+    public TestData(String title,
+                    String input,
+                    int charOffset, int charLength,
+                    int byteOffset, int byteLength,
+                    double expectedDoubleValue,
+                    float expectedFloatValue,
+                    boolean valid) {
         this.title = title;
         this.input = input;
         this.charOffset = charOffset;

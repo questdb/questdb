@@ -36,7 +36,7 @@ import java.util.Set;
  *         docs.oracle.com</a></dd>
  * </dl>
  */
-class LexicalGenerator {
+public class LexicalGenerator {
 
     private final static char[] DIGITS = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
     };
@@ -54,7 +54,7 @@ class LexicalGenerator {
     private final boolean produceUnderscore;
     private final boolean produceFloatTypeSuffix;
 
-    LexicalGenerator(boolean produceUnderscore, boolean produceFloatTypeSuffix) {
+    public LexicalGenerator(boolean produceUnderscore, boolean produceFloatTypeSuffix) {
         this.produceUnderscore = produceUnderscore;
         this.produceFloatTypeSuffix = produceFloatTypeSuffix;
     }
@@ -277,15 +277,9 @@ class LexicalGenerator {
         if (produceFloatTypeSuffix) {
             switch (rng.nextInt(4)) {
             case 0:
-                buf.append('f');
-                break;
-            case 1:
-                buf.append('F');
-                break;
-            case 2:
                 buf.append('d');
                 break;
-            case 3:
+            case 1:
                 buf.append('D');
                 break;
             }

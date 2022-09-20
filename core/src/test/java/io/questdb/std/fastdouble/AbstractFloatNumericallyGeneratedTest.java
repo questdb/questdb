@@ -6,14 +6,11 @@
 package io.questdb.std.fastdouble;
 
 import io.questdb.std.NumericException;
-import org.junit.jupiter.api.DynamicNode;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.Test;
 
 import java.util.Random;
-import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.DynamicTest.dynamicTest;
+import static org.junit.Assert.assertEquals;
 
 abstract class AbstractFloatNumericallyGeneratedTest {
     /**
@@ -23,34 +20,38 @@ abstract class AbstractFloatNumericallyGeneratedTest {
      * (Make sure to take a note of the seed value if
      * tests failed.)
      */
-    public static final long SEED = 0;//System.nanoTime();
+    public static final long SEED = System.nanoTime();
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsRandomDecimalFloatLiterals() {
+    @Test
+    public void testRandomDecimalFloatLiterals() {
         Random r = new Random(SEED);
-        return r.ints(10_000)
+        r.ints(10_000)
                 .mapToObj(Float::intBitsToFloat)
-                .map(d -> dynamicTest(d + "", () -> testLegalInput(d)));
+                .forEach(this::testLegalInput);
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsRandomHexadecimalFloatLiterals() {
+    @Test
+    public void testRandomHexadecimalFloatLiterals() {
         Random r = new Random(SEED);
-        return r.ints(10_000)
+        r.ints(10_000)
                 .mapToObj(Float::intBitsToFloat)
-                .map(d -> dynamicTest(Float.toHexString(d) + "", () -> testLegalInput(d)));
+                .forEach(this::testLegalInput);
     }
 
     protected abstract float parse(String str) throws NumericException;
 
-    private void testLegalInput(String str, float expected) throws NumericException {
-        float actual = parse(str);
-        assertEquals(expected, actual, "str=" + str);
-        assertEquals(Float.floatToIntBits(expected), Float.floatToIntBits(actual),
-                "intBits of " + expected);
+    private void testLegalInput(String str, float expected) {
+        float actual;
+        try {
+            actual = parse(str);
+        } catch (NumericException e) {
+            throw new NumberFormatException();
+        }
+        assertEquals("str=" + str, expected, actual, 0.001);
+        assertEquals("intBits of " + expected, Float.floatToIntBits(expected), Float.floatToIntBits(actual));
     }
 
-    private void testLegalInput(float expected) throws NumericException {
+    private void testLegalInput(float expected) {
         testLegalInput(expected + "", expected);
     }
 }

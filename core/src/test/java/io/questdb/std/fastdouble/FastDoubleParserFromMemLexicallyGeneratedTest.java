@@ -9,9 +9,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
-import io.questdb.test.tools.TestUtils;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.Assert.assertEquals;
 
 public class FastDoubleParserFromMemLexicallyGeneratedTest extends AbstractLexicallyGeneratedTest {
 
@@ -39,11 +38,10 @@ public class FastDoubleParserFromMemLexicallyGeneratedTest extends AbstractLexic
 
             assertEquals(isExpectedToFail, actualFailed);
             if (!isExpectedToFail) {
-                assertEquals(expected, actual, "str=" + str);
-                assertEquals(
+                assertEquals("str=" + str, expected, actual, 0.001);
+                assertEquals("longBits of " + expected,
                         Double.doubleToLongBits(expected),
-                        Double.doubleToLongBits(actual),
-                        "longBits of " + expected
+                        Double.doubleToLongBits(actual)
                 );
             }
         } finally {

@@ -57,7 +57,7 @@ final class FastFloatCharArray {
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
-    public static float parseFloatingPointLiteral(char[] str, int offset, int length) throws NumericException {
+    static float parseFloatingPointLiteral(char[] str, int offset, int length) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
             throw NumericException.INSTANCE;

@@ -9,7 +9,8 @@ import io.questdb.std.NumericException;
 
 import java.nio.charset.StandardCharsets;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.Assert.assertEquals;
+
 
 public class FastDoubleParserFromByteArrayLexicallyGeneratedTest extends AbstractLexicallyGeneratedTest {
     @Override
@@ -32,9 +33,8 @@ public class FastDoubleParserFromByteArrayLexicallyGeneratedTest extends Abstrac
 
         assertEquals(isExpectedToFail, actualFailed);
         if (!isExpectedToFail) {
-            assertEquals(expected, actual, "str=" + str);
-            assertEquals(Double.doubleToLongBits(expected), Double.doubleToLongBits(actual),
-                    "longBits of " + expected);
+            assertEquals("str=" + str, expected, actual, 0.001);
+            assertEquals("longBits of " + expected, Double.doubleToLongBits(expected), Double.doubleToLongBits(actual));
         }
     }
 }

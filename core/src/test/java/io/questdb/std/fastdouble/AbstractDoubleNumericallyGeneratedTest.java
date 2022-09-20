@@ -6,14 +6,11 @@
 package io.questdb.std.fastdouble;
 
 import io.questdb.std.NumericException;
-import org.junit.jupiter.api.DynamicNode;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.Test;
 
 import java.util.Random;
-import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.DynamicTest.dynamicTest;
+import static org.junit.Assert.assertEquals;
 
 abstract class AbstractDoubleNumericallyGeneratedTest {
     /**
@@ -25,32 +22,36 @@ abstract class AbstractDoubleNumericallyGeneratedTest {
      */
     public static final long SEED = 0;//System.nanoTime();
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsRandomDecimalFloatLiterals() {
+    @Test
+    public void testRandomDecimalFloatLiterals() {
         Random r = new Random(SEED);
-        return r.longs(10_000)
+        r.longs(10_000)
                 .mapToDouble(Double::longBitsToDouble)
-                .mapToObj(d -> dynamicTest(d + "", () -> testLegalInput(d)));
+                .forEach(this::testLegalInput);
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsRandomHexadecimalFloatLiterals() {
+    @Test
+    public void testRandomHexadecimalFloatLiterals() {
         Random r = new Random(SEED);
-        return r.longs(10_000)
+        r.longs(10_000)
                 .mapToDouble(Double::longBitsToDouble)
-                .mapToObj(d -> dynamicTest(Double.toHexString(d) + "", () -> testLegalInput(d)));
+                .forEach(this::testLegalInput);
     }
 
     protected abstract double parse(String str) throws NumericException;
 
-    private void testLegalInput(String str, double expected) throws NumericException {
-        double actual = parse(str);
-        assertEquals(expected, actual, "str=" + str);
-        assertEquals(Double.doubleToLongBits(expected), Double.doubleToLongBits(actual),
-                "longBits of " + expected);
+    private void testLegalInput(String str, double expected) {
+        double actual;
+        try {
+            actual = parse(str);
+        } catch (NumericException e) {
+            throw new NumberFormatException();
+        }
+        assertEquals("str=" + str, expected, actual, 0.001);
+        assertEquals("longBits of " + expected, Double.doubleToLongBits(expected), Double.doubleToLongBits(actual));
     }
 
-    private void testLegalInput(double expected) throws NumericException {
+    private void testLegalInput(double expected) {
         testLegalInput(expected + "", expected);
     }
 }

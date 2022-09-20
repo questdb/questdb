@@ -5,16 +5,12 @@
 
 package io.questdb.std.fastdouble;
 
-import org.junit.jupiter.api.DynamicNode;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.Assert;
+import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.fail;
-import static org.junit.jupiter.api.DynamicTest.dynamicTest;
+import static org.junit.Assert.fail;
 
 public class ParseSignificandWithSwarTest {
     /**
@@ -41,26 +37,23 @@ public class ParseSignificandWithSwarTest {
         double actual = significandToDouble(s.getBytes(StandardCharsets.ISO_8859_1));
         double expected = Double.parseDouble(s);
         System.out.println(expected + " == " + actual);
-        assertEquals(expected, actual);
+        Assert.assertEquals(expected, actual, 0.001);
     }
 
-    @TestFactory
-    List<DynamicNode> dynamicTestsIllegalInput() {
-        List<DynamicNode> list = new ArrayList<>();
+    @Test
+    public void dynamicTestsIllegalInput() {
         String str = "12345678";
         for (int i = 0; i < 7; i++) {
             byte[] bytes = str.getBytes(StandardCharsets.ISO_8859_1);
             bytes[i] = '.';
             bytes[i + 1] = '.';
             String s = new String(bytes, StandardCharsets.ISO_8859_1);
-            list.add(dynamicTest(s, () -> doIllegalTest(s)));
+            doIllegalTest(s);
         }
-        return list;
     }
 
-    @TestFactory
-    List<DynamicNode> dynamicTestsLegalInput() {
-        List<DynamicNode> list = new ArrayList<>();
+    @Test
+    public void dynamicTestsLegalInput() {
         String str = "12345678";
         for (int i = -1; i < 8; i++) {
             byte[] bytes = str.getBytes(StandardCharsets.ISO_8859_1);
@@ -68,9 +61,8 @@ public class ParseSignificandWithSwarTest {
                 bytes[i] = '.';
             }
             String s = new String(bytes, StandardCharsets.ISO_8859_1);
-            list.add(dynamicTest(s, () -> doLegalTest(s)));
+            doLegalTest(s);
         }
-        return list;
     }
 
     /**

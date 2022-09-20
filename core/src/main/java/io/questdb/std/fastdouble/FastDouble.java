@@ -32,7 +32,7 @@ import io.questdb.std.NumericException;
  * See {@link io.questdb.std.fastdouble} for the grammar of
  * {@code FloatingPointLiteral}.
  */
-public class FastDouble {
+class FastDouble {
 
     /**
      * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
@@ -52,7 +52,7 @@ public class FastDouble {
      * @return the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
-    public static double parseFloatingPointLiteral(CharSequence str, int offset, int length) throws NumericException {
+    static double parseFloatingPointLiteral(CharSequence str, int offset, int length) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length()) {
             throw NumericException.INSTANCE;

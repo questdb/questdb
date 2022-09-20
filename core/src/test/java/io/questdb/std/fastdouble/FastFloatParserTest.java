@@ -6,132 +6,120 @@
 package io.questdb.std.fastdouble;
 
 import io.questdb.std.NumericException;
-import org.junit.jupiter.api.DynamicNode;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
-import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.fail;
-import static org.junit.jupiter.api.DynamicTest.dynamicTest;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 /**
  * Tests class {@link FastDoubleParser}
  */
 public class FastFloatParserTest extends AbstractFastXParserTest {
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleCharSequence() {
-        return createAllTestDataForFloat().stream()
+    @Test
+    public void testParseDoubleBitsByteArrayIntInt() {
+        createAllTestDataForFloat()
+                .forEach(t -> testBits(t, u -> FastFloatParser.parseFloatBits(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength())));
+    }
+
+    @Test
+    public void testParseDoubleBitsCharArrayIntInt() {
+        createAllTestDataForFloat()
+                .forEach(t -> testBits(t, u -> FastFloatParser.parseFloatBits(u.input().toCharArray(), u.charOffset(), u.charLength())));
+    }
+
+    @Test
+    public void testParseDoubleBitsCharSequenceIntInt() {
+        createAllTestDataForFloat()
+                .forEach(t -> testBits(t, u -> {
+                    try {
+                        return FastFloatParser.parseFloatBits(u.input(), u.charOffset(), u.charLength());
+                    } catch (NumericException e) {
+                        throw new NumberFormatException();
+                    }
+                }));
+    }
+
+    @Test
+    public void testParseDoubleByteArray() {
+        createAllTestDataForFloat().stream()
                 .filter(t -> t.charLength() == t.input().length()
                         && t.charOffset() == 0)
-                .map(t -> dynamicTest(t.title(),
-                        () -> test(t, u -> {
-                            try {
-                                return FastFloatParser.parseFloat(u.input());
-                            } catch (NumericException e) {
-                                throw new NumberFormatException();
-                            }
-                        })));
+                .forEach(t -> test(t, u -> {
+                    try {
+                        return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8));
+                    } catch (NumericException e) {
+                        throw new NumberFormatException();
+                    }
+                }));
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleCharSequenceIntInt() {
-        return createAllTestDataForFloat().stream()
-                .map(t -> dynamicTest(t.title(),
-                        () -> test(t, u -> {
-                            try {
-                                return FastFloatParser.parseFloat(u.input(), u.charOffset(), u.charLength());
-                            } catch (NumericException e) {
-                                throw new NumberFormatException();
-                            }
-                        })));
+    @Test
+    public void testParseDoubleByteArrayIntInt() {
+        createAllTestDataForFloat()
+                .forEach(t -> test(t, u -> {
+                    try {
+                        return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength());
+                    } catch (NumericException e) {
+                        throw new NumberFormatException();
+                    }
+                }));
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleByteArray() {
-        return createAllTestDataForFloat().stream()
+    @Test
+    public void testParseDoubleCharArray() {
+        createAllTestDataForFloat().stream()
                 .filter(t -> t.charLength() == t.input().length()
                         && t.charOffset() == 0)
-                .map(t -> dynamicTest(t.title(),
-                        () -> test(t, u -> {
-                            try {
-                                return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8));
-                            } catch (NumericException e) {
-                                throw new NumberFormatException();
-                            }
-                        })));
+                .forEach(t -> test(t, u -> {
+                    try {
+                        return FastFloatParser.parseFloat(u.input().toCharArray());
+                    } catch (NumericException e) {
+                        throw new NumberFormatException();
+                    }
+                }));
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleByteArrayIntInt() {
-        return createAllTestDataForFloat().stream()
-                .map(t -> dynamicTest(t.title(),
-                        () -> test(t, u -> {
-                            try {
-                                return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength());
-                            } catch (NumericException e) {
-                                throw new NumberFormatException();
-                            }
-                        })));
+    @Test
+    public void testParseDoubleCharArrayIntInt() {
+        createAllTestDataForFloat()
+                .forEach(t -> test(t, u -> {
+                    try {
+                        return FastFloatParser.parseFloat(u.input().toCharArray(), u.charOffset(), u.charLength());
+                    } catch (NumericException e) {
+                        throw new NumberFormatException();
+                    }
+                }));
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleCharArray() {
-        return createAllTestDataForFloat().stream()
+    @Test
+    public void testParseDoubleCharSequence() {
+        createAllTestDataForFloat().stream()
                 .filter(t -> t.charLength() == t.input().length()
                         && t.charOffset() == 0)
-                .map(t -> dynamicTest(t.title(),
-                        () -> test(t, u -> {
-                            try {
-                                return FastFloatParser.parseFloat(u.input().toCharArray());
-                            } catch (NumericException e) {
-                                throw new NumberFormatException();
-                            }
-                        })));
+                .forEach(t -> test(t, u -> {
+                    try {
+                        return FastFloatParser.parseFloat(u.input());
+                    } catch (NumericException e) {
+                        throw new NumberFormatException();
+                    }
+                }));
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleCharArrayIntInt() {
-        return createAllTestDataForFloat().stream()
-                .map(t -> dynamicTest(t.title(),
-                        () -> test(t, u -> {
-                            try {
-                                return FastFloatParser.parseFloat(u.input().toCharArray(), u.charOffset(), u.charLength());
-                            } catch (NumericException e) {
-                                throw new NumberFormatException();
-                            }
-                        })));
+    @Test
+    public void testParseDoubleCharSequenceIntInt() {
+        createAllTestDataForFloat()
+                .forEach(t -> test(t, u -> {
+                    try {
+                        return FastFloatParser.parseFloat(u.input(), u.charOffset(), u.charLength());
+                    } catch (NumericException e) {
+                        throw new NumberFormatException();
+                    }
+                }));
     }
 
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleBitsCharSequenceIntInt() {
-        return createAllTestDataForFloat().stream()
-                .map(t -> dynamicTest(t.title(),
-                        () -> testBits(t, u -> {
-                            try {
-                                return FastFloatParser.parseFloatBits(u.input(), u.charOffset(), u.charLength());
-                            } catch (NumericException e) {
-                                throw new NumberFormatException();
-                            }
-                        })));
-    }
-
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleBitsByteArrayIntInt() {
-        return createAllTestDataForFloat().stream()
-                .map(t -> dynamicTest(t.title(),
-                        () -> testBits(t, u -> FastFloatParser.parseFloatBits(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength()))));
-    }
-
-    @TestFactory
-    Stream<DynamicNode> dynamicTestsParseDoubleBitsCharArrayIntInt() {
-        return createAllTestDataForFloat().stream()
-                .map(t -> dynamicTest(t.title(),
-                        () -> testBits(t, u -> FastFloatParser.parseFloatBits(u.input().toCharArray(), u.charOffset(), u.charLength()))));
-    }
-
-    private void test(TestData d, ToFloatFunction<TestData> f) throws NumericException {
+    private void test(TestData d, ToFloatFunction<TestData> f) {
         if (!d.valid()) {
             try {
                 f.applyAsFloat(d);
@@ -140,12 +128,15 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
                 //success
             }
         } else {
-            double actual = f.applyAsFloat(d);
-            assertEquals(d.expectedFloatValue(), actual);
+            try {
+                assertEquals(d.title(), d.expectedFloatValue(), f.applyAsFloat(d), 0.001);
+            } catch (NumericException e) {
+                throw new NumberFormatException();
+            }
         }
     }
 
-    private void testBits(TestData d, ToFloatFunction<TestData> f) throws NumericException {
+    private void testBits(TestData d, ToFloatFunction<TestData> f) {
         if (!d.valid()) {
             try {
                 f.applyAsFloat(d);
@@ -154,7 +145,11 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
                 //success
             }
         } else {
-            assertEquals(d.expectedFloatValue(), f.applyAsFloat(d));
+            try {
+                assertEquals(d.title(), d.expectedFloatValue(), f.applyAsFloat(d), 0.001);
+            } catch (NumericException e) {
+                throw new NumberFormatException();
+            }
         }
     }
 

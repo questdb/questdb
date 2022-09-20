@@ -858,7 +858,6 @@ class FastDoubleMath {
         // We want the most significant 64 bits of the product. We know
         // this will be non-zero because the most significant bit of digits is
         // 1.
-        //before Java 18
         long x01 = significand & 0xffffffffL, x11 = significand >>> 32;
         long y01 = factorMantissa & 0xffffffffL, y11 = factorMantissa >>> 32;
         long p111 = x11 * y11, p011 = x01 * y11;
