@@ -1525,8 +1525,12 @@ final class WhereClauseParser implements Mutable {
                 ts += isLo ? 1 : -1;
             }
         } catch (NumericException e) {
-            long inc = equalsTo ? 0 : isLo ? 1 : -1;
-            ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+            try {
+                return Numbers.parseLong(node.token);
+            } catch (NumericException e2) {
+                long inc = equalsTo ? 0 : isLo ? 1 : -1;
+                ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+            }
         }
         return ts;
     }

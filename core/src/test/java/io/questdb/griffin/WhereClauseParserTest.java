@@ -227,6 +227,27 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadEpochInLess() {
+        try {
+            modelOf("'1663676011000000' < timestamp");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            Assert.assertEquals("[0] Invalid date", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testBadEpochInLess2() {
+        try {
+            modelOf("timestamp < '1663676011000000'");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals("[12] Invalid date", e.getMessage());
+        }
+    }
+
+    @Test
     public void testBadDateInInterval() {
         try {
             modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
@@ -440,6 +461,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
         runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
+    }
+
+    @Test
+    public void testDesTimestampWithEpochGreaterAndLessOrEqual() throws Exception {
+        runWhereTest("timestamp >= 1424649600000000 and timestamp <= 1424736000000000",
                 "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
     }
 
