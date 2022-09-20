@@ -516,7 +516,6 @@ public class FilesTest {
     private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
-//            Assert.assertTrue(dbRoot.mkdirs());
             Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
             Path hardLinkFilePath = null;
             try {
