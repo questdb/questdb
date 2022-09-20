@@ -3418,10 +3418,6 @@ nodejs code:
         });
     }
 
-    static {
-        LogFactory.configureSync();
-    }
-
     @Test
     public void testLargeSelect() throws Exception {
         assertMemoryLeak(() -> {
