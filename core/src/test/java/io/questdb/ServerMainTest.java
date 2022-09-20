@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.std.Os;
 import org.junit.*;
 
 
@@ -40,6 +41,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    @Ignore("Flaky")
     public void testServerMainStart() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
