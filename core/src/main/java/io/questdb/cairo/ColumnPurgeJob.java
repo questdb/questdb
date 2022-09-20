@@ -66,7 +66,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final long retryDelayLimit;
     private final long retryDelay;
     private final double retryDelayMultiplier;
-    private final int columnPurgeQueueLimit;
     private ColumnPurgeOperator columnPurgeOperator;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
@@ -85,7 +84,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelay = configuration.getColumnPurgeRetryDelay();
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
         this.columnPurgeRetryLimitDays = configuration.getColumnPurgeRetryLimitDays();
-        this.columnPurgeQueueLimit = configuration.getColumnPurgeQueueLimit();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
@@ -225,21 +223,25 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             long microTime = clock.getTicks();
             try (RecordCursorFactory recordCursorFactory = reloadQuery.getRecordCursorFactory()) {
                 assert recordCursorFactory.supportsUpdateRowId(tableName);
+                int count = 0;
+
                 try (RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext)) {
                     Record rec = records.getRecord();
                     long lastTs = 0;
                     ColumnPurgeRetryTask taskRun = null;
 
                     CharSequenceObjHashMap<String> stringIntern = new CharSequenceObjHashMap<>();
-                    int count = 0;
 
-                    while (records.hasNext() && count++ < columnPurgeQueueLimit) {
+                    while (records.hasNext()) {
+                        count++;
                         long ts = rec.getTimestamp(0);
                         if (ts != lastTs || taskRun == null) {
                             if (taskRun != null) {
-                                retryQueue.add(taskRun);
+                                columnPurgeOperator.purgeExclusive(taskRun);
+                            } else {
+                                taskRun = taskPool.pop();
                             }
-                            taskRun = taskPool.pop();
+
                             lastTs = ts;
                             String tableName = internStrObj(stringIntern, rec.getSym(TABLE_NAME_COLUMN));
                             String columnName = internStrObj(stringIntern, rec.getSym(COLUMN_NAME_COLUMN));
@@ -266,20 +268,16 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         taskRun.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                     }
                     if (taskRun != null) {
-                        retryQueue.add(taskRun);
-                    }
-
-                    if (count > columnPurgeQueueLimit) {
-                        // There can be too many tasks in the table so that this code can cause OOM
-                        // and QuestDB will not be able to start at all. Stop here and let the user know
-                        LOG.critical().$("too many Column Purge Tasks in the table some task will be ignored, " +
-                                        "run VACUUM TABLE command to re-trigger for each table [limit=")
-                                .$(columnPurgeQueueLimit).I$();
+                        columnPurgeOperator.purgeExclusive(taskRun);
+                        taskPool.push(taskRun);
                     }
                 }
+
+                if (count > 0) {
+                    LOG.info().$("cleaned up rewritten column files [cleanCount=").$(count).I$();
+                }
             }
-            if (retryQueue.size() == 0 && writer != null) {
-                // No tasks to do. Cleanup the log table
+            if (writer != null) {
                 try {
                     writer.truncate();
                 } catch (Throwable th) {

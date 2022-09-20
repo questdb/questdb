@@ -411,7 +411,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
-    private final int columnPurgeQueueLimit;
 
     public PropServerConfiguration(
             String root,
@@ -742,7 +741,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelay = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 10.0);
             this.columnPurgeRetryLimitDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS, 31);
-            this.columnPurgeQueueLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_LIMIT, 5_000_000);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
@@ -1933,11 +1931,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getColumnPurgeQueueCapacity() {
             return columnPurgeQueueCapacity;
-        }
-
-        @Override
-        public int getColumnPurgeQueueLimit() {
-            return columnPurgeQueueLimit;
         }
 
         @Override
