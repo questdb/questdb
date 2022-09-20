@@ -24,7 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.std.Os;
 import org.junit.*;
 
 
