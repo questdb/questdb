@@ -447,7 +447,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             if (e.isInterruption()) {
                 reportQueryCancelled(e.getFlyweightMessage());
             } else {
-                reportError(-1, e.getFlyweightMessage(), e.getErrno());
+                reportInternalError(e);
             }
         } catch (AuthenticationException e) {
             prepareError(-1, e.getMessage(), 0);
@@ -1664,21 +1664,30 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareDescribePortalResponse();
     }
 
-    private void prepareError(int position, CharSequence message, long errno) {
-        prepareErrorResponse(position, message);
+    private void prepareInternalError(CairoException ex) {
+        int errno = ex.getErrno();
+        CharSequence message = ex.getFlyweightMessage();
+        prepareErrorResponse(-1, ex.getFlyweightMessage());
         if (errno == CairoException.NON_CRITICAL) {
             LOG.error()
-                    .$("error [pos=").$(position)
-                    .$(", msg=`").$(message).$('`')
+                    .$("error [msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)
                     .I$();
         } else {
             LOG.critical()
-                    .$("error [pos=").$(position)
-                    .$(", msg=`").$(message).$('`')
+                    .$("error [msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)
                     .I$();
         }
+    }
+
+    private void prepareError(int position, CharSequence message, long errno) {
+        prepareErrorResponse(position, message);
+        LOG.error()
+                .$("error [pos=").$(position)
+                .$(", msg=`").$(message).$('`')
+                .$(", errno=`").$(errno)
+                .I$();
     }
 
     private void prepareErrorResponse(int position, CharSequence message) {
@@ -2309,7 +2318,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 if (ex.isInterruption()) {
                     prepareQueryCanceled(ex.getFlyweightMessage());
                 } else {
-                    prepareError(-1, ex.getFlyweightMessage(), ex.getErrno());
+                    prepareInternalError(ex);
                 }
             }
         } else {
@@ -2406,6 +2415,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 namedStatementMap.removeAt(index);
             }
         }
+    }
+
+    private void reportInternalError(CairoException ex)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareInternalError(ex);
+        sendReadyForNewQuery();
+        clearRecvBuffer();
     }
 
     private void reportError(int position, CharSequence flyweightMessage, long errno)
