@@ -31,6 +31,11 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     private final ObjList<Scrapable> metrics = new ObjList<>();
 
     @Override
+    public void addScrapable(Scrapable scrapable) {
+        metrics.add(scrapable);
+    }
+
+    @Override
     public Counter newCounter(CharSequence name) {
         Counter counter = new CounterImpl(name);
         metrics.add(counter);
