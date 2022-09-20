@@ -33,6 +33,7 @@ public class EntryUnavailableException extends CairoException {
     public static EntryUnavailableException instance(String reason) {
         EntryUnavailableException ex = tlException.get();
         ex.message.clear();
+        ex.errno = CairoException.NON_CRITICAL;
         ex.put("table busy [reason=").put(reason).put("]");
         ex.reason = reason;
         return ex;
