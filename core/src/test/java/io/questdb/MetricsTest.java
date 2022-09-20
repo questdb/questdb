@@ -63,6 +63,9 @@ public class MetricsTest {
         MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_free_count"));
         MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_mem_used"));
         MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_malloc_count"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_jvm_free"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_jvm_total"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_jvm_max"));
     }
 
     @Test

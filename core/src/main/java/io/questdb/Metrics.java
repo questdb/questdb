@@ -28,10 +28,7 @@ import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cutlass.http.processors.HealthCheckMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
-import io.questdb.metrics.MetricsRegistry;
-import io.questdb.metrics.MetricsRegistryImpl;
-import io.questdb.metrics.NullMetricsRegistry;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
@@ -43,6 +40,10 @@ public class Metrics implements Scrapable {
     private final HealthCheckMetrics healthCheck;
     private final TableWriterMetrics tableWriter;
     private final MetricsRegistry metricsRegistry;
+    private final Runtime runtime = Runtime.getRuntime();
+    private final VirtualGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
+    private final VirtualGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
+    private final VirtualGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
 
     Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
@@ -63,6 +64,9 @@ public class Metrics implements Scrapable {
         metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
         metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
         metricsRegistry.newVirtualGauge("memory_realloc_count", Unsafe::getReallocCount);
+        metricsRegistry.newVirtualGauge("memory_jvm_free", jvmFreeMemRef);
+        metricsRegistry.newVirtualGauge("memory_jvm_total", jvmTotalMemRef);
+        metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
     }
 
     public static Metrics enabled() {
