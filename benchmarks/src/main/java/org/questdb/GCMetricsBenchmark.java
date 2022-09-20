@@ -24,7 +24,10 @@
 
 package org.questdb;
 
+import io.questdb.metrics.GCMetrics;
+import io.questdb.std.str.DirectCharSink;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.profile.GCProfiler;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -35,33 +38,25 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class AbsBenchmark {
+public class GCMetricsBenchmark {
 
-    int x = -5;
+    GCMetrics metrics = new GCMetrics();
+    DirectCharSink sink = new DirectCharSink(1024 * 1024);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(AbsBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .include(GCMetricsBenchmark.class.getSimpleName())
+                .warmupIterations(1)
+                .measurementIterations(3)
+                .addProfiler(GCProfiler.class)
                 .forks(1)
                 .build();
         new Runner(opt).run();
     }
 
     @Benchmark
-    public int testManual() {
-        return x > 0 ? x : -x;
-    }
-
-    @Benchmark
-    public int testMathAbs() {
-        return Math.abs(x);
-    }
-
-    @Benchmark
-    public int testXor() {
-        int y = x >>> 31;
-        return (x ^ y) - y;
+    public void testScrape() {
+        sink.clear();
+        metrics.scrapeIntoPrometheus(sink);
     }
 }
