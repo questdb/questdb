@@ -43,7 +43,7 @@ abstract class AbstractDoubleHandPickedTest {
 
     @Test
     public void testErrorCases() throws IOException, URISyntaxException {
-        Path p = Paths.get(AbstractDoubleHandPickedTest.class.getResource("/fastdouble/FastDoubleParser_errorcases.txt").toURI());
+        Path p = Paths.get(AbstractDoubleHandPickedTest.class.getResource("/fastdouble/FastDoubleParser_testcases.txt").toURI());
         Files.lines(p)
                 .flatMap(line -> Arrays.stream(line.split(",")))
                 .forEach(str -> {

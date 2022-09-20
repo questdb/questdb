@@ -5,13 +5,11 @@
 
 package io.questdb.std.fastdouble;
 
-import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 
 import static org.junit.Assert.assertEquals;
 
 public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends AbstractLexicallyGeneratedTest {
-
     @Override
     protected void testAgainstJdk(String str) {
         double expected = 0.0;
@@ -19,7 +17,9 @@ public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends Abst
         try {
             expected = Double.parseDouble(str);
             // our double parser rejects 'f' suffix
-            if (Chars.endsWith(str, 'F') || Chars.endsWith(str, 'f')) {
+            String ss = str.trim();
+            int l = ss.length();
+            if (l > 0 && (ss.charAt(l - 1) | 32) == 'f') {
                 isExpectedToFail = true;
             }
         } catch (NumberFormatException t) {
@@ -34,7 +34,7 @@ public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends Abst
             actualFailed = true;
         }
 
-        assertEquals(isExpectedToFail, actualFailed);
+        assertEquals(str, isExpectedToFail, actualFailed);
         if (!isExpectedToFail) {
             assertEquals("str=" + str, expected, actual, 0.001);
             assertEquals("longBits of " + expected, Double.doubleToLongBits(expected), Double.doubleToLongBits(actual));
