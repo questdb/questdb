@@ -300,8 +300,10 @@ public class ColumnPurgeOperator implements Closeable {
                 completedRowIds.add(updateRowId);
             }
         } finally {
-            Misc.free(txnScoreboard);
-            Misc.free(txReader);
+            if (scoreboardMode != ScoreboardUseMode.EXTERNAL) {
+                Misc.free(txnScoreboard);
+                Misc.free(txReader);
+            }
         }
 
         return allDone;
@@ -373,7 +375,6 @@ public class ColumnPurgeOperator implements Closeable {
                             .$(", fileSize=").$(length).I$();
                     // Re-open of the file next run in case something went wrong.
                     purgeLogPartitionTimestamp = -1;
-                    continue;
                 }
             }
         } catch (CairoException ex) {
