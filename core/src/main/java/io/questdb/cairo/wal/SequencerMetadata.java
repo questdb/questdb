@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.BaseRecordMetadata;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableDescriptor;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -35,10 +32,10 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.*;
+
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends BaseRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
@@ -107,12 +104,12 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         syncToMetaFile();
     }
 
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
     public int getRealColumnCount() {
         return columnNameIndexMap.size();
+    }
+
+    public long getStructureVersion() {
+        return structureVersion;
     }
 
     public int getTableId() {
@@ -127,6 +124,80 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     @Override
     public boolean isWalEnabled() {
         return true;
+    }
+
+    @Override
+    public void toReaderIndexes() {
+        // Remove deleted columns from the metadata, e.g. make it reader metadata.
+        // Deleted columns have negative type.
+        int copyTo = 0;
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = columnMetadata.getQuick(i).getType();
+            if (columnType > 0) {
+                if (copyTo != i) {
+                    TableColumnMetadata columnMeta = columnMetadata.get(i);
+                    columnMetadata.set(copyTo, columnMeta);
+                    if (i == timestampIndex) {
+                        timestampIndex = copyTo;
+                    }
+                }
+                copyTo++;
+            }
+        }
+        columnCount = copyTo;
+        columnMetadata.setPos(columnCount);
+    }
+
+    public void open(String tableName, Path path, int pathLen) {
+        reset();
+        this.tableName = tableName;
+        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+
+        // get written data size
+        if (readonly == READ_WRITE) {
+            metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
+            int size = metaMem.getInt(0);
+            metaMem.jumpTo(size);
+        }
+
+        loadSequencerMetadata(roMetaMem);
+        structureVersion = roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
+        columnCount = columnMetadata.size();
+        timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+        tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
+
+        if (readonly == READ_ONLY) {
+            // close early
+            roMetaMem.close();
+        }
+    }
+
+    public void removeColumn(CharSequence columnName) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+        }
+
+        columnNameIndexMap.remove(columnName);
+        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
+        deletedMeta.markDeleted();
+
+        structureVersion++;
+    }
+
+    public void renameColumn(CharSequence columnName, CharSequence newName) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+        }
+        int columnType = columnMetadata.getQuick(columnIndex).getType();
+        String newNameStr = newName.toString();
+        columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newNameStr, 0L, columnType));
+
+        columnNameIndexMap.removeEntry(columnName);
+        columnNameIndexMap.put(newNameStr, columnIndex);
+
+        structureVersion++;
     }
 
     public void syncToMetaFile() {
@@ -152,54 +223,57 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         metaMem.jumpTo(size);
     }
 
-    public void open(String tableName, Path path, int pathLen) {
-        reset();
-        this.tableName = tableName;
-        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+    private void loadSequencerMetadata(
+            MemoryMR metaMem
+    ) {
+        columnMetadata.clear();
+        columnNameIndexMap.clear();
 
-        // get written data size
-        if (readonly == READ_WRITE) {
-            metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
-            int size = metaMem.getInt(0);
-            metaMem.jumpTo(size);
+        try {
+            final long memSize = checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS);
+            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION);
+            final int columnCount = TableUtils.getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
+            final int timestampIndex = TableUtils.getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
+
+            // load column types and names
+            long offset = SEQ_META_OFFSET_COLUMNS;
+            for (int i = 0; i < columnCount; i++) {
+                final int type = TableUtils.getColumnType(metaMem, memSize, offset, i);
+                offset += Integer.BYTES;
+
+                final String name = TableUtils.getColumnName(metaMem, memSize, offset, i).toString();
+                offset += Vm.getStorageLength(name);
+
+                if (type > 0) {
+                    columnNameIndexMap.put(name, i);
+                }
+
+                if (ColumnType.isSymbol(Math.abs(type))) {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
+                } else {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type));
+                }
+            }
+
+            // validate designated timestamp column
+            if (timestampIndex != -1) {
+                final int timestampType = columnMetadata.getQuick(timestampIndex).getType();
+                if (!ColumnType.isTimestamp(timestampType)) {
+                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                }
+            }
+        } catch (Throwable e) {
+            columnNameIndexMap.clear();
+            columnMetadata.clear();
+            throw e;
         }
-
-        loadSequencerMetadata(roMetaMem, columnMetadata, columnNameIndexMap);
-        structureVersion = roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
-        columnCount = columnMetadata.size();
-        timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
-        tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
-
-        if (readonly == READ_ONLY) {
-            // close early
-            roMetaMem.close();
-        }
-    }
-
-    public void removeColumn(CharSequence columnName) {
-        int columnIndex = columnNameIndexMap.get(columnName);
-        if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
-        }
-        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
-        deletedMeta.markDeleted();
-        columnNameIndexMap.remove(deletedMeta.getName());
-        structureVersion++;
-    }
-
-    public void renameColumn(CharSequence columnName, CharSequence newName) {
-        int columnIndex = columnNameIndexMap.get(columnName);
-        if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
-        }
-        int columnType = columnMetadata.getQuick(columnIndex).getType();
-        columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newName.toString(), 0L, columnType));
-        structureVersion++;
     }
 
     private void addColumn0(CharSequence columnName, int columnType) {
         final String name = columnName.toString();
-        columnNameIndexMap.put(name, columnMetadata.size());
+        if (columnType > 0) {
+            columnNameIndexMap.put(name, columnMetadata.size());
+        }
         columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
         columnCount++;
     }
@@ -216,27 +290,5 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         columnCount = 0;
         timestampIndex = -1;
         tableName = null;
-    }
-
-    @Override
-    public void toReaderIndexes() {
-        // Remove deleted columns from the metadata, e.g. make it reader metadata.
-        // Deleted columns have negative type.
-        int copyTo = 0;
-        for (int i = 0; i < columnCount; i++) {
-            int columnType = columnMetadata.getQuick(i).getType();
-            if (columnType > 0) {
-                if (copyTo != i) {
-                    TableColumnMetadata columnMeta = columnMetadata.get(i);
-                    columnMetadata.set(copyTo, columnMeta);
-                    if (i == timestampIndex) {
-                        timestampIndex = copyTo;
-                    }
-                }
-                copyTo++;
-            }
-        }
-        columnCount = copyTo;
-        columnMetadata.setPos(columnCount);
     }
 }

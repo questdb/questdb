@@ -2786,7 +2786,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
         symbolMap.setPos(symbolMapDiff.getSize());
 
-        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
+        // This is defensive. It validates that all the symbols used in WAL are set in SymbolMapDiff
         symbolMap.setAll(symbolMapDiff.getSize(), -1);
         final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
         boolean identical = true;

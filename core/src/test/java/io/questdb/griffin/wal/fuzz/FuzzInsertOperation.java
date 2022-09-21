@@ -61,8 +61,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
         this.cancelRows = cancelRows;
         this.strLen = strLen;
         this.symbols = symbols;
-        this.s0 = rnd.getSeed0();
-        this.s1 = rnd.getSeed1();
+        this.s0 = rnd.nextLong();
+        this.s1 = rnd.nextLong();
         this.metadata = metadata;
         this.timestamp = timestamp;
         this.notSet = notSet;

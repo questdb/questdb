@@ -40,7 +40,6 @@ import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -53,12 +52,12 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameWal = testName.getMethodName() + "_wal";
-            String tableNameWal2 = testName.getMethodName() + "_wal2";
+            String tableNameWal2 = testName.getMethodName() + "_wal_parallel";
             String tableNameNoWal = testName.getMethodName() + "_nonwal";
 
-            createInitialTable(tableNameWal, true);
-            createInitialTable(tableNameWal2, true);
-            createInitialTable(tableNameNoWal, false);
+            createInitialTable(tableNameWal, true, 5000);
+            createInitialTable(tableNameWal2, true, 5000);
+            createInitialTable(tableNameNoWal, false, 5000);
 
             ObjList<FuzzTransaction> transactions;
             int tableId1, tableId2;
@@ -78,7 +77,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         0.005,
                         0.05,
                         0.05,
-                        1000,
+                        500,
                         20,
                         10000
                 );
@@ -99,16 +98,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
         assertMemoryLeak(() -> {
             String tableNameWal = testName.getMethodName() + "_wal";
-            String tableNameWal2 = testName.getMethodName() + "_wal2";
+            String tableNameWal2 = testName.getMethodName() + "_wal_parallel";
             String tableNameNoWal = testName.getMethodName() + "_nonwal";
 
-            createInitialTable(tableNameWal, true);
-            createInitialTable(tableNameWal2, true);
-            createInitialTable(tableNameNoWal, false);
+            createInitialTable(tableNameWal, true, 0);
+            createInitialTable(tableNameWal2, true,0);
+            createInitialTable(tableNameNoWal, false, 0);
 
             ObjList<FuzzTransaction> transactions;
             int tableId1, tableId2;
@@ -120,7 +118,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         new Rnd(),
                         IntervalUtils.parseFloorPartialDate("2022-02-24T17"),
                         IntervalUtils.parseFloorPartialDate("2022-02-27T17"),
-                        100_000,
+                        1000_000,
                         false,
                         0.05,
                         0.2,
@@ -130,7 +128,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         0.05,
                         1000,
                         20,
-                        10000
+                        1000
                 );
             }
             try (TableReader reader = new TableReader(configuration, tableNameWal)) {
@@ -140,7 +138,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
             applyNonWal(transactions, tableNameNoWal, tableId2);
 
-            applyWal(transactions, tableNameWal, tableId1, 3);
+            applyWal(transactions, tableNameWal, tableId1, 4);
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
 
             applyWalParallel(transactions, tableNameWal2, tableId1, 4);
@@ -148,7 +146,58 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         });
     }
 
-    private void createInitialTable(String tableName1, boolean isWal) throws SqlException {
+    @Test
+    public void testWalMetadataChangeHeavy() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNameWal = testName.getMethodName() + "_wal";
+            String tableNameWal2 = testName.getMethodName() + "_wal_parallel";
+            String tableNameNoWal = testName.getMethodName() + "_nonwal";
+
+            createInitialTable(tableNameWal, true, 0);
+            createInitialTable(tableNameWal2, true,0);
+            createInitialTable(tableNameNoWal, false, 0);
+
+            ObjList<FuzzTransaction> transactions;
+            int tableId1, tableId2;
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId1 = metadata.getTableId();
+                transactions = FuzzTransactionGenerator.generateSet(
+                        metadata,
+                        new Rnd(),
+                        IntervalUtils.parseFloorPartialDate("2022-02-24T17"),
+                        IntervalUtils.parseFloorPartialDate("2022-02-27T17"),
+                        1000_000,
+                        false,
+                        0.05,
+                        0.2,
+                        0.1,
+                        0.005,
+                        // 50% chance of column add
+                        0.5,
+                        // 50% chance of column remove
+                        0.5,
+                        1000,
+                        20,
+                        1000
+                );
+            }
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId2 = metadata.getTableId();
+            }
+
+            applyNonWal(transactions, tableNameNoWal, tableId2);
+
+            applyWal(transactions, tableNameWal, tableId1, 4);
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+
+            applyWalParallel(transactions, tableNameWal2, tableId1, 4);
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+        });
+    }
+
+    private void createInitialTable(String tableName1, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         compile("create table " + tableName1 + " as (" +
                 "select x as c1, " +
@@ -157,7 +206,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                 " cast(x as int) c3," +
                 " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') " +
-                " from long_sequence(5000)" +
+                " from long_sequence(" + rowCount + ")" +
                 ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));
     }
 
@@ -261,6 +310,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         }
                         Os.sleep(1);
                         i++;
+                    }
+                    while (job.run(0)) {
+                        // run until empty
                     }
                 }
                 LOG.info().$("finished apply thread after iterations: ").$(i).$();

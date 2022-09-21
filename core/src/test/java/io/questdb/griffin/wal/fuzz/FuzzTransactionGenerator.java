@@ -93,8 +93,11 @@ public class FuzzTransactionGenerator {
                 } else {
                     startTs = lastTimestamp;
                 }
-                stopTs = Math.min((long) (startTs + (maxTimestamp - minTimestamp) / (transactionCount - i) * (i + 1.0) * getZeroToOneDouble(rnd)), maxTimestamp);
-
+                long size = (maxTimestamp - minTimestamp) / transactionCount;
+                if (o3) {
+                    size *= getZeroToOneDouble(rnd);
+                }
+                stopTs = Math.min(startTs + size, maxTimestamp);
 
                 generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols);
                 rowCount -= blockRows;

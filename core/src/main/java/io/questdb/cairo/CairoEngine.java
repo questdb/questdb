@@ -310,7 +310,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
         Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
-        int steelingAttempts = 10;
+        int steelingAttempts = 100;
         SqlToOperation sqlToOperation = null;
         IntLongHashMap localCommittedTransactions = new IntLongHashMap();
 
@@ -343,6 +343,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                                     if (lastCommittedTxn > -1) {
                                         localCommittedTransactions.put(taskTableId, lastCommittedTxn);
                                     }
+                                }
+
+                                // If this is the same table we want to notify about
+                                // then we don't to notify about it anymore, whoever processes the WAL
+                                // for the table will apply the transaction we want to notify about too
+                                if (tableName.equals(taskTableName) && tableId == taskTableId) {
+                                    return;
                                 }
                             }
                         } catch (Throwable throwable) {
