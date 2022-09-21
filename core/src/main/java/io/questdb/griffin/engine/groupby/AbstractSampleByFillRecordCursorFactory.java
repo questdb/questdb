@@ -73,8 +73,9 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        AbstractNoRecordSampleByCursor rawCursor = null;
         try {
-            AbstractNoRecordSampleByCursor rawCursor = getRawCursor();
+            rawCursor = getRawCursor();
             if (rawCursor instanceof Reallocatable) {
                 ((Reallocatable) rawCursor).reallocate();
             }
@@ -118,6 +119,9 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             return initFunctionsAndCursor(executionContext, baseCursor);
         } catch (Throwable ex) {
             baseCursor.close();
+            if (rawCursor != null) {
+                rawCursor.close();
+            }
             throw ex;
         }
     }

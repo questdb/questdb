@@ -94,6 +94,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            Misc.free(cursor);
             throw e;
         }
     }

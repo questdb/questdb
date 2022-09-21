@@ -68,6 +68,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             return cursor;
         } catch (Throwable ex) {
             baseCursor.close();
+            cursor.close();
             throw ex;
         }
     }

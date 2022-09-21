@@ -81,6 +81,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             return this.cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
+            Misc.free(cursor);
             throw e;
         }
     }

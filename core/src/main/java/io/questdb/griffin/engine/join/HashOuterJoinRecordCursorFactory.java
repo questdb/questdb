@@ -113,6 +113,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
+            Misc.free(cursor);
             throw e;
         }
     }

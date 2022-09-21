@@ -103,6 +103,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             return EmptyTableNoSizeRecordCursor.INSTANCE;
         } catch (Throwable ex) {
             Misc.free(baseCursor);
+            Misc.free(cursor);
             throw ex;
         }
     }

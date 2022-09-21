@@ -1325,6 +1325,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1348,6 +1349,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1373,6 +1375,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                        String expectedTimestamp,
                                        boolean supportsRandomAccess,
                                        boolean expectSize) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1386,6 +1389,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQueryPlain(String expected, String query) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
