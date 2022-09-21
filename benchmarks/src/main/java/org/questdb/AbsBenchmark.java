@@ -37,9 +37,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class AbsBenchmark {
 
-
     int x = -5;
-
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -48,7 +46,6 @@ public class AbsBenchmark {
                 .measurementIterations(5)
                 .forks(1)
                 .build();
-
         new Runner(opt).run();
     }
 

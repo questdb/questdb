@@ -442,15 +442,15 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 }
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
-            reportError(e.getPosition(), e.getFlyweightMessage(), 0);
+            reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
         } catch (CairoException e) {
             if (e.isInterruption()) {
                 reportQueryCancelled(e.getFlyweightMessage());
             } else {
-                reportError(-1, e.getFlyweightMessage(), e.getErrno());
+                reportError(e);
             }
         } catch (AuthenticationException e) {
-            prepareError(-1, e.getMessage(), 0);
+            prepareNonCriticalError(-1, e.getMessage());
             sendAndReset();
             clearRecvBuffer();
         }
@@ -1664,21 +1664,29 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareDescribePortalResponse();
     }
 
-    private void prepareError(int position, CharSequence message, long errno) {
-        prepareErrorResponse(position, message);
+    private void prepareError(CairoException ex) {
+        int errno = ex.getErrno();
+        CharSequence message = ex.getFlyweightMessage();
+        prepareErrorResponse(-1, ex.getFlyweightMessage());
         if (errno == CairoException.NON_CRITICAL) {
             LOG.error()
-                    .$("error [pos=").$(position)
-                    .$(", msg=`").$(message).$('`')
+                    .$("error [msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)
                     .I$();
         } else {
             LOG.critical()
-                    .$("error [pos=").$(position)
-                    .$(", msg=`").$(message).$('`')
+                    .$("error [msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)
                     .I$();
         }
+    }
+
+    private void prepareNonCriticalError(int position, CharSequence message) {
+        prepareErrorResponse(position, message);
+        LOG.error()
+                .$("error [pos=").$(position)
+                .$(", msg=`").$(message).$('`')
+                .I$();
     }
 
     private void prepareErrorResponse(int position, CharSequence message) {
@@ -2304,12 +2312,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 // we need to continue parsing receive buffer even if we errored out
                 // this is because PG client might expect separate responses to everything it sent
             } catch (SqlException ex) {
-                prepareError(ex.getPosition(), ex.getFlyweightMessage(), 0);
+                prepareNonCriticalError(ex.getPosition(), ex.getFlyweightMessage());
             } catch (CairoException ex) {
                 if (ex.isInterruption()) {
                     prepareQueryCanceled(ex.getFlyweightMessage());
                 } else {
-                    prepareError(-1, ex.getFlyweightMessage(), ex.getErrno());
+                    prepareError(ex);
                 }
             }
         } else {
@@ -2408,9 +2416,16 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void reportError(int position, CharSequence flyweightMessage, long errno)
+    private void reportError(CairoException ex)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareError(position, flyweightMessage, errno);
+        prepareError(ex);
+        sendReadyForNewQuery();
+        clearRecvBuffer();
+    }
+
+    private void reportNonCriticalError(int position, CharSequence flyweightMessage)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareNonCriticalError(position, flyweightMessage);
         sendReadyForNewQuery();
         clearRecvBuffer();
     }
@@ -2480,7 +2495,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             responseAsciiSink.putLen(addr);
         } else {
             final SqlException e = SqlException.$(0, "table does not exist [table=").put(textLoader.getTableName()).put(']');
-            prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
+            prepareNonCriticalError(e.getPosition(), e.getFlyweightMessage());
             prepareReadyForQuery();
         }
         sendAndReset();
