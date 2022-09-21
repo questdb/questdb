@@ -549,7 +549,13 @@ public final class IntervalUtils {
                     addHiLoInterval(millis, millis, operation, out);
                     break;
                 } catch (NumericException e) {
-                    throw SqlException.$(position, "Invalid date");
+                    try {
+                        long millis = Numbers.parseLong(seq);
+                        addHiLoInterval(millis, millis, operation, out);
+                        break;
+                    } catch (NumericException e2) {
+                        throw SqlException.$(position, "Invalid date");
+                    }
                 }
             case 0:
                 // single semicolon, expect period format after date
@@ -599,12 +605,18 @@ public final class IntervalUtils {
             long millis = parseFloorPartialDate(seq, lo, lim);
             addHiLoInterval(millis, millis, operation, out);
         } catch (NumericException e) {
-            for (int i = lo; i < lim; i++) {
-                if (seq.charAt(i) == ';') {
-                    throw SqlException.$(position, "Not a date, use IN keyword with intervals");
-                }
+            try{
+                long millis = Numbers.parseLong(seq);
+                addHiLoInterval(millis, millis, operation, out);
             }
-            throw SqlException.$(position, "Invalid date");
+            catch (NumericException e2) {
+                for (int i = lo; i < lim; i++) {
+                    if (seq.charAt(i) == ';') {
+                        throw SqlException.$(position, "Not a date, use IN keyword with intervals");
+                    }
+                }
+                throw SqlException.$(position, "Invalid date");
+            }
         }
     }
 

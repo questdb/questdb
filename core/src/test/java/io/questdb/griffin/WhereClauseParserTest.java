@@ -352,6 +352,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadEqualsEpoch() {
+        try{
+            modelOf("timestamp = '1583077401000000'");
+            Assert.fail("Exception expected");
+        }
+        catch (SqlException e){
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            Assert.assertEquals(12, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadNotEqualsEpoch() {
+        try{
+            modelOf("timestamp != '1583077401000000'");
+            Assert.fail("Exception expected");
+        }
+        catch (SqlException e){
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            Assert.assertEquals(13, e.getPosition());
+        }
+    }
+
+    @Test
     public void testBetweenFuncArgument() throws Exception {
         IntrinsicModel m = modelOf("dateadd(1, 'd', timestamp) between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
         Assert.assertFalse(m.hasIntervalFilters());
@@ -489,6 +513,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
+    @Test
+    public void testEqualsEpochTimestamp() throws Exception {
+        runWhereTest("timestamp = 1424649600000000", "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
+    }
+
+    @Test
+    public void testNotEqualsEpochTimestamp() throws Exception {
+        runWhereIntervalTest0("timestamp != 1583077401000000", "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
     @Test
     public void testComplexNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
