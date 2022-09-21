@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -49,17 +48,14 @@ public class FuzzTransactionGenerator {
             double rollback,
             double collAdd,
             double collRemove,
+            double colRename,
             int transactionCount,
             int strLen,
-            int totalSymbols) {
+            String[] symbols) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int metaVersion = 0;
 
         long lastTimestamp = minTimestamp;
-        String[] symbols = new String[totalSymbols];
-        for (int i = 0; i < totalSymbols; i++) {
-            symbols[i] = Chars.toString(rnd.nextChars(strLen));
-        }
 
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = getZeroToOneDouble(rnd);
@@ -69,6 +65,14 @@ public class FuzzTransactionGenerator {
             } else if (transactionType < collAdd + collRemove) {
                 // generate column remove
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, tableMetadata);
+                if (newTableMetadata != null) {
+                    // Sometimes there can be nothing to remove
+                    metaVersion++;
+                    tableMetadata = newTableMetadata;
+                }
+            } else if (transactionType < collAdd + collRemove + colRename) {
+                // generate column rename
+                RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, rnd, tableMetadata);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to remove
                     metaVersion++;
@@ -106,6 +110,41 @@ public class FuzzTransactionGenerator {
         }
 
         return transactionList;
+    }
+
+    private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, Rnd rnd, RecordMetadata tableMetadata) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
+        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
+            int columnIndex = (startColumnIndex + i) % tableMetadata.getColumnCount();
+
+            int type = tableMetadata.getColumnType(columnIndex);
+            if (type > 0 && columnIndex != tableMetadata.getTimestampIndex()) {
+                String columnName = tableMetadata.getColumnName(columnIndex);
+                String newColName;
+                for (int col = 0; ; col++) {
+                    newColName = "new_col_" + col;
+                    int colIndex = tableMetadata.getColumnIndexQuiet(newColName);
+                    if (colIndex == -1) {
+                        break;
+                    }
+                }
+
+                transaction.operationList.add(new FuzzRenameColumnOperation(tableMetadata, columnName, newColName));
+                transaction.structureVersion = metadataVersion;
+                transactionList.add(transaction);
+
+                FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
+                GenericRecordMetadata.copyColumns(tableMetadata, newMeta);
+                newMeta.rename(columnIndex, columnName, newColName);
+                newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
+
+                return newMeta;
+            }
+        }
+
+        // nothing to drop, only timestamp column left
+        return null;
     }
 
     static void generateDataBlock(
@@ -198,7 +237,7 @@ public class FuzzTransactionGenerator {
         for (int col = 0; ; col++) {
             newColName = "new_col_" + col;
             int colIndex = tableMetadata.getColumnIndexQuiet(newColName);
-            if (colIndex == -1 || tableMetadata.getColumnType(colIndex) < 0) {
+            if (colIndex == -1) {
                 break;
             }
         }

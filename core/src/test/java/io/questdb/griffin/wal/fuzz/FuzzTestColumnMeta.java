@@ -30,10 +30,15 @@ import io.questdb.cairo.TableColumnMetadata;
 public class FuzzTestColumnMeta extends GenericRecordMetadata {
     @Override
     public GenericRecordMetadata add(TableColumnMetadata meta) {
-        add(columnCount, meta);
-        if (meta.getType() < 0) {
-            columnNameIndexMap.remove(meta.getName());
-        }
+        columnNameIndexMap.put(meta.getName(), columnCount);
+        columnMetadata.extendAndSet(columnCount, meta);
+        columnCount++;
         return this;
+    }
+
+    public void rename(int columnIndex, String name, String newName) {
+        columnMetadata.get(columnIndex).setName(newName);
+        columnNameIndexMap.remove(name);
+        columnNameIndexMap.put(newName, columnIndex);
     }
 }

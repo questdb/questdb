@@ -46,6 +46,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.Sequencer.NO_TXN;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class WalWriter implements TableWriterFrontend {
@@ -156,10 +157,10 @@ public class WalWriter implements TableWriterFrontend {
                 }
 
                 txn = tableRegistry.nextStructureTxn(tableName, getStructureVersion(), operation);
-                if (txn == Sequencer.NO_TXN) {
+                if (txn == NO_TXN) {
                     applyStructureChanges(Long.MAX_VALUE);
                 }
-            } while (txn == Sequencer.NO_TXN);
+            } while (txn == NO_TXN);
 
             // Apply to itself.
             try {
@@ -223,7 +224,7 @@ public class WalWriter implements TableWriterFrontend {
             rollback();
             throw th;
         }
-        return Sequencer.NO_TXN;
+        return NO_TXN;
     }
 
     @Override
@@ -793,10 +794,10 @@ public class WalWriter implements TableWriterFrontend {
         long txn;
         do {
             txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
-            if (txn == Sequencer.NO_TXN) {
+            if (txn == NO_TXN) {
                 applyStructureChanges(Long.MAX_VALUE);
             }
-        } while (txn == Sequencer.NO_TXN);
+        } while (txn == NO_TXN);
         return txn;
     }
 
@@ -912,6 +913,37 @@ public class WalWriter implements TableWriterFrontend {
     private void removeSymbolMapWriter(int index) {
         Misc.free(symbolMapReaders.getAndSetQuick(index, null));
         initialSymbolCounts.setQuick(index, -1);
+    }
+
+    private void renameColumFiles(int columnType, CharSequence columnName, CharSequence newName) {
+        path.trimTo(rootLen);
+        Path tempPath = Path.PATH.get().of(path);
+
+        path.trimTo(rootLen).slash().put(segmentId);
+        tempPath.trimTo(rootLen).slash().put(segmentId);
+        int trimTo = path.length();
+
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BINARY:
+            case ColumnType.STRING:
+
+                iFile(path, columnName);
+                iFile(tempPath, newName);
+                if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
+                    throw CairoException.critical(ff.errno()).put("cannot rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
+                }
+                path.trimTo(trimTo);
+                tempPath.trimTo(trimTo);
+
+
+            default:
+
+                dFile(path, columnName);
+                dFile(tempPath, newName);
+                if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
+                    throw CairoException.critical(ff.errno()).put("cannot rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
+                }
+        }
     }
 
     private void resetDataTxnProperties() {
@@ -1378,7 +1410,41 @@ public class WalWriter implements TableWriterFrontend {
         }
 
         @Override
-        public void renameColumn(CharSequence columnName, CharSequence newName) {
+        public void renameColumn(CharSequence columnName, CharSequence newColumnName) {
+            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex > -1) {
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType > 0) {
+                    if (currentTxnStartRowNum > 0) {
+                        // Roll last transaction to new segment
+                        rollUncommittedToNewSegment();
+                    }
+
+                    if (currentTxnStartRowNum == 0 || rowCount == currentTxnStartRowNum) {
+                        metadata.renameColumn(columnName, newColumnName);
+                        // We are not going to do any special for symbol readers which point
+                        // to the files in the root of the table.
+                        // We keep the symbol readers open against files with old name.
+                        // Incosistency between column name and symbol file names in the root
+                        // does not matter, these files are for re-lookup only for the WAL writer
+                        // and should not be serialised to the WAL segment.
+
+                        if (!rollSegmentOnNextRow) {
+                            // This is WAL writer receiving notification from another writer that the column is added
+                            // it has to add it to the open segment.
+                            metadata.syncToMetaFile();
+                            renameColumFiles(columnType, columnName, newColumnName);
+                        }
+
+                        LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumName=").$(newColumnName).I$();
+                    } else {
+                        throw CairoException.critical(0).put("column '").put(columnName)
+                                .put("' removed, cannot commit because of concurrent table definition change ");
+                    }
+                }
+            } else {
+                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+            }
         }
     }
 

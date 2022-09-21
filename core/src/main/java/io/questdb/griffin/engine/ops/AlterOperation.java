@@ -427,7 +427,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 writer.renameColumn(columnName, newName);
             } catch (CairoException e) {
                 LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot rename column \"").put(columnName).put("\"; ").put(e.getFlyweightMessage());
+                throw SqlException.$(tableNamePosition, "cannot rename column \"").put(columnName).put("\", errno=; ").put(e.getErrno()).put(", error=").put(e.getFlyweightMessage());
             }
         }
     }

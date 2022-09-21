@@ -190,9 +190,8 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         if (columnIndex < 0) {
             throw CairoException.critical(0).put("Column not found: ").put(columnName);
         }
-        int columnType = columnMetadata.getQuick(columnIndex).getType();
         String newNameStr = newName.toString();
-        columnMetadata.setQuick(columnIndex, new TableColumnMetadata(newNameStr, 0L, columnType));
+        columnMetadata.getQuick(columnIndex).setName(newNameStr);
 
         columnNameIndexMap.removeEntry(columnName);
         columnNameIndexMap.put(newNameStr, columnIndex);
