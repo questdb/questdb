@@ -1991,6 +1991,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timezoneNameFuncPos = 0;
             }
 
+            if (!timezoneNameFunc.isConstant() || (timezoneNameFunc.getType() != ColumnType.STRING && timezoneNameFunc.getType() != ColumnType.CHAR)) {
+                throw SqlException.$(timezoneNameFuncPos, "timezone must be a constant expression of STRING or CHAR type");
+            }
+
             if (offset != null) {
                 offsetFunc = functionParser.parseFunction(
                         offset,
@@ -2001,6 +2005,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 offsetFunc = StrConstant.NULL;
                 offsetFuncPos = 0;
+            }
+
+            if (!offsetFunc.isConstant() || (offsetFunc.getType() != ColumnType.STRING && offsetFunc.getType() != ColumnType.CHAR)) {
+                throw SqlException.$(offsetFuncPos, "offset must be a constant expression of STRING or CHAR type");
             }
 
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);

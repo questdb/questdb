@@ -79,12 +79,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);
         this.rules = null;
-        final CharSequence tz;
-        try {
-            tz = timezoneNameFunc.getStr(null);
-        } catch (UnsupportedOperationException e) {
-            throw SqlException.$(timezoneNameFuncPos, "invalid timezone: string value expected");
-        }
+        final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {
                 long opt = Timestamps.parseOffset(tz);
@@ -108,12 +103,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
             this.nextDstUTC = Long.MAX_VALUE;
         }
 
-        final CharSequence offset;
-        try {
-            offset = offsetFunc.getStr(null);
-        } catch (UnsupportedOperationException e) {
-            throw SqlException.$(offsetFuncPos, "invalid offset: string value expected");
-        }
+        final CharSequence offset = offsetFunc.getStr(null);
         if (offset != null) {
             final long val = Timestamps.parseOffset(offset);
             if (val == Numbers.LONG_NaN) {
