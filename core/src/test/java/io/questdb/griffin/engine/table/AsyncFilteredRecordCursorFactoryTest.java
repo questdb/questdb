@@ -42,7 +42,10 @@ import org.hamcrest.MatcherAssert;
 import org.hamcrest.core.StringContains;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -475,9 +478,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPreTouchColumns() throws Exception {
+    public void testPreTouchDisabled() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
-            enableColumnPreTouch = true;
+            enableColumnPreTouch = false;
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
