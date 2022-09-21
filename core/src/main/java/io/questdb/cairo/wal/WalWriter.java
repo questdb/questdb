@@ -43,6 +43,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
@@ -92,6 +93,8 @@ public class WalWriter implements TableWriterFrontend {
     private SequencerStructureChangeCursor structureChangeCursor;
     private boolean open;
     private boolean distressed;
+    private TxReader txReader;
+    private ColumnVersionReader columnVersionReader;
 
     public WalWriter(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -142,13 +145,19 @@ public class WalWriter implements TableWriterFrontend {
                 try {
                     operation.apply(alterOperationValidationBackend, true);
                 } catch (SqlException e) {
-                    // Table schema (metadata) changed and this alter is not valid anymore
-                    throw CairoException.critical(0).put(e.getFlyweightMessage());
+                    // Table schema (metadata) changed and this Alter is not valid anymore.
+                    // Try to update WAL metadata to latest and repeat one more time.
+                    goActive();
+                    try {
+                        operation.apply(alterOperationValidationBackend, true);
+                    } catch (SqlException e2) {
+                        throw CairoException.critical(0).put(e2.getFlyweightMessage());
+                    }
                 }
 
                 txn = tableRegistry.nextStructureTxn(tableName, getStructureVersion(), operation);
                 if (txn == Sequencer.NO_TXN) {
-                    applyStructureChanges();
+                    applyStructureChanges(Long.MAX_VALUE);
                 }
             } while (txn == Sequencer.NO_TXN);
 
@@ -267,17 +276,10 @@ public class WalWriter implements TableWriterFrontend {
         if (inTransaction() || hasDirtyColumns(currentTxnStartRowNum)) {
             setAppendPosition(currentTxnStartRowNum);
             rowCount = currentTxnStartRowNum;
+            txnMinTimestamp = Long.MAX_VALUE;
+            txnMaxTimestamp = -1;
+            txnOutOfOrder = false;
         }
-    }
-
-    private boolean hasDirtyColumns(long currentTxnStartRowNum) {
-        for(int i = 0; i < columnCount; i++) {
-            long writtenCount = rowValueIsNotNull.getQuick(i);
-            if (writtenCount >= currentTxnStartRowNum && writtenCount != COLUMN_DELETED_NULL_FLAG) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public void doClose(boolean truncate) {
@@ -313,8 +315,13 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     public boolean goActive() {
+        return goActive(Long.MAX_VALUE);
+    }
+
+    @TestOnly
+    public boolean goActive(long maxStructureVersion) {
         try {
-            applyStructureChanges();
+            applyStructureChanges(maxStructureVersion);
             return true;
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, wal will be closed [table=").$(tableName)
@@ -375,7 +382,8 @@ public class WalWriter implements TableWriterFrontend {
 
             try {
                 int timestampIndex = metadata.getTimestampIndex();
-                LOG.debug().$("rolling uncommitted rows to new segment [wal=").$(Files.SEPARATOR).$(segmentId + 1)
+                LOG.info().$("rolling uncommitted rows to new segment [wal=")
+                        .$(path).$(Files.SEPARATOR).$(segmentId + 1)
                         .$(", rowCount=").$(uncommittedRows).I$();
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -496,9 +504,13 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
+    private static void freeNullSetter(ObjList<Runnable> nullSetters, int columnIndex) {
+        nullSetters.setQuick(columnIndex, NOOP);
+    }
+
     private long applyNonStructuralOperation(AbstractOperation operation) {
         try {
-            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement());
+            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
             return getTableTxn();
         } catch (Throwable th) {
             rollback();
@@ -506,25 +518,28 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void applyStructureChanges() {
+    private void applyStructureChanges(long maxStructureVersion) {
         try {
             structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, getStructureVersion());
             if (structureChangeCursor == null) {
                 // nothing to do
                 return;
             }
-            while (structureChangeCursor.hasNext()) {
+            long metadataVersion;
+            while (structureChangeCursor.hasNext() && (metadataVersion = getStructureVersion()) < maxStructureVersion) {
                 AlterOperation alterOperation = structureChangeCursor.next();
-                long metadataVersion = getStructureVersion();
                 try {
                     alterOperation.apply(walMetadataUpdater, true);
                 } catch (SqlException e) {
                     distressed = true;
-                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction. ").put(e.getFlyweightMessage());
+                    throw CairoException.critical(0)
+                            .put("could not apply table definition changes to the current transaction. ")
+                            .put(e.getFlyweightMessage());
                 }
                 if (metadataVersion >= getStructureVersion()) {
                     distressed = true;
-                    throw CairoException.critical(0).put("could not apply table definition changes to the current transaction, version unchanged");
+                    throw CairoException.critical(0)
+                            .put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
         } finally {
@@ -541,11 +556,6 @@ public class WalWriter implements TableWriterFrontend {
         throw CairoException.critical(0).
                 put("wal writer is distressed and cannot be used any more [table=").put(tableName)
                 .put(", wal=").put(walId).put(']');
-    }
-
-    private void closeCurrentSegment() {
-        // TODO: mark segment as closed, commits should not be hidden to the client
-        commit();
     }
 
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
@@ -571,16 +581,6 @@ public class WalWriter implements TableWriterFrontend {
             columns.extendAndSet(baseIndex + 1, NullMemory.INSTANCE);
             nullSetters.add(NOOP);
             rowValueIsNotNull.add(COLUMN_DELETED_NULL_FLAG);
-        }
-    }
-
-    private MemoryMA createSecondaryMem(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BINARY:
-            case ColumnType.STRING:
-                return Vm.getMAInstance();
-            default:
-                return null;
         }
     }
 
@@ -666,30 +666,8 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void configureSymbolTable() {
-        // we should not need the reader here, this will not work in a distributed environment
-        // what if the wal is created on a node where the table itself is not present?
-        // maybe copying symbols from existing table is not the best or sequencer needs an API for it
-        // but then sequencer will have to keep track of all symbol tables
-        try (
-                TxReader txReader = new TxReader(ff);
-                ColumnVersionReader columnVersionReader = new ColumnVersionReader()
-        ) {
-            MillisecondClock milliClock = configuration.getMillisecondClock();
-            long spinLockTimeout = configuration.getSpinLockTimeout();
-
-            Path path = Path.PATH2.get();
-            path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
-
-            // Does not matter which PartitionBy, as long as it is partitioned
-            // WAL tables must be partitioned
-            txReader.ofRO(path, PartitionBy.DAY);
-            path.of(configuration.getRoot()).concat(tableName).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-            columnVersionReader.ofRO(ff, path);
-
-            do {
-                TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
-                columnVersionReader.readSafe(milliClock, spinLockTimeout);
-            } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+        boolean initialized = false;
+        try {
             int denseSymbolIndex = 0;
 
             for (int i = 0; i < columnCount; i++) {
@@ -700,15 +678,68 @@ public class WalWriter implements TableWriterFrontend {
                     initialSymbolCounts.extendAndSet(i, -1);
                     symbolMaps.extendAndSet(i, null);
                 } else {
-                    int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
-                    long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
-                    configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
+                    if (txReader == null) {
+                        txReader = new TxReader(ff);
+                        columnVersionReader = new ColumnVersionReader();
+                    }
+
+                    if (!initialized) {
+                        MillisecondClock milliClock = configuration.getMillisecondClock();
+                        long spinLockTimeout = configuration.getSpinLockTimeout();
+
+                        Path path = Path.PATH2.get();
+                        path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
+
+                        // Does not matter which PartitionBy, as long as it is partitioned
+                        // WAL tables must be partitioned
+                        txReader.ofRO(path, PartitionBy.DAY);
+                        path.of(configuration.getRoot()).concat(tableName).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                        columnVersionReader.ofRO(ff, path);
+
+                        initialized = true;
+                        long structureVersion = getStructureVersion();
+
+                        do {
+                            TableUtils.safeReadTxn(txReader, milliClock, spinLockTimeout);
+                            if (txReader.getStructureVersion() != structureVersion) {
+                                initialized = false;
+                                break;
+                            }
+                            columnVersionReader.readSafe(milliClock, spinLockTimeout);
+                        } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
+                    }
+
+                    if (initialized) {
+                        int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
+                        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
+                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
+                    } else {
+                        // table on disk structure version does not match the structure version of the WalWriter
+                        // it is not possible to re-use table symbol table because the column name may not match.
+                        // The symbol counts stored as dense in _txn file and removal of symbols
+                        // shifts the counts that's why it's not possible to find out the symbol count if metadata versions
+                        // don't match.
+                        configureSymbolMapWriter(i, metadata.getColumnName(i), 0, COLUMN_NAME_TXN_NONE);
+                    }
                 }
 
                 if (columnType == ColumnType.SYMBOL || columnType == -ColumnType.SYMBOL) {
                     denseSymbolIndex++;
                 }
             }
+        } finally {
+            Misc.free(columnVersionReader);
+            Misc.free(txReader);
+        }
+    }
+
+    private MemoryMA createSecondaryMem(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BINARY:
+            case ColumnType.STRING:
+                return Vm.getMAInstance();
+            default:
+                return null;
         }
     }
 
@@ -740,10 +771,6 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private static void freeNullSetter(ObjList<Runnable> nullSetters, int columnIndex) {
-        nullSetters.setQuick(columnIndex, NOOP);
-    }
-
     private void freeSymbolMapWriters() {
         Misc.freeObjList(symbolMapReaders);
     }
@@ -767,10 +794,20 @@ public class WalWriter implements TableWriterFrontend {
         do {
             txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
             if (txn == Sequencer.NO_TXN) {
-                applyStructureChanges();
+                applyStructureChanges(Long.MAX_VALUE);
             }
         } while (txn == Sequencer.NO_TXN);
         return txn;
+    }
+
+    private boolean hasDirtyColumns(long currentTxnStartRowNum) {
+        for (int i = 0; i < columnCount; i++) {
+            long writtenCount = rowValueIsNotNull.getQuick(i);
+            if (writtenCount >= currentTxnStartRowNum && writtenCount != COLUMN_DELETED_NULL_FLAG) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void lock() {
@@ -837,6 +874,8 @@ public class WalWriter implements TableWriterFrontend {
                     if (type == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.setQuick(i, reader.getSymbolCount());
+                        CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
+                        symbolMap.clear();
                     }
                 } else {
                     rowValueIsNotNull.setQuick(i, COLUMN_DELETED_NULL_FLAG);
@@ -1019,7 +1058,7 @@ public class WalWriter implements TableWriterFrontend {
         if (rowCount > 0) {
             long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
             try {
-                Vect.memset(address, (byte) varColSize, -1);
+                Vect.memset(address, varColSize, -1);
             } finally {
                 ff.munmap(address, varColSize, MEM_TAG);
             }

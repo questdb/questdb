@@ -401,6 +401,104 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateViaWal_IndexedVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            try (
+                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+                final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                sqlExecutionContext.getBindVariableService().setInt(0, 567890);
+                sqlExecutionContext.getBindVariableService().setByte(1, (byte) 122);
+                sqlExecutionContext.getBindVariableService().setShort(2, (short) 42567);
+                sqlExecutionContext.getBindVariableService().setLong(3, 33342567L);
+                sqlExecutionContext.getBindVariableService().setFloat(4, (float) 34.34);
+                sqlExecutionContext.getBindVariableService().setDouble(5, 357.35);
+                sqlExecutionContext.getBindVariableService().setTimestamp(6, 100_000L);
+                sqlExecutionContext.getBindVariableService().setDate(7, 100_000L);
+                sqlExecutionContext.getBindVariableService().setChar(8, 'Q');
+                sqlExecutionContext.getBindVariableService().setBoolean(9, true);
+                sqlExecutionContext.getBindVariableService().setStr(10, "updated");
+                sqlExecutionContext.getBindVariableService().setStr(11, "labelUpdate");
+
+                executeOperation("UPDATE " + tableName + " SET " +
+                        "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
+                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12 " +
+                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
+
+                executeOperation("UPDATE " + tableCopyName + " SET " +
+                        "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
+                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12 " +
+                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateViaWal_NamedVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            try (
+                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+                final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                sqlExecutionContext.getBindVariableService().setInt("INTVAL", 567890);
+                sqlExecutionContext.getBindVariableService().setByte("BYTEVAL", (byte) 122);
+                sqlExecutionContext.getBindVariableService().setShort("SHORTVAL", (short) 42567);
+                sqlExecutionContext.getBindVariableService().setLong("LONGVAL", 33342567L);
+                sqlExecutionContext.getBindVariableService().setFloat("FLOATVAL", (float) 34.34);
+                sqlExecutionContext.getBindVariableService().setDouble("DOUBLEVAL", 357.35);
+                sqlExecutionContext.getBindVariableService().setTimestamp("TIMESTAMPVAL", 100_000L);
+                sqlExecutionContext.getBindVariableService().setDate("DATEVAL", 100_000L);
+                sqlExecutionContext.getBindVariableService().setChar("CHARVAL", 'Q');
+                sqlExecutionContext.getBindVariableService().setBoolean("BOOLVAL", true);
+                sqlExecutionContext.getBindVariableService().setStr("STRVAL", "updated");
+                sqlExecutionContext.getBindVariableService().setStr("SYMVAL", "labelUpdate");
+
+                executeOperation("UPDATE " + tableName + " SET " +
+                        "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
+                        "FLOAT=:FLOATVAL, DOUBLE=:DOUBLEVAL, TIMESTAMP=:TIMESTAMPVAL, DATE=:DATEVAL, " +
+                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL " +
+                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
+
+                executeOperation("UPDATE " + tableCopyName + " SET " +
+                        "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
+                        "FLOAT=:FLOATVAL, DOUBLE=:DOUBLEVAL, TIMESTAMP=:TIMESTAMPVAL, DATE=:DATEVAL, " +
+                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL " +
+                        "WHERE INT > 5", CompiledQuery.UPDATE);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
     public void testUpdateViaWal_JoinRejected() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -510,7 +608,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
             @Override
             public void close() throws IOException {
-
             }
 
             @Override

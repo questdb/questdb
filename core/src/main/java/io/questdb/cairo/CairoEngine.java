@@ -297,55 +297,78 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
         rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
-        tempTxReader.ofRO(rootPath, PartitionBy.NONE);
-        if (tempTxReader.unsafeLoad(true)) {
-            if (tempTxReader.getTxn() < txn) {
-                // table name should be immutable when in the notification
-                String tableNameStr = Chars.toString(tableName);
-                notifyWalTxnCommitted(tableId, tableNameStr, txn);
+        try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
+            if (txReader.unsafeLoad(true)) {
+                if (txReader.getTxn() < txn) {
+                    // table name should be immutable when in the notification
+                    String tableNameStr = Chars.toString(tableName);
+                    notifyWalTxnCommitted(tableId, tableNameStr, txn);
+                }
             }
         }
     }
 
     public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
         Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
-        int steelingAttempts = 10;
-        while (true) {
-            long cursor = pubSeq.next();
-            if (cursor > -1L) {
-                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                task.of(tableName, tableId, txn);
-                pubSeq.done(cursor);
-                return;
-            } else if (cursor == -1L) {
-                // Oh, no queue overflow!
-                // Steel the work!
-                if (steelingAttempts-- > 0) {
-                    Sequence subSeq = messageBus.getWalTxnNotificationSubSequence();
-                    try (SqlToOperation sqlToOperation = new SqlToOperation(this)) {
-                        while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
-                            if (cursor > -1L) {
+        int steelingAttempts = 100;
+        SqlToOperation sqlToOperation = null;
+        IntLongHashMap localCommittedTransactions = new IntLongHashMap();
+
+        try {
+            while (true) {
+                long cursor = pubSeq.next();
+                if (cursor > -1L) {
+                    WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                    task.of(tableName, tableId, txn);
+                    pubSeq.done(cursor);
+                    return;
+                } else if (cursor == -1L) {
+                    // Oh, no queue overflow!
+                    // Steel the work!
+                    if (steelingAttempts-- > 0) {
+                        Sequence subSeq = messageBus.getWalTxnNotificationSubSequence();
+                        if (sqlToOperation == null) {
+                            sqlToOperation = new SqlToOperation(this);
+                        }
+                        try {
+                            while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
                                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
                                 String taskTableName = task.getTableName();
                                 int taskTableId = task.getTableId();
                                 // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
                                 subSeq.done(cursor);
 
-                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
+                                if (localCommittedTransactions.get(taskTableId) < task.getTxn()) {
+                                    long lastCommittedTxn = ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
+                                    if (lastCommittedTxn > -1) {
+                                        localCommittedTransactions.put(taskTableId, lastCommittedTxn);
+                                    }
+                                }
+
+                                // If this is the same table we want to notify about
+                                // then we don't to notify about it anymore, whoever processes the WAL
+                                // for the table will apply the transaction we want to notify about too
+                                if (tableName.equals(taskTableName) && tableId == taskTableId) {
+                                    return;
+                                }
                             }
+                        } catch (Throwable throwable) {
+                            LOG.criticalW()
+                                    .$("error in steeling and processing WAL notifications. Attempts left: ").$(steelingAttempts)
+                                    .$(throwable).$();
                         }
-                    } catch (Throwable throwable) {
-                        LOG.criticalW()
-                                .$("error in steeling and processing WAL notifications. Attempts left: ").$(steelingAttempts)
-                                .$(throwable).$();
+                    } else {
+                        LOG.criticalW().$("error publishing WAL notifications, queue is full").$();
+                        // WAL is committed and can eventually be picked up and applied to the table.
+                        // Error is critical but throwing exception will make client assume
+                        // that commit failed but in fact the data is written.
+                        return;
                     }
-                } else {
-                    LOG.criticalW().$("error publishing WAL notifications, queue is full").$();
-                    // WAL is committed and can eventually be picked up and applied to the table.
-                    // Error is critical but throwing exception will make client assume
-                    // that commit failed but in fact the data is written.
-                    return;
                 }
+            }
+        } finally {
+            if (sqlToOperation != null) {
+                Misc.free(sqlToOperation);
             }
         }
     }

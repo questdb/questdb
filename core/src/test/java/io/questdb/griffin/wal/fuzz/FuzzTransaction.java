@@ -27,7 +27,7 @@ package io.questdb.griffin.wal.fuzz;
 import io.questdb.std.ObjList;
 
 public class FuzzTransaction {
-    public int metadataVersion;
+    public int structureVersion;
     public boolean rollback;
     public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
 }

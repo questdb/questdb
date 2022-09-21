@@ -24,20 +24,28 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class EmptyTableRecordCursorTest {
     private static final EmptyTableRecordCursor CURSOR = new EmptyTableRecordCursor();
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testSymbolTable() {
-        CURSOR.getSymbolTable(0);
+        SymbolTable symbolTable = CURSOR.getSymbolTable(0);
+        Assert.assertNotNull(symbolTable);
+        Assert.assertNull(symbolTable.valueOf(0));
+        Assert.assertNull(symbolTable.valueBOf(0));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testSymbolTable2() {
-        CURSOR.getSymbolTable(2);
+        SymbolTable symbolTable = CURSOR.getSymbolTable(2);
+        Assert.assertNotNull(symbolTable);
+        Assert.assertNull(symbolTable.valueOf(0));
+        Assert.assertNull(symbolTable.valueBOf(0));
     }
 
     @Test(expected = UnsupportedOperationException.class)
