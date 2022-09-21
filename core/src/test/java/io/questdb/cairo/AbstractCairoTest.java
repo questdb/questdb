@@ -421,11 +421,17 @@ public class AbstractCairoTest {
 
     @After
     public void tearDown() {
+        tearDown(true);
+    }
+
+    public void tearDown(boolean removeDir) {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         snapshotAgent.clear();
         engine.getTableIdGenerator().close();
         engine.clear();
-        TestUtils.removeTestPath(root);
+        if (removeDir) {
+            TestUtils.removeTestPath(root);
+        }
         configOverrideMaxUncommittedRows = -1;
         configOverrideCommitLagMicros = -1;
         currentMicros = -1;
