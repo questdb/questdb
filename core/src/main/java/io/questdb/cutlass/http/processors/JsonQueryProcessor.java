@@ -196,7 +196,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
-            state.error().$("Uh-oh. Error!").$(e).$();
+            state.critical().$("Uh-oh. Error!").$(e).$();
             throw ServerDisconnectException.INSTANCE;
         }
     }
