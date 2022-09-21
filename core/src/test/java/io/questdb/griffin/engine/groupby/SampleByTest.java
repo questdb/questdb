@@ -9262,6 +9262,60 @@ public class SampleByTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testIntegerConstantInTimezoneName() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table orders as " +
+                            "(" +
+                            "select" +
+                            " rnd_double(0)*100 price," +
+                            " timestamp_sequence(172800000000, 3600000000) timestamp" +
+                            " from" +
+                            " long_sequence(20)" +
+                            ") timestamp(timestamp) partition by day",
+                    sqlExecutionContext
+            );
+            final String sql = "select timestamp, avg(price) from orders sample by 1h align to calendar time zone 42";
+            try (
+                    final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursor ignored = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(82, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: string value expected");
+            }
+        });
+    }
+
+    @Test
+    public void testIntegerConstantInOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table orders as " +
+                            "(" +
+                            "select" +
+                            " rnd_double(0)*100 price," +
+                            " timestamp_sequence(172800000000, 3600000000) timestamp" +
+                            " from" +
+                            " long_sequence(20)" +
+                            ") timestamp(timestamp) partition by day",
+                    sqlExecutionContext
+            );
+            final String sql = "select timestamp, avg(price) from orders sample by 1h align to calendar with offset 0";
+            try (
+                    final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursor ignored = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(84, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: string value expected");
+            }
+        });
+    }
+
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
         assertSampleByIndexQuery(expected, query, insert, false);
     }

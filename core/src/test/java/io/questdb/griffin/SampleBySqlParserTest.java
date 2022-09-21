@@ -298,6 +298,7 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
                 model()
         );
     }
+
     private static TableModel model() {
         return modelOf("x")
                 .col("a", ColumnType.DOUBLE)
