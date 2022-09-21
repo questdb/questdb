@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.wal;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
@@ -226,7 +223,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
                 if (ColumnType.isSymbol(columnType)) {
-                    var symbolReader = reader.getSymbolMapReader(i);
+                    SymbolMapReader symbolReader = reader.getSymbolMapReader(i);
                     for (int sym = 0; symbolIndex < totalSymbols && sym < symbolReader.getSymbolCount() - 1; sym++) {
                         symbols[symbolIndex++] = Chars.toString(symbolReader.valueOf(sym));
                     }
