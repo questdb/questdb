@@ -26,7 +26,7 @@ abstract class AbstractDoubleNumericallyGeneratedTest {
      * (Make sure to take a note of the seed value if
      * tests failed.)
      */
-    public static final long SEED = System.nanoTime();
+    private static final long SEED = System.nanoTime();
 
     @BeforeClass
     public static void init() {
