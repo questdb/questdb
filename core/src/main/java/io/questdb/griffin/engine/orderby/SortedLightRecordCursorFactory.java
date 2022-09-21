@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.RecordComparator;
 
 public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final LongTreeChain chain;
     private final SortedLightRecordCursor cursor;
 
     public SortedLightRecordCursorFactory(
@@ -45,7 +44,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             RecordComparator comparator
     ) {
         super(metadata);
-        this.chain = new LongTreeChain(
+        LongTreeChain chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxPages(),
                 configuration
@@ -58,7 +57,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     protected void _close() {
         base.close();
-        chain.close();
+        cursor.close();
     }
 
     @Override
@@ -69,7 +68,6 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             return cursor;
         } catch (Throwable ex) {
             baseCursor.close();
-            chain.clear();
             throw ex;
         }
     }

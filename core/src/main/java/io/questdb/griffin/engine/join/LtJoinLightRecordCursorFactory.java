@@ -220,9 +220,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         @Override
         public void close() {
             if (isOpen) {
-                isOpen = false;
                 joinKeyMap.close();
                 super.close();
+                isOpen = false;
             }
         }
     }

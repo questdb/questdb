@@ -35,18 +35,27 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain.TreeCursor chainCursor;
     private RecordCursor base;
     private Record baseRecord;
+    private boolean isOpen;
 
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
         this.comparator = comparator;
         // assign it once, it's the same instance anyway
         this.chainCursor = chain.getCursor();
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        chain.clear();
-        base.close();
+        if (isOpen) {
+            chain.close();
+            isOpen = false;
+        }
+        if (base != null) {
+            base.close();
+            base = null;
+            baseRecord = null;
+        }
     }
 
     @Override
@@ -95,12 +104,16 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
+        if (!isOpen) {
+            chain.reallocate();
+            isOpen = true;
+        }
+
         this.base = base;
         this.baseRecord = base.getRecord();
         final Record placeHolderRecord = base.getRecordB();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
-        chain.clear();
         while (base.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             // Tree chain is liable to re-position record to
