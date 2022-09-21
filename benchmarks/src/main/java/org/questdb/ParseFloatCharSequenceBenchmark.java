@@ -24,28 +24,30 @@
 
 package org.questdb;
 
-import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class ParseDoubleBenchmark {
-    private final static long memSize = 1024 * 16;
-    private final static String d = "78899.9";
-    private final static DirectByteCharSequence flyweight = new DirectByteCharSequence();
-    private long mem;
+public class ParseFloatCharSequenceBenchmark {
+    private final static List<String> floats = new ArrayList<>();
+    private static final int N = 100;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(ParseDoubleBenchmark.class.getSimpleName())
+                .include(ParseFloatCharSequenceBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(2)
                 .addProfiler("gc")
@@ -58,26 +60,28 @@ public class ParseDoubleBenchmark {
     @Setup(Level.Iteration)
     public void setup() {
         Os.init();
-        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
-        Chars.asciiStrCpy(d, d.length(), mem);
-    }
-
-    @TearDown(Level.Iteration)
-    public void tearDown() {
-        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    @Benchmark
-    public double testCharSequenceParse() throws NumericException {
-        return Numbers.parseDouble(flyweight.of(mem, mem + d.length()));
-    }
-
-    @Benchmark
-    public double testStringParse() {
-        final byte[] b = new byte[d.length()];
-        for (int i = 0, n = b.length; i < n; i++) {
-            b[i] = Unsafe.getUnsafe().getByte(mem + i);
+        floats.clear();
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < N; i++) {
+            floats.add(Float.toString(rnd.nextFloat()));
         }
-        return Double.parseDouble(new String(b));
+    }
+
+    @Benchmark
+    public float testFloatParseFloat() {
+        float sum = 0;
+        for (int i = 0; i < N; i++) {
+            sum += Float.parseFloat(floats.get(i));
+        }
+        return sum;
+    }
+
+    @Benchmark
+    public float testNumbersParseFloat() throws NumericException {
+        float sum = 0;
+        for (int i = 0; i < N; i++) {
+            sum += Numbers.parseFloat(floats.get(i));
+        }
+        return sum;
     }
 }
