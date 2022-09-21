@@ -29,6 +29,10 @@ import io.questdb.std.str.CharSink;
 public class NullMetricsRegistry implements MetricsRegistry {
 
     @Override
+    public void addScrapable(Scrapable scrapable) {
+    }
+
+    @Override
     public Counter newCounter(CharSequence name) {
         return NullCounter.INSTANCE;
     }

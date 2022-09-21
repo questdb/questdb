@@ -424,6 +424,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelFilterPreTouchEnabled() {
+        return true;
+    }
+
+    @Override
     public int getSqlCopyLogRetentionDays() {
         return 3;
     }

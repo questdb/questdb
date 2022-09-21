@@ -630,7 +630,7 @@ public class LineTcpParser {
                 }
                 default:
                     try {
-                        floatValue = Numbers.parseDouble(value);
+                        floatValue = Numbers.parseDouble(value.getLo(), value.length());
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
                         type = ENTITY_TYPE_SYMBOL;

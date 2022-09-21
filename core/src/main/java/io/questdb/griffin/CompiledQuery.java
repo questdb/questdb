@@ -59,7 +59,8 @@ public interface CompiledQuery {
     short CREATE_TABLE_AS_SELECT = 21;
     short SNAPSHOT_DB_PREPARE = 22;
     short SNAPSHOT_DB_COMPLETE = 23;
-    short TYPES_COUNT = SNAPSHOT_DB_COMPLETE;
+    short DEALLOCATE = 24;
+    short TYPES_COUNT = DEALLOCATE;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -92,6 +93,11 @@ public interface CompiledQuery {
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
      */
     long getAffectedRowsCount();
+
+    /**
+     * Returns statement name for DEALLOCATE statement. Used e.g. in pg wire protocol.
+     */
+    CharSequence getStatementName();
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 }

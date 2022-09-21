@@ -42,7 +42,7 @@ public final class BadDateAdapter extends DateAdapter {
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         throw new UnsupportedOperationException();
     }
 

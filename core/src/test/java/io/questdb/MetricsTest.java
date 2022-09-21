@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
@@ -35,6 +36,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.hasItem;
 
 public class MetricsTest {
@@ -52,7 +54,6 @@ public class MetricsTest {
 
     @Test
     public void testMetricNamesContainAllMemoryTags() {
-
         SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
         new Metrics(true, metricsRegistry);
 
@@ -63,6 +64,25 @@ public class MetricsTest {
         MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_free_count"));
         MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_mem_used"));
         MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_malloc_count"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_jvm_free"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_jvm_total"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_jvm_max"));
+    }
+
+    @Test
+    public void testMetricNamesContainGCMetrics() {
+        Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+
+        CharSink sink = new StringSink();
+        metrics.scrapeIntoPrometheus(sink);
+
+        String scraped = sink.toString();
+        MatcherAssert.assertThat(scraped, containsString("jvm_major_gc_count"));
+        MatcherAssert.assertThat(scraped, containsString("jvm_major_gc_time"));
+        MatcherAssert.assertThat(scraped, containsString("jvm_minor_gc_count"));
+        MatcherAssert.assertThat(scraped, containsString("jvm_minor_gc_time"));
+        MatcherAssert.assertThat(scraped, containsString("jvm_unknown_gc_count"));
+        MatcherAssert.assertThat(scraped, containsString("jvm_unknown_gc_time"));
     }
 
     @Test
@@ -98,6 +118,11 @@ public class MetricsTest {
         private final Set<CharSequence> labelNames = new HashSet<>();
         private final Set<CharSequence> metricsWithNotUniqueLabels = new HashSet<>();
         private final Set<CharSequence> notUniqueMetrics = new HashSet<>();
+
+        @Override
+        public void addScrapable(Scrapable scrapable) {
+            delegate.addScrapable(scrapable);
+        }
 
         @Override
         public Counter newCounter(CharSequence name) {

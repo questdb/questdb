@@ -26,6 +26,8 @@ package io.questdb.metrics;
 
 public interface MetricsRegistry extends Scrapable {
 
+    void addScrapable(Scrapable scrapable);
+
     Counter newCounter(CharSequence name);
 
     CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);

@@ -24,9 +24,10 @@
 
 package org.questdb;
 
-import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.metrics.GCMetrics;
+import io.questdb.std.str.DirectCharSink;
 import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.profile.GCProfiler;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -37,47 +38,25 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class ParseDoubleBenchmark {
-    private final static long memSize = 1024 * 16;
-    private final static String d = "78899.9";
-    private final static DirectByteCharSequence flyweight = new DirectByteCharSequence();
-    private long mem;
+public class GCMetricsBenchmark {
+
+    GCMetrics metrics = new GCMetrics();
+    DirectCharSink sink = new DirectCharSink(1024 * 1024);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(ParseDoubleBenchmark.class.getSimpleName())
-                .warmupIterations(2)
-                .measurementIterations(2)
-                .addProfiler("gc")
+                .include(GCMetricsBenchmark.class.getSimpleName())
+                .warmupIterations(1)
+                .measurementIterations(3)
+                .addProfiler(GCProfiler.class)
                 .forks(1)
                 .build();
-
         new Runner(opt).run();
     }
 
-    @Setup(Level.Iteration)
-    public void setup() {
-        Os.init();
-        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
-        Chars.asciiStrCpy(d, d.length(), mem);
-    }
-
-    @TearDown(Level.Iteration)
-    public void tearDown() {
-        Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
-    }
-
     @Benchmark
-    public double testCharSequenceParse() throws NumericException {
-        return Numbers.parseDouble(flyweight.of(mem, mem + d.length()));
-    }
-
-    @Benchmark
-    public double testStringParse() {
-        final byte[] b = new byte[d.length()];
-        for (int i = 0, n = b.length; i < n; i++) {
-            b[i] = Unsafe.getUnsafe().getByte(mem + i);
-        }
-        return Double.parseDouble(new String(b));
+    public void testScrape() {
+        sink.clear();
+        metrics.scrapeIntoPrometheus(sink);
     }
 }

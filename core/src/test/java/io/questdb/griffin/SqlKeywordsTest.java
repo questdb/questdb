@@ -187,7 +187,6 @@ public class SqlKeywordsTest {
             int m = method.getModifiers() & Modifier.methodModifiers();
             if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
                 String keyword;
-                System.out.printf("NAME: %s%n", name);
                 if (name.endsWith("Keyword")) {
                     keyword = name.substring(2, name.length() - 7).toLowerCase();
                 } else {
