@@ -9,7 +9,6 @@ import io.questdb.std.NumericException;
 
 public class FastFloatParserFromCharSequenceHandPickedTest extends AbstractFloatHandPickedTest {
 
-
     @Override
     float parse(CharSequence str) throws NumericException {
         return FastFloatParser.parseFloat(str);

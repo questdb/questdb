@@ -5,6 +5,9 @@
 
 package io.questdb.std.fastdouble;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.Random;
@@ -27,6 +30,9 @@ import java.util.stream.IntStream;
  * discovering new test cases.
  */
 abstract class AbstractLexicallyGeneratedTest {
+
+    private static final Log LOG = LogFactory.getLog(AbstractLexicallyGeneratedTest.class);
+
     /**
      * Seed for random number generator.
      * Specify a literal number to obtain repeatable tests.
@@ -35,6 +41,11 @@ abstract class AbstractLexicallyGeneratedTest {
      * tests failed.)
      */
     public static final long SEED = System.nanoTime();
+
+    @BeforeClass
+    public static void init() {
+        LOG.info().$("seed=").$(SEED).$();
+    }
 
     @Test
     public void testRandomStringFrom1SyntaxRuleWithoutWhitespace() {

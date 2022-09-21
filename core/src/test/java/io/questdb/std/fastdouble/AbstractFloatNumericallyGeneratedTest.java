@@ -5,7 +5,10 @@
 
 package io.questdb.std.fastdouble;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.Random;
@@ -13,6 +16,9 @@ import java.util.Random;
 import static org.junit.Assert.assertEquals;
 
 abstract class AbstractFloatNumericallyGeneratedTest {
+
+    private static final Log LOG = LogFactory.getLog(AbstractFloatNumericallyGeneratedTest.class);
+
     /**
      * Seed for random number generator.
      * Specify a literal number to obtain repeatable tests.
@@ -21,6 +27,11 @@ abstract class AbstractFloatNumericallyGeneratedTest {
      * tests failed.)
      */
     public static final long SEED = System.nanoTime();
+
+    @BeforeClass
+    public static void init() {
+        LOG.info().$("seed=").$(SEED).$();
+    }
 
     @Test
     public void testRandomDecimalFloatLiterals() {
