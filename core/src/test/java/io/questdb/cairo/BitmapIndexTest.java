@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemorySRImpl;
+import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -1090,6 +1091,16 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 assertEmptyCursor(reader);
             }
         });
+    }
+
+    @Test
+    public void testNullMemDoesNotCauseInfiniteLoops() {
+        Assert.assertEquals(-1L, BitmapIndexUtils.searchValueBlock(
+                new NullMemoryMR(),
+                0L,
+                63L,
+                1L
+        ));
     }
 
     @Test

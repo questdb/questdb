@@ -73,12 +73,12 @@ public final class BitmapIndexUtils {
      * <p>
      * List of value blocks is assumed to be ordered by value in ascending order.
      *
-     * @param valueCount           total count of values in all blocks
-     * @param blockOffset          offset of last value block in chain of blocks
-     * @param valueMem             value block memory
-     * @param maxValue             upper limit for block values
-     * @param blockValueCountMod   number of values in single block - 1
-     * @param seeker               interface that collects results of the search
+     * @param valueCount         total count of values in all blocks
+     * @param blockOffset        offset of last value block in chain of blocks
+     * @param valueMem           value block memory
+     * @param maxValue           upper limit for block values
+     * @param blockValueCountMod number of values in single block - 1
+     * @param seeker             interface that collects results of the search
      */
     static void seekValueBlockRTL(
             long valueCount,
@@ -219,13 +219,14 @@ public final class BitmapIndexUtils {
      * @param offset    offset in virtual memory
      * @param cellCount length of the available memory measured in 64-bit cells
      * @param value     value we search of
-     * @return index directly behind the searched value or group of values if list contains duplicate values.
+     * @return index directly behind the searched value or group of values if list contains duplicate values,
+     * or -1L when value is not found.
      */
     static long searchValueBlock(MemoryR memory, long offset, long cellCount, long value) {
         // when block is "small", we just scan it linearly
         if (cellCount < 64) {
             // this will definitely exit because we had checked that at least the last value is greater than value
-            for (long i = offset; ; i += 8) {
+            for (long i = offset, limit = memory.size(); i < limit; i += 8) {
                 if (memory.getLong(i) > value) {
                     return (i - offset) / 8;
                 }
@@ -251,6 +252,7 @@ public final class BitmapIndexUtils {
 
             return low + 1;
         }
+        return -1L;
     }
 
     @FunctionalInterface
