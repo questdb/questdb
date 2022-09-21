@@ -1125,6 +1125,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
+        final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
 
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
@@ -1165,7 +1166,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             jitFilter,
                             reduceTaskPool,
                             limitLoFunction,
-                            limitLoPos
+                            limitLoPos,
+                            preTouchColumns
                     );
                 } catch (SqlException | LimitOverflowException ex) {
                     Misc.free(jitFilter);
@@ -1203,7 +1205,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext
                     ),
                     limitLoFunction,
-                    limitLoPos
+                    limitLoPos,
+                    preTouchColumns
             );
         }
         return new FilteredRecordCursorFactory(factory, filter);
@@ -1451,7 +1454,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext
                                 ),
                                 null,
-                                0
+                                0,
+                                false
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(

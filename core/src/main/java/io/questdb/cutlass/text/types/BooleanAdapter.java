@@ -42,7 +42,7 @@ public final class BooleanAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         return SqlKeywords.isTrueKeyword(text) || SqlKeywords.isFalseKeyword(text);
     }
 

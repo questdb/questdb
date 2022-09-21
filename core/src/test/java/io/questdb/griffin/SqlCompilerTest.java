@@ -3968,6 +3968,32 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testDeallocateMissingStatementName() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("DEALLOCATE", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(10, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "statement name expected");
+            }
+        });
+    }
+
+    @Test
+    public void testDeallocateMultipleStatementNames() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("deallocate foo bar", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(15, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bar]");
+            }
+        });
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
         compiler.compile(sql, sqlExecutionContext);
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {

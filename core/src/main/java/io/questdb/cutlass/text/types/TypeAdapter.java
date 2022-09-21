@@ -35,7 +35,7 @@ public interface TypeAdapter {
         return false;
     }
 
-    boolean probe(CharSequence text);
+    boolean probe(DirectByteCharSequence text);
 
     void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
 

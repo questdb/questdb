@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -64,14 +65,23 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
-            int limitLoPos
+            int limitLoPos,
+            boolean preTouchColumns
     ) {
         super(base.getMetadata());
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
-        this.filterAtom = new AsyncFilterAtom(filter, perWorkerFilters);
+        IntList preTouchColumnTypes = null;
+        if (preTouchColumns) {
+            preTouchColumnTypes = new IntList();
+            for (int i = 0, n = base.getMetadata().getColumnCount(); i < n; i++) {
+                int columnType = base.getMetadata().getColumnType(i);
+                preTouchColumnTypes.add(columnType);
+            }
+        }
+        this.filterAtom = new AsyncFilterAtom(filter, perWorkerFilters, preTouchColumnTypes);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -180,5 +190,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         } finally {
             atom.releaseFilter(filterId);
         }
+
+        // Pre-touch fixed-size columns, if asked.
+        atom.preTouchColumns(record, rows);
     }
 }

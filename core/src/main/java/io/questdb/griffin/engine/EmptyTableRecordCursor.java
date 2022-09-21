@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.std.ObjList;
 
@@ -55,5 +57,15 @@ final public class EmptyTableRecordCursor implements NoRandomAccessRecordCursor 
     @Override
     public long size() {
         return 0;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return EmptySymbolMapReader.INSTANCE;
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return EmptySymbolMapReader.INSTANCE;
     }
 }

@@ -53,7 +53,7 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
             return false;
         }

@@ -144,7 +144,6 @@ public class TestInterop {
                 case JsonLexer.EVT_VALUE:
                     switch (tag1Type) {
                         case TAG_TEST_NAME:
-                            System.out.println(tag);
                             break;
                         case TAG_TABLE_NAME:
                             try {
