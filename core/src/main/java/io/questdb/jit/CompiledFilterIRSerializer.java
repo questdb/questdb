@@ -280,8 +280,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(offset + 2 * Integer.BYTES, payload);
     }
 
-    private void putDoubleOperand(long offset, int opcode, int type, double payload) {
-        memory.putInt(offset, opcode);
+    private void putDoubleOperand(long offset, int type, double payload) {
+        memory.putInt(offset, CompiledFilterIRSerializer.IMM);
         memory.putInt(offset + Integer.BYTES, type);
         memory.putDouble(offset + 2 * Integer.BYTES, payload);
     }
@@ -543,10 +543,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.NULL : Numbers.LONG_NaN);
                 break;
             case F4_TYPE:
-                putDoubleOperand(offset, IMM, typeCode, Float.NaN);
+                putDoubleOperand(offset, typeCode, Float.NaN);
                 break;
             case F8_TYPE:
-                putDoubleOperand(offset, IMM, typeCode, Double.NaN);
+                putDoubleOperand(offset, typeCode, Double.NaN);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
@@ -606,7 +606,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeNumber(long offset, int position, final CharSequence token, int typeCode, boolean negated) throws SqlException {
+    private void serializeNumber(
+            long offset,
+            int position,
+            final CharSequence token,
+            int typeCode,
+            boolean negated
+    ) throws SqlException {
         long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
@@ -625,7 +631,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         putOperand(offset, IMM, I4_TYPE, sign * i);
                     } catch (NumericException e) {
                         final float fi = Numbers.parseFloat(token);
-                        putDoubleOperand(offset, IMM, F4_TYPE, sign * fi);
+                        putDoubleOperand(offset, F4_TYPE, sign * fi);
                     }
                     break;
                 case I8_TYPE:
@@ -635,7 +641,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         putOperand(offset, IMM, I8_TYPE, sign * l);
                     } catch (NumericException e) {
                         final double dl = Numbers.parseDouble(token);
-                        putDoubleOperand(offset, IMM, F8_TYPE, sign * dl);
+                        putDoubleOperand(offset, F8_TYPE, sign * dl);
                     }
                     break;
                 default:
@@ -669,14 +675,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         try {
             final double d = Numbers.parseDouble(token);
-            putDoubleOperand(offset, IMM, F8_TYPE, sign * d);
+            putDoubleOperand(offset, F8_TYPE, sign * d);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final float f = Numbers.parseFloat(token);
-            putDoubleOperand(offset, IMM, F4_TYPE, sign * f);
+            putDoubleOperand(offset, F4_TYPE, sign * f);
             return;
         } catch (NumericException ignore) {
         }

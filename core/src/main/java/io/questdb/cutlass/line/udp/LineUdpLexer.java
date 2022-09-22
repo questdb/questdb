@@ -29,6 +29,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -371,6 +372,14 @@ public class LineUdpLexer implements Mutable, Closeable {
         @Override
         public char charAt(int index) {
             return Unsafe.getUnsafe().getChar(lo + index * 2L);
+        }
+
+        @Override
+        public @NotNull CharSequence subSequence(int start, int end) {
+            FloatingCharSequence fcs = new FloatingCharSequence();
+            fcs.lo = this.lo + start * 2L;
+            fcs.hi = this.lo + end * 2L;
+            return fcs;
         }
     }
 

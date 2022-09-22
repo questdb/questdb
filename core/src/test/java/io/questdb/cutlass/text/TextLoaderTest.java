@@ -694,8 +694,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     public void testDelimiterPriority() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\n" +
-                    ";;;\t;;\t0.0\n" +
-                    ";;;\t;;\t0.0\n";
+                    ";;;\t;;\t....\n" +
+                    ";;;\t;;\t....\n";
 
             String csv = ";;;,;;,....\n" +
                     ";;;,;;,....\n";
@@ -707,7 +707,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     csv,
                     200,
                     expected,
-                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     2,
                     2
             );
@@ -1451,7 +1451,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(textLoader -> {
             final String expected = "VendorID\tlpep_pickup_datetime\tLpep_dropoff_datetime\tStore_and_fwd_flag\tRateCodeID\tPickup_longitude\tPickup_latitude\tDropoff_longitude\tDropoff_latitude\tPassenger_count\tTrip_distance\tFare_amount\tExtra\tMTA_tax\tTip_amount\tTolls_amount\tEhail_fee\tTotal_amount\tPayment_type\tTrip_type\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:18:34.000Z\tN\t1\t0\t0\t-73.87202453613281\t40.678714752197266\t6\t7.02\t28.5\t0.0\t0.5\t0.0\t0\t\t29.0\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T13:10:37.000Z\tN\t1\t0\t0\t-73.91783905029298\t40.75776672363281\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T13:10:37.000Z\tN\t1\t0\t0\t-73.91783905029297\t40.75776672363281\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:36:16.000Z\tN\t1\t0\t0\t-73.88289642333984\t40.87045669555664\t1\t0.84\t5.0\t0.0\t0.5\t0.0\t0\t\t5.5\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:51:03.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t8.98\t26.5\t0.5\t0.5\t5.4\t0\t\t32.9\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T03:13:09.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t0.91\t5.5\t0.5\t0.5\t0.0\t0\t\t6.5\t2\t1\n" +
@@ -1462,7 +1462,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T10:45:08.000Z\tN\t1\t0\t0\t-73.98382568359375\t40.67216491699219\t5\t2.98\t11.0\t0.0\t0.5\t0.0\t0\t\t11.5\t2\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:23:12.000Z\tN\t1\t0\t0\t-73.89750671386719\t40.856563568115234\t1\t6.1\t21.0\t0.0\t0.5\t4.2\t0\t\t25.7\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T20:30:34.000Z\tN\t1\t0\t0\t-73.83473205566406\t40.769981384277344\t1\t4.03\t13.5\t0.5\t0.5\t0.0\t0\t\t14.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:11:02.000Z\tN\t1\t0\t0\t-73.96269226074219\t40.80527877807618\t1\t11.02\t36.5\t0.5\t0.5\t9.25\t0\t\t46.75\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:11:02.000Z\tN\t1\t0\t0\t-73.96269226074219\t40.80527877807617\t1\t11.02\t36.5\t0.5\t0.5\t9.25\t0\t\t46.75\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T01:12:02.000Z\tN\t1\t0\t0\t-73.81257629394531\t40.72515869140625\t1\t2.98\t11.0\t0.5\t0.5\t2.3\t0\t\t14.3\t1\t1\n";
 
             String csv = "VendorID,lpep_pickup_datetime,Lpep_dropoff_datetime,Store_and_fwd_flag,RateCodeID,Pickup_longitude,Pickup_latitude,Dropoff_longitude,Dropoff_latitude,Passenger_count,Trip_distance,Fare_amount,Extra,MTA_tax,Tip_amount,Tolls_amount,Ehail_fee,Total_amount,Payment_type,Trip_type\n" +

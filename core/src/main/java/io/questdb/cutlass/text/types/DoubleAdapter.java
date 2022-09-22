@@ -44,12 +44,12 @@ public final class DoubleAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
             return false;
         }
         try {
-            Numbers.parseDouble(text);
+            Numbers.parseDouble(text.getLo(), text.length());
             return true;
         } catch (NumericException e) {
             return false;
@@ -58,6 +58,6 @@ public final class DoubleAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDouble(column, SqlKeywords.isNullKeyword(value) ? Double.NaN : Numbers.parseDouble(value));
+        row.putDouble(column, SqlKeywords.isNullKeyword(value) ? Double.NaN : Numbers.parseDouble(value.getLo(), value.length()));
     }
 }
