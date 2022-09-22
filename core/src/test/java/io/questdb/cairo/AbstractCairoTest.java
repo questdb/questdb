@@ -103,6 +103,8 @@ public abstract class AbstractCairoTest {
     protected static RostiAllocFacade rostiAllocFacade = null;
     protected static int parallelImportStatusLogKeepNDays = -1;
     protected static Boolean ioURingEnabled = null;
+    protected static String stackFailureClass;
+    protected static String stackFailureMethod;
 
     @Rule
     public TestName testName = new TestName();
@@ -154,6 +156,21 @@ public abstract class AbstractCairoTest {
         };
 
         configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public CharSequence getRoot() {
+                if (stackFailureClass != null) {
+                    try {
+                        throw new RuntimeException("Test failure");
+                    } catch (Exception e) {
+                        final StackTraceElement[] stackTrace = e.getStackTrace();
+                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
+                            throw e;
+                        }
+                    }
+                }
+                return root;
+            }
+
             @Override
             public DateFormat getBackupDirTimestampFormat() {
                 if (backupDirTimestampFormat != null) {

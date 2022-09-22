@@ -236,7 +236,6 @@ public class ServerMain {
             final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(cairoEngine);
             workerPool.assign(applyWal2TableJob);
             workerPool.freeOnHalt(applyWal2TableJob);
-            workerPool.assignCleaner(ApplyWal2TableJob.CLEANER);
 
             if (configuration.getCairoConfiguration().getSqlCopyInputRoot() != null) {
                 final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(

@@ -26,9 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.griffin.engine.ops.AlterOperation;
 
-import java.io.Closeable;
-
-public interface SequencerStructureChangeCursor extends Closeable {
+public interface SequencerStructureChangeCursor {
     SequencerStructureChangeCursor empty();
 
     boolean hasNext();

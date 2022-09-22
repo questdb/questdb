@@ -32,7 +32,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.IntLongHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.Nullable;
@@ -45,7 +44,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final ThreadLocal<SequencerStructureChangeCursor> reusableStructureChangeCursor = new ThreadLocal<>();
-    public static final Closeable CLEANER = ApplyWal2TableJob::clearThreadLocals;
     private final CairoEngine engine;
     private final SqlToOperation sqlToOperation;
     private final IntLongHashMap localCommittedTransactions = new IntLongHashMap();
@@ -54,10 +52,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         this.sqlToOperation = new SqlToOperation(engine);
-    }
-
-    public static void clearThreadLocals() {
-        Misc.free(reusableStructureChangeCursor);
     }
 
     public static long processWalTxnNotification(

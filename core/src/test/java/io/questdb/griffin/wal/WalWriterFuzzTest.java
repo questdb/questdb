@@ -349,15 +349,11 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
                     while (done.get() == 0 && errors.size() == 0) {
                         Unsafe.getUnsafe().loadFence();
-                        while (job.run(0)) {
-                            // run until empty
-                        }
+                        while (job.run(0));
                         Os.sleep(1);
                         i++;
                     }
-                    while (job.run(0)) {
-                        // run until empty
-                    }
+                    while (job.run(0));
                 }
                 LOG.info().$("finished apply thread after iterations: ").$(i).$();
             } catch (Throwable e) {

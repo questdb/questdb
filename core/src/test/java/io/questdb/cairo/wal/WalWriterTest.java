@@ -33,6 +33,7 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -155,6 +156,160 @@ public class WalWriterTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (CairoError e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" + tableName + "`]"));
+            }
+        });
+    }
+
+    @Test
+    public void testAddingColumnOverlapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            final String walName1, walName2;
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    walName1 = walWriter1.getWalName();
+                    walName2 = walWriter2.getWalName();
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                }
+            }
+
+            try (TableModel model = defaultModel(tableName)) {
+                model.col("c", ColumnType.INT);
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 0, 0)) {
+                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(walName1, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(0, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertFalse(eventCursor.hasNext());
+                }
+
+                model.col("d", ColumnType.INT);
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 0, 0)) {
+                    assertEquals(4, reader.getColumnCount());
+                    assertEquals(walName2, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(0, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertFalse(eventCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingStructureChangeMissing() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long readULong(long fd, long offset) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[1].getClassName().endsWith("TxnCatalog$SequencerStructureChangeCursorImpl") && stackTrace[1].getMethodName().equals("of")) {
+                        return -1;
+                    }
+                }
+                return Files.readULong(fd, offset);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                    fail("Exception expected");
+                } catch(Exception e) {
+                    // this exception will be handled in ILP/PG/HTTP
+                    assertEquals("[0] expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=0]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[9].getClassName().endsWith("WalWriter") && stackTrace[9].getMethodName().equals("applyStructureChanges")) {
+                        return -1;
+                    }
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                    fail("Exception expected");
+                } catch(Exception e) {
+                    // this exception will be handled in ILP/PG/HTTP
+                    assertTrue(e.getMessage().startsWith("[0] could not apply table definition changes to the current transaction. could not add column [error=could not open read-write"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingStructureChangeFails() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[1].getClassName().endsWith("TxnCatalog") && stackTrace[1].getMethodName().equals("openFileRO")) {
+                        return -1;
+                    }
+                }
+                return Files.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                    fail("Exception expected");
+                } catch(Exception e) {
+                    // this exception will be handled in ILP/PG/HTTP
+                    assertTrue(e.getMessage().startsWith("[2] could not open read-only"));
+                }
             }
         });
     }
@@ -1144,6 +1299,89 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             } finally {
                 Unsafe.getUnsafe().freeMemory(pointer);
+            }
+        });
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
+        assertMemoryLeak(() -> {
+            stackFailureClass = "SequencerImpl";
+            stackFailureMethod = "<init>";
+
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch(Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                assertEquals("Test failure", e.getMessage());
+            }
+
+            stackFailureClass = null;
+            stackFailureMethod = null;
+        });
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long getPageSize() {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[4].getClassName().endsWith("SequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
+                        throw e;
+                    }
+                }
+                return Files.PAGE_SIZE;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch(Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                assertEquals("Test failure", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotCreateDir() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[1].getClassName().endsWith("SequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
+                        return 1;
+                    }
+                }
+                return Files.mkdirs(path, mode);
+            }
+
+            @Override
+            public int errno() {
+                return 999;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch(Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                assertTrue(e.getMessage().startsWith("[999] Cannot create sequencer directory:"));
             }
         });
     }

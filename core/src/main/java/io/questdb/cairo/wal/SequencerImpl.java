@@ -61,7 +61,8 @@ public class SequencerImpl implements Sequencer {
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
-            path = new Path().of(configuration.getRoot()).concat(tableName).concat(SEQ_DIR);
+            path = new Path();
+            path.of(configuration.getRoot()).concat(tableName).concat(SEQ_DIR);
             rootLen = path.length();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
@@ -202,26 +203,27 @@ public class SequencerImpl implements Sequencer {
 
     @Override
     public void close() {
-        doClose();
+        schemaLock.writeLock().lock();
+        try {
+            doClose();
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
     }
 
     private void doClose() {
-        if (open) {
-            schemaLock.writeLock().lock();
-            try {
-                open = false;
-                Misc.free(metadata);
-                Misc.free(catalog);
-                Misc.free(walIdGenerator);
-                Misc.free(path);
-            } finally {
-                schemaLock.writeLock().unlock();
-            }
-        }
+        open = false;
+        Misc.free(metadata);
+        Misc.free(catalog);
+        Misc.free(walIdGenerator);
+        Misc.free(path);
     }
+
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
+            final CairoException e = CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
+            doClose();
+            throw e;
         }
         path.trimTo(rootLen);
     }

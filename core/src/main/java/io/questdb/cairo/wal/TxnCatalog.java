@@ -36,7 +36,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
@@ -267,11 +266,6 @@ public class TxnCatalog implements Closeable {
         private long txnMetaAddress;
         private MemorySerializer serializer;
         private FilesFacade ff;
-
-        @Override
-        public void close() throws IOException {
-            reset();
-        }
 
         @Override
         public SequencerStructureChangeCursor empty() {
