@@ -516,7 +516,7 @@ public class AbstractCairoTest {
     protected static void assertFactoryMemoryUsage() {
         if (memoryUsage > -1) {
             long memAfterCursorClose = getMemUsedByFactories();
-            long limit = memoryUsage + 10 * 1024;
+            long limit = memoryUsage + 50 * 1024;
             if (memAfterCursorClose > limit) {
                 printFactoryMemoryUsageDiff();
                 Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
