@@ -6209,7 +6209,9 @@ create table tab as (
                     assertEquals(expectedTs, tsBack);
 
                     // cleanup
-                    conn.prepareStatement("drop table ts").execute();
+                    if (!isDisabledForWalRun()) {
+                        conn.prepareStatement("drop table ts").execute();
+                    }
                 }
             }
         });
