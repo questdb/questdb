@@ -4766,7 +4766,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT \n" +
                         "a\n" +
                         "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
-                        "select * from long_sequence(1)", // <-- dangling 'select * from long_sequence(1)'
+                        "select * from long_sequence(1)",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.SYMBOL)
