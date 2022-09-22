@@ -214,13 +214,16 @@ public final class BitmapIndexUtils {
      * ^
      * <p>
      * Same index will be returned when we search for value of 3.
+     * <p>
+     * This method is meant to search for the position of a rowid (value), 100% guaranteed to exist, otherwise
+     * it means the index is corrupt.
      *
      * @param memory    virtual memory instance
      * @param offset    offset in virtual memory
      * @param cellCount length of the available memory measured in 64-bit cells
      * @param value     value we search of
-     * @return index directly behind the searched value or group of values if list contains duplicate values,
-     * or -1L when value is not found.
+     * @return index directly behind the searched value or group of values if list contains duplicate values
+     * @throws CairoException when the index is corrupted
      */
     static long searchValueBlock(MemoryR memory, long offset, long cellCount, long value) {
         // when block is "small", we just scan it linearly
@@ -252,7 +255,11 @@ public final class BitmapIndexUtils {
 
             return low + 1;
         }
-        return -1L;
+        throw CairoException.critical(0)
+                .put("index is corrupt, rowid not found [offset=").put(offset)
+                .put(", cellCount=").put(cellCount)
+                .put(", value=").put(value)
+                .put(']');
     }
 
     @FunctionalInterface

@@ -1095,12 +1095,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNullMemDoesNotCauseInfiniteLoops() {
-        Assert.assertEquals(-1L, BitmapIndexUtils.searchValueBlock(
-                new NullMemoryMR(),
-                0L,
-                63L,
-                1L
-        ));
+        try {
+            BitmapIndexUtils.searchValueBlock(new NullMemoryMR(), 0L, 63L, 1L);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains("index is corrupt, rowid not found [offset=0, cellCount=63, value=1]", e.getFlyweightMessage());
+        }
     }
 
     @Test
