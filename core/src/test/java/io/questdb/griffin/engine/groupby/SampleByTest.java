@@ -862,6 +862,50 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByAlignToCalendarBindVariablesWrongTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a') s," +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s) timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            String sql = "select k, s, first(lat) lat, last(lon) lon from x sample by 1h align to calendar time zone $1 with offset $2";
+
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                sqlExecutionContext.getBindVariableService().setLong(0, 42);
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(91, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: 42");
+                }
+            }
+
+            sqlExecutionContext.getBindVariableService().clear();
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setLong(1, 42);
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(106, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: 42");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge() throws Exception {
         assertQuery("k\ts\tlat\tlon\n" +
                         "2021-03-28T01:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +

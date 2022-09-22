@@ -1991,7 +1991,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timezoneNameFuncPos = 0;
             }
 
-            if (!timezoneNameFunc.isConstant() || (timezoneNameFunc.getType() != ColumnType.STRING && timezoneNameFunc.getType() != ColumnType.CHAR)) {
+            if (ColumnType.isUndefined(timezoneNameFunc.getType())) {
+                timezoneNameFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+            } else if ((!timezoneNameFunc.isConstant() && !timezoneNameFunc.isRuntimeConstant())
+                    || !ColumnType.isAssignableFrom(timezoneNameFunc.getType(), ColumnType.STRING)) {
                 throw SqlException.$(timezoneNameFuncPos, "timezone must be a constant expression of STRING or CHAR type");
             }
 
@@ -2007,7 +2010,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 offsetFuncPos = 0;
             }
 
-            if (!offsetFunc.isConstant() || (offsetFunc.getType() != ColumnType.STRING && offsetFunc.getType() != ColumnType.CHAR)) {
+            if (ColumnType.isUndefined(offsetFunc.getType())) {
+                offsetFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+            } else if ((!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant())
+                    || !ColumnType.isAssignableFrom(offsetFunc.getType(), ColumnType.STRING)) {
                 throw SqlException.$(offsetFuncPos, "offset must be a constant expression of STRING or CHAR type");
             }
 
