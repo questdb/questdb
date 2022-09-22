@@ -52,7 +52,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
 
-    private final static int ROSTI_MINIMIZED_SIZE = 2;
+    private final static int ROSTI_MINIMIZED_SIZE = 16;//16 is the minimum size usable on arm 
 
     private final RecordCursorFactory base;
     private final ObjList<VectorAggregateFunction> vafList;
