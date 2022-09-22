@@ -308,7 +308,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     fail("Exception expected");
                 } catch(Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().startsWith("[2] could not open read-only"));
+                    assertTrue(e.getMessage().contains("could not open read-only"));
                 }
             }
         });
