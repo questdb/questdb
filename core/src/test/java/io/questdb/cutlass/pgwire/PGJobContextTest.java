@@ -110,6 +110,7 @@ public class PGJobContextTest extends BasePGTest {
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT;
 
+    /** When set to true, tests or sections of tests that are don't work with the WAL are skipped. */
     public static final boolean SKIP_FAILING_WAL_TESTS = true;
 
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
@@ -163,6 +164,10 @@ public class PGJobContextTest extends BasePGTest {
     private void mayDrainWalQueue() {
         if (walEnabled)
             drainWalQueue();
+    }
+
+    private boolean isDisabledForWalRun() {
+        return SKIP_FAILING_WAL_TESTS && walEnabled;
     }
 
     /**
@@ -4494,8 +4499,11 @@ nodejs code:
 
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     queryTimestampsInRange(connection);
-                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                        statement.execute();
+
+                    if (!isDisabledForWalRun()) {
+                        try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                            statement.execute();
+                        }
                     }
                 }
 
@@ -4528,9 +4536,11 @@ nodejs code:
                     }
                 }
 
-                try (final Connection connection = getConnection(server.getPort(), false, false);
-                     PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                    statement.execute();
+                if (!isDisabledForWalRun()) {
+                    try (final Connection connection = getConnection(server.getPort(), false, false);
+                         PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
                 }
                 Assert.assertTrue("Exception is not thrown", caught);
             }
@@ -4553,8 +4563,10 @@ nodejs code:
 
             queryTimestampsInRange(connection);
 
-            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                statement.execute();
+            if (!isDisabledForWalRun()) {
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
             }
         });
     }
@@ -5700,8 +5712,10 @@ create table tab as (
                 }
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                statement.execute();
+            if (!isDisabledForWalRun()) {
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
             }
         });
     }
@@ -6147,7 +6161,10 @@ create table tab as (
                             );
                         }
                     }
-                    connection.prepareStatement("drop table ts").execute();
+
+                    if (!isDisabledForWalRun()) {
+                        connection.prepareStatement("drop table ts").execute();
+                    }
                 }
             }
         });
@@ -6192,7 +6209,9 @@ create table tab as (
                     assertEquals(expectedTs, tsBack);
 
                     // cleanup
-                    conn.prepareStatement("drop table ts").execute();
+                    if (!isDisabledForWalRun()) {
+                        conn.prepareStatement("drop table ts").execute();
+                    }
                 }
             }
         });
