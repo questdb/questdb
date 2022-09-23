@@ -177,11 +177,6 @@ public class FilesTest {
     }
 
     @Test
-    public void testHardLinkAsciiName() throws Exception {
-        assertHardLinkPreservesFileContent("some_column.d");
-    }
-
-    @Test
     public void testDeleteDir2() throws Exception {
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
@@ -229,6 +224,11 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testHardLinkAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("some_column.d");
     }
 
     @Test
@@ -419,6 +419,45 @@ public class FilesTest {
     }
 
     @Test
+    public void testReadOver2GB() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd1 = Files.openRW(path.$());
+                long size2Gb = (2L << 30) + 4096;
+                long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+
+                try {
+                    Files.truncate(fd1, size2Gb);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, size2Gb - 8);
+
+                    // Check read call works
+                    // Check written data
+                    Assert.assertEquals(size2Gb, Files.read(fd1, mem, size2Gb, 0));
+                    long long1 = Files.readULong(fd1, 0L);
+                    Assert.assertEquals(testValue, long1);
+                    long long2 = Files.readULong(fd1, size2Gb - 8);
+                    Assert.assertEquals(testValue, long2);
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Unsafe.free(mem, size2Gb, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRemove() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
@@ -426,6 +465,59 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertTrue(Files.remove(path));
                 Assert.assertFalse(Files.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testSendFileOver2GB() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (
+                    Path path1 = new Path().of(temp.getAbsolutePath());
+                    Path path2 = new Path().of(temp.getAbsolutePath())
+            ) {
+                long fd1 = Files.openRW(path1.$());
+                path2.put(".2").$();
+                long fd2 = 0;
+
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long size2Gb = (2L << 30) + 4096;
+
+                try {
+                    Files.truncate(fd1, size2Gb);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, size2Gb - 8);
+
+                    // Check copy call works
+                    int result = Files.copy(path1, path2);
+
+                    // Check written data
+                    Assert.assertEquals(0, result);
+
+                    fd2 = Files.openRO(path2.$());
+                    long long1 = Files.readULong(fd2, 0L);
+                    Assert.assertEquals(testValue, long1);
+                    long long2 = Files.readULong(fd2, size2Gb - 8);
+                    Assert.assertEquals(testValue, long2);
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    if (fd2 != 0) {
+                        Files.close(fd2);
+                    }
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path1);
+                    Files.remove(path2);
+                }
             }
         });
     }
@@ -447,6 +539,53 @@ public class FilesTest {
                     Assert.assertEquals(0, Files.length(path));
                 } finally {
                     Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWriteOver2GB() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+                long fd1 = Files.openRW(path.$());
+                long fd2 = Files.openRW(path.chop$().put(".2").$());
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+                long mmap = 0;
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long size2Gb = (2L << 30) + 4096;
+
+                try {
+                    Files.truncate(fd1, size2Gb);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, size2Gb - 8);
+
+                    // Check write call works
+                    mmap = Files.mmap(fd1, size2Gb, 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
+                    Files.truncate(fd2, size2Gb);
+
+                    // Check written data
+                    Assert.assertEquals(size2Gb, Files.write(fd2, mmap, size2Gb, 0));
+                    long long1 = Files.readULong(fd2, 0L);
+                    Assert.assertEquals(testValue, long1);
+                    long long2 = Files.readULong(fd2, size2Gb - 8);
+                    Assert.assertEquals(testValue, long2);
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Files.close(fd2);
+                    Files.munmap(mmap, size2Gb, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
+                    Files.remove(path.of(temp.getAbsolutePath()).$());
                 }
             }
         });

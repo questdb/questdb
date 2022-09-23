@@ -43,10 +43,13 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.number.OrderingComparison;
 import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -889,6 +892,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testVarColumnCopyLargePrefix() throws Exception {
+        ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
         executeWithPool(0,
                 (CairoEngine engine,
                  SqlCompiler compiler,
@@ -911,12 +915,27 @@ public class O3Test extends AbstractO3Test {
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
                     TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
 
+                    // Check that there was an attempt to write a file bigger than 2GB
+                    long max = 0;
+                    for (Long wLen : writeLen) {
+                        if (wLen > max) {
+                            max = wLen;
+                        }
+                    }
+                    MatcherAssert.assertThat(max, OrderingComparison.greaterThan(2L << 30));
+
                     TestUtils.assertSql(compiler, sqlExecutionContext, "select * from " + tableName + " limit -5,5", sink, "str\tts\n" +
                             strColVal + "\t2022-02-24T00:51:34.357000Z\n" +
                             strColVal + "\t2022-02-24T00:51:34.358000Z\n" +
                             strColVal + "\t2022-02-24T00:51:34.359000Z\n" +
                             "abcd\t2022-02-24T00:51:34.359000Z\n" +
                             strColVal + "\t2022-02-24T00:51:34.360000Z\n");
+                }, new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long address, long len, long offset) {
+                        writeLen.add(len);
+                        return super.write(fd, address, len, offset);
+                    }
                 });
     }
 
