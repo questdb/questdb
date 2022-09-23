@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.log.Log;
@@ -3654,14 +3653,6 @@ public class O3FailureTest extends AbstractO3Test {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
-                if (fd == targetFd.get() && counter.decrementAndGet() == 0) {
-                    return -1;
-                }
-                return super.mmap(fd, len, flags, mode, memoryTag);
             }
 
             @Override

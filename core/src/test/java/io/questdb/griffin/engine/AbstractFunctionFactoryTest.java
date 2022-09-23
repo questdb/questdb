@@ -471,18 +471,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             closeFunctions();
         }
 
-        public void andAssert(byte expected) {
-            Assert.assertEquals(expected, function1.getByte(record));
-            Assert.assertEquals(expected, function2.getByte(record));
-            closeFunctions();
-        }
-
-        public void andAssert(short expected) {
-            Assert.assertEquals(expected, function1.getShort(record));
-            Assert.assertEquals(expected, function2.getShort(record));
-            closeFunctions();
-        }
-
         public void andAssert(long expected) {
             Assert.assertEquals(expected, function1.getLong(record));
             Assert.assertEquals(expected, function2.getLong(record));
@@ -512,13 +500,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         public void andAssertLong256(Long256 expected) {
-            Assert.assertTrue(expected.equals(function1.getLong256A(record)));
-            Assert.assertTrue(expected.equals(function2.getLong256A(record)));
+            Assert.assertEquals(expected, function1.getLong256A(record));
+            Assert.assertEquals(expected, function2.getLong256A(record));
             closeFunctions();
-        }
-
-        public Record getRecord() {
-            return record;
         }
 
         private void assertString(Function func, CharSequence expected) {

@@ -229,6 +229,7 @@ public class FastMap implements Map, Reallocatable {
         return key.init();
     }
 
+    @Override
     public void restoreInitialCapacity() {
         this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
         this.kLimit = kStart + this.initialPageSize;

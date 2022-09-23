@@ -54,8 +54,9 @@ final class FiltersCompiler {
             message.clear();
         }
 
-        // We are not going to allocate and convert strings,
-        // so instead we fill it char by char (ASCII char).
+        // We are not going to allocate and convert strings, so instead
+        // we fill it char by char (ASCII char) from the C++ side.
+        @SuppressWarnings("unused")
         public void put(byte b) {
             message.put((char) b);
         }
