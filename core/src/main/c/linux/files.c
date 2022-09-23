@@ -78,7 +78,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     size_t len = fileStat.st_size;
     while (len > 0) {
         ssize_t writtenLen = sendfile(output, input, NULL, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
-        if (writtenLen <= 0) {
+        if (writtenLen <= 0
+            // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
+            && errno != EINTR) {
             break;
         }
         len -= writtenLen;

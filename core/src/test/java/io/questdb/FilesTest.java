@@ -30,6 +30,7 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -43,6 +44,9 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.lessThan;
 
 public class FilesTest {
     @Rule
@@ -419,6 +423,39 @@ public class FilesTest {
     }
 
     @Test
+    public void testReadFails() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd1 = Files.openRW(path.$());
+                long fileSize = 4096;
+                long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+
+                try {
+                    Files.truncate(fd1, fileSize);
+
+                    MatcherAssert.assertThat(Files.read(fd1, mem, 8L, 0), is(8L));
+                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize, -1), lessThan(0L));
+                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize, fileSize), is(0L));
+                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize + 8, fileSize), is(0L));
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Unsafe.free(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReadOver2GB() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
@@ -498,7 +535,9 @@ public class FilesTest {
                     int result = Files.copy(path1, path2);
 
                     // Check written data
-                    Assert.assertEquals(0, result);
+                    // Windows return 1 but Linux and others return 0 on success
+                    // All return negative in case of error.
+                    MatcherAssert.assertThat(result, greaterThanOrEqualTo(0));
 
                     fd2 = Files.openRO(path2.$());
                     long long1 = Files.readULong(fd2, 0L);
@@ -539,6 +578,38 @@ public class FilesTest {
                     Assert.assertEquals(0, Files.length(path));
                 } finally {
                     Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWriteFails() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+                long fd1 = Files.openRW(path.$());
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long fileSize = (2L << 30) + 4096;
+
+                try {
+                    Files.truncate(fd1, fileSize);
+
+                    MatcherAssert.assertThat(Files.write(fd1, mem, 8, 0), is(8L));
+                    MatcherAssert.assertThat(Files.write(fd1, mem, -1, fileSize), is(-1L));
+                    MatcherAssert.assertThat(Files.write(-1, mem, 8, fileSize), is(-1L));
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
                 }
             }
         });
