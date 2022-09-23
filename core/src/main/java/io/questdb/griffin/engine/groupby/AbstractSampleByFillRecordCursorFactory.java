@@ -119,9 +119,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             return initFunctionsAndCursor(executionContext, baseCursor);
         } catch (Throwable ex) {
             baseCursor.close();
-            if (rawCursor != null) {
-                rawCursor.close();
-            }
+            Misc.free(rawCursor);
             throw ex;
         }
     }

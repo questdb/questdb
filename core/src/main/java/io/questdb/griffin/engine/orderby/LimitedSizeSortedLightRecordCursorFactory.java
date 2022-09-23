@@ -29,8 +29,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.AbstractRedBlackTree;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 
 /**
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
@@ -80,9 +80,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             return cursor;
         } catch (Throwable ex) {
             baseCursor.close();
-            if (cursor != null) {
-                cursor.close();
-            }
+            Misc.free(cursor);
             throw ex;
         }
     }

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 
 class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain chain;
@@ -51,11 +52,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
             chain.close();
             isOpen = false;
         }
-        if (base != null) {
-            base.close();
-            base = null;
-            baseRecord = null;
-        }
+        base = Misc.free(base);
+        baseRecord = null;
     }
 
     @Override

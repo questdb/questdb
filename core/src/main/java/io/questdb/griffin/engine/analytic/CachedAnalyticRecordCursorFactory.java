@@ -170,7 +170,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         private void reallocate(ObjList list) {
-            for (int i = 0; i < list.size(); i++) {
+            for (int i = 0, n = list.size(); i < n; i++) {
                 if (list.getQuick(i) instanceof Reallocatable) {
                     ((Reallocatable) list.getQuick(i)).reallocate();
                 }
