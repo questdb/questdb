@@ -73,6 +73,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour", sqlExecutionContext);
 
+            snapshotMemoryUsage();
             final String sql = "select * from x where s in ('C','D') limit 10";
             try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getClass());
@@ -523,6 +524,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         compiler.compile("create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour", sqlExecutionContext);
 
+        snapshotMemoryUsage();
         final String sql = "select * from x where s in ('C','D') limit 10";
         try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getClass());

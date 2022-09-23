@@ -39,7 +39,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
-
+    //factory keeps a reference but allocation lifecycle is governed by cursor
     protected final Map map;
     protected final ObjList<GroupByFunction> groupByFunctions;
     protected final RecordSink mapSink;
@@ -66,15 +66,19 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     @Override
     protected void _close() {
         super._close();
-        Misc.free(map);
+        getRawCursor().close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        AbstractNoRecordSampleByCursor rawCursor = null;
         try {
-            map.clear();
+            rawCursor = getRawCursor();
+            if (rawCursor instanceof Reallocatable) {
+                ((Reallocatable) rawCursor).reallocate();
+            }
 
             // This factory fills gaps in data. To do that we
             // have to know all possible key values. Essentially, every time
@@ -102,6 +106,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             // empty map? this means that base cursor was empty
             if (map.size() == 0) {
                 baseCursor.close();
+                rawCursor.close();
                 return EmptyTableNoSizeRecordCursor.INSTANCE;
             }
 
@@ -114,6 +119,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             return initFunctionsAndCursor(executionContext, baseCursor);
         } catch (Throwable ex) {
             baseCursor.close();
+            Misc.free(rawCursor);
             throw ex;
         }
     }

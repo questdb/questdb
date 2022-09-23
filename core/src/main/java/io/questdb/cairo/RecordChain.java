@@ -35,7 +35,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI {
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI, Reallocatable {
 
     private final long[] columnOffsets;
     private final MemoryARW mem;
@@ -128,6 +128,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public Record getRecordB() {
         return recordB;
+    }
+
+    @Override
+    public void reallocate() {
+        //nothing to do here        
     }
 
     @Override

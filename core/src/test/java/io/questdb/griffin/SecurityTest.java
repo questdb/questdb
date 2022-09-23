@@ -157,6 +157,14 @@ public class SecurityTest extends AbstractGriffinTest {
         Misc.free(memoryRestrictedEngine);
     }
 
+    @After
+    public void tearDown() {
+        //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
+        memoryRestrictedEngine.getTableIdGenerator().close();
+        memoryRestrictedEngine.clear();
+        super.tearDown();
+    }
+
     @Test
     public void testAlterTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
