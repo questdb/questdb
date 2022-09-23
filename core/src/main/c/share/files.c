@@ -112,7 +112,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
         size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
         read = pread((int) fd, (void *) (address), count, readOffset);
         if (read < 0
-            // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
+            // Signals should not interrupt pread on Linux but just to align with POSIX standards
             && errno != EINTR) {
             // If process interrupted, do another spin.
             // Negative means error. Return negative.
