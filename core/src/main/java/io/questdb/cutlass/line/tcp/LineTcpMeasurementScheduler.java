@@ -248,8 +248,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     long getNextPublisherEventSequence(int writerWorkerId) {
         assert isOpen();
         long seq;
-        //noinspection StatementWithEmptyBody
         while ((seq = pubSeq[writerWorkerId].next()) == -2) {
+            Os.pause();
         }
         return seq;
     }
