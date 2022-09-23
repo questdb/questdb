@@ -27,6 +27,8 @@ package io.questdb.griffin.model;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
+import java.util.Objects;
+
 public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
@@ -72,5 +74,18 @@ public class QueryColumn implements Mutable {
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
         return this;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QueryColumn that = (QueryColumn) o;
+        return includeIntoWildcard == that.includeIntoWildcard && Objects.equals(alias, that.alias) && Objects.equals(ast, that.ast);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(alias, ast, includeIntoWildcard);
     }
 }

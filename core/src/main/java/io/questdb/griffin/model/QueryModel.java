@@ -25,14 +25,23 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 import java.util.ArrayDeque;
+import java.util.Iterator;
+import java.util.Objects;
 
 import static io.questdb.griffin.SqlKeywords.isAndKeyword;
 
+/**
+ * Important note: Make sure to update clear, equals and hashCode methods, as well as
+ * the unit tests, when you're adding a new field to this class. Instances of QueryModel
+ * are reused across query compilation, so making sure that we reset all fields correctly
+ * is important.
+ */
 public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
@@ -118,7 +127,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode constWhereClause;
     private QueryModel nestedModel;
     private ExpressionNode tableName;
-    private long tableVersion;
+    private long tableVersion = -1;
     private Function tableNameFunction;
     private ExpressionNode alias;
     private ExpressionNode timestamp;
@@ -126,7 +135,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode sampleByUnit;
     private JoinContext context;
     private ExpressionNode joinCriteria;
-    private int joinType;
+    private int joinType = JOIN_INNER;
     private int joinKeywordPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
     private ExpressionNode limitLo;
@@ -147,10 +156,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel unionModel;
     private int setOperationType;
     private int modelPosition = 0;
-    private int orderByAdviceMnemonic;
-    private int tableId;
+    private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+    private int tableId = -1;
     private boolean isUpdateModel;
-    private int modelType;
+    private int modelType = ExecutionModel.QUERY;
     private QueryModel updateTableModel;
     private String updateTableName;
     private boolean artificialStar;
@@ -298,6 +307,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return true;
     }
 
+    @Override
     public void clear() {
         bottomUpColumns.clear();
         aliasToColumnNameMap.clear();
@@ -306,7 +316,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         clearSampleBy();
         orderBy.clear();
         orderByDirection.clear();
+        orderByAdvice.clear();
+        orderByDirectionAdvice.clear();
         orderByPosition = 0;
+        orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         isSelectTranslation = false;
         groupBy.clear();
         dependencies.clear();
@@ -1300,6 +1313,143 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             getNestedModel().toSink(sink);
             sink.put(")");
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QueryModel that = (QueryModel) o;
+        // joinModels always contain this as the first element, so we need to compare them manually.
+        if (joinModels.size() != that.joinModels.size()) {
+            return false;
+        }
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (!joinModels.getQuick(i).equals(that.joinModels.getQuick(i))) {
+                return false;
+            }
+        }
+        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
+        if (sqlNodeStack.size() != that.sqlNodeStack.size()) {
+            return false;
+        }
+        Iterator<ExpressionNode> i1 = sqlNodeStack.iterator();
+        Iterator<ExpressionNode> i2 = that.sqlNodeStack.iterator();
+        while (i1.hasNext() && i2.hasNext()) {
+            ExpressionNode n1 = i1.next();
+            ExpressionNode n2 = i2.next();
+            if (!Objects.equals(n1, n2)) {
+                return false;
+            }
+        }
+        return orderByPosition == that.orderByPosition
+                && latestByType == that.latestByType
+                && tableVersion == that.tableVersion
+                && joinType == that.joinType
+                && joinKeywordPosition == that.joinKeywordPosition
+                && limitPosition == that.limitPosition
+                && isLimitImplemented == that.isLimitImplemented
+                && isSelectTranslation == that.isSelectTranslation
+                && selectModelType == that.selectModelType
+                && nestedModelIsSubQuery == that.nestedModelIsSubQuery
+                && distinct == that.distinct
+                && setOperationType == that.setOperationType
+                && modelPosition == that.modelPosition
+                && orderByAdviceMnemonic == that.orderByAdviceMnemonic
+                && tableId == that.tableId
+                && isUpdateModel == that.isUpdateModel
+                && modelType == that.modelType
+                && artificialStar == that.artificialStar
+                && Objects.equals(bottomUpColumns, that.bottomUpColumns)
+                && Objects.equals(topDownNameSet, that.topDownNameSet)
+                && Objects.equals(topDownColumns, that.topDownColumns)
+                && Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)
+                && Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)
+                && Objects.equals(aliasToColumnMap, that.aliasToColumnMap)
+                && Objects.equals(bottomUpColumnNames, that.bottomUpColumnNames)
+                && Objects.equals(orderBy, that.orderBy)
+                && Objects.equals(groupBy, that.groupBy)
+                && Objects.equals(orderByDirection, that.orderByDirection)
+                && Objects.equals(dependencies, that.dependencies)
+                && Objects.equals(orderedJoinModels1, that.orderedJoinModels1)
+                && Objects.equals(orderedJoinModels2, that.orderedJoinModels2)
+                && Objects.equals(columnAliasIndexes, that.columnAliasIndexes)
+                && Objects.equals(modelAliasIndexes, that.modelAliasIndexes)
+                && Objects.equals(expressionModels, that.expressionModels)
+                && Objects.equals(parsedWhere, that.parsedWhere)
+                && Objects.equals(parsedWhereConstants, that.parsedWhereConstants)
+                && Objects.equals(orderHash, that.orderHash)
+                && Objects.equals(joinColumns, that.joinColumns)
+                && Objects.equals(sampleByFill, that.sampleByFill)
+                && Objects.equals(latestBy, that.latestBy)
+                && Objects.equals(orderByAdvice, that.orderByAdvice)
+                && Objects.equals(orderByDirectionAdvice, that.orderByDirectionAdvice)
+                && Objects.equals(withClauseModel, that.withClauseModel)
+                && Objects.equals(updateSetColumns, that.updateSetColumns)
+                && Objects.equals(updateTableColumnTypes, that.updateTableColumnTypes)
+                && Objects.equals(updateTableColumnNames, that.updateTableColumnNames)
+                && Objects.equals(sampleByTimezoneName, that.sampleByTimezoneName)
+                && Objects.equals(sampleByOffset, that.sampleByOffset)
+                && Objects.equals(whereClause, that.whereClause)
+                && Objects.equals(backupWhereClause, that.backupWhereClause)
+                && Objects.equals(postJoinWhereClause, that.postJoinWhereClause)
+                && Objects.equals(constWhereClause, that.constWhereClause)
+                && Objects.equals(nestedModel, that.nestedModel)
+                && Objects.equals(tableName, that.tableName)
+                && Objects.equals(tableNameFunction, that.tableNameFunction)
+                && Objects.equals(alias, that.alias)
+                && Objects.equals(timestamp, that.timestamp)
+                && Objects.equals(sampleBy, that.sampleBy)
+                && Objects.equals(sampleByUnit, that.sampleByUnit)
+                && Objects.equals(context, that.context)
+                && Objects.equals(joinCriteria, that.joinCriteria)
+                && Objects.equals(orderedJoinModels, that.orderedJoinModels)
+                && Objects.equals(limitLo, that.limitLo)
+                && Objects.equals(limitHi, that.limitHi)
+                && Objects.equals(limitAdviceLo, that.limitAdviceLo)
+                && Objects.equals(limitAdviceHi, that.limitAdviceHi)
+                && Objects.equals(unionModel, that.unionModel)
+                && Objects.equals(updateTableModel, that.updateTableModel)
+                && Objects.equals(updateTableName, that.updateTableName);
+    }
+
+    @Override
+    public int hashCode() {
+        int hash = super.hashCode();
+        // joinModels always contain this as the first element, so we need to hash them manually.
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            hash = 31 * hash + Objects.hash(joinModels.getQuick(i));
+        }
+        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
+        for (ExpressionNode node : sqlNodeStack) {
+            hash = 31 * hash + Objects.hash(node);
+        }
+        return 31 * hash + Objects.hash(
+                bottomUpColumns, topDownNameSet, topDownColumns,
+                aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
+                bottomUpColumnNames, orderBy,
+                orderByPosition, groupBy, orderByDirection,
+                dependencies, orderedJoinModels1, orderedJoinModels2,
+                columnAliasIndexes, modelAliasIndexes, expressionModels,
+                parsedWhere, parsedWhereConstants,
+                orderHash, joinColumns, sampleByFill,
+                latestBy, orderByAdvice, orderByDirectionAdvice,
+                withClauseModel, updateSetColumns, updateTableColumnTypes,
+                updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
+                latestByType, whereClause, backupWhereClause,
+                postJoinWhereClause, constWhereClause, nestedModel,
+                tableName, tableVersion, tableNameFunction,
+                alias, timestamp, sampleBy,
+                sampleByUnit, context, joinCriteria,
+                joinType, joinKeywordPosition, orderedJoinModels,
+                limitLo, limitHi, limitPosition,
+                limitAdviceLo, limitAdviceHi, isLimitImplemented,
+                isSelectTranslation, selectModelType, nestedModelIsSubQuery,
+                distinct, unionModel, setOperationType,
+                modelPosition, orderByAdviceMnemonic, tableId,
+                isUpdateModel, modelType, updateTableModel,
+                updateTableName, artificialStar
+        );
     }
 
     public static final class QueryModelFactory implements ObjectFactory<QueryModel> {

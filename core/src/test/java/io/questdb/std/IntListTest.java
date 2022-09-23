@@ -32,8 +32,6 @@ public class IntListTest {
     public void testBinarySearchFuzz() {
         final int N = 997; // prime
         final int skipRate = 4;
-        final int dupeRate = 8;
-        final int dupeCountBound = 4;
         for (int c = 0; c < N; c++) {
             for (int i = 0; i < skipRate; i++) {
                 testBinarySearchFuzz0(c, i);
@@ -102,5 +100,4 @@ public class IntListTest {
         pos = -pos - 1;
         Assert.assertEquals(0, pos);
     }
-
 }
