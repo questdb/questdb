@@ -892,6 +892,8 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testVarColumnCopyLargePrefix() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
         executeWithPool(0,
                 (CairoEngine engine,
