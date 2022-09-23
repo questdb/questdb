@@ -138,6 +138,34 @@ public class IntHashSet extends AbstractIntHashSet {
         return list.toString();
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        IntHashSet that = (IntHashSet) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (int i = 0, n = list.size(); i < n; i++) {
+            int key = list.getQuick(i);
+            if (key != noEntryKeyValue && that.excludes(key)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += keys[i];
+            }
+        }
+        return hashCode;
+    }
+
     private void rehash() {
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;

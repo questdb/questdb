@@ -1706,6 +1706,10 @@ public final class SqlParser {
             }
             model.addBottomUpColumn(colPosition, col, false);
 
+            if (model.getColumns().size() == 1 && tok == null && Chars.equals(expr.token, '*')) {
+                throw err(lexer, tok, "'from' expected");
+            }
+
             if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparseLast();
                 break;
