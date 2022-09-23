@@ -41,7 +41,7 @@ public class WriterRowUtils {
                 throw ImplicitCastException.inconvertibleValue(0, hash, ColumnType.STRING, type);
             } else {
                 try {
-                    val = ColumnType.truncateGeoHashBits(
+                    val = GeoHashes.widen(
                             GeoHashes.fromString(hash, 0, charsRequired),
                             charsRequired * 5,
                             typeBits

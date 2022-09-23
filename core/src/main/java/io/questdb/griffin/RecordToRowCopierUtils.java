@@ -86,6 +86,7 @@ public class RecordToRowCopierUtils {
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
+        int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
         int implicitCastStrAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastStrAsFloat", "(Ljava/lang/CharSequence;)F");
         int implicitCastStrAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDouble", "(Ljava/lang/CharSequence;)D");
         int implicitCastStrAsByte = asm.poolMethod(SqlUtil.class, "implicitCastStrAsByte", "(Ljava/lang/CharSequence;)B");
@@ -99,9 +100,7 @@ public class RecordToRowCopierUtils {
         int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
-        int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
-        int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
-
+        int implicitCastGeoHashAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastGeoHashAsGeoHash", "(JII)J");
         int checkDoubleBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkDoubleBounds", "(DDDIII)V");
         int checkLongBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkLongBounds", "(JJJIII)V");
 
@@ -123,6 +122,21 @@ public class RecordToRowCopierUtils {
         int maxLongByte = asm.poolLongConst(Byte.MAX_VALUE);
         int minLongByte = asm.poolLongConst(Byte.MIN_VALUE);
 
+        // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
+        // the correct value.
+        int n = toColumnFilter.getColumnCount();
+
+        // pool column type constants
+        int toColumnType_0 = asm.getPoolCount();
+        int fromColumnType_0 = toColumnType_0 + 1;
+        for (int i = 0; i < n; i++) {
+            asm.poolIntConst(
+                    to.getColumnType(
+                            toColumnFilter.getColumnIndexFactored(i))
+            );
+            asm.poolIntConst(from.getColumnType(i));
+        }
+
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
 
@@ -136,7 +150,6 @@ public class RecordToRowCopierUtils {
 
         asm.startMethod(copyNameIndex, copySigIndex, 15, 3);
 
-        int n = toColumnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
 
             final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
@@ -690,15 +703,8 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutSymChar, 2);
                             break;
                         case ColumnType.GEOBYTE:
-                            asm.invokeStatic(encodeCharAsGeoByte);
-                            if (ColumnType.getGeoHashBits(toColumnType) < 5) {
-                                asm.i2l();
-                                asm.iconst(ColumnType.getGeoHashTypeWithBits(5));
-                                asm.iconst(toColumnType);
-                                asm.invokeStatic(truncateGeoHashTypes);
-                                asm.l2i();
-                                asm.i2b();
-                            }
+                            asm.ldc(toColumnType_0 + i * 2);
+                            asm.invokeStatic(implicitCastCharAsGeoHash);
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         default:
@@ -794,9 +800,10 @@ public class RecordToRowCopierUtils {
                     if (fromColumnType != toColumnType && (fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOBYTE)) {
                         // truncate within the same storage type
                         asm.i2l();
-                        asm.iconst(fromColumnType);
-                        asm.iconst(toColumnType);
-                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.ldc(fromColumnType_0 + i * 2);
+                        // toColumnType
+                        asm.ldc(toColumnType_0 + i * 2);
+                        asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                         asm.l2i();
                         asm.i2b();
                     }
@@ -806,17 +813,17 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetGeoShort, 1);
                     if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
                         asm.i2l();
-                        asm.iconst(fromColumnType);
-                        asm.iconst(toColumnType);
-                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.ldc(fromColumnType_0 + i * 2);
+                        asm.ldc(toColumnType_0 + i * 2);
+                        asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                         asm.l2i();
                         asm.i2b();
                         asm.invokeInterface(wPutByte, 2);
                     } else if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOSHORT) {
                         asm.i2l();
-                        asm.iconst(fromColumnType);
-                        asm.iconst(toColumnType);
-                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.ldc(fromColumnType_0 + i * 2);
+                        asm.ldc(toColumnType_0 + i * 2);
+                        asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                         asm.l2i();
                         asm.i2s();
                         asm.invokeInterface(wPutShort, 2);
@@ -829,18 +836,18 @@ public class RecordToRowCopierUtils {
                     switch (ColumnType.tagOf(toColumnType)) {
                         case ColumnType.GEOBYTE:
                             asm.i2l();
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.ldc(fromColumnType_0 + i * 2);
+                            asm.ldc(toColumnType_0 + i * 2);
+                            asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                             asm.l2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.GEOSHORT:
                             asm.i2l();
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.ldc(fromColumnType_0 + i * 2);
+                            asm.ldc(toColumnType_0 + i * 2);
+                            asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                             asm.l2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
@@ -848,9 +855,9 @@ public class RecordToRowCopierUtils {
                         default:
                             if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOINT) {
                                 asm.i2l();
-                                asm.iconst(fromColumnType);
-                                asm.iconst(toColumnType);
-                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.ldc(fromColumnType_0 + i * 2);
+                                asm.ldc(toColumnType_0 + i * 2);
+                                asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                                 asm.l2i();
                             }
                             asm.invokeInterface(wPutInt, 2);
@@ -861,33 +868,33 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetGeoLong, 1);
                     switch (ColumnType.tagOf(toColumnType)) {
                         case ColumnType.GEOBYTE:
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.ldc(fromColumnType_0 + i * 2);
+                            asm.ldc(toColumnType_0 + i * 2);
+                            asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                             asm.l2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.GEOSHORT:
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.ldc(fromColumnType_0 + i * 2);
+                            asm.ldc(toColumnType_0 + i * 2);
+                            asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                             asm.l2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.GEOINT:
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.ldc(fromColumnType_0 + i * 2);
+                            asm.ldc(toColumnType_0 + i * 2);
+                            asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                             asm.l2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         default:
                             if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOLONG) {
-                                asm.iconst(fromColumnType);
-                                asm.iconst(toColumnType);
-                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.ldc(fromColumnType_0 + i * 2);
+                                asm.ldc(toColumnType_0 + i * 2);
+                                asm.invokeStatic(implicitCastGeoHashAsGeoHash);
                             }
                             asm.invokeInterface(wPutLong, 3);
                             break;

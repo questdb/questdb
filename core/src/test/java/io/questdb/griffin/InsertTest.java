@@ -89,7 +89,7 @@ public class InsertTest extends AbstractGriffinTest {
                 while (cursor.hasNext()) {
                     Assert.assertEquals(rnd.nextGeoHashByte(6), record.getGeoByte(0));
                     Assert.assertEquals(rnd.nextGeoHashShort(12), record.getGeoShort(1));
-                    Assert.assertEquals(ColumnType.truncateGeoHashBits(rnd.nextGeoHashInt(29), 29, 27), record.getGeoInt(2));
+                    Assert.assertEquals(GeoHashes.widen(rnd.nextGeoHashInt(29), 29, 27), record.getGeoInt(2));
                     Assert.assertEquals(rnd.nextGeoHashLong(44), record.getGeoLong(3));
                 }
             }

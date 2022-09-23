@@ -280,18 +280,6 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    public static long truncateGeoHashBits(long value, int fromBits, int toBits) {
-        return value >> (fromBits - toBits);
-    }
-
-    // This method used by row copier assembler
-    public static long truncateGeoHashTypes(long value, int fromType, int toType) {
-        final int fromBits = getGeoHashBits(fromType);
-        final int toBits = getGeoHashBits(toType);
-        assert fromBits >= toBits;
-        return truncateGeoHashBits(value, fromBits, toBits);
-    }
-
     private static int mkGeoHashType(int bits, short baseType) {
         return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }

@@ -24,16 +24,69 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SqlUtilTest {
+
+    @Test
+    public void testImplicitCastCharAsGeoHash() {
+        int bits = 5;
+        long hash = SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));
+        StringSink sink = new StringSink();
+        GeoHashes.appendChars(hash, bits / 5, sink);
+        TestUtils.assertEquals("c", sink);
+    }
+
+    @Test
+    public void testImplicitCastCharAsGeoHashInvalidChar() {
+        testImplicitCastCharAsGeoHashInvalidChar0('o');
+        testImplicitCastCharAsGeoHashInvalidChar0('O');
+        testImplicitCastCharAsGeoHashInvalidChar0('l');
+        testImplicitCastCharAsGeoHashInvalidChar0('L');
+        testImplicitCastCharAsGeoHashInvalidChar0('i');
+        testImplicitCastCharAsGeoHashInvalidChar0('I');
+        testImplicitCastCharAsGeoHashInvalidChar0('-');
+    }
+
+    private void testImplicitCastCharAsGeoHashInvalidChar0(char c) {
+        int bits = 5;
+        try {
+            SqlUtil.implicitCastCharAsGeoHash(c, ColumnType.getGeoHashTypeWithBits(bits));
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)] tuple: 0", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testImplicitCastCharAsGeoHashNarrowing() {
+        int bits = 6;
+        try {
+            SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains("inconvertible value: c [CHAR -> GEOHASH(6b)] tuple: 0", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testImplicitCastCharAsGeoHashWidening() {
+        int bits = 4;
+        long hash = SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));
+        StringSink sink = new StringSink();
+        GeoHashes.appendBinary(hash, bits, sink);
+        TestUtils.assertEquals("0101", sink);
+    }
 
     @Test
     public void testParseStrByte() {
@@ -78,28 +131,6 @@ public class SqlUtilTest {
     }
 
     @Test
-    public void testParseStrTimestamp() {
-        // this is required to initialize calendar indexes ahead of using it
-        // otherwise sink can end up having odd characters
-        TimestampFormatUtils.init();
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsTimestamp(null));
-        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55.123Z")));
-        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("200")));
-        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("-900")));
-
-        // not a number
-        try {
-            SqlUtil.implicitCastStrAsDate("hello");
-            Assert.fail();
-        } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> DATE] tuple: 0", e.getFlyweightMessage());
-        }
-    }
-
-    @Test
     public void testParseStrDouble() {
         //noinspection SimplifiableAssertion
         Assert.assertFalse(SqlUtil.implicitCastStrAsDouble(null) == SqlUtil.implicitCastStrAsDouble(null));
@@ -126,8 +157,12 @@ public class SqlUtilTest {
         Assert.assertEquals(-899.23, SqlUtil.implicitCastStrAsFloat("-899.23"), 0.001);
 
         // overflow
-        //noinspection SimplifiableAssertion
-        Assert.assertTrue(Float.POSITIVE_INFINITY == SqlUtil.implicitCastStrAsFloat("1e210"));
+        try {
+            SqlUtil.implicitCastStrAsFloat("1e210");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: 1e210 [STRING -> FLOAT] tuple: 0", e.getFlyweightMessage());
+        }
 
         // not a number
         try {
@@ -206,6 +241,28 @@ public class SqlUtilTest {
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> SHORT] tuple: 0", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseStrTimestamp() {
+        // this is required to initialize calendar indexes ahead of using it
+        // otherwise sink can end up having odd characters
+        TimestampFormatUtils.init();
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsTimestamp(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("-900")));
+
+        // not a number
+        try {
+            SqlUtil.implicitCastStrAsDate("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: hello [STRING -> DATE] tuple: 0", e.getFlyweightMessage());
         }
     }
 }

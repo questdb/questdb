@@ -33,8 +33,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.*;
-import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyFactory;
@@ -65,7 +63,6 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-    private static final CastCharToStrFunctionFactory CHAR_TO_STR_FUNCTION_FACTORY = new CastCharToStrFunctionFactory();
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
@@ -1268,7 +1265,8 @@ public class SqlCompiler implements Closeable {
         while (cursor.hasNext()) {
             CharSequence str = record.getStr(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));                copier.copy(record, row);
+            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));
+            copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
                 writer.commitWithLag(commitLag);
@@ -1653,13 +1651,13 @@ public class SqlCompiler implements Closeable {
                         int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
                         if (metadataColumnIndex > -1) {
                             final ExpressionNode node = model.getRowTupleValues(tupleIndex).getQuick(i);
-                            Function function = functionParser.parseFunction(
+                            final Function function = functionParser.parseFunction(
                                     node,
                                     GenericRecordMetadata.EMPTY,
                                     executionContext
                             );
 
-                            function = validateAndConsume(
+                            insertValidateFunctionAndAddToList(
                                     model,
                                     tupleIndex,
                                     valueFunctions,
@@ -1696,7 +1694,7 @@ public class SqlCompiler implements Closeable {
                         final ExpressionNode node = values.getQuick(i);
 
                         Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                        validateAndConsume(
+                        insertValidateFunctionAndAddToList(
                                 model,
                                 tupleIndex,
                                 valueFunctions,
@@ -1877,6 +1875,43 @@ public class SqlCompiler implements Closeable {
             }
         }
         return compiledQuery.ofInsertAsSelect(insertCount);
+    }
+
+    private void insertValidateFunctionAndAddToList(
+            InsertModel model,
+            int tupleIndex,
+            ObjList<Function> valueFunctions,
+            RecordMetadata metadata,
+            int metadataTimestampIndex,
+            int insertColumnIndex,
+            int metadataColumnIndex,
+            Function function,
+            int functionPosition,
+            BindVariableService bindVariableService
+    ) throws SqlException {
+
+        final int columnType = metadata.getColumnType(metadataColumnIndex);
+        if (function.isUndefined()) {
+            function.assignType(columnType, bindVariableService);
+        }
+
+        if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
+            if (metadataColumnIndex == metadataTimestampIndex) {
+                return;
+            }
+
+            valueFunctions.add(function);
+            listColumnFilter.add(metadataColumnIndex + 1);
+            return;
+        }
+
+        throw SqlException.inconvertibleTypes(
+                functionPosition,
+                function.getType(),
+                model.getRowTupleValues(tupleIndex).getQuick(insertColumnIndex).token,
+                metadata.getColumnType(metadataColumnIndex),
+                metadata.getColumnName(metadataColumnIndex)
+        );
     }
 
     private ExecutionModel lightlyValidateInsertModel(InsertModel model) throws SqlException {
@@ -2298,70 +2333,6 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");
         }
         throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
-    }
-
-    private Function validateAndConsume(
-            InsertModel model,
-            int tupleIndex,
-            ObjList<Function> valueFunctions,
-            RecordMetadata metadata,
-            int metadataTimestampIndex,
-            int insertColumnIndex,
-            int metadataColumnIndex,
-            Function function,
-            int functionPosition,
-            BindVariableService bindVariableService
-    ) throws SqlException {
-
-        final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (function.isUndefined()) {
-            function.assignType(columnType, bindVariableService);
-        }
-
-        if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
-            if (metadataColumnIndex == metadataTimestampIndex) {
-                return function;
-            }
-            // cast char and string to target column types
-            switch (ColumnType.tagOf(function.getType())) {
-                case ColumnType.CHAR:
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.GEOBYTE:
-                        case ColumnType.GEOSHORT:
-                        case ColumnType.GEOINT:
-                        case ColumnType.GEOLONG:
-                            function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
-                            break;
-                        default:
-                            // no cast by default
-                            break;
-                    }
-                    break;
-                case ColumnType.STRING:
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.GEOBYTE:
-                        case ColumnType.GEOSHORT:
-                        case ColumnType.GEOINT:
-                        case ColumnType.GEOLONG:
-                            function = CastStrToGeoHashFunctionFactory.newInstance(functionPosition, columnType, function);
-                            break;
-                        default:
-                            // no cast by default
-                            break;
-                    }
-            }
-            valueFunctions.add(function);
-            listColumnFilter.add(metadataColumnIndex + 1);
-            return function;
-        }
-
-        throw SqlException.inconvertibleTypes(
-                functionPosition,
-                function.getType(),
-                model.getRowTupleValues(tupleIndex).getQuick(insertColumnIndex).token,
-                metadata.getColumnType(metadataColumnIndex),
-                metadata.getColumnName(metadataColumnIndex)
-        );
     }
 
     private InsertModel validateAndOptimiseInsertAsSelect(

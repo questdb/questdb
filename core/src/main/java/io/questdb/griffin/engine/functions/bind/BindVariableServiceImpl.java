@@ -925,7 +925,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 if (fromBits == toBits) {
                     ((GeoHashBindVariable) function).value = value;
                 } else if (fromBits > toBits) {
-                    ((GeoHashBindVariable) function).value = ColumnType.truncateGeoHashBits(value, fromBits, toBits);
+                    ((GeoHashBindVariable) function).value = GeoHashes.widen(value, fromBits, toBits);
                 } else if (name != null) {
                     throw SqlException.$(0, "inconvertible types: ")
                             .put(ColumnType.nameOf(type))

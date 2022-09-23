@@ -229,6 +229,10 @@ public class BytecodeAssembler {
         return codeStart;
     }
 
+    public int getPoolCount() {
+        return poolCount;
+    }
+
     public void getfield(int index) {
         putByte(0xb4);
         putShort(index);
@@ -267,14 +271,15 @@ public class BytecodeAssembler {
             putByte(iconst_m1);
         } else if (v > -1 && v < 6) {
             putByte(iconst_0 + v);
-        } else if (v < 0) {
+        } else if (v < 0 && v >= Short.MIN_VALUE) {
             putByte(sipush);
             putShort(v);
-        } else if (v < 128) {
+        } else if (v < 128 && v >= Short.MIN_VALUE) {
             putByte(bipush);
             putByte(v);
         } else {
             putByte(sipush);
+            assert v >= Short.MIN_VALUE && v <= Short.MAX_VALUE;
             putShort(v);
         }
     }
@@ -469,8 +474,24 @@ public class BytecodeAssembler {
         return classCache.valueAt(index);
     }
 
+    public int poolDoubleConst(double value) {
+        putByte(0x06);
+        putDouble(value);
+        int index = poolCount;
+        poolCount += 2;
+        return index;
+    }
+
     public int poolField(int classIndex, int nameAndTypeIndex) {
         return poolRef(0x09, classIndex, nameAndTypeIndex);
+    }
+
+    public int poolIntConst(int value) {
+        putByte(0x03);
+        putInt(value);
+        int index = poolCount;
+        poolCount += 1;
+        return index;
     }
 
     public int poolInterfaceMethod(Class<?> clazz, String name, String sig) {
@@ -479,14 +500,6 @@ public class BytecodeAssembler {
 
     public int poolInterfaceMethod(int classIndex, String name, String sig) {
         return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));
-    }
-
-    public int poolDoubleConst(double value) {
-        putByte(0x06);
-        putDouble(value);
-        int index = poolCount;
-        poolCount += 2;
-        return index;
     }
 
     public int poolLongConst(long value) {
@@ -574,6 +587,13 @@ public class BytecodeAssembler {
         buf.put((byte) b);
     }
 
+    public void putDouble(double value) {
+        if (buf.remaining() < 4) {
+            resize();
+        }
+        buf.putDouble(value);
+    }
+
     public void putITEM_Integer() {
         putByte(0x01);
     }
@@ -589,13 +609,6 @@ public class BytecodeAssembler {
 
     public void putITEM_Top() {
         putByte(0);
-    }
-
-    public void putDouble(double value) {
-        if (buf.remaining() < 4) {
-            resize();
-        }
-        buf.putDouble(value);
     }
 
     public void putLong(long value) {

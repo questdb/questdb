@@ -1887,18 +1887,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table geohash (geohash geohash(1c))",
                 null,
                 "insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
                 "geohash\n" +
                         "q\n" +
-                        "\n" +
-                        "\n" +
+                        "q\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
                         "e\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n",
+                        "q\n" +
+                        "u\n",
                 true,
                 true,
                 true
@@ -1913,18 +1913,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table geohash (geohash geohash(4b))",
                 null,
                 "insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
                 "geohash\n" +
                         "1011\n" +
-                        "\n" +
-                        "\n" +
+                        "1011\n" +
                         "1101\n" +
-                        "1101\n" +
-                        "\n" +
+                        "0110\n" +
+                        "0110\n" +
+                        "0110\n" +
                         "0110\n" +
                         "1101\n" +
-                        "1101\n" +
-                        "\n",
+                        "1011\n" +
+                        "1101\n",
                 true,
                 true,
                 true

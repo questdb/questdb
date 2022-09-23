@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
@@ -54,18 +55,6 @@ public class SqlUtil {
     ) throws SqlException {
         model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
         model.setArtificialStar(true);
-    }
-
-    public static char implicitCastStrAsChar(CharSequence value) {
-        if (value == null || value.length() == 0) {
-            return 0;
-        }
-
-        if (value.length() == 1) {
-            return value.charAt(0);
-        }
-
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.CHAR);
     }
 
     // used by Copier assembler
@@ -115,6 +104,46 @@ public class SqlUtil {
         return null;
     }
 
+    // used by bytecode assembler
+    @SuppressWarnings("unused")
+    public static byte implicitCastCharAsByte(char value, int toType) {
+        return implicitCastCharAsType(value, 0, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // used by copier bytecode assembler
+    public static byte implicitCastCharAsGeoHash(char value, int toType) {
+        int v;
+        // '0' .. '9' and 'A-Z', excl 'A', 'I', 'L', 'O'
+        if ((value >= '0' && value <= '9') || ((v = value | 32) > 'a' && v <= 'z' && v != 'i' && v != 'l' && v != 'o')) {
+            int toBits = ColumnType.getGeoHashBits(toType);
+            if (toBits < 5) {
+                // widening
+                return (byte) GeoHashes.widen(GeoHashes.encodeChar(value), 5, toBits);
+            }
+
+            if (toBits == 5) {
+                return GeoHashes.encodeChar(value);
+            }
+        }
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.CHAR, toType);
+    }
+
+    public static byte implicitCastCharAsType(char value, int tupleIndex, int toType) {
+        byte v = (byte) (value - '0');
+        if (v > -1 && v < 10) {
+            return v;
+        }
+        throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
+    }
+
+    public static long implicitCastGeoHashAsGeoHash(long value, int fromType, int toType) {
+        final int fromBits = ColumnType.getGeoHashBits(fromType);
+        final int toBits = ColumnType.getGeoHashBits(toType);
+        assert fromBits >= toBits;
+        return GeoHashes.widen(value, fromBits, toBits);
+    }
+
     public static byte implicitCastStrAsByte(CharSequence value) {
         if (value != null) {
             try {
@@ -129,16 +158,16 @@ public class SqlUtil {
         return 0;
     }
 
-    public static byte implicitCastCharAsType(char value, int tupleIndex, int toType) {
-        byte v = (byte) (value - '0');
-        if (v > -1 && v < 10) {
-            return v;
+    public static char implicitCastStrAsChar(CharSequence value) {
+        if (value == null || value.length() == 0) {
+            return 0;
         }
-        throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
-    }
 
-    public static byte implicitCastCharAsByte(char value, int toType) {
-        return implicitCastCharAsType(value, 0, toType);
+        if (value.length() == 1) {
+            return value.charAt(0);
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.CHAR);
     }
 
     public static long implicitCastStrAsDate(CharSequence value) {
@@ -170,23 +199,6 @@ public class SqlUtil {
         return Double.NaN;
     }
 
-    public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
-        try {
-            if (value != null) {
-                Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
-            } else {
-                long256Acceptor.setAll(
-                        Long256Impl.NULL_LONG256.getLong0(),
-                        Long256Impl.NULL_LONG256.getLong1(),
-                        Long256Impl.NULL_LONG256.getLong2(),
-                        Long256Impl.NULL_LONG256.getLong3()
-                );
-            }
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.LONG256);
-        }
-    }
-
     public static float implicitCastStrAsFloat(CharSequence value) {
         if (value != null) {
             try {
@@ -196,23 +208,6 @@ public class SqlUtil {
             }
         }
         return Float.NaN;
-    }
-
-    /**
-     * Parses partial representation of timestamp with time zone.
-     *
-     * @param value      the characters representing timestamp
-     * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
-     * @param columnType the target column type, which might be different from timestamp
-     * @return epoch offset
-     * @throws ImplicitCastException inconvertible type error.
-     */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
-        }
     }
 
     public static int implicitCastStrAsInt(CharSequence value) {
@@ -235,6 +230,23 @@ public class SqlUtil {
             }
         }
         return Numbers.LONG_NaN;
+    }
+
+    public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
+        try {
+            if (value != null) {
+                Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+            } else {
+                long256Acceptor.setAll(
+                        Long256Impl.NULL_LONG256.getLong0(),
+                        Long256Impl.NULL_LONG256.getLong1(),
+                        Long256Impl.NULL_LONG256.getLong2(),
+                        Long256Impl.NULL_LONG256.getLong3()
+                );
+            }
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.LONG256);
+        }
     }
 
     public static short implicitCastStrAsShort(@Nullable CharSequence value) {
@@ -270,6 +282,23 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NaN;
+    }
+
+    /**
+     * Parses partial representation of timestamp with time zone.
+     *
+     * @param value      the characters representing timestamp
+     * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
+     * @param columnType the target column type, which might be different from timestamp
+     * @return epoch offset
+     * @throws ImplicitCastException inconvertible type error.
+     */
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
+        }
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {

@@ -796,18 +796,33 @@ public final class Numbers {
             dp = lim;//implicit decimal point
         }
 
+        // small overflow check
+
+        float div = 1;
         if (dp != -1) {
             int adjust = dp < lim && dpe > dp ? 1 : 0;
-            exp = exp - (dpe - dp - adjust);
+            if (exp < 0) {
+                div = pow10f[dpe - dp - adjust];
+            } else {
+                exp = exp - (dpe - dp - adjust);
+            }
         }
 
         if (exp > 38) {
-            return negative ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY;
-        } else if (exp < -38) {
-            return negative ? -0.0f : 0.0f;
+            // out of range
+            throw NumericException.INSTANCE;
+        } else if (exp < -38 && exp >= -45) {
+            // Our exponent based divisor can only get to index 308
+            // therefore additional divisor has to take more responsibility.
+            // How much more? The delta between "exp" and 308 limit.
+            div *= pow10d[-38 - exp];
+            exp = -38;
+        } else if (exp < -45) {
+            // negative overflow
+            throw NumericException.INSTANCE;
         }
 
-        float v = exp > 0 ? val * pow10f[exp] : val / pow10f[-exp];
+        float v = exp > -1 ? val * pow10f[exp] : val / pow10f[-exp] / div;
         return negative ? -v : v;
     }
 
