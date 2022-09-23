@@ -48,7 +48,7 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         try {
             format.parse(text, locale);
             return true;

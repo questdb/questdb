@@ -185,7 +185,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 assertTableSizeEventually(engine, "mytable", 1);
                 try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
                     TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
-                            "-Infinity\tInfinity\tNaN\t1.7976931348623157E308\t4.9E-307\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                            "-Infinity\tInfinity\tNaN\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
                 }
             }
         });
@@ -338,9 +338,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testControlCharInTableName() {
-        assertControlCharacterException(s -> {
-            s.table("mytable\u0001");
-        });
+        assertControlCharacterException(s -> s.table("mytable\u0001"));
     }
 
     @Test

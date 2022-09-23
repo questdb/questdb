@@ -1309,7 +1309,7 @@ final class WhereClauseParser implements Mutable {
             CharSequence value
     ) throws SqlException {
         Function func = functionParser.createBindVariable(executionContext, position, value);
-        if (func.isRuntimeConstant() && func.getType() == ColumnType.UNDEFINED) {
+        if (func.isRuntimeConstant() && ColumnType.isUndefined(func.getType())) {
             func.assignType(ColumnType.STRING, executionContext.getBindVariableService());
         }
         func.init(null, executionContext);

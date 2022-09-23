@@ -51,7 +51,7 @@ public class SymbolAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         // any text can be symbol if we look at it without context
         throw new UnsupportedOperationException();
     }
