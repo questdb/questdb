@@ -72,15 +72,24 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     }
 
     // On linux sendfile can accept file as well as sockets
-    off_t offset = 0;
     struct stat fileStat = {0};
     fstat(input, &fileStat);
-    int result = sendfile(output, input, &offset, fileStat.st_size);
+
+    size_t len = fileStat.st_size;
+    while (len > 0) {
+        ssize_t writtenLen = sendfile(output, input, NULL, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
+        if (writtenLen <= 0
+            // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
+            && errno != EINTR) {
+            break;
+        }
+        len -= writtenLen;
+    }
 
     close(input);
     close(output);
 
-    return result;
+    return len == 0 ? 0 : -len;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0

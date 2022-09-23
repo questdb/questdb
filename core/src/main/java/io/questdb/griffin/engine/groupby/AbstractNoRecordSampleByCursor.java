@@ -70,7 +70,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     @Override
     public void close() {
-        base.close();
+        Misc.free(base);
         Misc.clearObjList(groupByFunctions);
         circuitBreaker = null;
     }

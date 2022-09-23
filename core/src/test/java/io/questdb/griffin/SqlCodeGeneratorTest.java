@@ -287,6 +287,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
@@ -311,6 +313,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong("y", 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t:y\n" +
                                     "1\t10\n" +
@@ -336,6 +340,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
@@ -361,6 +367,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = $1", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\n" +
                                     "10\n",
@@ -368,7 +376,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             true,
                             true,
                             false
-
                     );
                 }
             }
@@ -381,6 +388,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
             try {
                 compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
@@ -5213,6 +5221,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("x limit -9223372036854775807-1, -1", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("x\n" +
                                 "1\n" +
@@ -5229,7 +5238,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         true,
                         true,
                         true
-
                 );
             }
         });

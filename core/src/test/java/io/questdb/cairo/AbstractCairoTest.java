@@ -45,6 +45,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
@@ -92,6 +93,7 @@ public class AbstractCairoTest {
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static Boolean enableParallelFilter = null;
+    protected static Boolean enableColumnPreTouch = null;
     protected static int queryCacheEventQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
@@ -113,13 +115,31 @@ public class AbstractCairoTest {
     protected static Boolean copyPartitionOnAttach = null;
     protected static String attachableDirSuffix = null;
 
-
     private static TelemetryConfiguration telemetryConfiguration;
+
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
+    private static long memoryUsage = -1;
+
+    static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+
+    static {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            FACTORY_TAGS[i] = !Chars.startsWith(MemoryTag.nameOf(i), "MMAP");
+        }
+
+        FACTORY_TAGS[MemoryTag.NATIVE_O3] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_JOIN_MAP] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
+    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -329,6 +349,11 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public boolean isSqlParallelFilterPreTouchEnabled() {
+                return enableColumnPreTouch != null ? enableColumnPreTouch : super.isSqlParallelFilterPreTouchEnabled();
+            }
+
+            @Override
             public int getColumnPurgeTaskPoolCapacity() {
                 return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
             }
@@ -391,15 +416,22 @@ public class AbstractCairoTest {
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
         SharedRandom.RANDOM.set(new Rnd());
+        memoryUsage = -1;
     }
 
     @After
     public void tearDown() {
+        tearDown(true);
+    }
+
+    public void tearDown(boolean removeDir) {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         snapshotAgent.clear();
         engine.getTableIdGenerator().close();
         engine.clear();
-        TestUtils.removeTestPath(root);
+        if (removeDir) {
+            TestUtils.removeTestPath(root);
+        }
         configOverrideMaxUncommittedRows = -1;
         configOverrideCommitLagMicros = -1;
         currentMicros = -1;
@@ -416,6 +448,7 @@ public class AbstractCairoTest {
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         enableParallelFilter = null;
+        enableColumnPreTouch = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
         queryCacheEventQueueCapacity = -1;
@@ -434,6 +467,7 @@ public class AbstractCairoTest {
         attachableDirSuffix = null;
         sink.clear();
         ff = null;
+        memoryUsage = -1;
     }
 
     protected static void configureForBackups() throws IOException {
@@ -453,8 +487,8 @@ public class AbstractCairoTest {
             try {
                 code.run();
                 engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
+                Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
                 engine.clear();
                 AbstractCairoTest.ff = ffBefore;
@@ -477,5 +511,93 @@ public class AbstractCairoTest {
         public long getTicks() {
             return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
         }
+    }
+
+    protected static void assertFactoryMemoryUsage() {
+        if (memoryUsage > -1) {
+            long memAfterCursorClose = getMemUsedByFactories();
+            long limit = memoryUsage + 50 * 1024;
+            if (memAfterCursorClose > limit) {
+                printFactoryMemoryUsageDiff();
+                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+            }
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            System.err.print(MemoryTag.nameOf(i));
+            System.err.print(":");
+            System.err.println(Unsafe.getMemUsedByTag(i));
+        }
+    }
+
+    @TestOnly
+    public static void snapshotMemoryUsage() {
+        memoryUsage = getMemUsedByFactories();
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(value);
+            }
+        }
+    }
+
+    @TestOnly
+    public static void printFactoryMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                continue;
+            }
+
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(value);
+            }
+        }
+    }
+
+    //ignores:
+    // o3, mmap - because they're usually linked with table readers that are kept in pool 
+    // join map memory - because it's usually a small and can't really be released until factory is closed
+    // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
+    @TestOnly
+    public static long getMemUsedByFactories() {
+        long tags = 0;
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                tags = tags | 1L << i;
+            }
+        }
+
+        return getMemUsedExcept(tags);
+    }
+
+    @TestOnly
+    public static long getMemUsedExcept(long tagsToIgnore) {
+        long memUsed = 0;
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if ((tagsToIgnore & 1L << i) == 0) {
+                memUsed += Unsafe.getMemUsedByTag(i);
+            }
+        }
+
+        return memUsed;
     }
 }

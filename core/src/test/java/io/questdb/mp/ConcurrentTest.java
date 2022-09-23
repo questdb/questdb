@@ -347,7 +347,7 @@ public class ConcurrentTest {
         // There is also a generic consumer thread that's processing
         // all messages
 
-        final RingQueue<LongMsg> queue = new RingQueue<LongMsg>(LongMsg::new, 64);
+        final RingQueue<LongMsg> queue = new RingQueue<>(LongMsg::new, 64);
         final SPSequence pubSeq = new SPSequence(queue.getCycle());
         final FanOut subFo = new FanOut();
         pubSeq.then(subFo).then(pubSeq);

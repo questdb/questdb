@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.Reallocatable;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -36,11 +37,12 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
+class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reallocatable {
     private final Map map;
     private final RecordSink keyMapSink;
     private final RecordCursor mapCursor;
     private final Record mapRecord;
+    private boolean isOpen;
 
     public SampleByFillValueRecordCursor(
             Map map,
@@ -71,11 +73,11 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         this.record.of(map.getRecord());
         this.mapCursor = map.getCursor();
         this.mapRecord = map.getRecord();
+        this.isOpen = true;
     }
 
     @Override
     public boolean hasNext() {
-        //
         if (mapCursor.hasNext()) {
             // scroll down the map iterator
             // next() will return record that uses current map position
@@ -147,6 +149,14 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     }
 
     @Override
+    public void reallocate() {
+        if (!isOpen) {
+            this.map.reallocate();
+            isOpen = true;
+        }
+    }
+
+    @Override
     protected void updateValueWhenClockMovesBack(MapValue value, int n) {
         final MapKey key = map.withKey();
         keyMapSink.copy(baseRecord, key);
@@ -186,5 +196,14 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             record.setActiveB();
         }
         return true;
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
+        }
     }
 }

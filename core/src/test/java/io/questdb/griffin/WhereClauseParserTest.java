@@ -150,6 +150,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         noDesignatedTimestampNorIdxReader.close();
         compiler.close();
         sqlExecutionContext.close();
+        TestUtils.removeTestPath(root);
+    }
+
+    @Override
+    public void tearDown() {
+        super.tearDown(false);
     }
 
     @Test

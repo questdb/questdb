@@ -162,6 +162,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
+        final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
@@ -197,6 +198,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("VACUUM", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
         keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
+        keywordBasedExecutors.put("deallocate", compileDeallocate);
+        keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
 
         configureLexer(lexer);
 
@@ -1125,6 +1128,15 @@ public class SqlCompiler implements Closeable {
                 Chars.toString(fileName),
                 model
         );
+    }
+
+    private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+        }
+        return compiledQuery.ofDeallocate(statementName);
     }
 
     @NotNull

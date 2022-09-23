@@ -43,12 +43,17 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.number.OrderingComparison;
 import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3Test extends AbstractO3Test {
     private static final Log LOG = LogFactory.getLog(O3Test.class);
@@ -774,11 +779,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testPartitionedOOONullStrSetters() throws Exception {
-        executeVanilla(O3Test::testPartitionedOOONullStrSetters0);
-    }
-
-    @Test
     public void testPartitionedOOONullSettersContended() throws Exception {
         executeWithPool(0, O3Test::testPartitionedOOONullSetters0);
     }
@@ -786,6 +786,11 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testPartitionedOOONullSettersParallel() throws Exception {
         executeWithPool(4, O3Test::testPartitionedOOONullSetters0);
+    }
+
+    @Test
+    public void testPartitionedOOONullStrSetters() throws Exception {
+        executeVanilla(O3Test::testPartitionedOOONullStrSetters0);
     }
 
     @Test
@@ -883,6 +888,57 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVanillaCommitLagSinglePartitionParallel() throws Exception {
         executeWithPool(4, O3Test::testVanillaCommitLagSinglePartition0);
+    }
+
+    @Test
+    public void testVarColumnCopyLargePrefix() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    String strColVal =
+                            "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, directIoFlag=true]";
+                    int len = getStorageLength(strColVal);
+                    int records = Integer.MAX_VALUE / len + 5;
+
+                    // String
+                    String tableName = name.getMethodName();
+                    compiler.compile("create table " + tableName + " as ( " +
+                            "select " +
+                            "'" + strColVal + "' as str, " +
+                            " timestamp_sequence('2022-02-24', 1000) ts" +
+                            " from long_sequence(" + records + ")" +
+                            ") timestamp (ts) partition by DAY", sqlExecutionContext);
+
+                    long maxTimestamp = IntervalUtils.parseFloorPartialDate("2022-02-24") + records * 1000L;
+                    CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
+                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+
+                    // Check that there was an attempt to write a file bigger than 2GB
+                    long max = 0;
+                    for (Long wLen : writeLen) {
+                        if (wLen > max) {
+                            max = wLen;
+                        }
+                    }
+                    MatcherAssert.assertThat(max, OrderingComparison.greaterThan(2L << 30));
+
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "select * from " + tableName + " limit -5,5", sink, "str\tts\n" +
+                            strColVal + "\t2022-02-24T00:51:34.357000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.358000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.359000Z\n" +
+                            "abcd\t2022-02-24T00:51:34.359000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.360000Z\n");
+                }, new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long address, long len, long offset) {
+                        writeLen.add(len);
+                        return super.write(fd, address, len, offset);
+                    }
+                });
     }
 
     @Test

@@ -257,9 +257,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long columnPurgeRetryDelayLimit;
     private final double columnPurgeRetryDelayMultiplier;
     private final String systemTableNamePrefix;
-    private final int columnPurgeRetryLimitDays;
     private final long columnPurgeRetryDelay;
     private final boolean sqlParallelFilterEnabled;
+    private final boolean sqlParallelFilterPreTouchEnabled;
     private final int cairoPageFrameReduceShardCount;
     private final int replaceFunctionBufferMaxSize;
     private final int cairoSqlCopyQueueCapacity;
@@ -740,13 +740,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelayLimit = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 60_000_000L);
             this.columnPurgeRetryDelay = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 10.0);
-            this.columnPurgeRetryLimitDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS, 31);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
+            this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
             this.cairoPageFrameReduceTaskPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY, 4);
 
@@ -1949,11 +1949,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getColumnPurgeRetryLimitDays() {
-            return columnPurgeRetryLimitDays;
-        }
-
-        @Override
         public int getColumnPurgeTaskPoolCapacity() {
             return columnPurgeTaskPoolCapacity;
         }
@@ -2625,6 +2620,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelFilterPreTouchEnabled() {
+            return sqlParallelFilterPreTouchEnabled;
         }
     }
 

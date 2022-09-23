@@ -1125,6 +1125,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
+        final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
 
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
@@ -1165,7 +1166,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             jitFilter,
                             reduceTaskPool,
                             limitLoFunction,
-                            limitLoPos
+                            limitLoPos,
+                            preTouchColumns
                     );
                 } catch (SqlException | LimitOverflowException ex) {
                     Misc.free(jitFilter);
@@ -1203,7 +1205,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext
                     ),
                     limitLoFunction,
-                    limitLoPos
+                    limitLoPos,
+                    preTouchColumns
             );
         }
         return new FilteredRecordCursorFactory(factory, filter);
@@ -1451,7 +1454,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext
                                 ),
                                 null,
-                                0
+                                0,
+                                false
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(
@@ -1987,6 +1991,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timezoneNameFuncPos = 0;
             }
 
+            if (ColumnType.isUndefined(timezoneNameFunc.getType())) {
+                timezoneNameFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+            } else if ((!timezoneNameFunc.isConstant() && !timezoneNameFunc.isRuntimeConstant())
+                    || !ColumnType.isAssignableFrom(timezoneNameFunc.getType(), ColumnType.STRING)) {
+                throw SqlException.$(timezoneNameFuncPos, "timezone must be a constant expression of STRING or CHAR type");
+            }
+
             if (offset != null) {
                 offsetFunc = functionParser.parseFunction(
                         offset,
@@ -1997,6 +2008,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 offsetFunc = StrConstant.NULL;
                 offsetFuncPos = 0;
+            }
+
+            if (ColumnType.isUndefined(offsetFunc.getType())) {
+                offsetFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+            } else if ((!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant())
+                    || !ColumnType.isAssignableFrom(offsetFunc.getType(), ColumnType.STRING)) {
+                throw SqlException.$(offsetFuncPos, "offset must be a constant expression of STRING or CHAR type");
             }
 
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);

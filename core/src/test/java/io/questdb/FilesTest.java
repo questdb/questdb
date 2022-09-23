@@ -26,11 +26,11 @@ package io.questdb;
 
 import io.questdb.log.LogError;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -44,13 +44,13 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.lessThan;
 
 public class FilesTest {
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
-
-    // Kick static LOG inits to not mess with assertMemoryLeak measurments inside the tests
-    private final DateFormat IGNORED = DateFormatUtils.PG_DATE_FORMAT;
 
     @Test
     public void testAllocate() throws Exception {
@@ -181,11 +181,6 @@ public class FilesTest {
     }
 
     @Test
-    public void testHardLinkAsciiName() throws Exception {
-        assertHardLinkPreservesFileContent("some_column.d");
-    }
-
-    @Test
     public void testDeleteDir2() throws Exception {
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
@@ -236,10 +231,14 @@ public class FilesTest {
     }
 
     @Test
+    public void testHardLinkAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("some_column.d");
+    }
+
+    @Test
     public void testHardLinkFailuresSrcDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
-            dbRoot.mkdirs();
             Path srcFilePath = null;
             Path hardLinkFilePath = null;
             try {
@@ -424,6 +423,78 @@ public class FilesTest {
     }
 
     @Test
+    public void testReadFails() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd1 = Files.openRW(path.$());
+                long fileSize = 4096;
+                long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+
+                try {
+                    Files.truncate(fd1, fileSize);
+
+                    MatcherAssert.assertThat(Files.read(fd1, mem, 8L, 0), is(8L));
+                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize, -1), lessThan(0L));
+                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize, fileSize), is(0L));
+                    MatcherAssert.assertThat(Files.read(fd1, mem, fileSize + 8, fileSize), is(0L));
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Unsafe.free(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReadOver2GB() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd1 = Files.openRW(path.$());
+                long size2Gb = (2L << 30) + 4096;
+                long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+
+                try {
+                    Files.truncate(fd1, size2Gb);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, size2Gb - 8);
+
+                    // Check read call works
+                    // Check written data
+                    Assert.assertEquals(size2Gb, Files.read(fd1, mem, size2Gb, 0));
+                    long long1 = Files.readULong(fd1, 0L);
+                    Assert.assertEquals(testValue, long1);
+                    long long2 = Files.readULong(fd1, size2Gb - 8);
+                    Assert.assertEquals(testValue, long2);
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Unsafe.free(mem, size2Gb, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRemove() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
@@ -431,6 +502,61 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertTrue(Files.remove(path));
                 Assert.assertFalse(Files.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testSendFileOver2GB() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (
+                    Path path1 = new Path().of(temp.getAbsolutePath());
+                    Path path2 = new Path().of(temp.getAbsolutePath())
+            ) {
+                long fd1 = Files.openRW(path1.$());
+                path2.put(".2").$();
+                long fd2 = 0;
+
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long size2Gb = (2L << 30) + 4096;
+
+                try {
+                    Files.truncate(fd1, size2Gb);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, size2Gb - 8);
+
+                    // Check copy call works
+                    int result = Files.copy(path1, path2);
+
+                    // Check written data
+                    // Windows return 1 but Linux and others return 0 on success
+                    // All return negative in case of error.
+                    MatcherAssert.assertThat(result, greaterThanOrEqualTo(0));
+
+                    fd2 = Files.openRO(path2.$());
+                    long long1 = Files.readULong(fd2, 0L);
+                    Assert.assertEquals(testValue, long1);
+                    long long2 = Files.readULong(fd2, size2Gb - 8);
+                    Assert.assertEquals(testValue, long2);
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    if (fd2 != 0) {
+                        Files.close(fd2);
+                    }
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path1);
+                    Files.remove(path2);
+                }
             }
         });
     }
@@ -452,6 +578,86 @@ public class FilesTest {
                     Assert.assertEquals(0, Files.length(path));
                 } finally {
                     Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWriteFails() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+                long fd1 = Files.openRW(path.$());
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long fileSize = (2L << 30) + 4096;
+
+                try {
+                    Files.truncate(fd1, fileSize);
+
+                    MatcherAssert.assertThat(Files.write(fd1, mem, 8, 0), is(8L));
+                    MatcherAssert.assertThat(Files.write(fd1, mem, -1, fileSize), is(-1L));
+                    MatcherAssert.assertThat(Files.write(-1, mem, 8, fileSize), is(-1L));
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWriteOver2GB() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+                long fd1 = Files.openRW(path.$());
+                long fd2 = Files.openRW(path.chop$().put(".2").$());
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+                long mmap = 0;
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long size2Gb = (2L << 30) + 4096;
+
+                try {
+                    Files.truncate(fd1, size2Gb);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, size2Gb - 8);
+
+                    // Check write call works
+                    mmap = Files.mmap(fd1, size2Gb, 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
+                    Files.truncate(fd2, size2Gb);
+
+                    // Check written data
+                    Assert.assertEquals(size2Gb, Files.write(fd2, mmap, size2Gb, 0));
+                    long long1 = Files.readULong(fd2, 0L);
+                    Assert.assertEquals(testValue, long1);
+
+                    long long2 = Files.readULong(fd2, size2Gb - 8);
+                    Assert.assertEquals(testValue, long2);
+
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Files.close(fd2);
+                    Files.munmap(mmap, size2Gb, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path);
+                    Files.remove(path.of(temp.getAbsolutePath()).$());
                 }
             }
         });
@@ -521,7 +727,6 @@ public class FilesTest {
     private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
-            dbRoot.mkdirs();
             Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
             Path hardLinkFilePath = null;
             try {
