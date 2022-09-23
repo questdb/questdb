@@ -189,6 +189,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // no data, nothing to do
             if (cursor.recordKeyMap.size() == 0) {
                 baseCursor.close();
+                cursor.close();
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }
 
@@ -376,6 +377,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
+            cursor.close();
             throw e;
         }
     }
