@@ -294,6 +294,8 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
  * Signature: (JJ)I
  */
 
+#define MAX_RW_COUNT 0x7ffff000
+
 #define FILES_RENAME_ERR_OK 0
 #define FILES_RENAME_ERR_EXDEV 1
 #define FILES_RENAME_ERR_OTHER 2

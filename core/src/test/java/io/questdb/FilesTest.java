@@ -573,6 +573,7 @@ public class FilesTest {
                     Assert.assertEquals(size2Gb, Files.write(fd2, mmap, size2Gb, 0));
                     long long1 = Files.readULong(fd2, 0L);
                     Assert.assertEquals(testValue, long1);
+
                     long long2 = Files.readULong(fd2, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
 

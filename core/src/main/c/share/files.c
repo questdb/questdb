@@ -50,7 +50,20 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
          jlong address,
          jlong len,
          jlong offset) {
-    return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
+
+    off_t writeOffset = offset;
+    ssize_t written = 1;
+    while (len > 0 && written > 0) {
+        size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
+        written = pwrite((int) fd, (void *) (address), count, writeOffset);
+        if (written < 0) {
+            return written;
+        }
+        len -= written;
+        writeOffset += written;
+        address += written;
+    }
+    return writeOffset - offset;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
@@ -85,7 +98,20 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
          jlong len,
          jlong offset) {
 
-    return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
+    off_t readOffset = offset;
+    ssize_t read = 1;
+    while (len > 0 && read > 0) {
+        size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
+        read = pread((int) fd, (void *) (address), count, readOffset);
+        if (read < 0) {
+            // Negative means error. Return negative.
+            return read;
+        }
+        len -= read;
+        readOffset += read;
+        address += read;
+    }
+    return readOffset - offset;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
