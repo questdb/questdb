@@ -57,7 +57,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int PARTITION_NAME_COLUMN = 10;
     private static final int MAX_ERRORS = 11;
     private final String tableName;
-    private final int columnPurgeRetryLimitDays;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
@@ -83,7 +82,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
         this.retryDelay = configuration.getColumnPurgeRetryDelay();
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
-        this.columnPurgeRetryLimitDays = configuration.getColumnPurgeRetryLimitDays();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
@@ -106,7 +104,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
-        putTasksFromTableToQueue();
+        processTableRecords();
     }
 
     @Override
@@ -213,10 +211,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
-    private void putTasksFromTableToQueue() {
+    private void processTableRecords() {
         try {
             CompiledQuery reloadQuery = sqlCompiler.compile(
-                    "SELECT * FROM \"" + tableName + "\" WHERE ts > dateadd('d', -" + columnPurgeRetryLimitDays + ", now()) and completed = null",
+                    "SELECT * FROM \"" + tableName + "\" WHERE completed = null",
                     sqlExecutionContext
             );
 
