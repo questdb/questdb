@@ -133,11 +133,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnPurgeRetryLimitDays() {
-        return conf.getColumnPurgeRetryLimitDays();
-    }
-
-    @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return conf.getColumnPurgeTaskPoolCapacity();
     }

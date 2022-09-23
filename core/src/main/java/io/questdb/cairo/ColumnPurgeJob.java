@@ -57,7 +57,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int PARTITION_NAME_COLUMN = 10;
     private static final int MAX_ERRORS = 11;
     private final String tableName;
-    private final int columnPurgeRetryLimitDays;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
@@ -83,7 +82,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
         this.retryDelay = configuration.getColumnPurgeRetryDelay();
         this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
-        this.columnPurgeRetryLimitDays = configuration.getColumnPurgeRetryLimitDays();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
@@ -106,7 +104,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
-        putTasksFromTableToQueue();
+        processTableRecords();
     }
 
     @Override
@@ -136,29 +134,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         task.nextRunTimestamp = currentTime + task.retryDelay;
     }
 
-    private boolean purge() {
-        boolean useful = false;
-        final long now = clock.getTicks() + 1;
-        while (retryQueue.size() > 0) {
-            ColumnPurgeRetryTask nextTask = retryQueue.peek();
-            if (nextTask.nextRunTimestamp < now) {
-                retryQueue.poll();
-                useful = true;
-                if (!columnPurgeOperator.purge(nextTask)) {
-                    // Re-queue
-                    calculateNextTimestamp(nextTask, now);
-                    retryQueue.add(nextTask);
-                } else {
-                    taskPool.push(nextTask);
-                }
-            } else {
-                // All reruns are in the future.
-                return useful;
-            }
-        }
-        return useful;
-    }
-
     private void commit() {
         try {
             if (writer != null) {
@@ -171,6 +146,16 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     .I$();
             writer = Misc.free(writer);
         }
+    }
+
+    private String internStrObj(CharSequenceObjHashMap<String> stringIntern, CharSequence sym) {
+        String val = stringIntern.get(sym);
+        if (val != null) {
+            return val;
+        }
+        val = Chars.toString(sym);
+        stringIntern.put(val, val);
+        return val;
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
@@ -203,31 +188,61 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
-    private void putTasksFromTableToQueue() {
+    private boolean purge() {
+        boolean useful = false;
+        final long now = clock.getTicks() + 1;
+        while (retryQueue.size() > 0) {
+            ColumnPurgeRetryTask nextTask = retryQueue.peek();
+            if (nextTask.nextRunTimestamp < now) {
+                retryQueue.poll();
+                useful = true;
+                if (!columnPurgeOperator.purge(nextTask)) {
+                    // Re-queue
+                    calculateNextTimestamp(nextTask, now);
+                    retryQueue.add(nextTask);
+                } else {
+                    taskPool.push(nextTask);
+                }
+            } else {
+                // All reruns are in the future.
+                return useful;
+            }
+        }
+        return useful;
+    }
+
+    private void processTableRecords() {
         try {
             CompiledQuery reloadQuery = sqlCompiler.compile(
-                    "SELECT * FROM \"" + tableName + "\" WHERE ts > dateadd('d', -" + columnPurgeRetryLimitDays + ", now()) and completed = null",
+                    "SELECT * FROM \"" + tableName + "\" WHERE completed = null",
                     sqlExecutionContext
             );
 
             long microTime = clock.getTicks();
             try (RecordCursorFactory recordCursorFactory = reloadQuery.getRecordCursorFactory()) {
                 assert recordCursorFactory.supportsUpdateRowId(tableName);
+                int count = 0;
+
                 try (RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext)) {
                     Record rec = records.getRecord();
                     long lastTs = 0;
                     ColumnPurgeRetryTask taskRun = null;
 
+                    CharSequenceObjHashMap<String> stringIntern = new CharSequenceObjHashMap<>();
+
                     while (records.hasNext()) {
+                        count++;
                         long ts = rec.getTimestamp(0);
                         if (ts != lastTs || taskRun == null) {
                             if (taskRun != null) {
-                                retryQueue.add(taskRun);
+                                columnPurgeOperator.purgeExclusive(taskRun);
+                            } else {
+                                taskRun = taskPool.pop();
                             }
-                            taskRun = taskPool.pop();
+
                             lastTs = ts;
-                            String tableName = Chars.toString(rec.getSym(TABLE_NAME_COLUMN));
-                            String columnName = Chars.toString(rec.getSym(COLUMN_NAME_COLUMN));
+                            String tableName = internStrObj(stringIntern, rec.getSym(TABLE_NAME_COLUMN));
+                            String columnName = internStrObj(stringIntern, rec.getSym(COLUMN_NAME_COLUMN));
                             int tableId = rec.getInt(TABLE_ID_COLUMN);
                             long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
@@ -251,12 +266,16 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         taskRun.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                     }
                     if (taskRun != null) {
-                        retryQueue.add(taskRun);
+                        columnPurgeOperator.purgeExclusive(taskRun);
+                        taskPool.push(taskRun);
                     }
                 }
+
+                if (count > 0) {
+                    LOG.info().$("cleaned up rewritten column files [cleanCount=").$(count).I$();
+                }
             }
-            if (retryQueue.size() == 0 && writer != null) {
-                // No tasks to do. Cleanup the log table
+            if (writer != null) {
                 try {
                     writer.truncate();
                 } catch (Throwable th) {
