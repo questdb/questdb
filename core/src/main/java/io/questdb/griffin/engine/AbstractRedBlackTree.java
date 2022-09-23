@@ -24,14 +24,13 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.Reallocatable;
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
-import java.io.Closeable;
-
-public abstract class AbstractRedBlackTree implements Mutable, Closeable {
+public abstract class AbstractRedBlackTree implements Mutable, Reallocatable {
     // parent is at offset 0
     protected static final int O_LEFT = 8;
     // P(8) + L + R + C(1) + REF
@@ -60,7 +59,13 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
 
     @Override
     public void close() {
+        root = -1;
         Misc.free(mem);
+    }
+
+    @Override
+    public void reallocate() {
+        mem.reallocate();
     }
 
     public long size() {

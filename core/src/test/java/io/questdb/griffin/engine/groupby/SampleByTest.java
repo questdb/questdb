@@ -784,6 +784,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            snapshotMemoryUsage();
             try (
                     RecordCursorFactory factory = compiler.compile(
                             "select k, s, first(lat) lat, last(lon) lon " +
@@ -814,6 +815,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 // invalid timezone
                 sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
@@ -825,6 +827,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(108, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
@@ -835,6 +838,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(123, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -846,6 +850,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, null);
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -857,6 +862,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
             }
         });
     }
@@ -1234,7 +1240,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "),index(s) timestamp(k)");
     }
 
-    @Test
+    @Test//here
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
         assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
@@ -1426,7 +1432,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "sample by 3d");
     }
 
-    @Test
+    @Test//here
     public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -2929,6 +2935,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile(
                     "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
                     sqlExecutionContext
@@ -2962,6 +2969,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 // invalid timezone
                 sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
@@ -2973,6 +2981,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(67, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
@@ -2983,6 +2992,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(82, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -2994,6 +3004,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
             }
         });
     }
@@ -8076,7 +8087,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             ") timestamp(k) partition by NONE",
                     sqlExecutionContext
             );
-
+            snapshotMemoryUsage();
             try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)", sqlExecutionContext).getRecordCursorFactory()) {
                 assertTimestamp("k", factory);
                 String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
@@ -8401,16 +8412,16 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueListWithNullAndPrev() throws Exception {
+    public void testSampleFillValueListWithNullAndPrev() throws Exception { //here
         assertQuery("b\tsum\tcount\tmin\tmax\tavg\tk\n" +
                         "XYZ\t28.45577791213847\t1\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:00:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T01:00:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:30:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T01:30:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:30:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T02:00:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T02:00:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T02:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T02:30:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T02:30:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T02:30:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:00:00.000000Z\n" +
                         "ABC\t79.05675319675964\t1\t79.05675319675964\t79.05675319675964\t79.05675319675964\t1970-01-03T03:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:30:00.000000Z\n" +

@@ -37,7 +37,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testFixedLength() throws SqlException {
+    public void testFixedLength() throws Exception {
         assertQuery("x\n" +
                         "00000000 ee 41 1d 15 55 8a\n" +
                         "\n" +
@@ -53,7 +53,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testFixedLengthNoNulls() throws SqlException {
+    public void testFixedLengthNoNulls() throws Exception {
         assertQuery("x\n" +
                         "00000000 ee 41 1d 15 55\n" +
                         "00000000 17 fa d8 cc 14\n" +
@@ -79,7 +79,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testVarLength() throws SqlException {
+    public void testVarLength() throws Exception {
         assertQuery("x\n" +
                         "00000000 41 1d 15\n" +
                         "00000000 17 fa d8 cc 14\n" +
@@ -95,7 +95,7 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testVarLengthNoNulls() throws SqlException {
+    public void testVarLengthNoNulls() throws Exception {
         assertQuery("x\n" +
                         "00000000 41 1d 15\n" +
                         "00000000 17 fa d8 cc 14\n" +

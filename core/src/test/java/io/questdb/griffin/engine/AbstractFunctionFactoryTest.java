@@ -29,6 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
@@ -52,9 +53,13 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private static int toByteRefs = 0;
     private FunctionFactory factory;
 
-    protected void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-        assertCursor(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
+    protected void assertQuery(CharSequence expected, CharSequence sql) throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(expected, cursor, factory.getMetadata(), true);
+            }
+        });
     }
 
     protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
