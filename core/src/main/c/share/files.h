@@ -294,6 +294,8 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
  * Signature: (JJ)I
  */
 
+// On Linux, read() (and similar system calls) will transfer at most 0x7ffff000 (2,147,479,552) bytes,
+// returning the number of bytes actually transferred or -1 depending on the platforms
 #define MAX_RW_COUNT 0x7ffff000
 
 #define FILES_RENAME_ERR_OK 0
