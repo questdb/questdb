@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.functions.analytic;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -94,7 +91,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Closeable {
+    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reallocatable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -148,8 +145,13 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void reallocate() {
+            map.reallocate();
+        }
+
+        @Override
         public void reset() {
-            map.clear();
+            map.close();
         }
 
         @Override
