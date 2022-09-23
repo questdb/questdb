@@ -257,7 +257,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long columnPurgeRetryDelayLimit;
     private final double columnPurgeRetryDelayMultiplier;
     private final String systemTableNamePrefix;
-    private final int columnPurgeRetryLimitDays;
     private final long columnPurgeRetryDelay;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
@@ -741,7 +740,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelayLimit = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 60_000_000L);
             this.columnPurgeRetryDelay = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 10.0);
-            this.columnPurgeRetryLimitDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS, 31);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
@@ -1948,11 +1946,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getColumnPurgeRetryDelayMultiplier() {
             return columnPurgeRetryDelayMultiplier;
-        }
-
-        @Override
-        public int getColumnPurgeRetryLimitDays() {
-            return columnPurgeRetryLimitDays;
         }
 
         @Override
