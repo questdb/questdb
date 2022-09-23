@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 public final class Unsafe {
+    public static final long BYTE_OFFSET;
+    public static final long BYTE_SCALE;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
@@ -56,6 +58,9 @@ public final class Unsafe {
             Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
+
+            BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
+            BYTE_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(byte[].class));
 
             INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
             INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
@@ -190,6 +195,18 @@ public final class Unsafe {
         }
     }
 
+    public static long swapEndianness(long value) {
+        long b0 = value & 0xff;
+        long b1 = (value >> 8) & 0xff;
+        long b2 = (value >> 16) & 0xff;
+        long b3 = (value >> 24) & 0xff;
+        long b4 = (value >> 32) & 0xff;
+        long b5 = (value >> 40) & 0xff;
+        long b6 = (value >> 48) & 0xff;
+        long b7 = (value >> 56) & 0xff;
+        return (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7;
+    }
+
     public static long getFreeCount() {
         return FREE_COUNT.get();
     }
@@ -248,7 +265,7 @@ public final class Unsafe {
         COUNTERS[memoryTag].add(size);
     }
 
-    //most significant bit 
+    //most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

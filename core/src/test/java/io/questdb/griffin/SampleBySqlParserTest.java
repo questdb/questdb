@@ -298,6 +298,47 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
                 model()
         );
     }
+
+    @Test
+    public void testAlignToCalendarNonStringConstantTimeZone() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 42 with offset '00:15'",
+                76,
+                "timezone must be a constant expression of STRING or CHAR type",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarNonConstantTimeZone() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone rnd_str('foo','bar') with offset '00:15'",
+                76,
+                "timezone must be a constant expression of STRING or CHAR type",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarTimeZoneWithNonStringConstantOffset() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset 42",
+                92,
+                "offset must be a constant expression of STRING or CHAR type",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarTimeZoneWithNonConstantOffset() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset rnd_str('foo','bar')",
+                92,
+                "offset must be a constant expression of STRING or CHAR type",
+                model()
+        );
+    }
+
     private static TableModel model() {
         return modelOf("x")
                 .col("a", ColumnType.DOUBLE)
