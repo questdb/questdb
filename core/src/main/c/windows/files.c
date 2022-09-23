@@ -99,6 +99,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
          jlong len,
          jlong offset) {
     DWORD count;
+    if (len < 0 || offset < 0) {
+        // To align with other platforms
+        return -1;
+    }
     if (set_file_pos((HANDLE) fd, offset) && WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }

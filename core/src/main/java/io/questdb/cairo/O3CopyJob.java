@@ -856,7 +856,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long len = (srcHi - srcLo + 1) << shl;
         final long fromAddress = src + (srcLo << shl);
         if (directIoFlag) {
-            ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset);
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
+                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
+            }
         } else {
             Vect.memcpy(dstFixAddr, fromAddress, len);
         }
@@ -1026,7 +1029,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         assert len <= Math.abs(dstVarSize) - dstVarOffset;
         final long offset = dstVarOffset + dstVarAdjust;
         if (directIoFlag) {
-            ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset);
+            if (ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstVarFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
+            }
         } else {
             Vect.memcpy(dstVarAddr + dstVarOffset, srcVarAddr + lo, len);
         }
