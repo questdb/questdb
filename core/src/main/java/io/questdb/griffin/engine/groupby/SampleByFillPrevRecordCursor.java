@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.Reallocatable;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -35,10 +36,11 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
+class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor implements Reallocatable {
     private final Map map;
     private final RecordSink keyMapSink;
     private final RecordCursor mapCursor;
+    private boolean isOpen;
 
     public SampleByFillPrevRecordCursor(
             Map map,
@@ -65,12 +67,12 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
         this.map = map;
         this.keyMapSink = keyMapSink;
         this.mapCursor = map.getCursor();
-        record.of(map.getRecord());
+        this.record.of(map.getRecord());
+        this.isOpen = true;
     }
 
     @Override
     public boolean hasNext() {
-        //
         if (mapCursor.hasNext()) {
             // scroll down the map iterator
             // next() will return record that uses current map position
@@ -143,6 +145,14 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
+    public void reallocate() {
+        if (!isOpen) {
+            map.reallocate();
+            isOpen = true;
+        }
+    }
+
+    @Override
     public void toTop() {
         super.toTop();
         if (base.hasNext()) {
@@ -168,5 +178,14 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor {
         final MapKey key = map.withKey();
         keyMapSink.copy(baseRecord, key);
         super.updateValueWhenClockMovesBack(key.createValue(), n);
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
+        }
     }
 }
