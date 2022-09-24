@@ -64,7 +64,6 @@ public enum PropertyKey {
     CAIRO_FAST_MAP_LOAD_FACTOR("cairo.fast.map.load.factor"),
     CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY("cairo.sql.join.context.pool.capacity"),
     CAIRO_LEXER_POOL_CAPACITY("cairo.lexer.pool.capacity"),
-    CAIRO_WRITER_APPEND_PAGE_SIZE("cairo.writer.append.page.size"),
     CAIRO_SQL_MAP_KEY_CAPACITY("cairo.sql.map.key.capacity"),
     CAIRO_SQL_SMALL_MAP_KEY_CAPACITY("cairo.sql.small.map.key.capacity"),
     CAIRO_SQL_MAP_PAGE_SIZE("cairo.sql.map.page.size"),
@@ -125,7 +124,6 @@ public enum PropertyKey {
     CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD("cairo.sql.jit.page.address.cache.threshold"),
     CAIRO_SQL_JIT_DEBUG_ENABLED("cairo.sql.jit.debug.enabled"),
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),
-
     CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
     CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),
     CAIRO_SQL_COPY_BUFFER_SIZE("cairo.sql.copy.buffer.size"),

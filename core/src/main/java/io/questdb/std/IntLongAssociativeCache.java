@@ -67,7 +67,6 @@ public class IntLongAssociativeCache {
             return NO_VALUE;
         }
         long value = values[index];
-//        Unsafe.arrayPut(values, index, 0);
         keys[index] = UNUSED_KEY;
         return value;
     }

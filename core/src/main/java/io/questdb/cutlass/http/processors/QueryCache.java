@@ -77,11 +77,6 @@ public final class QueryCache implements Closeable {
         }
     }
 
-    public void remove(CharSequence sql) {
-        cache.put(sql, null);
-        log("remove", sql);
-    }
-
     public void clear() {
         cache.clear();
         LOG.info().$("cleared").$();
