@@ -227,8 +227,6 @@ public class StrFunctionTest {
         }
     }
 
-    /////////////////////
-
     @Test
     public void testCastToFloat() {
         Assert.assertEquals(1345.998f, new StrConstant("1345.998").getFloat(null), 0.001);
@@ -247,6 +245,26 @@ public class StrFunctionTest {
     @Test
     public void testCastToFloatNeg() {
         Assert.assertEquals(-1990.997f, new StrConstant("-1990.997").getFloat(null), 0.001);
+    }
+
+    @Test
+    public void testCastToFloatPosInf() {
+        Assert.assertEquals(Float.POSITIVE_INFINITY, new StrConstant("Infinity").getFloat(null), 0.001);
+    }
+
+    @Test
+    public void testCastToFloatNegInf() {
+        Assert.assertEquals(Float.NEGATIVE_INFINITY, new StrConstant("-Infinity").getFloat(null), 0.001);
+    }
+
+    @Test
+    public void testCastToFloatZero() {
+        Assert.assertEquals(0, new StrConstant("0.0000f").getFloat(null), 0.001);
+    }
+
+    @Test
+    public void testCastToFloatNegZero() {
+        Assert.assertEquals(-0.0f, new StrConstant("-0.000f").getFloat(null), 0.001);
     }
 
     @Test
@@ -271,6 +289,73 @@ public class StrFunctionTest {
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -9E-210 [STRING -> FLOAT]");
+        }
+    }
+
+    /////////////////
+
+    @Test
+    public void testCastToDouble() {
+        Assert.assertEquals(1345.998, new StrConstant("1345.998").getDouble(null), 0.001);
+    }
+
+    @Test
+    public void testCastToDoubleEmpty() {
+        try {
+            new StrConstant("").getDouble(null);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> DOUBLE]");
+        }
+    }
+
+    @Test
+    public void testCastToDoubleNeg() {
+        Assert.assertEquals(-1990.997, new StrConstant("-1990.997").getDouble(null), 0.001);
+    }
+
+    @Test
+    public void testCastToDoublePosInf() {
+        Assert.assertEquals(Float.POSITIVE_INFINITY, new StrConstant("Infinity").getDouble(null), 0.001);
+    }
+
+    @Test
+    public void testCastToDoubletNegInf() {
+        Assert.assertEquals(Float.NEGATIVE_INFINITY, new StrConstant("-Infinity").getDouble(null), 0.001);
+    }
+
+    @Test
+    public void testCastToDoubleZero() {
+        Assert.assertEquals(0, new StrConstant("0.0000").getDouble(null), 0.001);
+    }
+
+    @Test
+    public void testCastToDoubleNegZero() {
+        Assert.assertEquals(-0.0, new StrConstant("-0.000").getDouble(null), 0.001);
+    }
+
+    @Test
+    public void testCastToDoubleNull() {
+        Assert.assertEquals(Float.NaN, new StrConstant(null).getDouble(null), 0.001);
+    }
+
+    @Test
+    public void testCastToDoubletTooWide1() {
+        try {
+            new StrConstant("1E350").getDouble(null);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 1E350 [STRING -> DOUBLE]");
+        }
+    }
+
+    @Test
+    public void testCastToDoubleTooWide2() {
+        try {
+            new StrConstant("-9E-410").getDouble(null);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -9E-410 [STRING -> DOUBLE]");
         }
     }
 

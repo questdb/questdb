@@ -683,8 +683,12 @@ public class NumbersTest {
         String s3 = "9223372036854775808123.0123456789";
         Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
 
-        String s4 = "922337203685477580812392233720368547758081.01239223372036854775808123";//Infinity
-        Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
+        String s4 = "922337203685477580812392233720368547758081.01239223372036854775808123"; // overflow
+        try {
+            Numbers.parseFloat(s4);
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
     }
     
     @Test

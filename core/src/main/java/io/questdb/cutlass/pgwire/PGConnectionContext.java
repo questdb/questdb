@@ -320,17 +320,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         circuitBreaker.resetMaxTimeToDefault();
     }
 
-    private void evictNamedStatementWrappersAndClear() {
-        if (namedStatementMap.size() > 0) {
-            ObjList<CharSequence> names = namedStatementMap.keys();
-            for (int i = 0, n = names.size(); i < n; i++) {
-                CharSequence name = names.getQuick(i);
-                namedStatementWrapperPool.push(namedStatementMap.get(name));
-            }
-            namedStatementMap.clear();
-        }
-    }
-
     @Override
     public PGConnectionContext of(long fd, IODispatcher<PGConnectionContext> dispatcher) {
         PGConnectionContext r = super.of(fd, dispatcher);
@@ -444,7 +433,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         } catch (SqlException e) {
             reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
         } catch (ImplicitCastException e) {
-            reportError(-1, e.getFlyweightMessage(), 0);
+            reportNonCriticalError(-1, e.getFlyweightMessage());
         } catch (CairoException e) {
             if (e.isInterruption()) {
                 reportQueryCancelled(e.getFlyweightMessage());
@@ -1273,6 +1262,17 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
+    private void evictNamedStatementWrappersAndClear() {
+        if (namedStatementMap.size() > 0) {
+            ObjList<CharSequence> names = namedStatementMap.keys();
+            for (int i = 0, n = names.size(); i < n; i++) {
+                CharSequence name = names.getQuick(i);
+                namedStatementWrapperPool.push(namedStatementMap.get(name));
+            }
+            namedStatementMap.clear();
+        }
+    }
+
     private void executeInsert() throws SqlException {
         final TableWriter writer;
         try {
@@ -1683,14 +1683,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void prepareNonCriticalError(int position, CharSequence message) {
-        prepareErrorResponse(position, message);
-        LOG.error()
-                .$("error [pos=").$(position)
-                .$(", msg=`").$(message).$('`')
-                .I$();
-    }
-
     private void prepareErrorResponse(int position, CharSequence message) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
@@ -1753,6 +1745,14 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void prepareNoDataMessage() {
         responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
         responseAsciiSink.putIntDirect(INT_BYTES_X);
+    }
+
+    private void prepareNonCriticalError(int position, CharSequence message) {
+        prepareErrorResponse(position, message);
+        LOG.error()
+                .$("error [pos=").$(position)
+                .$(", msg=`").$(message).$('`')
+                .I$();
     }
 
     private void prepareParameterDescription() {
@@ -2418,8 +2418,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void reportError(CairoException ex)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareError(ex);
         sendReadyForNewQuery();
         clearRecvBuffer();

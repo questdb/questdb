@@ -603,15 +603,18 @@ public final class Numbers {
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
-        return FastDoubleParser.parseDouble(sequence);
+        return FastDoubleParser.parseDouble(sequence, true);
     }
 
     public static double parseDouble(long str, int len) throws NumericException {
-        return FastDoubleParser.parseDouble(str, len);
+        if (Unsafe.getUnsafe().getByte(str) == 'i') {
+            System.out.println("ok");
+        }
+        return FastDoubleParser.parseDouble(str, len, true);
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
-        return FastFloatParser.parseFloat(sequence);
+        return FastFloatParser.parseFloat(sequence, true);
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {

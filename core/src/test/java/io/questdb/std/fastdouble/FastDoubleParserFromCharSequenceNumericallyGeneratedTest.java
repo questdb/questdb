@@ -10,6 +10,6 @@ import io.questdb.std.NumericException;
 public class FastDoubleParserFromCharSequenceNumericallyGeneratedTest extends AbstractDoubleNumericallyGeneratedTest {
     @Override
     protected double parse(String str) throws NumericException {
-        return FastDoubleParser.parseDouble(str);
+        return FastDoubleParser.parseDouble(str, false);
     }
 }

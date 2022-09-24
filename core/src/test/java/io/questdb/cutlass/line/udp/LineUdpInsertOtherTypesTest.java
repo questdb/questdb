@@ -630,8 +630,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "3.141592653589793\t1970-01-01T00:00:04.000000Z\n" +
                         "1.7976931348623155E308\t1970-01-01T00:00:05.000000Z\n" +
                         "1.7976931348623151E308\t1970-01-01T00:00:06.000000Z\n" +
-                        "Infinity\t1970-01-01T00:00:07.000000Z\n" +
-                        "-Infinity\t1970-01-01T00:00:08.000000Z\n" +
+                        "NaN\t1970-01-01T00:00:07.000000Z\n" +
+                        "NaN\t1970-01-01T00:00:08.000000Z\n" +
                         "1.35E-12\t1970-01-01T00:00:09.000000Z\n" +
                         "1.35E-12\t1970-01-01T00:00:10.000000Z\n" +
                         "1.35E12\t1970-01-01T00:00:11.000000Z\n" +
@@ -649,8 +649,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "3.14159265358979323846", // valid
                         "1.7976931348623156E308", // valid
                         "1.7976931348623152E308", // valid
-                        "1.7976931348623152E312", // valid Infinity
-                        "-1.7976931348623152E312", // valid -Infinity
+                        "1.7976931348623152E312", // invalid - overflow
+                        "-1.7976931348623152E312", // invalid - overflow
                         "1.35E-12", // valid
                         "1.35e-12", // valid
                         "1.35e12", // valid
@@ -678,8 +678,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-3.5\t1970-01-01T00:00:10.000000Z\n" +
                         "3.141592653589793\t1970-01-01T00:00:11.000000Z\n" +
                         "1.7976931348623151E308\t1970-01-01T00:00:12.000000Z\n" +
-                        "Infinity\t1970-01-01T00:00:13.000000Z\n" +
-                        "-Infinity\t1970-01-01T00:00:14.000000Z\n" +
+                        "NaN\t1970-01-01T00:00:13.000000Z\n" +
+                        "NaN\t1970-01-01T00:00:14.000000Z\n" +
                         "-3.01E-43\t1970-01-01T00:00:15.000000Z\n" +
                         "123.0\t1970-01-01T00:00:16.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
@@ -698,8 +698,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-0.0035e3", // valid
                         "3.14159265358979323846", // valid
                         "1.7976931348623152E308", // valid
-                        "1.7976931348623152E312", // valid Infinity
-                        "-1.7976931348623152E312", // valid -Infinity
+                        "1.7976931348623152E312", // invalid - overflow
+                        "-1.7976931348623152E312", // invalid - overflow
                         "-3.01e-43", // valid
                         "123", // valid
                         "-123", // valid
@@ -719,8 +719,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "1.35000005E12\t1970-01-01T00:00:05.000000Z\n" +
                         "1.35000005E12\t1970-01-01T00:00:06.000000Z\n" +
                         "3.4028235E38\t1970-01-01T00:00:08.000000Z\n" +
-                        "Infinity\t1970-01-01T00:00:09.000000Z\n" +
-                        "-Infinity\t1970-01-01T00:00:10.000000Z\n" +
+                        "NaN\t1970-01-01T00:00:09.000000Z\n" +
+                        "NaN\t1970-01-01T00:00:10.000000Z\n" +
                         "-3.5000\t1970-01-01T00:00:11.000000Z\n" +
                         "-0.0000\t1970-01-01T00:00:12.000000Z\n" +
                         "123.0000\t1970-01-01T00:00:13.000000Z\n" +
@@ -737,8 +737,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "1.35E12", // valid
                         "null", // discarded bad type symbol
                         "3.4028235E38", // valid
-                        "3.4028235E39", // valid Infinity
-                        "-3.4028235E39", // valid -Infinity
+                        "3.4028235E39", // invalid - overflow
+                        "-3.4028235E39", // invalid - overflow
                         "-0.0035e3", // valid
                         "-3.01e-43", // valid
                         "123", // valid

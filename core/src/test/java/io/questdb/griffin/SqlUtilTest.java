@@ -137,8 +137,12 @@ public class SqlUtilTest {
         Assert.assertEquals(9.901E62, SqlUtil.implicitCastStrAsDouble("990.1e60"), 0.001);
 
         // overflow
-        //noinspection SimplifiableAssertion
-        Assert.assertTrue(Double.POSITIVE_INFINITY == SqlUtil.implicitCastStrAsDouble("1e450"));
+        try {
+            SqlUtil.implicitCastStrAsDouble("1e450");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: 1e450 [STRING -> DOUBLE] tuple: 0", e.getFlyweightMessage());
+        }
 
         // not a number
         try {

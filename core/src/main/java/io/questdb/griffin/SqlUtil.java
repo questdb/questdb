@@ -36,6 +36,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.fastdouble.FastFloatParser;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -202,8 +203,8 @@ public class SqlUtil {
     public static float implicitCastStrAsFloat(CharSequence value) {
         if (value != null) {
             try {
-                return Numbers.parseFloat(value);
-            } catch (NumericException e) {
+                return FastFloatParser.parseFloat(value, 0, value.length(), true);
+            } catch (NumericException ignored) {
                 throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.FLOAT);
             }
         }
