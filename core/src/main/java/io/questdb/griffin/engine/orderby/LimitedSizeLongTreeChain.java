@@ -35,6 +35,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * LongTreeChain with a size limit - used to keep only the necessary records
@@ -49,7 +50,7 @@ import io.questdb.std.str.CharSink;
  * L &gt;= 0, H &gt;= 0 - first H records (but skip first L later, if H &lt;= L then return empty set)
  * L &gt;= 0, H &lt; 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
  * H-th from the end, and we don't  ) and need to revert to default behavior -
- * produce the whole set and skip .
+ * produce the whole set and skip.
  * </p>
  * <p>
  * TreeChain stores repeating values (rowids) on valueChain as a linked list :
@@ -387,6 +388,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
     }
 
+    @TestOnly
     public void print(CharSink sink) {
         print(sink, null);
     }

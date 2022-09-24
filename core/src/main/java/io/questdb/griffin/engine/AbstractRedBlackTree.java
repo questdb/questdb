@@ -135,24 +135,6 @@ public abstract class AbstractRedBlackTree implements Mutable, Reallocatable {
         return p;
     }
 
-    protected static long predecessor(long current) {
-        long p = leftOf(current);
-        if (p != EMPTY) {
-            long r;
-            while ((r = rightOf(p)) != EMPTY) {
-                p = r;
-            }
-        } else {
-            p = parentOf(current);
-            long ch = current;
-            while (p != EMPTY && ch == leftOf(p)) {
-                ch = p;
-                p = parentOf(p);
-            }
-        }
-        return p;
-    }
-
     protected long allocateBlock() {
         long p = mem.allocate(getBlockSize());
         setLeft(p, -1);

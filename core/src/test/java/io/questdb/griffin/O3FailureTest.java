@@ -3800,14 +3800,6 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
-                if (fd == targetFd.get() && counter.decrementAndGet() == 0) {
-                    return -1;
-                }
-                return super.mmap(fd, len, flags, mode, memoryTag);
-            }
-
-            @Override
             public long openRW(LPSZ name, long opts) {
                 long fd = super.openRW(name, opts);
                 if (Chars.endsWith(name, fileName)) {
