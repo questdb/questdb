@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.std.Os;
 import org.junit.*;
 
 
@@ -40,7 +41,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    @Ignore("Flaky")
     public void testServerMainStart() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
@@ -49,7 +49,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 Assert.assertNotNull(serverMain.getWorkerPoolManager());
                 Assert.assertFalse(serverMain.hasStarted());
                 Assert.assertFalse(serverMain.hasBeenClosed());
-                serverMain.start(false);
+                serverMain.start();
+                Os.sleep(1000L); // do some work with the server. Also, allow some time for
+                // the workers to finish what they need to do on start
             }
         });
     }
