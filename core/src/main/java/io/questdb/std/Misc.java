@@ -28,6 +28,7 @@ import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
+import java.io.IOException;
 import java.util.Arrays;
 
 public final class Misc {
@@ -43,9 +44,7 @@ public final class Misc {
         if (object instanceof Closeable) {
             try {
                 ((Closeable) object).close();
-            } catch (Throwable e) {
-                // Closeable is a super type of QuietCloseable,
-                // potentially throwing untyped exceptions.
+            } catch (IOException e) {
                 throw new FatalError(e);
             }
         }
