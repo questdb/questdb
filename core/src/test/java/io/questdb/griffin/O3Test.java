@@ -1358,8 +1358,8 @@ public class O3Test extends AbstractO3Test {
 
             haltLatch.await();
 
-            pool1.close();
-            pool2.close();
+            pool1.halt();
+            pool2.halt();
 
             Assert.assertEquals(0, errorCount.get());
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);

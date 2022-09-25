@@ -43,9 +43,10 @@ import io.questdb.network.IORequestProcessor;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
 
-public class HttpServer implements QuietCloseable {
+import java.io.Closeable;
+
+public class HttpServer implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
 

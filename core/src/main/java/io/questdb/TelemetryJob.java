@@ -43,14 +43,13 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.io.Closeable;
 
-public class TelemetryJob extends SynchronizedJob implements QuietCloseable {
+public class TelemetryJob extends SynchronizedJob implements Closeable {
     public final static CharSequence tableName = "telemetry";
     public final static CharSequence configTableName = "telemetry_config";
     static final String QDB_PACKAGE = "QDB_PACKAGE";
@@ -62,7 +61,6 @@ public class TelemetryJob extends SynchronizedJob implements QuietCloseable {
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
     private final SCSequence tempSequence = new SCSequence();
-    private final AtomicBoolean closed = new AtomicBoolean();
     private boolean enabled;
     private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
@@ -132,15 +130,13 @@ public class TelemetryJob extends SynchronizedJob implements QuietCloseable {
 
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
-            if (enabled) {
-                runSerially();
-                newRow(Telemetry.SYSTEM_EVENT_DOWN);
-                writer.commit();
-                writer = Misc.free(writer);
-            }
-            configWriter = Misc.free(configWriter);
+        if (enabled) {
+            runSerially();
+            newRow(Telemetry.SYSTEM_EVENT_DOWN);
+            writer.commit();
+            writer = Misc.free(writer);
         }
+        configWriter = Misc.free(configWriter);
     }
 
     @Override

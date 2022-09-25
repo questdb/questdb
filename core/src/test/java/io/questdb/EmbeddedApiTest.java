@@ -97,7 +97,7 @@ public class EmbeddedApiTest {
                         }
                     }
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });

@@ -34,11 +34,12 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.io.Closeable;
 
-public class LineTcpReceiver implements QuietCloseable {
+
+public class LineTcpReceiver implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
 
     private final IODispatcher<LineTcpConnectionContext> dispatcher;

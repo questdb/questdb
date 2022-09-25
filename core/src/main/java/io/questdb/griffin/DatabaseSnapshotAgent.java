@@ -36,10 +36,11 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
+import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class DatabaseSnapshotAgent implements QuietCloseable {
+public class DatabaseSnapshotAgent implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);
 

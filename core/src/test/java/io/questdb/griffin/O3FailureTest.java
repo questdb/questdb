@@ -3764,8 +3764,8 @@ public class O3FailureTest extends AbstractO3Test {
 
             haltLatch.await();
 
-            pool1.close();
-            pool2.close();
+            pool1.halt();
+            pool2.halt();
             Assert.assertTrue(errorCount.get() > 0);
         }
     }

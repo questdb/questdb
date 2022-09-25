@@ -30,13 +30,12 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class WorkerPoolManager implements QuietCloseable {
+public abstract class WorkerPoolManager {
 
     public enum Requester {
 
@@ -132,8 +131,7 @@ public abstract class WorkerPoolManager implements QuietCloseable {
         }
     }
 
-    @Override
-    public void close() {
+    public void halt() {
         if (closed.compareAndSet(false, true)) {
             ObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
@@ -142,14 +140,14 @@ public abstract class WorkerPoolManager implements QuietCloseable {
                 LOG.info().$("closing dedicated pool [name=").$(name)
                         .$(", workers=").$(pool.getWorkerCount())
                         .I$();
-                pool.close();
+                pool.halt();
             }
             dedicatedPools.clear();
 
             LOG.info().$("closing shared pool [name=").$(sharedPool.getPoolName())
                     .$(", workers=").$(sharedPool.getWorkerCount())
                     .I$();
-            sharedPool.close();
+            sharedPool.halt();
         }
     }
 }

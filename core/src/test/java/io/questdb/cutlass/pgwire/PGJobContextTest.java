@@ -4482,7 +4482,7 @@ nodejs code:
                     }
                     connection.close();
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -7031,7 +7031,7 @@ create table tab as (
                         }
                     }
                 } finally {
-                    pool.close();
+                    pool.halt();
                     engine.releaseAllWriters();
                 }
                 // Failure may not happen if we're lucky, even when they are expected

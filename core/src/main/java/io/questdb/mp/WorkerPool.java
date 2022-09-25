@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class WorkerPool implements QuietCloseable {
+public class WorkerPool implements Closeable {
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final int workerCount;
@@ -173,8 +173,7 @@ public class WorkerPool implements QuietCloseable {
         }
     }
 
-    @Override
-    public void close() {
+    public void halt() {
         if (closed.compareAndSet(false, true)) {
             boolean await = running.get();
             if (await) {
@@ -193,5 +192,10 @@ public class WorkerPool implements QuietCloseable {
             Misc.freeObjList(workers);
             Misc.freeObjList(freeOnHalt);
         }
+    }
+
+    @Override
+    public void close() {
+        halt();
     }
 }

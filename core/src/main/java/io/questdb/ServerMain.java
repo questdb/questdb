@@ -41,15 +41,16 @@ import io.questdb.mp.WorkerPoolManager;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
+import java.io.Closeable;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ServerMain implements QuietCloseable {
+public class ServerMain implements Closeable {
     private final PropServerConfiguration config;
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ObjList<QuietCloseable> toBeClosed = new ObjList<>();
+    private final ObjList<Closeable> toBeClosed = new ObjList<>();
     private final WorkerPoolManager workerPoolManager;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
@@ -69,7 +70,7 @@ public class ServerMain implements QuietCloseable {
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
         engine = new CairoEngine(cairoConfig, metrics);
-        toBeClosed.add(engine);
+        toBeClosed(engine);
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -126,65 +127,50 @@ public class ServerMain implements QuietCloseable {
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(engine);
-        toBeClosed.add(snapshotAgent);
+        toBeClosed(snapshotAgent);
 
         // http
-        final QuietCloseable httpServer = Services.createHttpServer(
+        toBeClosed(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
                 ffCache,
                 snapshotAgent,
                 metrics
-        );
-        if (httpServer != null) {
-            toBeClosed.add(httpServer);
-        }
+        ));
 
         // http min
-        final QuietCloseable httpMinServer = Services.createMinHttpServer(
+        toBeClosed(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
-        );
-        if (httpMinServer != null) {
-            toBeClosed.add(httpMinServer);
-        }
+        ));
 
         // pg wire
-        final QuietCloseable pgWireServer = Services.createPGWireServer(
+        toBeClosed(Services.createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 ffCache,
                 snapshotAgent,
                 metrics
-        );
-        if (pgWireServer != null) {
-            toBeClosed.add(pgWireServer);
-        }
+        ));
 
         // ilp/tcp
-        final QuietCloseable lineTcpReceiver = Services.createLineTcpReceiver(
+        toBeClosed(Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
-        );
-        if (lineTcpReceiver != null) {
-            toBeClosed.add(lineTcpReceiver);
-        }
+        ));
 
         // ilp/udp
-        final QuietCloseable lineUdpReceiver = Services.createLineUdpReceiver(
+        toBeClosed(Services.createLineUdpReceiver(
                 config.getLineUdpReceiverConfiguration(),
                 engine,
                 workerPoolManager
-        );
-        if (lineUdpReceiver != null) {
-            toBeClosed.add(lineUdpReceiver);
-        }
+        ));
 
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
@@ -210,7 +196,7 @@ public class ServerMain implements QuietCloseable {
     public void close() {
         if (closed.compareAndSet(false, true)) {
             ShutdownFlag.INSTANCE.shutdown();
-            workerPoolManager.close();
+            workerPoolManager.halt();
             Misc.freeObjListAndClear(toBeClosed);
             LogFactory.INSTANCE.flushJobsAndClose();
             // leave hasStarted as is, to disable start
@@ -239,6 +225,12 @@ public class ServerMain implements QuietCloseable {
 
     public boolean hasBeenClosed() {
         return closed.get();
+    }
+
+    private void toBeClosed(Closeable closeable) {
+        if (closeable != null) {
+            toBeClosed.add(closeable);
+        }
     }
 
     private void addShutdownHook() {

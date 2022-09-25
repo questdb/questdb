@@ -140,7 +140,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void closeContext() {
         if (null != scheduler) {
-            workerPool.close();
+            workerPool.halt();
             Assert.assertFalse(context.invalid());
             Assert.assertEquals(FD, context.getFd());
             context.close();

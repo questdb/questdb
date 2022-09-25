@@ -226,7 +226,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
                     throw err;
                 } finally {
-                    sharedWorkerPool.close();
+                    sharedWorkerPool.halt();
                     Path.clearThreadLocals();
                 }
             } catch (Throwable err) {

@@ -38,7 +38,6 @@ import java.lang.reflect.Field;
 import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.Properties;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LogFactory implements Closeable {
 
@@ -72,7 +71,6 @@ public class LogFactory implements Closeable {
     private int recordLength = DEFAULT_MSG_SIZE;
     static boolean envEnabled = true;
     static boolean overwriteWithSyncLogging = false;
-    private final AtomicBoolean closed = new AtomicBoolean();
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -260,14 +258,12 @@ public class LogFactory implements Closeable {
 
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
-            haltThread();
-            for (int i = 0, n = jobs.size(); i < n; i++) {
-                Misc.free(jobs.get(i));
-            }
-            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-                Misc.free(scopeConfigs.getQuick(i));
-            }
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            Misc.free(jobs.get(i));
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
         }
     }
 
@@ -379,7 +375,7 @@ public class LogFactory implements Closeable {
 
     public void haltThread() {
         if (workerPool != null) {
-            workerPool.close();
+            workerPool.halt();
             workerPool = null;
         }
     }

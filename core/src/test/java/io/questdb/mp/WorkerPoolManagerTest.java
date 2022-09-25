@@ -143,7 +143,7 @@ public class WorkerPoolManagerTest {
         } catch (IllegalStateException err) {
             TestUtils.assertContains("can only get instance before start", err.getMessage());
         } finally {
-            workerPoolManager.close();
+            workerPoolManager.halt();
         }
     }
 
@@ -152,8 +152,8 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
         workerPoolManager.start(null);
         workerPoolManager.start(null);
-        workerPoolManager.close();
-        workerPoolManager.close();
+        workerPoolManager.halt();
+        workerPoolManager.halt();
     }
 
     private static WorkerPoolManager createWorkerPoolManager(int workerCount) throws SqlException {

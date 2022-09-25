@@ -799,7 +799,7 @@ public class IODispatcherTest {
                 // download select * from 'sample.csv' as csv
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, downloadAsCsvScript, "127.0.0.1", 9001);
             } finally {
-                workerPool.close();
+                workerPool.halt();
             }
         }
     }
@@ -858,7 +858,7 @@ public class IODispatcherTest {
                 // select * from 'sample.csv' and limit columns to f0,f1
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
             } finally {
-                workerPool.close();
+                workerPool.halt();
             }
         }
     }
@@ -1867,7 +1867,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -2328,7 +2328,7 @@ public class IODispatcherTest {
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -2911,7 +2911,7 @@ public class IODispatcherTest {
                         nf.close(fd);
                     }
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -4073,7 +4073,7 @@ public class IODispatcherTest {
                             false
                     );
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -4249,7 +4249,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -4327,7 +4327,7 @@ public class IODispatcherTest {
                     }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -4476,7 +4476,7 @@ public class IODispatcherTest {
                     // number of rows before query is interrupted
                     Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });
@@ -5386,7 +5386,7 @@ public class IODispatcherTest {
                             Net.freeSockAddr(sockAddr);
                         }
                     } finally {
-                        workerPool.close();
+                        workerPool.halt();
                         Files.remove(path);
                     }
                 }
@@ -5531,7 +5531,7 @@ public class IODispatcherTest {
                             LOG.info().$("closed [fd=").$(fd).$(']').$();
                         }
                     } finally {
-                        workerPool.close();
+                        workerPool.halt();
                         Files.remove(path);
                     }
                 }
@@ -5724,7 +5724,7 @@ public class IODispatcherTest {
                             }
                         } finally {
                             Net.freeSockAddr(sockAddr);
-                            workerPool.close();
+                            workerPool.halt();
                         }
                     } finally {
                         Files.remove(path);

@@ -38,13 +38,13 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.io.Closeable;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class PGWireServer implements QuietCloseable {
+public class PGWireServer implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
 

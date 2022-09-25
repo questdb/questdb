@@ -1732,7 +1732,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 e.printStackTrace();
             }
 
-            server.getWorkerPool().close();
+            server.getWorkerPool().halt();
             server.close();
         }
     }

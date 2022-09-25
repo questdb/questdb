@@ -93,7 +93,7 @@ public class HttpHealthCheckTestBuilder {
                 try {
                     code.run(engine);
                 } finally {
-                    workerPool.close();
+                    workerPool.halt();
                 }
             }
         });

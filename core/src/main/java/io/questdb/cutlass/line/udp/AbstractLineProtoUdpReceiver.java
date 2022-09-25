@@ -34,12 +34,12 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
+import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements QuietCloseable {
+public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
     protected final LineUdpLexer lexer;
     protected final LineUdpParserImpl parser;
