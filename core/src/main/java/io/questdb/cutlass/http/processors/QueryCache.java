@@ -81,11 +81,6 @@ public final class QueryCache implements QuietCloseable {
         }
     }
 
-    public void remove(CharSequence sql) {
-        cache.put(sql, null);
-        log("remove", sql);
-    }
-
     public void clear() {
         cache.clear();
         LOG.info().$("cleared").$();

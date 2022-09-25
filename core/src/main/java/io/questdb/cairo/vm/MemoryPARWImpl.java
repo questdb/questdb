@@ -83,11 +83,6 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void putBool(long offset, boolean value) {
         putByte(offset, (byte) (value ? 1 : 0));
     }

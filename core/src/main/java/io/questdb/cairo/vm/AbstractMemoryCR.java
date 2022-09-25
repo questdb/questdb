@@ -25,7 +25,10 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 
 //contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR {
@@ -64,11 +67,6 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     public long resize(long size) {
         extend(size);
         return pageAddress;
-    }
-
-    public void zero() {
-        long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
     }
 
     @Override
