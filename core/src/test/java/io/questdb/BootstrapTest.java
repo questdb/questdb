@@ -60,7 +60,6 @@ public class BootstrapTest extends AbstractBootstrapTest {
         createDummyConfiguration();
         try (Path path = new Path().of(root)) {
             int plen = path.length();
-            Assert.assertFalse(Files.exists(path.concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
             Bootstrap bootstrap = Bootstrap.withArgs("-d", root.toString());
             Assert.assertNotNull(bootstrap.getLog());
             Assert.assertNotNull(bootstrap.getConfiguration());

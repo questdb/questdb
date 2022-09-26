@@ -151,6 +151,7 @@ public abstract class AbstractBootstrapTest {
 
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
+        System.setProperty("out", file);
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
             writer.println("writers=stdout");
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
