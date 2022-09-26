@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.Reallocatable;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
@@ -39,7 +39,7 @@ import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
-public class RecordTreeChain implements Closeable, Mutable, Reallocatable {
+public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     // P(8) + L + R + C(1) + REF + TOP
     private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8;
     private static final int O_LEFT = 8;
@@ -73,9 +73,9 @@ public class RecordTreeChain implements Closeable, Mutable, Reallocatable {
     }
 
     @Override
-    public void reallocate() {
-        recordChain.reallocate();
-        mem.reallocate();
+    public void reopen() {
+        recordChain.reopen();
+        mem.reopen();
     }
 
     private static void setLeft(long blockAddress, long left) {

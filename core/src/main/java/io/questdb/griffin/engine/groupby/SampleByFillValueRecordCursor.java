@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.Reallocatable;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reallocatable {
+class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reopenable {
     private final Map map;
     private final RecordSink keyMapSink;
     private final RecordCursor mapCursor;
@@ -149,9 +149,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     }
 
     @Override
-    public void reallocate() {
+    public void reopen() {
         if (!isOpen) {
-            this.map.reallocate();
+            this.map.reopen();
             isOpen = true;
         }
     }

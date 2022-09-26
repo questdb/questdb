@@ -210,7 +210,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!isOpen) {
                 isOpen = true;
-                joinKeyMap.reallocate();
+                joinKeyMap.reopen();
             }
             slaveTimestamp = Long.MIN_VALUE;
             danglingSlaveRecord = false;

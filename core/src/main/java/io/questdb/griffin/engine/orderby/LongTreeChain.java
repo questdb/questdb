@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.Reallocatable;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
-public class LongTreeChain extends AbstractRedBlackTree implements Reallocatable {
+public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private final TreeCursor cursor = new TreeCursor();
     private final MemoryARW valueChain;
 
@@ -57,7 +57,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reallocatable
     }
 
     @Override
-    public void reallocate() {
+    public void reopen() {
         //nothing to do here
     }
 

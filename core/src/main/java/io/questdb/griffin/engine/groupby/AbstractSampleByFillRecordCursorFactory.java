@@ -76,8 +76,8 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
         AbstractNoRecordSampleByCursor rawCursor = null;
         try {
             rawCursor = getRawCursor();
-            if (rawCursor instanceof Reallocatable) {
-                ((Reallocatable) rawCursor).reallocate();
+            if (rawCursor instanceof Reopenable) {
+                ((Reopenable) rawCursor).reopen();
             }
 
             // This factory fills gaps in data. To do that we
