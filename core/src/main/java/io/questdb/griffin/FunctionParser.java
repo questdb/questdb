@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -381,7 +382,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         try {
             LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
-        } catch (SqlException e) {
+        } catch (SqlException | ImplicitCastException e) {
             Misc.freeObjList(args);
             throw e;
         } catch (Throwable e) {

@@ -935,11 +935,11 @@ public class RecordToRowCopierUtils {
             int toType,
             int toColumnIndex
     ) {
-        if (toType == ColumnType.FLOAT && Double.isInfinite(value)) {
+        if ((toType == ColumnType.FLOAT && Double.isInfinite(value)) || Double.isNaN(value)) {
             // infinity in double should be able to be cast to float, since they have the same mathematical meaning
             return;
         }
-        if (value < min || value > max) {
+        if ((value < min || value > max)) {
             throw ImplicitCastException.inconvertibleValue(toColumnIndex, value, fromType, toType);
         }
     }

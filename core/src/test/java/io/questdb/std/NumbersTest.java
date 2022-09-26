@@ -595,49 +595,46 @@ public class NumbersTest {
 
     @Test
     public void testParseFloat() throws Exception {
-//        String s1 = "0.45677899234";
-//        Assert.assertEquals(Float.parseFloat(s1), Numbers.parseFloat(s1), 0.000000001);
+        String s1 = "0.45677899234";
+        Assert.assertEquals(Float.parseFloat(s1), Numbers.parseFloat(s1), 0.000000001);
 
-//        String s2 = "1.459983E35";
-//        Assert.assertEquals(Float.parseFloat(s2) / 1e35d, Numbers.parseFloat(s2) / 1e35d, 0.00001);
+        String s2 = "1.459983E35";
+        Assert.assertEquals(Float.parseFloat(s2) / 1e35d, Numbers.parseFloat(s2) / 1e35d, 0.00001);
 
-//        String s3 = "0.000000023E-30";
-//        Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
-
-//        String s4 = "0.000000023E-38";
-//        Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
+        String s3 = "0.000000023E-30";
+        Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
 
         // overflow
-//        try {
-//            Numbers.parseFloat("1.0000E-204");
-//            Assert.fail();
-//        } catch (NumericException ignored) {
-//        }
+        try {
+            Numbers.parseFloat("1.0000E-204");
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
 
-//        try {
-//            Numbers.parseFloat("1E39");
-//            Assert.fail();
-//        } catch (NumericException ignored) {
-//        }
+        try {
+            Numbers.parseFloat("1E39");
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
 
-//        try {
-//            Numbers.parseFloat("1.0E39");
-//            Assert.fail();
-//        } catch (NumericException ignored) {
-//        }
+        try {
+            Numbers.parseFloat("1.0E39");
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
 
-//        String s6 = "200E2";
-//        Assert.assertEquals(Float.parseFloat(s6), Numbers.parseFloat(s6), 0.000000001);
+        String s6 = "200E2";
+        Assert.assertEquals(Float.parseFloat(s6), Numbers.parseFloat(s6), 0.000000001);
 
-//        String s7 = "NaN";
-//        Assert.assertEquals(Float.parseFloat(s7), Numbers.parseFloat(s7), 0.000000001);
+        String s7 = "NaN";
+        Assert.assertEquals(Float.parseFloat(s7), Numbers.parseFloat(s7), 0.000000001);
 
-//        String s8 = "-Infinity";
-//        Assert.assertEquals(Float.parseFloat(s8), Numbers.parseFloat(s8), 0.000000001);
+        String s8 = "-Infinity";
+        Assert.assertEquals(Float.parseFloat(s8), Numbers.parseFloat(s8), 0.000000001);
 
         // min exponent float
-//        String s9 = "1.4e-45";
-//        Assert.assertEquals(1.4e-45f, Numbers.parseFloat(s9), 0.001);
+        String s9 = "1.4e-45";
+        Assert.assertEquals(1.4e-45f, Numbers.parseFloat(s9), 0.001);
 
         // false overflow
         String s10 = "0003000.0e-46";

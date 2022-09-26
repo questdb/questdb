@@ -102,7 +102,7 @@ public final class ColumnType {
             /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
             /* 9  FLOAT     */, {FLOAT, DOUBLE}
             /* 10 DOUBLE    */, {DOUBLE}
-            /* 11 STRING    */, {} //{BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+            /* 11 STRING    */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
             /* 12 SYMBOL    */, {SYMBOL, STRING}
             /* 13 LONG256   */, {LONG256}
             /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
@@ -137,12 +137,10 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return                 (
-                (toType == fromType || tagOf(fromType) == tagOf(toType)) &&
-                        (
-                                getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0
-                        )
-        )
+        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) &&
+                (
+                        getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0
+                ))
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
