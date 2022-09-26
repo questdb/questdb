@@ -174,11 +174,181 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastDoubleAsByte(double value) {
+        if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
+            return (byte) value;
+        }
+
+        if (Double.isNaN(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.BYTE);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastDoubleAsFloat(double value) {
+        final double d = Math.abs(value);
+        if ((d >= Float.MIN_VALUE && d <= Float.MAX_VALUE) || (Double.isNaN(value) || Double.isInfinite(value) || d == 0.0)) {
+            return (float) value;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.DOUBLE, ColumnType.FLOAT);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static int implicitCastDoubleAsInt(double value) {
+        if (Double.isNaN(value)) {
+            return Numbers.INT_NaN;
+        }
+        return implicitCastAsInt((long) value, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastDoubleAsLong(double value) {
+        if (value > Long.MIN_VALUE && value <= Long.MAX_VALUE) {
+            return (long) value;
+        }
+
+        if (Double.isNaN(value)) {
+            return Numbers.LONG_NaN;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.DOUBLE, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastDoubleAsShort(double value) {
+        if (Double.isNaN(value)) {
+            return 0;
+        }
+        return implicitCastAsShort((long) value, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastFloatAsByte(float value) {
+        if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
+            return (byte) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.BYTE);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static int implicitCastFloatAsInt(float value) {
+        if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
+            return (int) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return Numbers.INT_NaN;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.INT);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastFloatAsLong(float value) {
+        if (value > Long.MIN_VALUE && value <= Long.MAX_VALUE) {
+            return (long) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return Numbers.LONG_NaN;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastFloatAsShort(float value) {
+        if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
+            return (short) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.SHORT);
+    }
+
     public static long implicitCastGeoHashAsGeoHash(long value, int fromType, int toType) {
         final int fromBits = ColumnType.getGeoHashBits(fromType);
         final int toBits = ColumnType.getGeoHashBits(toType);
         assert fromBits >= toBits;
         return GeoHashes.widen(value, fromBits, toBits);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastIntAsByte(int value) {
+        if (value != Numbers.INT_NaN) {
+            return implicitCastAsByte(value, ColumnType.INT);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastIntAsShort(int value) {
+        if (value != Numbers.INT_NaN) {
+            return implicitCastAsShort(value, ColumnType.INT);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastLongAsByte(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return implicitCastAsByte(value, ColumnType.LONG);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static int implicitCastLongAsInt(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return implicitCastAsInt(value, ColumnType.LONG);
+        }
+        return Numbers.INT_NaN;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastLongAsShort(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return implicitCastAsShort(value, ColumnType.LONG);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastShortAsByte(short value) {
+        return implicitCastAsByte(value, ColumnType.SHORT);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static int implicitCastShortAsInt(short value) {
+        return implicitCastAsInt(value, ColumnType.SHORT);
     }
 
     public static byte implicitCastStrAsByte(CharSequence value) {

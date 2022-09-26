@@ -393,8 +393,12 @@ public class BytecodeAssembler {
     }
 
     public void ldc(int index) {
-        putByte(0x12);
-        putByte(index);
+        if (index < 256) {
+            putByte(0x12);
+            putByte(index);
+        } else {
+            ldc_w(index);
+        }
     }
 
     public void ldc2_w(int index) {

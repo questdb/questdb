@@ -506,6 +506,86 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastFloatByteTab() throws Exception {
+        assertCastFloatTab("byte",
+                "a\n" +
+                        "28\n" +
+                        "29\n" +
+                        "8\n" +
+                        "20\n" +
+                        "93\n" +
+                        "0\n" +
+                        "66\n" +
+                        "80\n" +
+                        "22\n" +
+                        "12\n" +
+                        "8\n",
+                -210f,
+                220f
+        );
+    }
+
+    @Test
+    public void testCastFloatShortTab() throws Exception {
+        assertCastFloatTab("short",
+                "a\n" +
+                        "28\n" +
+                        "29\n" +
+                        "8\n" +
+                        "20\n" +
+                        "93\n" +
+                        "0\n" +
+                        "66\n" +
+                        "80\n" +
+                        "22\n" +
+                        "12\n" +
+                        "8\n",
+                -42230f,
+                42230f
+        );
+    }
+
+    @Test
+    public void testCastFloatIntTab() throws Exception {
+        assertCastFloatTab("int",
+                "a\n" +
+                        "28\n" +
+                        "29\n" +
+                        "8\n" +
+                        "20\n" +
+                        "93\n" +
+                        "NaN\n" +
+                        "66\n" +
+                        "80\n" +
+                        "22\n" +
+                        "12\n" +
+                        "8\n",
+                -3.4e20f,
+                3.4e20f
+        );
+    }
+
+    @Test
+    public void testCastFloatLongTab() throws Exception {
+        assertCastFloatTab("long",
+                "a\n" +
+                        "28\n" +
+                        "29\n" +
+                        "8\n" +
+                        "20\n" +
+                        "93\n" +
+                        "NaN\n" +
+                        "66\n" +
+                        "80\n" +
+                        "22\n" +
+                        "12\n" +
+                        "8\n",
+                -3.4e35f,
+                3.4e35f
+                );
+    }
+
+    @Test
     public void testCastIntToByteBind() throws Exception {
         assertIntBind(
                 "byte",
@@ -1194,6 +1274,40 @@ public class InsertCastTest extends AbstractGriffinTest {
                     sink,
                     "ts\n" +
                             "\n"
+            );
+        });
+    }
+
+    private void assertCastFloatTab(String type, String expected, float outOfRangeLeft, float outOfRangeRight) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + type + ");", sqlExecutionContext);
+            compiler.compile("create table x as (select rnd_float()*100 a from long_sequence(5));", sqlExecutionContext);
+            compiler.compile("insert into y select rnd_float()*100 a from long_sequence(5);", sqlExecutionContext);
+            executeInsert("insert into y values (cast ('NaN' as float));");
+            // execute insert statement for each value of reference table
+            compiler.compile("insert into y select a from x", sqlExecutionContext).getInsertOperation();
+
+            try {
+                executeInsert("insert into y values (cast ('" + outOfRangeLeft + "' as float));");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+
+            try {
+                executeInsert("insert into y values (cast ('" + outOfRangeRight + "' as float));");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    expected
             );
         });
     }

@@ -284,28 +284,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastDateByte() throws SqlException {
-        assertCastDate("a\n" +
-                        "11\n" +
-                        "0\n" +
-                        "121\n" +
-                        "-2\n" +
-                        "0\n" +
-                        "-43\n" +
-                        "-124\n" +
-                        "100\n" +
-                        "0\n" +
-                        "124\n" +
-                        "0\n" +
-                        "-45\n" +
-                        "0\n" +
-                        "24\n" +
-                        "-16\n" +
-                        "58\n" +
-                        "0\n" +
-                        "-6\n" +
-                        "73\n" +
-                        "125\n",
-                ColumnType.BYTE);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.BYTE) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select cast(rnd_byte() as date) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.BYTE) + ")";
+
+        assertCast("a\n" +
+                        "76\n" +
+                        "102\n" +
+                        "27\n" +
+                        "87\n" +
+                        "79\n" +
+                        "79\n" +
+                        "122\n" +
+                        "83\n" +
+                        "90\n" +
+                        "76\n" +
+                        "84\n" +
+                        "84\n" +
+                        "74\n" +
+                        "55\n" +
+                        "83\n" +
+                        "88\n" +
+                        "32\n" +
+                        "21\n" +
+                        "91\n" +
+                        "74\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -362,28 +370,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastDateInt() throws SqlException {
-        assertCastDate("a\n" +
-                        "368100107\n" +
-                        "0\n" +
-                        "-1322920583\n" +
-                        "315036158\n" +
-                        "0\n" +
-                        "925824213\n" +
-                        "848878212\n" +
-                        "1466216804\n" +
-                        "0\n" +
-                        "74798204\n" +
-                        "0\n" +
-                        "779467987\n" +
-                        "0\n" +
-                        "-222350568\n" +
-                        "-747511056\n" +
-                        "-2058822342\n" +
-                        "0\n" +
-                        "480456698\n" +
-                        "2102580553\n" +
-                        "637210493\n",
-                ColumnType.INT);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.INT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select cast(rnd_int() as date) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
+
+        assertCast("a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -414,28 +430,37 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastDateShort() throws SqlException {
-        assertCastDate("a\n" +
-                        "-15605\n" +
-                        "0\n" +
-                        "-10887\n" +
-                        "4606\n" +
-                        "0\n" +
-                        "-2859\n" +
-                        "-9596\n" +
-                        "-20124\n" +
-                        "0\n" +
-                        "21628\n" +
-                        "0\n" +
-                        "-17197\n" +
-                        "0\n" +
-                        "13080\n" +
-                        "-7440\n" +
-                        "-8902\n" +
-                        "0\n" +
-                        "12282\n" +
-                        "-10935\n" +
-                        "3965\n",
-                ColumnType.SHORT);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.SHORT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select cast(rnd_short() as date) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.SHORT) + ")";
+
+        assertCast(
+                "a\n" +
+                        "-27056\n" +
+                        "24814\n" +
+                        "-11455\n" +
+                        "-13027\n" +
+                        "-21227\n" +
+                        "-22955\n" +
+                        "-1398\n" +
+                        "21015\n" +
+                        "30202\n" +
+                        "-19496\n" +
+                        "-14644\n" +
+                        "-5356\n" +
+                        "-4914\n" +
+                        "-24335\n" +
+                        "-32679\n" +
+                        "-19832\n" +
+                        "-31548\n" +
+                        "11665\n" +
+                        "7739\n" +
+                        "23922\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -504,14 +529,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.034Z\n" +
                         "1970-01-01T00:00:00.076Z\n" +
                         "1970-01-01T00:00:00.042Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.072Z\n" +
                         "1970-01-01T00:00:00.042Z\n" +
                         "1970-01-01T00:00:00.070Z\n" +
                         "1970-01-01T00:00:00.038Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.032Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.097Z\n" +
                         "1970-01-01T00:00:00.024Z\n" +
                         "1970-01-01T00:00:00.063Z\n",
@@ -556,14 +581,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "34\n" +
                         "76\n" +
                         "42\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "42\n" +
                         "70\n" +
                         "38\n" +
                         "0\n" +
                         "32\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "97\n" +
                         "24\n" +
                         "63\n",
@@ -582,18 +607,19 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "34\n" +
                         "76\n" +
                         "42\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "42\n" +
                         "70\n" +
                         "38\n" +
                         "0\n" +
                         "32\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "97\n" +
                         "24\n" +
                         "63\n",
-                ColumnType.LONG);
+                ColumnType.LONG
+        );
     }
 
     @Test
@@ -634,14 +660,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000034Z\n" +
                         "1970-01-01T00:00:00.000076Z\n" +
                         "1970-01-01T00:00:00.000042Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000072Z\n" +
                         "1970-01-01T00:00:00.000042Z\n" +
                         "1970-01-01T00:00:00.000070Z\n" +
                         "1970-01-01T00:00:00.000038Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000032Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000097Z\n" +
                         "1970-01-01T00:00:00.000024Z\n" +
                         "1970-01-01T00:00:00.000063Z\n",
@@ -678,22 +704,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatDate() throws SqlException {
         assertCastFloat("a\n" +
                         "1970-01-01T00:00:00.080Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.008Z\n" +
                         "1970-01-01T00:00:00.029Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.093Z\n" +
                         "1970-01-01T00:00:00.013Z\n" +
                         "1970-01-01T00:00:00.079Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.022Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.034Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.076Z\n" +
                         "1970-01-01T00:00:00.052Z\n" +
                         "1970-01-01T00:00:00.055Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.072Z\n" +
                         "1970-01-01T00:00:00.062Z\n" +
                         "1970-01-01T00:00:00.066Z\n",
@@ -730,22 +756,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatInt() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "8\n" +
                         "29\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "93\n" +
                         "13\n" +
                         "79\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "22\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "34\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "76\n" +
                         "52\n" +
                         "55\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "62\n" +
                         "66\n",
@@ -756,22 +782,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatLong() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "8\n" +
                         "29\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "93\n" +
                         "13\n" +
                         "79\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "22\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "34\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "76\n" +
                         "52\n" +
                         "55\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "62\n" +
                         "66\n",
@@ -808,22 +834,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatTimestamp() throws SqlException {
         assertCastFloat("a\n" +
                         "1970-01-01T00:00:00.000080Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
                         "1970-01-01T00:00:00.000029Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000093Z\n" +
                         "1970-01-01T00:00:00.000013Z\n" +
                         "1970-01-01T00:00:00.000079Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000022Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000034Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000076Z\n" +
                         "1970-01-01T00:00:00.000052Z\n" +
                         "1970-01-01T00:00:00.000055Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000072Z\n" +
                         "1970-01-01T00:00:00.000062Z\n" +
                         "1970-01-01T00:00:00.000066Z\n",
@@ -1425,28 +1451,37 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastTimestampByte() throws SqlException {
-        assertCastTimestamp("a\n" +
-                        "89\n" +
-                        "0\n" +
-                        "-19\n" +
-                        "-99\n" +
-                        "0\n" +
-                        "-102\n" +
-                        "86\n" +
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.BYTE) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select rnd_byte()::timestamp a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.BYTE) + ")";
+
+        assertCast(
+                "a\n" +
+                        "76\n" +
+                        "102\n" +
+                        "27\n" +
+                        "87\n" +
+                        "79\n" +
+                        "79\n" +
+                        "122\n" +
                         "83\n" +
-                        "0\n" +
-                        "30\n" +
-                        "0\n" +
-                        "-128\n" +
-                        "0\n" +
-                        "-115\n" +
-                        "-106\n" +
-                        "-76\n" +
-                        "0\n" +
-                        "25\n" +
-                        "30\n" +
-                        "-69\n",
-                ColumnType.BYTE);
+                        "90\n" +
+                        "76\n" +
+                        "84\n" +
+                        "84\n" +
+                        "74\n" +
+                        "55\n" +
+                        "83\n" +
+                        "88\n" +
+                        "32\n" +
+                        "21\n" +
+                        "91\n" +
+                        "74\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -1529,28 +1564,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastTimestampInt() throws SqlException {
-        assertCastTimestamp("a\n" +
-                        "1929150553\n" +
-                        "0\n" +
-                        "-1662833171\n" +
-                        "-1181550947\n" +
-                        "0\n" +
-                        "1427946650\n" +
-                        "-1020695722\n" +
-                        "1860812627\n" +
-                        "0\n" +
-                        "1532714782\n" +
-                        "0\n" +
-                        "-1596883072\n" +
-                        "0\n" +
-                        "2141839757\n" +
-                        "765393046\n" +
-                        "-264666444\n" +
-                        "0\n" +
-                        "333923609\n" +
-                        "-959951586\n" +
-                        "237646267\n",
-                ColumnType.INT);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.INT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select rnd_int()::timestamp a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
+
+        assertCast("a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -1581,28 +1624,37 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastTimestampShort() throws SqlException {
-        assertCastTimestamp("a\n" +
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.SHORT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select rnd_short()::timestamp a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.SHORT) + ")";
+
+        assertCast(
+                "a\n" +
+                        "-27056\n" +
+                        "24814\n" +
+                        "-11455\n" +
+                        "-13027\n" +
+                        "-21227\n" +
+                        "-22955\n" +
+                        "-1398\n" +
+                        "21015\n" +
+                        "30202\n" +
+                        "-19496\n" +
+                        "-14644\n" +
+                        "-5356\n" +
+                        "-4914\n" +
+                        "-24335\n" +
                         "-32679\n" +
-                        "0\n" +
-                        "11757\n" +
-                        "-2403\n" +
-                        "0\n" +
-                        "-17254\n" +
-                        "27478\n" +
-                        "-16557\n" +
-                        "0\n" +
-                        "24350\n" +
-                        "0\n" +
-                        "32640\n" +
-                        "0\n" +
-                        "-7795\n" +
-                        "-1898\n" +
-                        "-32076\n" +
-                        "0\n" +
-                        "17689\n" +
-                        "19742\n" +
-                        "12731\n",
-                ColumnType.SHORT);
+                        "-19832\n" +
+                        "-31548\n" +
+                        "11665\n" +
+                        "7739\n" +
+                        "23922\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
