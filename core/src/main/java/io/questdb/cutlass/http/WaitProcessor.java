@@ -132,6 +132,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             long cursor = inSubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
+                Os.pause();
                 continue;
             }
 
@@ -165,6 +166,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             long cursor = inPubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
+                Os.pause();
                 continue;
             }
 
