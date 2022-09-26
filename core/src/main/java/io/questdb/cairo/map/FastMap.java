@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-public class FastMap implements Map, Reallocatable {
+public class FastMap implements Map, Reopenable {
 
     private static final HashFunction DEFAULT_HASH = Hash::hashMem;
     private static final int MIN_INITIAL_CAPACITY = 128;
@@ -85,7 +85,18 @@ public class FastMap implements Map, Reallocatable {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
-    @TestOnly
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            int memoryTag
+    ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, memoryTag, memoryTag);
+    }
+
     FastMap(
             int pageSize,
             @Transient ColumnTypes keyTypes,
@@ -95,18 +106,33 @@ public class FastMap implements Map, Reallocatable {
             HashFunction hashFunction,
             int maxResizes
     ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, hashFunction, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+    }
+
+    @TestOnly
+    FastMap(
+            int pageSize,
+            @Transient ColumnTypes keyTypes,
+            @Transient ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            HashFunction hashFunction,
+            int maxResizes,
+            int mapMemoryTag,
+            int listMemoryTag
+    ) {
         assert pageSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
         this.initialKeyCapacity = keyCapacity;
         this.initialPageSize = pageSize;
         this.loadFactor = loadFactor;
-        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, MemoryTag.NATIVE_FAST_MAP);
+        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, mapMemoryTag);
         this.kLimit = kStart + pageSize;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = this.keyCapacity - 1;
         this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets = new DirectLongList(this.keyCapacity, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+        this.offsets = new DirectLongList(this.keyCapacity, listMemoryTag);
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(0);
         this.hashFunction = hashFunction;
@@ -177,7 +203,7 @@ public class FastMap implements Map, Reallocatable {
         this.cursor = new FastMapCursor(record, this);
     }
 
-    public void reallocate() {
+    public void reopen() {
         if (kStart == 0) {
             //handles both mem and offsets
             restoreInitialCapacity();
@@ -229,6 +255,7 @@ public class FastMap implements Map, Reallocatable {
         return key.init();
     }
 
+    @Override
     public void restoreInitialCapacity() {
         this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
         this.kLimit = kStart + this.initialPageSize;

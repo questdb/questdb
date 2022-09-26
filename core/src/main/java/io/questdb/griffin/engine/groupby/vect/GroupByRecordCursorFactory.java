@@ -52,6 +52,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
 
+    private final static int ROSTI_MINIMIZED_SIZE = 16;//16 is the minimum size usable on arm 
+
     private final RecordCursorFactory base;
     private final ObjList<VectorAggregateFunction> vafList;
     private final ObjectPool<VectorAggregateEntry> entryPool;
@@ -97,7 +99,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         for (int i = 0; i < workerCount; i++) {
             long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
             if (ptr == 0) {
-                for (int k = i -1; k > -1; k--) {
+                for (int k = i - 1; k > -1; k--) {
                     raf.free(pRosti[k]);
                 }
                 Misc.free(base);
@@ -177,7 +179,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
             Rosti.clear(pRosti[i]);
@@ -327,7 +328,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     continue;
                 }
 
-                if (!Rosti.reset(pRosti[i], configuration.getGroupByMapCapacity())) {
+                if (!Rosti.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
                     Misc.free(cursor);
                     throw new OutOfMemoryError();
                 }
@@ -361,7 +362,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(base);
     }
 
-    private static class RostiRecordCursor implements RecordCursor {
+    private class RostiRecordCursor implements RecordCursor {
         private final RostiRecord record;
         private long pRosti;
         private final IntList symbolTableSkewIndex;
@@ -394,7 +395,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             Misc.free(parent);
-            Rosti.reset(pRosti, defaultMapSize);
+            Rosti.reset(pRosti, ROSTI_MINIMIZED_SIZE);
         }
 
         @Override
