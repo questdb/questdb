@@ -58,7 +58,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
         try (LogFactory factory = new LogFactory()) {
             try {
-                LogFactory.configureFromSystemProperties(factory, null, null);
+                factory.configureFromSystemProperties();
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
@@ -127,8 +127,6 @@ public class LogFactoryTest {
             for (int i = 0; i < messageCount; i++) {
                 logger1.criticalW().$("test ").$(i).$();
             }
-
-            factory.flushJobsAndClose();
         }
         Assert.assertEquals(messageCount, counter.get());
     }
@@ -155,19 +153,15 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 64; i++) {
-                    logger.xerror().$("test ").$hex(i).$();
-                }
-
-                Os.sleep(100);
-
-                Assert.assertEquals(0, x.length());
-                Assert.assertEquals(576, y.length());
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 64; i++) {
+                logger.xerror().$("test ").$hex(i).$();
             }
+
+            Os.sleep(100);
+
+            Assert.assertEquals(0, x.length());
+            Assert.assertEquals(576, y.length());
         }
     }
 
@@ -193,18 +187,14 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 100000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-
-                Os.sleep(100);
-                Assert.assertTrue(x.length() > 0);
-                TestUtils.assertEquals(x, y);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 100000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
+
+            Os.sleep(100);
+            Assert.assertTrue(x.length() > 0);
+            TestUtils.assertEquals(x, y);
         }
     }
 
@@ -213,7 +203,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog2.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.configureFromSystemProperties();
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -229,7 +219,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.configureFromSystemProperties();
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -282,23 +272,19 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 1000; i++) {
-                    logger.xerror().$("test ").$(i).$();
-                }
-
-                yLatch.await(-1000);
-                Os.sleep(500);
-
-                for (int i = 0; i < 1000; i++) {
-                    logger.xinfo().$("test ").$(i).$();
-                }
-
-                xLatch.await(-1000);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 1000; i++) {
+                logger.xerror().$("test ").$(i).$();
             }
+
+            yLatch.await(-1000);
+            Os.sleep(500);
+
+            for (int i = 0; i < 1000; i++) {
+                logger.xinfo().$("test ").$(i).$();
+            }
+
+            xLatch.await(-1000);
         }
     }
 
@@ -409,7 +395,7 @@ public class LogFactoryTest {
             writer.setLocation(logFile);
             writer.setRollSize("1m");
             writer.setBufferSize("64k");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
 
             AtomicBoolean running = new AtomicBoolean(true);
             SOCountDownLatch halted = new SOCountDownLatch();
@@ -479,16 +465,12 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 100000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-
-                Os.sleep(100);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 100000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
+
+            Os.sleep(100);
         }
         Assert.assertTrue(new File(expectedLogFile).length() > 0);
     }
@@ -529,16 +511,12 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 100000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-
-                Os.sleep(1000);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 100000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
+
+            Os.sleep(1000);
         }
         Assert.assertTrue(new File(expectedLogFile).length() > 0);
     }
@@ -557,7 +535,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.configureFromSystemProperties();
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Invalid value for queueDepth", e.getMessage());
@@ -578,7 +556,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.configureFromSystemProperties();
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Invalid value for recordLength", e.getMessage());
@@ -604,7 +582,7 @@ public class LogFactoryTest {
             System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
 
             try (LogFactory factory = new LogFactory()) {
-                LogFactory.configureFromSystemProperties(factory);
+                factory.configureFromSystemProperties();
 
                 Log log = factory.create("xyz");
 
@@ -640,7 +618,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.configureFromSystemProperties();
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Unknown property: w.file.avocado", e.getMessage());
@@ -652,7 +630,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.configureFromSystemProperties();
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -713,7 +691,7 @@ public class LogFactoryTest {
                 props.store(stream, "");
             }
 
-            LogFactory.configureFromSystemProperties(factory, null, temp.getRoot().getPath());
+            factory.configureFromSystemProperties(temp.getRoot().getPath());
 
             File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
             MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
@@ -729,7 +707,7 @@ public class LogFactoryTest {
 
         final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed, IntervalUtils.parseFloorPartialDate("2019-12-31"));
 
-        long expectedFileCount = Files.getOpenFileCount();
+        final long expectedFileCount = Files.getOpenFileCount();
         long expectedMemUsage = Unsafe.getMemUsed();
 
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
@@ -748,13 +726,9 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 10000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 10000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
         }
 

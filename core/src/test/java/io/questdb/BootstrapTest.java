@@ -84,25 +84,21 @@ public class BootstrapTest extends AbstractBootstrapTest {
 
             factory.bind();
             factory.startThread();
-            try {
-                Log logger = factory.create("x");
+            Log logger = factory.create("x");
 
-                // create crash files
-                try (Path path = new Path().of(temp.getRoot().getAbsolutePath())) {
-                    int plen = path.length();
-                    Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
-                    Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
-                    Files.mkdirs(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
-                }
+            // create crash files
+            try (Path path = new Path().of(temp.getRoot().getAbsolutePath())) {
+                int plen = path.length();
+                Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
+                Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
+                Files.mkdirs(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
+            }
 
-                Bootstrap.reportCrashFiles(configuration, logger);
+            Bootstrap.reportCrashFiles(configuration, logger);
 
-                // wait until sequence is consumed and written to file
-                while (logger.getCriticalSequence().getBarrier().current() < 1) {
-                    Os.pause();
-                }
-            } finally {
-                factory.haltThread();
+            // wait until sequence is consumed and written to file
+            while (logger.getCriticalSequence().getBarrier().current() < 1) {
+                Os.pause();
             }
         }
 

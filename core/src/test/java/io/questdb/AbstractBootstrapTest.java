@@ -181,7 +181,6 @@ public abstract class AbstractBootstrapTest {
 
         Path.clearThreadLocals();
         Assert.assertEquals(0, Files.getOpenFileCount());
-        Assert.assertEquals(0, Unsafe.getMemUsed());
         Assert.assertEquals(addrInfoCount, Net.getAllocatedAddrInfoCount());
         Assert.assertEquals(sockAddrCount, Net.getAllocatedSockAddrCount());
     }

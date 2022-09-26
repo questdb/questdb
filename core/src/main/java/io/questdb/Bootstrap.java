@@ -131,9 +131,9 @@ public class Bootstrap {
         }
 
         // setup logger
-        LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
+        LogFactory.init(rootDirectory);
         final int nodeId = NODE_ID.incrementAndGet();
-        String logName = nodeId > 0 ? String.format("%s-%d", LOG_NAME, nodeId) : LOG_NAME;
+        final String logName = nodeId > 0 ? String.format("%s-%d", LOG_NAME, nodeId) : LOG_NAME;
         log = LogFactory.getLog(logName);
 
         // report copyright and architecture

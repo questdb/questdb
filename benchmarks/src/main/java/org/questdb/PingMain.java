@@ -84,6 +84,6 @@ public class PingMain {
                 Os.sleep(delayMillis);
             }
         }
-        LogFactory.INSTANCE.flushJobsAndClose();
+        LogFactory.getInstance().close(true);
     }
 }

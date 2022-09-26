@@ -198,8 +198,6 @@ public class ServerMain implements Closeable {
             ShutdownFlag.INSTANCE.shutdown();
             workerPoolManager.halt();
             Misc.freeObjListAndClear(toBeClosed);
-            LogFactory.INSTANCE.flushJobsAndClose();
-            System.out.printf("bye%n");
             // leave hasStarted as is, to disable start
         }
         if (!running.get()) {
@@ -240,6 +238,7 @@ public class ServerMain implements Closeable {
                 System.err.println("QuestDB is shutting down...");
                 System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.sum());
                 close();
+                LogFactory.getInstance().close(true);
             } catch (Error ignore) {
                 // ignore
             } finally {
