@@ -38,6 +38,7 @@ import java.lang.reflect.Field;
 import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LogFactory implements Closeable {
 
@@ -65,8 +66,9 @@ public class LogFactory implements Closeable {
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final MicrosecondClock clock;
     private final StringSink sink = new StringSink();
+    private final AtomicBoolean closed = new AtomicBoolean();
     private WorkerPool workerPool;
-    private boolean configured = false;
+    private volatile boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
     static boolean envEnabled = true;
@@ -82,54 +84,6 @@ public class LogFactory implements Closeable {
 
     public static void configureAsync() {
         overwriteWithSyncLogging = false;
-    }
-
-    public static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool, String logDir) {
-
-        factory.workerPool = workerPool;
-        String writers = getProperty(properties, "writers");
-
-        if (writers == null) {
-            factory.configured = true;
-            return;
-        }
-
-        String s;
-
-        s = getProperty(properties, "queueDepth");
-        if (s != null && s.length() > 0) {
-            try {
-                factory.setQueueDepth(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for queueDepth");
-            }
-        }
-
-        s = getProperty(properties, "recordLength");
-        if (s != null && s.length() > 0) {
-            try {
-                factory.setRecordLength(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for recordLength");
-            }
-        }
-
-        for (String w : writers.split(",")) {
-            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
-            if (conf != null) {
-                factory.add(conf);
-            }
-        }
-
-        factory.bind();
-    }
-
-    public static void configureFromSystemProperties(LogFactory factory) {
-        configureFromSystemProperties(factory, null);
-    }
-
-    public static void configureFromSystemProperties(LogFactory factory, WorkerPool workerPool) {
-        configureFromSystemProperties(factory, workerPool, null);
     }
 
     public static void configureFromSystemProperties(LogFactory factory, WorkerPool workerPool, String rootDir) {
@@ -196,6 +150,51 @@ public class LogFactory implements Closeable {
         factory.startThread();
     }
 
+    private static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool, String logDir) {
+
+        factory.workerPool = workerPool;
+        String writers = getProperty(properties, "writers");
+
+        if (writers == null) {
+            factory.configured = true;
+            return;
+        }
+
+        String s;
+
+        s = getProperty(properties, "queueDepth");
+        if (s != null && s.length() > 0) {
+            try {
+                factory.setQueueDepth(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for queueDepth");
+            }
+        }
+
+        s = getProperty(properties, "recordLength");
+        if (s != null && s.length() > 0) {
+            try {
+                factory.setRecordLength(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for recordLength");
+            }
+        }
+
+        for (String w : writers.split(",")) {
+            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
+            if (conf != null) {
+                factory.add(conf);
+            }
+        }
+
+        factory.bind();
+    }
+
+    @TestOnly
+    static void configureFromSystemProperties(LogFactory factory) {
+        configureFromSystemProperties(factory, null, null);
+    }
+
     public static void configureSync() {
         overwriteWithSyncLogging = true;
     }
@@ -207,7 +206,7 @@ public class LogFactory implements Closeable {
 
     public static Log getLog(CharSequence key) {
         if (!INSTANCE.configured) {
-            configureFromSystemProperties(INSTANCE, null);
+            configureFromSystemProperties(INSTANCE, null, null);
         }
         return INSTANCE.create(key);
     }
@@ -258,12 +257,14 @@ public class LogFactory implements Closeable {
 
     @Override
     public void close() {
-        haltThread();
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            Misc.free(jobs.get(i));
-        }
-        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-            Misc.free(scopeConfigs.getQuick(i));
+        if (closed.compareAndSet(false, true)) {
+            haltThread();
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                Misc.free(jobs.get(i));
+            }
+            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+                Misc.free(scopeConfigs.getQuick(i));
+            }
         }
     }
 
@@ -271,24 +272,26 @@ public class LogFactory implements Closeable {
      * Flush remaining log lines and close
      */
     public void flushJobsAndClose() {
-        haltThread();
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            LogWriter job = jobs.get(i);
-            if (job != null) {
-                try {
-                    // noinspection StatementWithEmptyBody
-                    while (job.run(0)) {
-                        // Keep running the job until it returns false to log all the buffered messages
+        if (closed.compareAndSet(false, true)) {
+            haltThread();
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                LogWriter job = jobs.get(i);
+                if (job != null) {
+                    try {
+                        // noinspection StatementWithEmptyBody
+                        while (job.run(0)) {
+                            // Keep running the job until it returns false to log all the buffered messages
+                        }
+                    } catch (Exception th) {
+                        // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                        // Switch to the next job.
                     }
-                } catch (Exception th) {
-                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                    // Switch to the next job.
+                    Misc.free(job);
                 }
-                Misc.free(job);
             }
-        }
-        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-            Misc.free(scopeConfigs.getQuick(i));
+            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+                Misc.free(scopeConfigs.getQuick(i));
+            }
         }
     }
 

@@ -199,6 +199,7 @@ public class ServerMain implements Closeable {
             workerPoolManager.halt();
             Misc.freeObjListAndClear(toBeClosed);
             LogFactory.INSTANCE.flushJobsAndClose();
+            System.out.printf("bye%n");
             // leave hasStarted as is, to disable start
         }
         if (!running.get()) {
