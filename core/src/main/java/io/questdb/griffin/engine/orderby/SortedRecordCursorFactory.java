@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.RecordComparator;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final RecordTreeChain chain;
     private final SortedRecordCursor cursor;
 
     public SortedRecordCursorFactory(
@@ -47,7 +46,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordComparator comparator
     ) {
         super(metadata);
-        this.chain = new RecordTreeChain(
+        RecordTreeChain chain = new RecordTreeChain(
                 metadata,
                 recordSink,
                 comparator,
@@ -63,7 +62,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
-        chain.close();
+        cursor.close();
     }
 
     @Override

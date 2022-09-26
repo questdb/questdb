@@ -76,7 +76,7 @@ public class HashJoinTest extends AbstractGriffinTest {
             }
 
             long rssBeforeFactory = Os.getRss();
-            long tagBeforeFactory = getMemUsedExceptMmap();
+            long tagBeforeFactory = getMemUsedByFactories();
             System.gc();
 
             try (final RecordCursorFactory factory = compiler.compile("  select a1.sensor_day, \n" +
@@ -106,7 +106,7 @@ public class HashJoinTest extends AbstractGriffinTest {
                     "  left join weather_data_historical a7 on (a1.sensor_day = a7.sensor_day and max_wind_gust_overall = a7.max_wind_gust_speed)", sqlExecutionContext).getRecordCursorFactory()) {
 
                 long rssBeforeCursor = Os.getRss();
-                long virtCursorMem = getMemUsedExceptMmap() - tagBeforeFactory;
+                long virtCursorMem = getMemUsedByFactories() - tagBeforeFactory;
                 assertThat(rssBeforeCursor - rssBeforeFactory, is(lessThan(virtCursorMem)));
 
                 long freeCount;
@@ -120,7 +120,7 @@ public class HashJoinTest extends AbstractGriffinTest {
                 }
 
                 assertThat(freeCount, is(lessThan(Unsafe.getFreeCount())));
-                assertThat(getMemUsedExceptMmap(), lessThan(tagBeforeFactory + 1024 * 1024));
+                assertThat(getMemUsedByFactories(), lessThan(tagBeforeFactory + 1024 * 1024));
             }
         });
     }

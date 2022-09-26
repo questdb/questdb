@@ -162,8 +162,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             cursor.isOpen = true;
-            cursor.recordKeyMap.reallocate();
-            cursor.dataMap.reallocate();
+            cursor.recordKeyMap.reopen();
+            cursor.dataMap.reopen();
         }
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
@@ -189,6 +189,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // no data, nothing to do
             if (cursor.recordKeyMap.size() == 0) {
                 baseCursor.close();
+                cursor.close();
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }
 
@@ -376,6 +377,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
+            cursor.close();
             throw e;
         }
     }

@@ -49,7 +49,6 @@ public class DateFormatUtils {
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
-    static int prevCenturyLow;
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
 
@@ -133,7 +132,6 @@ public class DateFormatUtils {
         } else {
             thisCenturyLow = referenceYear - centuryOffset;
         }
-        prevCenturyLow = thisCenturyLow - 100;
         newYear = Dates.endOfYear(referenceYear);
     }
 

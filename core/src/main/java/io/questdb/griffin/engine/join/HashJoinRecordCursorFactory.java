@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordChain slaveChain;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final RecordSink masterSink;
@@ -55,13 +54,12 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
             int columnSplit
-
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         Map joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
-        slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
+        RecordChain slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
@@ -69,7 +67,6 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        slaveChain.close();
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();
         slaveFactory.close();
@@ -84,6 +81,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             return this.cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -160,10 +158,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             if (!isOpen) {
                 isOpen = true;
-                joinKeyMap.reallocate();
+                joinKeyMap.reopen();
+                slaveChain.reopen();
             }
             HashJoinRecordCursorFactory factory = HashJoinRecordCursorFactory.this;
-            HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, factory.slaveKeySink, factory.slaveChain, circuitBreaker);
+            HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, factory.slaveKeySink, slaveChain, circuitBreaker);
         }
 
         void of(SqlExecutionContext executionContext, RecordCursor slaveCursor) throws SqlException {
@@ -187,6 +186,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 joinKeyMap.close();
+                slaveChain.close();
                 super.close();
             }
         }

@@ -35,9 +35,17 @@ public class IntLongAssociativeCacheTest {
         cache.put(1, 11);
         cache.put(2, 22);
         cache.put(3, 33);
+
         Assert.assertEquals(11, cache.peek(1));
         Assert.assertEquals(22, cache.peek(2));
         Assert.assertEquals(33, cache.peek(3));
+
+        Assert.assertEquals(11, cache.poll(1));
+        Assert.assertEquals(IntLongAssociativeCache.NO_VALUE, cache.poll(1));
+        Assert.assertEquals(22, cache.poll(2));
+        Assert.assertEquals(IntLongAssociativeCache.NO_VALUE, cache.poll(2));
+        Assert.assertEquals(33, cache.poll(3));
+        Assert.assertEquals(IntLongAssociativeCache.NO_VALUE, cache.poll(3));
     }
 
     @Test
@@ -73,7 +81,5 @@ public class IntLongAssociativeCacheTest {
                 Assert.assertTrue(reject.contains(k));
             }
         }
-//        Assert.assertEquals(512, reject.size());
     }
-
 }
