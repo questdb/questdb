@@ -121,6 +121,7 @@ public final class Unsafe {
 
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
         class Probe {
+            @SuppressWarnings("unused")
             private int intField; // Accessed through reflection
 
             boolean probe() {

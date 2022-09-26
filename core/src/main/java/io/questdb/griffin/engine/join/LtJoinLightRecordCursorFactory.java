@@ -207,7 +207,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!this.isOpen) {
                 this.isOpen = true;
-                this.joinKeyMap.reallocate();
+                this.joinKeyMap.reopen();
             }
             this.slaveTimestamp = Long.MIN_VALUE;
             this.lastSlaveRowID = Long.MIN_VALUE;

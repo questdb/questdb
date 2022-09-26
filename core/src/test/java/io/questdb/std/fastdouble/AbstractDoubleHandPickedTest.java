@@ -248,16 +248,8 @@ abstract class AbstractDoubleHandPickedTest {
         testLegalInput(s, s, expected);
     }
 
-    private void testLegalDecInput(String testName, double expected) throws NumericException {
-        testLegalInput(testName, expected + "", expected);
-    }
-
     private void testLegalHexInput(double expected) throws NumericException {
         testLegalInput(Double.toHexString(expected), Double.toHexString(expected), expected);
-    }
-
-    private void testLegalHexInput(String testName, double expected) throws NumericException {
-        testLegalInput(testName, Double.toHexString(expected), expected);
     }
 
     private void testLegalInput(String testName, String str) throws NumericException {

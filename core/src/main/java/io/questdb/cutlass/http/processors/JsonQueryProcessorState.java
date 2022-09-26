@@ -169,10 +169,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 || Chars.equalsNc("con", request.getUrlParam("src"));
     }
 
-    public LogRecord debug() {
-        return LOG.debug().$('[').$(getFd()).$("] ");
-    }
-
     public LogRecord error() {
         return LOG.error().$('[').$(getFd()).$("] ");
     }

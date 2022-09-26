@@ -135,7 +135,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             try {
                 if (!isOpen) {
                     isOpen = true;
-                    dataMap.reallocate();
+                    dataMap.reopen();
                 }
                 final Record baseRecord = baseCursor.getRecord();
                 final int n = groupByFunctions.size();

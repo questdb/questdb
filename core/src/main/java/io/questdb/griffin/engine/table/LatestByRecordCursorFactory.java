@@ -82,7 +82,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             cursor.isOpen = true;
-            cursor.latestByMap.reallocate();
+            cursor.latestByMap.reopen();
         }
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);

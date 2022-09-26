@@ -42,8 +42,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
-import java.io.Closeable;
-
 public class RowNumberFunctionFactory implements FunctionFactory {
 
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
@@ -91,7 +89,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reallocatable {
+    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -145,8 +143,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void reallocate() {
-            map.reallocate();
+        public void reopen() {
+            map.reopen();
         }
 
         @Override

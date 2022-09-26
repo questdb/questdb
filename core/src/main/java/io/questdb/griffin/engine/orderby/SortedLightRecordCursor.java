@@ -103,7 +103,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
         if (!isOpen) {
-            chain.reallocate();
+            chain.reopen();
             isOpen = true;
         }
 
