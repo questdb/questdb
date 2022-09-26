@@ -132,8 +132,9 @@ public final class TestUtils {
             rowIndex++;
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
+                int columnType = 0;
                 try {
-                    int columnType = metadataExpected.getColumnType(i);
+                    columnType = metadataExpected.getColumnType(i);
                     int tagType = ColumnType.tagOf(columnType);
                     switch (tagType) {
                         case ColumnType.DATE:
@@ -198,7 +199,7 @@ public final class TestUtils {
                             break;
                     }
                 } catch (AssertionError e) {
-                    throw new AssertionError(String.format("Row %d column %s %s", rowIndex, columnName, e.getMessage()));
+                    throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
                 }
             }
         }
