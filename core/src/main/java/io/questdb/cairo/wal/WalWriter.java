@@ -372,7 +372,6 @@ public class WalWriter implements TableWriterFrontend {
 
         path.trimTo(rootLen);
 
-
         if (uncommittedRows > 0) {
             createSegmentDir(newSegmentId);
             path.trimTo(rootLen);
@@ -1326,7 +1325,7 @@ public class WalWriter implements TableWriterFrontend {
                     long segmentRowCount = rowCount - currentTxnStartRowNum;
                     metadata.addColumn(columnName, columnType);
                     columnCount = metadata.getColumnCount();
-                    columnIndex = metadata.getColumnCount() - 1;
+                    columnIndex = columnCount - 1;
                     // create column file
                     configureColumn(columnIndex, columnType);
                     if (ColumnType.isSymbol(columnType)) {
@@ -1336,8 +1335,8 @@ public class WalWriter implements TableWriterFrontend {
                     if (!rollSegmentOnNextRow) {
                         // This is WAL writer receiving notification from another writer that the column is added
                         // it has to add it to the open segment.
-                        metadata.syncToMetaFile();
                         path.trimTo(rootLen).slash().put(segmentId);
+                        metadata.dumpTo(path, path.length());
                         openColumnFiles(columnName, columnIndex, path.length());
                     }
                     // If this is the WAL writer performing the add column operation
