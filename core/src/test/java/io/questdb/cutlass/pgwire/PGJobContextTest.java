@@ -1214,8 +1214,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
-        // todo: SIMPLE_TEXT is triggering unchecked type conversion bug in row copier generator
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test (id long,val int)");
                 statement.executeUpdate("create table test2(id long,val int)");
