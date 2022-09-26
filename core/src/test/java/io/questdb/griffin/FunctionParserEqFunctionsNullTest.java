@@ -144,7 +144,7 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
 
                 function = parseFunction("null = col1", metadata, functionParser);
                 Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-                Assert.assertTrue(function.getBool(NULL_RECORD));
+                Assert.assertTrue("col1="+col0Type+", col2="+col1Type, function.getBool(NULL_RECORD));
             }
         }
     }

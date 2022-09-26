@@ -102,7 +102,7 @@ public final class ColumnType {
             /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
             /* 9  FLOAT     */, {FLOAT, DOUBLE}
             /* 10 DOUBLE    */, {DOUBLE}
-            /* 11 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
+            /* 11 STRING    */, {} //{BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
             /* 12 SYMBOL    */, {SYMBOL, STRING}
             /* 13 LONG256   */, {LONG256}
             /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}

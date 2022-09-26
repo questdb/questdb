@@ -260,7 +260,6 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByDescWithStringFilter() throws Exception {
         testOrderByWithFilter("string", ORDER_DESC);
-        Os.sleep(1000);
     }
 
     @Test
