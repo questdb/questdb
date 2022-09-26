@@ -470,11 +470,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
         dbcs.of(address, address + valueLen);
-        try {
-            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, locale));
-        } catch (NumericException ex) {
-            throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
-        }
+        bindVariableService.define(index, ColumnType.DATE, 0);
+        bindVariableService.setStr(index, dbcs);
     }
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {

@@ -26,25 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class ImplicitCastException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
+public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {
     private static final ThreadLocal<ImplicitCastException> tlException = new ThreadLocal<>(ImplicitCastException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
-
-    public static ImplicitCastException inconvertibleTypes(int fromType, CharSequence fromName, int toType, CharSequence toName) {
-        return instance().put("inconvertible types: ")
-                .put(ColumnType.nameOf(fromType))
-                .put(" -> ")
-                .put(ColumnType.nameOf(toType))
-                .put(" [from=").put(fromName)
-                .put(", to=").put(toName).put(']');
-    }
 
     public static ImplicitCastException inconvertibleValue(int columnNumber, double value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
@@ -137,21 +125,6 @@ public class ImplicitCastException extends RuntimeException implements Sinkable,
 
     public ImplicitCastException put(char c) {
         message.put(c);
-        return this;
-    }
-
-    public ImplicitCastException putAsPrintable(CharSequence nonPrintable) {
-        message.putAsPrintable(nonPrintable);
-        return this;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put(message);
-    }
-
-    public ImplicitCastException ts(long timestamp) {
-        TimestampFormatUtils.appendDateTime(message, timestamp);
         return this;
     }
 }

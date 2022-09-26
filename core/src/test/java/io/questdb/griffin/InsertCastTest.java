@@ -26,11 +26,41 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class InsertCastTest extends AbstractGriffinTest {
+
+    @Test
+    public void testCastByteToCharBind() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a char);", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setByte(0, (byte) 9);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setByte(0, (byte) 33);
+                    insert.execute(sqlExecutionContext);
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\n" +
+                            "9\n"
+            );
+        });
+    }
 
     @Test
     public void testCastCharByteFunc() throws Exception {
@@ -323,6 +353,27 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastCharToGeoByteBind() throws Exception {
+        assertCharBind(
+                "geohash(1c)",
+                "a\n" +
+                        "0\n" +
+                        "3\n"
+        );
+    }
+
+    @Test
+    public void testCastCharToGeoByteLit() throws Exception {
+        assertCharLit(
+                "geohash(1c)",
+                "a\n" +
+                        "4\n" +
+                        "7\n" +
+                        "1\n"
+        );
+    }
+
+    @Test
     public void testCastCharToIntBind() throws Exception {
         assertCharBind(
                 "int",
@@ -344,14 +395,18 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastCharToGeoByteLit() throws Exception {
-        assertCharLit(
-                "geohash(1c)",
-                "a\n" +
-                        "4\n" +
-                        "7\n" +
-                        "1\n"
-        );
+    public void testCastCharToLong256Bind() throws Exception {
+        try {
+            assertCharBind(
+                    "long256",
+                    "a\n" +
+                            "0\n" +
+                            "3\n"
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept CHAR");
+        }
     }
 
     @Test
@@ -416,6 +471,175 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000007Z\n" +
                         "1970-01-01T00:00:00.000001Z\n"
         );
+    }
+
+    @Test
+    public void testCastDoubleToFloatBind() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a float);", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setDouble(0, 1.7e25);
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setDouble(0, Double.NaN);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setDouble(0, 4.5E198); // overflow
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\n" +
+                            "1.7E25\n" +
+                            "NaN\n"
+            );
+        });
+    }
+
+    @Test
+    public void testCastIntToByteBind() throws Exception {
+        assertIntBind(
+                "byte",
+                "a\n" +
+                        "3\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
+    public void testCastIntToCharBind() throws Exception {
+        assertIntBind(
+                "char",
+                "a\n" +
+                        "3\n" +
+                        "\n"
+        );
+    }
+
+    @Test
+    public void testCastIntToLong256Bind() throws Exception {
+        try {
+            assertIntBind(
+                    "long256",
+                    "a\n" +
+                            "3\n" +
+                            "0\n"
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept INT");
+        }
+    }
+
+    @Test
+    public void testCastIntToShortBind() throws Exception {
+        assertIntBind(
+                "short",
+                "a\n" +
+                        "3\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
+    public void testCastLongToByteBind() throws Exception {
+        assertLongBind(
+                "byte",
+                "a\n" +
+                        "8\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
+    public void testCastLongToCharBind() throws Exception {
+        assertLongBind(
+                "char",
+                "a\n" +
+                        "8\n" +
+                        "\n"
+        );
+    }
+
+    @Test
+    public void testCastLongToLong256Bind() throws Exception {
+        try {
+            assertLongBind(
+                    "long256",
+                    "a\n" +
+                            "3\n" +
+                            "0\n"
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept LONG");
+        }
+    }
+
+    @Test
+    public void testCastLongToShortBind() throws Exception {
+        assertLongBind(
+                "short",
+                "a\n" +
+                        "8\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
+    public void testCastShortToByteBind() throws Exception {
+        assertShortBind("byte");
+    }
+
+    @Test
+    public void testCastShortToCharBind() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a char);", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setShort(0, (short) 2);
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setShort(0, (short) 8);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setShort(0, (short) 210); // overflow
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\n" +
+                            "2\n" +
+                            "8\n"
+            );
+        });
+    }
+
+    @Test
+    public void testCastShortToLong256Bind() throws Exception {
+        try {
+            assertShortBind("long256");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept SHORT");
+        }
     }
 
     @Test
@@ -546,6 +770,17 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastStrToByteBind() throws Exception {
+        assertStrBind(
+                "byte",
+                "a\n" +
+                        "12\n" +
+                        "31\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
     public void testCastStrToByteLit() throws Exception {
         assertStrLit(
                 "byte",
@@ -580,6 +815,43 @@ public class InsertCastTest extends AbstractGriffinTest {
                             "A\n" +
                             "7\n" +
                             "K\n"
+            );
+        });
+    }
+
+    @Test
+    public void testCastStrToDateBind() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a date);", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setStr(0, "2012-04-11 10:45:11Z");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, "2012-04-11 10:45:11.344Z");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, null);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setStr(0, "iabc");
+                    insert.execute(sqlExecutionContext);
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\n" +
+                            "2012-04-11T10:45:11.000Z\n" +
+                            "2012-04-11T10:45:11.344Z\n" +
+                            "\n"
             );
         });
     }
@@ -624,6 +896,17 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastStrToDoubleBind() throws Exception {
+        assertStrBind(
+                "double",
+                "a\n" +
+                        "12.0\n" +
+                        "31.0\n" +
+                        "NaN\n"
+        );
+    }
+
+    @Test
     public void testCastStrToDoubleLit() throws Exception {
         assertStrLit(
                 "double",
@@ -631,6 +914,17 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "45.0\n" +
                         "76.0\n" +
                         "124.0\n"
+        );
+    }
+
+    @Test
+    public void testCastStrToFloatBind() throws Exception {
+        assertStrBind(
+                "float",
+                "a\n" +
+                        "12.0000\n" +
+                        "31.0000\n" +
+                        "NaN\n"
         );
     }
 
@@ -646,6 +940,17 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastStrToIntBind() throws Exception {
+        assertStrBind(
+                "int",
+                "a\n" +
+                        "12\n" +
+                        "31\n" +
+                        "NaN\n"
+        );
+    }
+
+    @Test
     public void testCastStrToIntLit() throws Exception {
         assertStrLit(
                 "int",
@@ -653,6 +958,28 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "45\n" +
                         "76\n" +
                         "124\n"
+        );
+    }
+
+    @Test
+    public void testCastStrToLong256Bind() throws Exception {
+        assertStrBind(
+                "long256",
+                "a\n" +
+                        "0x12\n" +
+                        "0x31\n" +
+                        "\n"
+        );
+    }
+
+    @Test
+    public void testCastStrToLongBind() throws Exception {
+        assertStrBind(
+                "long",
+                "a\n" +
+                        "12\n" +
+                        "31\n" +
+                        "NaN\n"
         );
     }
 
@@ -668,6 +995,17 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastStrToShortBind() throws Exception {
+        assertStrBind(
+                "short",
+                "a\n" +
+                        "12\n" +
+                        "31\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
     public void testCastStrToShortLit() throws Exception {
         assertStrLit(
                 "short",
@@ -676,6 +1014,43 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "76\n" +
                         "124\n"
         );
+    }
+
+    @Test
+    public void testCastStrToTimestampBind() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a timestamp);", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setStr(0, "2012-04-11T10:45:11");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, "2012-04-11T10:45:11.344999");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, null);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setStr(0, "iabc");
+                    insert.execute(sqlExecutionContext);
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\n" +
+                            "2012-04-11T10:45:11.000000Z\n" +
+                            "2012-04-11T10:45:11.344999Z\n" +
+                            "\n"
+            );
+        });
     }
 
     @Test
@@ -715,6 +1090,96 @@ public class InsertCastTest extends AbstractGriffinTest {
                             "2222-01-01T00:00:00.000124Z\n"
             );
         });
+    }
+
+    @Test
+    public void testCastTimestampToByteBind() throws Exception {
+        assertTimestampBind(
+                "byte",
+                "a\n" +
+                        "8\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
+    public void testCastTimestampToDoubleBind() throws Exception {
+        assertTimestampBindNoOverflow(
+                "double",
+                "a\n" +
+                        "8.0\n" +
+                        "NaN\n" +
+                        "8.8990229990007E13\n"
+        );
+    }
+
+    @Test
+    public void testCastTimestampToFloatBind() throws Exception {
+        assertTimestampBindNoOverflow(
+                "float",
+                "a\n" +
+                        "8.0000\n" +
+                        "NaN\n" +
+                        "8.8990229E13\n"
+        );
+    }
+
+    @Test
+    public void testCastTimestampToIntBind() throws Exception {
+        assertTimestampBind(
+                "int",
+                "a\n" +
+                        "8\n" +
+                        "NaN\n"
+        );
+    }
+
+    @Test
+    public void testCastTimestampToLong256Bind() throws Exception {
+        try {
+            assertTimestampBindNoOverflow(
+                    "long256",
+                    "a\n" +
+                            "1970-01-01T00:00:00.000008Z\n" +
+                            "\n" +
+                            "1972-10-26T23:30:29.990007Z\n"
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept TIMESTAMP");
+        }
+    }
+
+    @Test
+    public void testCastTimestampToLongBind() throws Exception {
+        assertTimestampBindNoOverflow(
+                "long",
+                "a\n" +
+                        "8\n" +
+                        "NaN\n" +
+                        "88990229990007\n"
+        );
+    }
+
+    @Test
+    public void testCastTimestampToShortBind() throws Exception {
+        assertTimestampBind(
+                "short",
+                "a\n" +
+                        "8\n" +
+                        "0\n"
+        );
+    }
+
+    @Test
+    public void testCastTimestampToStringBind() throws Exception {
+        assertTimestampBindNoOverflow(
+                "string",
+                "a\n" +
+                        "1970-01-01T00:00:00.000008Z\n" +
+                        "\n" +
+                        "1972-10-26T23:30:29.990007Z\n"
+        );
     }
 
     @Test
@@ -830,6 +1295,128 @@ public class InsertCastTest extends AbstractGriffinTest {
         });
     }
 
+    private void assertIntBind(String type, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + type + ");", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setInt(0, 3); // compatible with everything
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setInt(0, Numbers.INT_NaN);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setInt(0, 88990227); // overflow
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    expected
+            );
+        });
+    }
+
+    private void assertLongBind(String type, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + type + ");", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setLong(0, 8); // compatible with everything
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setLong(0, Numbers.LONG_NaN);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setLong(0, 88990229990007L); // overflow
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    expected
+            );
+        });
+    }
+
+    private void assertShortBind(String type) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + type + ");", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setShort(0, (short) 12);
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setShort(0, (short) 31);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setShort(0, (short) 210); // overflow
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    "a\n" +
+                            "12\n" +
+                            "31\n"
+            );
+        });
+    }
+
+    private void assertStrBind(String toType, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + toType + ");", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setStr(0, "12");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, "31");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, null);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setStr(0, "iabc");
+                    insert.execute(sqlExecutionContext);
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    expected
+            );
+        });
+    }
+
     private void assertStrLit(String toType, String expected) throws Exception {
         assertMemoryLeak(() -> {
             // insert table
@@ -861,6 +1448,60 @@ public class InsertCastTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select cast(rnd_byte() as string) a from long_sequence(5));", sqlExecutionContext);
             // execute insert statement for each value of reference table
             compiler.compile("insert into y select a,a from x", sqlExecutionContext).getInsertOperation();
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    expected
+            );
+        });
+    }
+
+    private void assertTimestampBind(String type, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + type + ");", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setTimestamp(0, 8); // compatible with everything
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setTimestamp(0, 88990229990007L); // overflow
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink,
+                    expected
+            );
+        });
+    }
+
+    private void assertTimestampBindNoOverflow(String type, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            compiler.compile("create table y(a " + type + ");", sqlExecutionContext);
+            // execute insert statement for each value of reference table
+            try (InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()) {
+                bindVariableService.setTimestamp(0, 8); // compatible with everything
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setTimestamp(0, 88990229990007L);
+                insert.execute(sqlExecutionContext);
+            }
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,

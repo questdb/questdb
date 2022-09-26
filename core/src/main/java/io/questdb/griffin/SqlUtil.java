@@ -105,6 +105,42 @@ public class SqlUtil {
         return null;
     }
 
+    public static byte implicitCastAsByte(long value, int fromType) {
+        if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
+            return (byte) value;
+        }
+        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.BYTE);
+    }
+
+    public static char implicitCastAsChar(long value, int fromType) {
+        if (value >= 0 && value <= 9) {
+            return (char) (value + '0');
+        }
+        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.CHAR);
+    }
+
+    public static float implicitCastAsFloat(double value, int fromType) {
+        if ((value >= Float.MIN_VALUE && value <= Float.MAX_VALUE) || Double.isNaN(value)) {
+            return (float) value;
+        }
+        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.FLOAT);
+    }
+
+    public static int implicitCastAsInt(long value, int fromType) {
+        if (value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
+            return (int) value;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.INT);
+    }
+
+    public static short implicitCastAsShort(long value, int fromType) {
+        if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
+            return (short) value;
+        }
+        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.SHORT);
+    }
+
     // used by bytecode assembler
     @SuppressWarnings("unused")
     public static byte implicitCastCharAsByte(char value, int toType) {

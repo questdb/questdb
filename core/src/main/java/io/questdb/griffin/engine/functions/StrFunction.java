@@ -166,6 +166,4 @@ public abstract class StrFunction implements ScalarFunction {
     public boolean isReadThreadSafe() {
         return false;
     }
-
-    // todo: write tests for "switch" function that would exercise the type conversions
 }

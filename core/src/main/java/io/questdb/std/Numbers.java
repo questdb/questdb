@@ -607,9 +607,6 @@ public final class Numbers {
     }
 
     public static double parseDouble(long str, int len) throws NumericException {
-        if (Unsafe.getUnsafe().getByte(str) == 'i') {
-            System.out.println("ok");
-        }
         return FastDoubleParser.parseDouble(str, len, true);
     }
 
