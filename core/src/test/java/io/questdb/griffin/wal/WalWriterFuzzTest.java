@@ -36,14 +36,18 @@ import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 
 // These test is designed to produce unstable runs, e.g. random generator is created
 // using current execution time.
@@ -197,6 +201,131 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         300,
                         20,
                         generateSymbols(rnd, rnd.nextInt(1000), 1000, tableNameNoWal)
+                );
+            }
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId2 = metadata.getTableId();
+            }
+
+            applyNonWal(transactions, tableNameNoWal, tableId2);
+
+            applyWal(transactions, tableNameWal, tableId1, getRndParellelWalCount(rnd));
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+
+            applyWalParallel(transactions, tableNameWal2, tableId1, getRndParellelWalCount(rnd));
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+        });
+    }
+
+    @Test
+    public void testWalWriteRollbackHeavy() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNameWal = testName.getMethodName() + "_wal";
+            String tableNameWal2 = testName.getMethodName() + "_wal_parallel";
+            String tableNameNoWal = testName.getMethodName() + "_nonwal";
+
+            createInitialTable(tableNameWal, true, 100);
+            createInitialTable(tableNameWal2, true,100);
+            createInitialTable(tableNameNoWal, false, 100);
+
+            ObjList<FuzzTransaction> transactions;
+            int tableId1, tableId2;
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId1 = metadata.getTableId();
+                transactions = FuzzTransactionGenerator.generateSet(
+                        metadata,
+                        rnd,
+                        IntervalUtils.parseFloorPartialDate("2022-02-24T17"),
+                        IntervalUtils.parseFloorPartialDate("2022-02-27T17"),
+                        10_000,
+                        false,
+                        0.7,
+                        0.5,
+                        0.1,
+                        0.7,
+                        // 25% chance of column add
+                        0.05,
+                        // 25% chance of column remove
+                        0.05,
+                        // 25% chance of column rename
+                        0.05,
+                        300,
+                        20,
+                        generateSymbols(rnd, rnd.nextInt(1000), 1000, tableNameNoWal)
+                );
+            }
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId2 = metadata.getTableId();
+            }
+
+            applyNonWal(transactions, tableNameNoWal, tableId2);
+
+            applyWal(transactions, tableNameWal, tableId1, getRndParellelWalCount(rnd));
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+
+            applyWalParallel(transactions, tableNameWal2, tableId1, getRndParellelWalCount(rnd));
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+        });
+    }
+
+    @Test
+    public void testWalWriteFullRandom() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        testWalWriteRandom(rnd);
+    }
+
+    @Test
+    public void testRollbackBeforeColumnAdd() throws Exception {
+        Rnd rnd = new Rnd(65781883724750L, 1664196463085L);
+        testWalWriteRandom(rnd);
+    }
+
+    @Test
+    @Ignore // TODO fix the test.
+    public void testFail2() throws Exception {
+        Rnd rnd = new Rnd(65515438461083L, 1664196196645L);
+        testWalWriteRandom(rnd);
+    }
+
+    public void testWalWriteRandom(Rnd rnd) throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNameWal = testName.getMethodName() + "_wal";
+            String tableNameWal2 = testName.getMethodName() + "_wal_parallel";
+            String tableNameNoWal = testName.getMethodName() + "_nonwal";
+
+            createInitialTable(tableNameWal, true, 100);
+            createInitialTable(tableNameWal2, true,100);
+            createInitialTable(tableNameNoWal, false, 100);
+
+            ObjList<FuzzTransaction> transactions;
+            int tableId1, tableId2;
+            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tableId1 = metadata.getTableId();
+                transactions = FuzzTransactionGenerator.generateSet(
+                        metadata,
+                        rnd,
+                        IntervalUtils.parseFloorPartialDate("2022-02-24T17"),
+                        IntervalUtils.parseFloorPartialDate("2022-02-24T17") + (long)(Timestamps.DAY_MICROS * getZeroToOneDouble(rnd) * 30),
+                        10_000,
+                        rnd.nextBoolean(),
+                        getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        // 25% chance of column add
+                        getZeroToOneDouble(rnd),
+                        // 25% chance of column remove
+                        getZeroToOneDouble(rnd),
+                        // 25% chance of column rename
+                        getZeroToOneDouble(rnd),
+                        300,
+                        rnd.nextInt(50),
+                        generateSymbols(rnd, rnd.nextInt(1000), rnd.nextInt(1000), tableNameNoWal)
                 );
             }
             try (TableReader reader = new TableReader(configuration, tableNameWal)) {
