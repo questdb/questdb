@@ -49,7 +49,7 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         DataFrame frame;
         if (!isOpen()) {
-            map.reallocate();
+            map.reopen();
         }
         try {
             while ((frame = this.dataFrameCursor.next()) != null) {

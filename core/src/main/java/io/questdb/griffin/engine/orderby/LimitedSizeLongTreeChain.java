@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.Reallocatable;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
@@ -60,7 +60,7 @@ import org.jetbrains.annotations.TestOnly;
  * but should only happen once . It's meant to limit value chain allocations on delete/insert.
  * </p>
  */
-public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reallocatable {
+public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reopenable {
     //value marks end of value chain 
     private static final long CHAIN_END = -1;
 
@@ -122,8 +122,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     @Override
-    public void reallocate() {
-        super.reallocate();
+    public void reopen() {
+        super.reopen();
     }
 
     @Override

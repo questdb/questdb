@@ -91,7 +91,7 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
         try {
             if (!isOpen) {
-                this.chain.reallocate();
+                this.chain.reopen();
                 this.isOpen = true;
             }
             this.chainCursor = chain.getCursor(base);

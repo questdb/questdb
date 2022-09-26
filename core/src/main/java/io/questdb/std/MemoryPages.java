@@ -24,14 +24,14 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.Reallocatable;
+import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 
 import java.io.Closeable;
 
-public class MemoryPages implements Closeable, Mutable, Reallocatable {
+public class MemoryPages implements Closeable, Mutable, Reopenable {
 
     private static final Log LOG = LogFactory.getLog(MemoryPages.class);
 
@@ -87,7 +87,7 @@ public class MemoryPages implements Closeable, Mutable, Reallocatable {
     }
 
     @Override
-    public void reallocate() {
+    public void reopen() {
         allocate0(0);
     }
 

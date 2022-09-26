@@ -185,7 +185,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
             if (!isOpen) {
                 this.isOpen = true;
-                this.dataMap.reallocate();
+                this.dataMap.reopen();
             }
             this.baseCursor = baseCursor;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
