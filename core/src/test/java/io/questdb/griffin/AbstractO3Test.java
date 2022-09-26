@@ -258,7 +258,7 @@ public class AbstractO3Test {
                     }
                 };
 
-                TestUtils.execute(pool, runnable, configuration);
+                TestUtils.execute(pool, runnable, configuration, LOG);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -307,7 +307,7 @@ public class AbstractO3Test {
                         return 0;
                     }
                 };
-                TestUtils.execute(null, runnable, configuration);
+                TestUtils.execute(null, runnable, configuration, LOG);
             }
         });
     }
@@ -318,11 +318,11 @@ public class AbstractO3Test {
     }
 
     protected static void executeVanilla(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root)));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), LOG));
     }
 
     protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled()));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled(), LOG));
     }
 
     static void assertO3DataConsistency(

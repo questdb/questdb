@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.std.Files;
 import org.junit.*;
 
 
@@ -42,6 +43,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainStart() throws Exception {
         assertMemoryLeak(() -> {
+            System.setProperty("out", root.toString() + Files.SEPARATOR + "conf" + Files.SEPARATOR + "log.conf");
             try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
                 Assert.assertNotNull(serverMain.getConfiguration());
                 Assert.assertNotNull(serverMain.getCairoEngine());

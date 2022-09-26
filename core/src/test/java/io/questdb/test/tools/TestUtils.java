@@ -32,7 +32,6 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -69,7 +68,6 @@ public final class TestUtils {
     private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
-    private static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     private TestUtils() {
     }
@@ -835,7 +833,8 @@ public final class TestUtils {
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
             CairoConfiguration configuration,
-            Metrics metrics
+            Metrics metrics,
+            Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
@@ -846,7 +845,7 @@ public final class TestUtils {
             try {
                 if (pool != null) {
                     setupWorkerPool(pool, engine);
-                    pool.start(LOG);
+                    pool.start(log);
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
@@ -868,9 +867,10 @@ public final class TestUtils {
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runner,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            Log log
     ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled());
+        execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull

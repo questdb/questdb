@@ -392,7 +392,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, errors.get());
                 },
-                configuration
+                configuration,
+                LOG
         );
     }
 
@@ -469,7 +470,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, errors.get());
                 },
-                configuration
+                configuration,
+                LOG
         );
     }
 }

@@ -3778,7 +3778,7 @@ public class O3FailureTest extends AbstractO3Test {
                     return ff;
                 }
             };
-            TestUtils.execute(null, runnable, configuration);
+            TestUtils.execute(null, runnable, configuration, LOG);
         });
     }
 

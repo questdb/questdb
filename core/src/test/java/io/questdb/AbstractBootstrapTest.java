@@ -142,9 +142,19 @@ public abstract class AbstractBootstrapTest {
             writer.println("line.tcp.writer.worker.count=1");
             writer.println("line.tcp.io.worker.count=1");
         }
+
+        // mime types
         file = confPath + Files.SEPARATOR + "mime.types";
         try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
             writer.println("");
+        }
+
+        // logs
+        file = confPath + Files.SEPARATOR + "log.conf";
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
+            writer.println("writers=stdout");
+            writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
+            writer.println("w.stdout.level=INFO");
         }
     }
 
