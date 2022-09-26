@@ -210,7 +210,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!this.isOpen) {
-                this.joinKeyMap.reallocate();
+                this.joinKeyMap.reopen();
                 this.isOpen = true;
             }
             this.slaveTimestamp = Long.MIN_VALUE;

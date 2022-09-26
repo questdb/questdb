@@ -154,25 +154,25 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         private void of(RecordCursor base) {
             this.base = base;
             if (!isOpen) {
-                recordChain.reallocate();
+                recordChain.reopen();
                 recordChain.setSymbolTableResolver(this);
-                reallocateTrees();
-                reallocate(allFunctions);
+                reopenTrees();
+                reopen(allFunctions);
                 isOpen = true;
             }
             buildRecordChain();
         }
 
-        private void reallocateTrees() {
+        private void reopenTrees() {
             for (int i = 0; i < orderedGroupCount; i++) {
-                orderedSources.getQuick(i).reallocate();
+                orderedSources.getQuick(i).reopen();
             }
         }
 
-        private void reallocate(ObjList list) {
+        private void reopen(ObjList list) {
             for (int i = 0, n = list.size(); i < n; i++) {
-                if (list.getQuick(i) instanceof Reallocatable) {
-                    ((Reallocatable) list.getQuick(i)).reallocate();
+                if (list.getQuick(i) instanceof Reopenable) {
+                    ((Reopenable) list.getQuick(i)).reopen();
                 }
             }
         }
