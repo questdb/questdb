@@ -60,7 +60,7 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
         super.of(cursorA, cursorB, circuitBreaker);
         this.recordB = cursorB.getRecord();
         if (!isOpen) {
-            map.reallocate();
+            map.reopen();
             isOpen = true;
         }
         hashCursorB();

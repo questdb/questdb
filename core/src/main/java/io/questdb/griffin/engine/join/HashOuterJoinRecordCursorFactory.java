@@ -189,8 +189,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             if (!this.isOpen) {
                 this.isOpen = true;
-                this.joinKeyMap.reallocate();
-                this.slaveChain.reallocate();
+                this.joinKeyMap.reopen();
+                this.slaveChain.reopen();
             }
             HashOuterJoinRecordCursorFactory factory = HashOuterJoinRecordCursorFactory.this;
             buildMap(slaveCursor, slaveCursor.getRecord(), this.joinKeyMap, factory.slaveKeySink, this.slaveChain, circuitBreaker);

@@ -160,8 +160,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             try {
                 if (!isOpen) {
                     this.isOpen = true;
-                    this.joinKeyMap.reallocate();
-                    this.slaveChain.reallocate();
+                    this.joinKeyMap.reopen();
+                    this.slaveChain.reopen();
                 }
 
                 buildMapOfSlaveRecords(slaveCursor, circuitBreaker);

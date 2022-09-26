@@ -156,7 +156,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
             if (!isOpen) {
                 this.isOpen = true;
-                this.dataMap.reallocate();
+                this.dataMap.reopen();
             }
             this.baseCursor = baseCursor;
             this.recordSink = recordSink;
