@@ -387,7 +387,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         if (lockedReason == OWNERSHIP_REASON_NONE) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
-                LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).$(']').$();
+                LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
                 return null;
             }
             writerPool.unlock(tableName);
@@ -526,13 +526,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         otherPath.of(root).concat(to).$();
 
         if (ff.exists(otherPath)) {
-            LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).$("']").$();
+            LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).I$();
             throw CairoException.nonCritical().put("Rename target exists");
         }
 
         if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
             int error = ff.errno();
-            LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
+            LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).I$();
             throw CairoException.critical(error).put("Rename failed");
         }
     }
