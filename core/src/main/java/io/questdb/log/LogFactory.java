@@ -67,6 +67,7 @@ public class LogFactory implements Closeable {
     private final MicrosecondClock clock;
     private final StringSink sink = new StringSink();
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPool workerPool;
     private volatile boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
@@ -377,35 +378,39 @@ public class LogFactory implements Closeable {
     }
 
     public void haltThread() {
-        if (workerPool != null) {
-            workerPool.halt();
-            workerPool = null;
+        if (running.compareAndSet(true, false)) {
+            if (workerPool != null) {
+                workerPool.halt();
+                workerPool = null;
+            }
         }
     }
 
     public void startThread() {
-        if (this.workerPool != null) {
-            return;
+        if (running.compareAndSet(false, true)) {
+            if (this.workerPool != null) {
+                return;
+            }
+
+            this.workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean isDaemonPool() {
+                    return true;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "logging";
+                }
+            }, Metrics.disabled());
+            assign(workerPool);
+            workerPool.start();
         }
-
-        this.workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean isDaemonPool() {
-                return true;
-            }
-
-            @Override
-            public String getPoolName() {
-                return "logging";
-            }
-        }, Metrics.disabled());
-        assign(workerPool);
-        workerPool.start();
     }
 
     private static String getProperty(final Properties properties, String key) {
