@@ -345,12 +345,6 @@ public class SqlUtil {
         return implicitCastAsByte(value, ColumnType.SHORT);
     }
 
-    @SuppressWarnings("unused")
-    // used by the row copier
-    public static int implicitCastShortAsInt(short value) {
-        return implicitCastAsInt(value, ColumnType.SHORT);
-    }
-
     public static byte implicitCastStrAsByte(CharSequence value) {
         if (value != null) {
             try {

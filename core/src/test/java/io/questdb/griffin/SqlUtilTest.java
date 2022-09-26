@@ -269,4 +269,23 @@ public class SqlUtilTest {
             TestUtils.assertEquals("inconvertible value: hello [STRING -> DATE] tuple: 0", e.getFlyweightMessage());
         }
     }
+
+    @Test
+    public void testNaNCast() {
+        Assert.assertEquals(0, SqlUtil.implicitCastIntAsByte(Numbers.INT_NaN));
+        Assert.assertEquals(0, SqlUtil.implicitCastIntAsShort(Numbers.INT_NaN));
+        Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NaN));
+        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NaN));
+        Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NaN));
+    }
+
+    @Test
+    public void testParseMicrosSansQualifier() {
+        try {
+            SqlUtil.expectMicros("125", 12);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected interval qualifier");
+        }
+    }
 }
