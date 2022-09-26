@@ -370,6 +370,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    private @Nullable ObjList<Function> compileWorkerFilterConditionally(
+            boolean condition,
+            int workerCount,
+            ExpressionNode filterExpr,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (condition) {
+            ObjList<Function> workerFilters = new ObjList<>();
+            for (int i = 0; i < workerCount; i++) {
+                workerFilters.extendAndSet(i, compileBooleanFilter(filterExpr, metadata, executionContext));
+            }
+            return workerFilters;
+        }
+        return null;
+    }
+
     private RecordCursorFactory createAsOfJoin(
             RecordMetadata metadata,
             RecordCursorFactory master,
@@ -1068,16 +1085,156 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         castFunctions.add(new Long256Column(i));
                         break;
                     case ColumnType.GEOBYTE:
-                        castFunctions.add(new GeoByteColumn(i, toType));
+                        switch (fromTag) {
+                            case ColumnType.STRING:
+                                castFunctions.add(
+                                        CastStrToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                toType,
+                                                new StrColumn(i)
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOBYTE:
+                                castFunctions.add(new GeoByteColumn(i, fromType));
+                                break;
+                            case ColumnType.GEOSHORT:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                new GeoShortColumn(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOINT:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                new GeoIntColumn(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOLONG:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                new GeoLongColumn(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
                         break;
                     case ColumnType.GEOSHORT:
-                        castFunctions.add(new GeoShortColumn(i, toType));
+                        switch (fromTag) {
+                            case ColumnType.STRING:
+                                castFunctions.add(
+                                        CastStrToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                toType,
+                                                new StrColumn(i)
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOSHORT:
+                                castFunctions.add(new GeoShortColumn(i, toType));
+                                break;
+                            case ColumnType.GEOINT:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                new GeoIntColumn(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOLONG:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                new GeoLongColumn(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
                         break;
                     case ColumnType.GEOINT:
-                        castFunctions.add(new GeoIntColumn(i, toType));
+                        switch (fromTag) {
+                            case ColumnType.STRING:
+                                castFunctions.add(
+                                        CastStrToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                toType,
+                                                new StrColumn(i)
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOINT:
+                                castFunctions.add(new GeoIntColumn(i, fromType));
+                                break;
+                            case ColumnType.GEOLONG:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                new GeoLongColumn(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
                         break;
                     case ColumnType.GEOLONG:
-                        castFunctions.add(new GeoLongColumn(i, toType));
+                        switch (fromTag) {
+                            case ColumnType.STRING:
+                                castFunctions.add(
+                                        CastStrToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                toType,
+                                                new StrColumn(i)
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOLONG:
+                                castFunctions.add(new GeoLongColumn(i, fromType));
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
                         break;
                     case ColumnType.BINARY:
                         castFunctions.add(new BinColumn(i));
@@ -3967,23 +4124,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return latestByColumnCount;
-    }
-
-    private @Nullable ObjList<Function> compileWorkerFilterConditionally(
-            boolean condition,
-            int workerCount,
-            ExpressionNode filterExpr,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (condition) {
-            ObjList<Function> workerFilters = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
-                workerFilters.extendAndSet(i, compileBooleanFilter(filterExpr, metadata, executionContext));
-            }
-            return workerFilters;
-        }
-        return null;
     }
 
     private void processJoinContext(

@@ -1032,14 +1032,13 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testGeoLongGeoShort() throws Exception {
-        // long + geohash overlap via string type
         testUnionAll(
                 "a\n" +
-                        "nt\n" +
-                        "53\n" +
-                        "74\n" +
-                        "00\n" +
-                        "ds\n" +
+                        "wh\n" +
+                        "s2\n" +
+                        "1c\n" +
+                        "mm\n" +
+                        "71\n" +
                         "9v\n" +
                         "46\n" +
                         "jn\n" +
@@ -1047,6 +1046,182 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "hp\n",
                 "create table x as (select rnd_geohash(40) a from long_sequence(5))",
                 "create table y as (select rnd_geohash(10) b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoLongGeoInt() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "wh4b6v\n" +
+                        "s2z2fy\n" +
+                        "1cjjwk\n" +
+                        "mmt894\n" +
+                        "71ftmp\n" +
+                        "9v1s8h\n" +
+                        "46swgj\n" +
+                        "jnw97u\n" +
+                        "zfuqd3\n" +
+                        "hp4muv\n",
+                "create table x as (select rnd_geohash(40) a from long_sequence(5))",
+                "create table y as (select rnd_geohash(30) b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testStrGeoInt() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "fgert9\n" +
+                        "fgert9\n" +
+                        "fgert9\n" +
+                        "fgert9\n" +
+                        "fgert9\n" +
+                        "9v1s8h\n" +
+                        "46swgj\n" +
+                        "jnw97u\n" +
+                        "zfuqd3\n" +
+                        "hp4muv\n",
+                "create table x as (select 'fgert930' a from long_sequence(5))",
+                "create table y as (select rnd_geohash(30) b from long_sequence(5))",
+                false
+        );
+    }
+
+    @Test
+    public void testStrGeoLong() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "kjhgt66s\n" +
+                        "kjhgt66s\n" +
+                        "kjhgt66s\n" +
+                        "kjhgt66s\n" +
+                        "kjhgt66s\n" +
+                        "9v1s8hm7\n" +
+                        "46swgj10\n" +
+                        "jnw97u4y\n" +
+                        "zfuqd3bf\n" +
+                        "hp4muv5t\n",
+                "create table x as (select 'kjhgt66srs' a from long_sequence(5))",
+                "create table y as (select rnd_geohash(40) b from long_sequence(5))",
+                false
+        );
+    }
+
+    @Test
+    public void testStrGeoShort() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "xk\n" +
+                        "xk\n" +
+                        "xk\n" +
+                        "xk\n" +
+                        "xk\n" +
+                        "9v\n" +
+                        "46\n" +
+                        "jn\n" +
+                        "zf\n" +
+                        "hp\n",
+                "create table x as (select 'xkl921' a from long_sequence(5))",
+                "create table y as (select rnd_geohash(10) b from long_sequence(5))",
+                false
+        );
+    }
+
+    @Test
+    public void testStrGeoByte() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "x\n" +
+                        "x\n" +
+                        "x\n" +
+                        "x\n" +
+                        "x\n" +
+                        "9\n" +
+                        "4\n" +
+                        "j\n" +
+                        "z\n" +
+                        "h\n",
+                "create table x as (select 'xkl921' a from long_sequence(5))",
+                "create table y as (select rnd_geohash(5) b from long_sequence(5))",
+                false
+        );
+    }
+
+    @Test
+    public void testGeoIntGeoShort() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "wh\n" +
+                        "s2\n" +
+                        "1c\n" +
+                        "mm\n" +
+                        "71\n" +
+                        "9v\n" +
+                        "46\n" +
+                        "jn\n" +
+                        "zf\n" +
+                        "hp\n",
+                "create table x as (select rnd_geohash(30) a from long_sequence(5))",
+                "create table y as (select rnd_geohash(10) b from long_sequence(5))",
+                false
+        );
+    }
+
+    @Test
+    public void testGeoIntGeoByte() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "w\n" +
+                        "s\n" +
+                        "1\n" +
+                        "m\n" +
+                        "7\n" +
+                        "9\n" +
+                        "4\n" +
+                        "j\n" +
+                        "z\n" +
+                        "h\n",
+                "create table x as (select rnd_geohash(20) a from long_sequence(5))",
+                "create table y as (select rnd_geohash(5) b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoShortGeoByte() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "w\n" +
+                        "s\n" +
+                        "1\n" +
+                        "m\n" +
+                        "7\n" +
+                        "9\n" +
+                        "4\n" +
+                        "j\n" +
+                        "z\n" +
+                        "h\n",
+                "create table x as (select rnd_geohash(10) a from long_sequence(5))",
+                "create table y as (select rnd_geohash(5) b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoLongGeoByte() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "w\n" +
+                        "s\n" +
+                        "1\n" +
+                        "m\n" +
+                        "7\n" +
+                        "9\n" +
+                        "4\n" +
+                        "j\n" +
+                        "z\n" +
+                        "h\n",
+                "create table x as (select rnd_geohash(40) a from long_sequence(5))",
+                "create table y as (select rnd_geohash(5) b from long_sequence(5))"
         );
     }
 
