@@ -166,6 +166,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             long cursor = inSubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
+                Os.pause();
                 continue;
             }
             // -1 = queue is empty, all done
