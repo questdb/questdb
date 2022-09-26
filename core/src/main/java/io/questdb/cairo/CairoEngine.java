@@ -134,7 +134,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(readerPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
-        tableRegistry.close();
+        Misc.free(telemetryQueue);
+        Misc.free(tableRegistry);
+        Misc.free(tableIdGenerator);
     }
 
     public void createTable(
