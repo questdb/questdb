@@ -306,7 +306,7 @@
                                 <configuration>
                                     <url>https://registry.npmjs.org/@questdb/web-console/-/web-console-${web.console.version}.tgz</url>
                                     <outputFileName>web-console.tgz</outputFileName>
-                                    <outputDirectory>${project.build.outputDirectory}/../site/</outputDirectory>
+                                    <outputDirectory>${project.build.directory}/site/</outputDirectory>
                                     <unpack>true</unpack>
                                 </configuration>
                             </execution>
