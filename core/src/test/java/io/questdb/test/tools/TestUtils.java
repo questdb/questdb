@@ -48,9 +48,12 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+
+import static org.hamcrest.Matchers.*;
 
 import java.io.*;
 import java.net.URISyntaxException;
@@ -1072,7 +1075,7 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
     }
 
     public static long toMemory(CharSequence sequence) {

@@ -247,11 +247,7 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        return mmap(fd, len, offset, flags, 0, memoryTag);
-    }
-
-    public static long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag) {
-        long address = mmap0(fd, len, offset, flags, baseAddress);
+        long address = mmap0(fd, len, offset, flags, 0);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }

@@ -506,10 +506,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             this.strings = strings;
         }
 
-        public void add(CharSequence ch) {
-            strings.add(ch);
-        }
-
         @Override
         public void clear() {
             strings.clear();

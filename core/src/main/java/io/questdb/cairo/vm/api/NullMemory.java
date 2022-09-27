@@ -46,10 +46,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-    }
-
-    @Override
     public void zero() {
     }
 

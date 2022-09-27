@@ -24,9 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -34,11 +34,13 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -49,6 +51,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3FailureTest extends AbstractO3Test {
 
@@ -228,45 +232,6 @@ public class O3FailureTest extends AbstractO3Test {
         // Failing to allocate concrete file is more stable than failing on a counter
         String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
         executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, new FilesFacadeImpl() {
-            private long theFd = 0;
-
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (fd == theFd && size == 1472) {
-                    theFd = -1;
-                    return false;
-                }
-                return super.allocate(fd, size);
-            }
-
-            @Override
-            public long length(long fd) {
-                long len = super.length(fd);
-                if (fd == theFd) {
-                    if (len == Files.PAGE_SIZE) {
-                        return 0;
-                    }
-                }
-                return len;
-            }
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                long fd = Files.openRW(name, opts);
-                if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
-                    theFd = fd;
-                    return fd;
-                }
-                return fd;
-            }
-        });
-    }
-
-    @Test
-    public void testAllocateToResizeLastPartition() throws Exception {
-        // Failing to allocate concrete file is more stable than failing on a counter
-        String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
-        executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, new FilesFacadeImpl() {
             private long theFd = 0;
 
             @Override
@@ -613,6 +578,76 @@ public class O3FailureTest extends AbstractO3Test {
                 return super.truncate(fd, size);
             }
         });
+    }
+
+    @Test
+    public void testFixedColumnCopyPrefixFails() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        int storageLength = 8;
+        long records = 500;
+
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+
+                    String tableName = "testFixedColumnCopyPrefixFails";
+                    compiler.compile("create table " + tableName + " as ( " +
+                                    "select " +
+                                    "x, " +
+                                    " timestamp_sequence('2022-02-24', 1000) ts" +
+                                    " from long_sequence(" + records + ")" +
+                                    ") timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+
+                    long maxTimestamp = IntervalUtils.parseFloorPartialDate("2022-02-24") + records * 1000L;
+                    CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
+
+                    try {
+                        TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')");
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                    }
+
+                    TestUtils.assertSql(compiler,
+                            sqlExecutionContext,
+                            "select * from " + tableName + " limit -5,5",
+                            sink,
+                            "x\tts\n" +
+                                    "496\t2022-02-24T00:00:00.495000Z\n" +
+                                    "497\t2022-02-24T00:00:00.496000Z\n" +
+                                    "498\t2022-02-24T00:00:00.497000Z\n" +
+                                    "499\t2022-02-24T00:00:00.498000Z\n" +
+                                    "500\t2022-02-24T00:00:00.499000Z\n"
+                    );
+
+                    // Insert ok after failure
+                    o3Ts = Timestamps.toString(maxTimestamp - 3000);
+                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')");
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext, "select * from " + tableName + " limit -5,5",
+                            sink,
+                            "x\tts\n" +
+                                    "497\t2022-02-24T00:00:00.496000Z\n" +
+                                    "498\t2022-02-24T00:00:00.497000Z\n" +
+                                    "-1\t2022-02-24T00:00:00.497000Z\n" +
+                                    "499\t2022-02-24T00:00:00.498000Z\n" +
+                                    "500\t2022-02-24T00:00:00.499000Z\n"
+                    );
+                },
+                new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long address, long len, long offset) {
+                        if (offset == 0 && len == storageLength * (records - 1)) {
+                            return -1;
+                        }
+                        return super.write(fd, address, len, offset);
+                    }
+                }
+        );
     }
 
     @Test
@@ -1014,6 +1049,77 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testTwoRowsConsistency() throws Exception {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
+    }
+
+    @Test
+    public void testVarColumnCopyPrefixFails() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        String strColVal = "[srcDataMax=165250000]";
+        int storageLength = getStorageLength(strColVal);
+        long records = 500;
+
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    String tableName = "testVarColumnCopyPrefixFails";
+                    compiler.compile(
+                            "create table " + tableName + " as ( " +
+                                    "select " +
+                                    "'" + strColVal + "' as str, " +
+                                    " timestamp_sequence('2022-02-24', 1000) ts" +
+                                    " from long_sequence(" + records + ")" +
+                                    ") timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+
+                    long maxTimestamp = IntervalUtils.parseFloorPartialDate("2022-02-24") + records * 1000L;
+                    CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
+
+                    try {
+                        TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                    }
+
+                    TestUtils.assertSql(compiler,
+                            sqlExecutionContext,
+                            "select * from " + tableName + " limit -5,5",
+                            sink,
+                            "str\tts\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.495000Z\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n"
+                    );
+
+                    // Insert ok after failure
+                    o3Ts = Timestamps.toString(maxTimestamp - 3000);
+                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext, "select * from " + tableName + " limit -5,5",
+                            sink,
+                            "str\tts\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
+                                    "abcd\t2022-02-24T00:00:00.497000Z\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n"
+                    );
+                },
+                new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long address, long len, long offset) {
+                        if (offset == 0 && len == storageLength * (records - 1)) {
+                            return -1;
+                        }
+                        return super.write(fd, address, len, offset);
+                    }
+                }
+        );
     }
 
     @Test
@@ -3676,14 +3782,6 @@ public class O3FailureTest extends AbstractO3Test {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
-                if (fd == targetFd.get() && counter.decrementAndGet() == 0) {
-                    return -1;
-                }
-                return super.mmap(fd, len, flags, mode, memoryTag);
             }
 
             @Override

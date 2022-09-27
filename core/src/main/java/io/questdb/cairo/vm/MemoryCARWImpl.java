@@ -28,10 +28,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Long256Acceptor;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -65,6 +62,12 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     @Override
     public long getPageSize() {
         return getExtendSegmentSize();
+    }
+
+    @Override
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     /**
@@ -118,11 +121,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(pageAddress + offset + bytes);
         return addressOf(offset);
-    }
-
-    @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

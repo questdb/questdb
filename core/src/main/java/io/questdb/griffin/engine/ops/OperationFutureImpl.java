@@ -199,12 +199,15 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         while (true) {
             long seq = eventSubSeq.next();
             if (seq < 0) {
-                // Queue is empty, check if the execution blocked for too long.
-                if (clock.getTicks() - start > timeout) {
-                    queryFutureUpdateListener.reportBusyWaitExpired(tableName, correlationId);
-                    return status;
+                if (seq == -1) {
+                    // Queue is empty, check if the execution blocked for too long.
+                    if (clock.getTicks() - start > timeout) {
+                        queryFutureUpdateListener.reportBusyWaitExpired(tableName, correlationId);
+                        return status;
+                    }
+                } else {
+                    Os.pause();
                 }
-                Os.pause();
                 continue;
             }
 

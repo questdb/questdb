@@ -1421,6 +1421,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             } else if (seq == -1) {
                 throw CairoException.nonCritical().put("could not publish, command queue is full [table=").put(tableName).put(']');
             }
+            Os.pause();
         }
     }
 
@@ -4840,6 +4841,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         long pubCursor;
         do {
             pubCursor = messageBus.getTableWriterEventPubSeq().next();
+            if (pubCursor == -2) {
+                Os.pause();
+            }
         } while (pubCursor < -1);
 
         if (pubCursor > -1) {
@@ -4884,6 +4888,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         long pubCursor;
         do {
             pubCursor = messageBus.getTableWriterEventPubSeq().next();
+            if (pubCursor == -2) {
+                Os.pause();
+            }
         } while (pubCursor < -1);
 
         if (pubCursor > -1) {
@@ -6038,13 +6045,13 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             if (cursor == -2) {
                 // CAS issue, retry
                 do {
+                    Os.pause();
                     cursor = indexPubSequence.next();
                     if (cursor == -1) {
                         indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
                         serialIndexCount++;
                         continue OUT;
                     }
-
                 } while (cursor < 0);
             }
 

@@ -92,8 +92,6 @@ public interface FilesFacade {
 
     long mmap(long fd, long len, long offset, int flags, int memoryTag);
 
-    long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag);
-
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
     int msync(long addr, long len, boolean async);

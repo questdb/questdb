@@ -31,15 +31,20 @@ import io.questdb.griffin.SqlExecutionContext;
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
     private RecordTreeChain.TreeCursor chainCursor;
+    private boolean isOpen;
 
     public SortedRecordCursor(RecordTreeChain chain) {
         this.chain = chain;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        chainCursor.close();
-        chain.clear();
+        if (isOpen) {
+            chainCursor.close();
+            chain.close();
+            isOpen = false;
+        }
     }
 
     @Override
@@ -85,11 +90,14 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
         try {
+            if (!isOpen) {
+                this.chain.reopen();
+                this.isOpen = true;
+            }
             this.chainCursor = chain.getCursor(base);
             final Record record = base.getRecord();
             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
-            chain.clear();
             while (base.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 // Tree chain is liable to re-position record to

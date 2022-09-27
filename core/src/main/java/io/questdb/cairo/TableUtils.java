@@ -871,6 +871,7 @@ public final class TableUtils {
             } else if (cursor == -1) {
                 return false;
             }
+            Os.pause();
         }
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
@@ -38,7 +39,7 @@ import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
-public class RecordTreeChain implements Closeable, Mutable {
+public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     // P(8) + L + R + C(1) + REF + TOP
     private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8;
     private static final int O_LEFT = 8;
@@ -69,6 +70,12 @@ public class RecordTreeChain implements Closeable, Mutable {
         this.mem = new MemoryPages(keyPageSize, keyMaxPages);
         this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
         this.recordChainRecord = this.recordChain.getRecordB();
+    }
+
+    @Override
+    public void reopen() {
+        recordChain.reopen();
+        mem.reopen();
     }
 
     private static void setLeft(long blockAddress, long left) {
@@ -147,12 +154,13 @@ public class RecordTreeChain implements Closeable, Mutable {
     @Override
     public void clear() {
         root = -1;
-        this.mem.clear();
+        mem.clear();
         recordChain.clear();
     }
 
     @Override
     public void close() {
+        root = -1;
         Misc.free(recordChain);
         Misc.free(mem);
     }
@@ -308,6 +316,7 @@ public class RecordTreeChain implements Closeable, Mutable {
         @Override
         public void close() {
             base.close();
+            current = -1;
         }
 
         @Override

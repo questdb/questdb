@@ -34,7 +34,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -302,7 +301,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     // Not our task, nothing to collect. Go for another spin.
                     collectSubSeq.done(cursor);
                 }
-            } else {
+            } else if (cursor == -1) {
                 if (dispatch()) {
                     // We have dispatched something, so let's try to collect it.
                     continue;
@@ -315,6 +314,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     return LOCAL_TASK_CURSOR;
                 }
                 return -1;
+            } else {
+                Os.pause();
             }
         }
     }
@@ -358,7 +359,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     reducePubSeq.done(cursor);
                     dispatched = true;
                     break;
-                } else {
+                } else if (cursor == -1) {
                     idle = false;
                     // start stealing work to unload the queue
                     if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
@@ -366,6 +367,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     }
                     dispatchStartFrameIndex = i;
                     break OUT;
+                } else {
+                    Os.pause();
                 }
             }
         }

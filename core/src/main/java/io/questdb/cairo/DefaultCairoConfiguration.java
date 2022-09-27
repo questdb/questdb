@@ -139,11 +139,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnPurgeRetryLimitDays() {
-        return 7;
-    }
-
-    @Override
     public double getColumnPurgeRetryDelayMultiplier() {
         return 2.0;
     }
