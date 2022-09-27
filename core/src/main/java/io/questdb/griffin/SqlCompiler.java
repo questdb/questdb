@@ -254,6 +254,7 @@ public class SqlCompiler implements Closeable {
         Misc.free(renamePath);
         Misc.free(textLoader);
         Misc.free(rebuildIndex);
+        Misc.freeIfCloseable(metadataFactory);
     }
 
     @NotNull
