@@ -129,6 +129,7 @@ public class WorkerPool implements Closeable {
         return workerCount;
     }
 
+
     public void start() {
         start(null);
     }
@@ -174,22 +175,14 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
-        if (closed.compareAndSet(false, true)) {
-            boolean await = running.get();
-            if (await) {
-                started.await();
-            }
+        if (running.compareAndSet(true, false)) {
+            started.await();
             for (int i = 0; i < workerCount; i++) {
-                Worker worker = workers.getQuiet(i);
-                if (worker != null) {
-                    worker.halt();
-                }
+                workers.getQuick(i).halt();
             }
-            if (await) {
-                halted.await();
-            }
+            halted.await();
 
-            Misc.freeObjList(workers);
+            workers.clear();//Worker is not closable
             Misc.freeObjList(freeOnHalt);
         }
     }

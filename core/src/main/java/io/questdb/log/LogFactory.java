@@ -276,7 +276,7 @@ public class LogFactory implements Closeable {
                         }
                     }
                 } finally {
-                    Misc.free(job);
+                    Misc.freeIfCloseable(job);
                 }
             }
             for (int i = 0, n = scopeConfigs.size(); i < n; i++) {

@@ -65,7 +65,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
         if (executionContext.getCloneSymbolTables()) {
             if (symbolTable != null) {
                 assert ownSymbolTable;
-                symbolTable = Misc.free(symbolTable);
+                symbolTable = Misc.freeIfCloseable(symbolTable);
             }
             symbolTable = symbolTableSource.newSymbolTable(columnIndex);
             ownSymbolTable = true;
@@ -109,7 +109,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public void close() {
         if (ownSymbolTable) {
-            symbolTable = Misc.free(symbolTable);
+            symbolTable = Misc.freeIfCloseable(symbolTable);
         }
     }
 

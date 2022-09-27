@@ -663,7 +663,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     frameSequence.collect(cursor, false);
                 }
                 frameSequence.await();
-                Misc.free(frameSequence.getSymbolTableSource());
+                Misc.freeIfCloseable(frameSequence.getSymbolTableSource());
                 frameSequence.clear();
             }
         });
