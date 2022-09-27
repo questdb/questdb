@@ -50,15 +50,12 @@ import org.jetbrains.annotations.TestOnly;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
-import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
-import org.junit.runner.Description;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCairoTest {
-
     protected static final PlanSink planSink = new PlanSink();
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -133,17 +130,16 @@ public abstract class AbstractCairoTest {
 
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
 
-    static {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            FACTORY_TAGS[i] = !Chars.startsWith(MemoryTag.nameOf(i), "MMAP");
+    protected static void assertFactoryMemoryUsage() {
+        if (memoryUsage > -1) {
+            long memAfterCursorClose = getMemUsedByFactories();
+            long limit = memoryUsage + 50 * 1024;
+            if (memAfterCursorClose > limit) {
+                dumpMemoryUsage();
+                printFactoryMemoryUsageDiff();
+                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+            }
         }
-
-        FACTORY_TAGS[MemoryTag.NATIVE_O3] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_JOIN_MAP] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
     }
 
     @BeforeClass
@@ -538,14 +534,9 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void assertFactoryMemoryUsage() {
-        if (memoryUsage > -1) {
-            long memAfterCursorClose = getMemUsedByFactories();
-            long limit = memoryUsage + 50 * 1024;
-            if (memAfterCursorClose > limit) {
-                printFactoryMemoryUsageDiff();
-                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
-            }
+    protected static void dumpMemoryUsage() {
+        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+            LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
         }
     }
 
@@ -632,6 +623,22 @@ public abstract class AbstractCairoTest {
             // run until empty
         }
         job.close();
+    }
+
+    static {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            FACTORY_TAGS[i] = !Chars.startsWith(MemoryTag.nameOf(i), "MMAP");
+        }
+
+        FACTORY_TAGS[MemoryTag.NATIVE_O3] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_JOIN_MAP] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_IMPORT] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_PARALLEL_IMPORT] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_REPL] = false;
     }
 
     protected static void clearWalQueue() {

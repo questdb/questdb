@@ -51,6 +51,7 @@ public class FastMap implements Map, Reopenable {
     private final int maxResizes;
     private final int initialKeyCapacity;
     private final int initialPageSize;
+    private final int mapMemoryTag;
     private long capacity;
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory
     // with 0 instead of -1 when clearing/rehashing.
@@ -121,6 +122,7 @@ public class FastMap implements Map, Reopenable {
             int mapMemoryTag,
             int listMemoryTag
     ) {
+        this.mapMemoryTag = mapMemoryTag;
         assert pageSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
         this.initialKeyCapacity = keyCapacity;
@@ -222,7 +224,7 @@ public class FastMap implements Map, Reopenable {
     public final void close() {
         Misc.free(offsets);
         if (kStart != 0) {
-            Unsafe.free(kStart, capacity, MemoryTag.NATIVE_FAST_MAP);
+            Unsafe.free(kStart, capacity, mapMemoryTag);
             kLimit = kStart = kPos = 0;
             free = 0;
             size = 0;
@@ -257,7 +259,7 @@ public class FastMap implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
-        this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
+        this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, mapMemoryTag);
         this.kLimit = kStart + this.initialPageSize;
         this.keyCapacity = (int) (this.initialKeyCapacity / loadFactor);
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
@@ -434,7 +436,7 @@ public class FastMap implements Map, Reopenable {
             if (kCapacity < target) {
                 kCapacity = Numbers.ceilPow2(target);
             }
-            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity, MemoryTag.NATIVE_FAST_MAP);
+            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity, mapMemoryTag);
 
             this.capacity = kCapacity;
             long d = kAddress - this.kStart;
