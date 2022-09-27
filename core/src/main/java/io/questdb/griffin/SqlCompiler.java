@@ -2511,8 +2511,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public boolean isWallEnabled() {
-            return model.isWallEnabled();
+        public boolean isWalEnabled() {
+            return model.isWalEnabled();
         }
 
         @Override

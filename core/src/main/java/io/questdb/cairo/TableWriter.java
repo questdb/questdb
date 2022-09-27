@@ -36,13 +36,12 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
-import io.questdb.griffin.SqlToOperation;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlToOperation;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -68,9 +67,10 @@ import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
+import static io.questdb.cairo.wal.WalTxnType.DATA;
+import static io.questdb.cairo.wal.WalTxnType.SQL;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterFrontend, TableWriterBackend, Closeable {
