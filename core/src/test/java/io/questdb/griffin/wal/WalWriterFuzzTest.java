@@ -39,7 +39,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -75,8 +74,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private int symbolCountMax;
 
     @Test
-    @Ignore // TODO fix the test.
-    public void testFail2() throws Exception {
+    public void testOneOfSymbolsNotWrittenAnyValues() throws Exception {
         Rnd rnd = new Rnd(65515438461083L, 1664196196645L);
         testWalWriteFullRandom(rnd);
     }
@@ -96,7 +94,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 0.05,
                 0.05,
                 0.05);
-        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 20, 0);
+        setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
@@ -435,23 +433,23 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         });
     }
 
-    private void setFuzzCounts(boolean isO31, int fuzzRowCount1, int transactionCount1, int strLen1, int symbolStrLenMax1, int symbolCountMax1, int initialRowCount1) {
-        isO3 = isO31;
-        fuzzRowCount = fuzzRowCount1;
-        transactionCount = transactionCount1;
-        strLen = strLen1;
-        symbolStrLenMax = symbolStrLenMax1;
-        symbolCountMax = symbolCountMax1;
-        initialRowCount = initialRowCount1;
+    private void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount) {
+        this.isO3 = isO3;
+        this.fuzzRowCount = fuzzRowCount;
+        this.transactionCount = transactionCount;
+        this.strLen = strLen;
+        this.symbolStrLenMax = symbolStrLenMax;
+        this.symbolCountMax = symbolCountMax;
+        this.initialRowCount = initialRowCount;
     }
 
-    private void setFuzzProbabilities(double cancelRowsProb1, double notSetProb1, double nullSetProb1, double rollbackProb1, double collAddProb1, double collRemoveProb1, double colRenameProb1) {
-        cancelRowsProb = cancelRowsProb1;
-        notSetProb = notSetProb1;
-        nullSetProb = nullSetProb1;
-        rollbackProb = rollbackProb1;
-        collAddProb = collAddProb1;
-        collRemoveProb = collRemoveProb1;
-        colRenameProb = colRenameProb1;
+    private void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb) {
+        this.cancelRowsProb = cancelRowsProb;
+        this.notSetProb = notSetProb;
+        this.nullSetProb = nullSetProb;
+        this.rollbackProb = rollbackProb;
+        this.collAddProb = collAddProb;
+        this.collRemoveProb = collRemoveProb;
+        this.colRenameProb = colRenameProb;
     }
 }
