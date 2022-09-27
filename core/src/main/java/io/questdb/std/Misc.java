@@ -40,7 +40,20 @@ public final class Misc {
     }
 
     @SuppressWarnings("SameReturnValue")
-    public static <T> T free(T object) {
+    public static <T extends Closeable> T free(T object) {
+        if (object != null) {
+            try {
+                object.close();
+            } catch (IOException e) {
+                throw new FatalError(e);
+            }
+        }
+        return null;
+    }
+
+    //same as free() but can be used when input object type is not guaranteed to be Closeable
+    @SuppressWarnings("SameReturnValue")
+    public static <T> T freeIfCloseable(T object) {
         if (object instanceof Closeable) {
             try {
                 ((Closeable) object).close();
@@ -57,7 +70,14 @@ public final class Misc {
         return b;
     }
 
-    public static <T> void freeObjList(ObjList<T> list) {
+    public static <T extends Closeable> void freeObjList(ObjList<T> list) {
+        if (list != null) {
+            freeObjList0(list);
+        }
+    }
+
+    //same as freeObjList() but can be used when input object type is not guaranteed to be Closeable   
+    public static <T> void freeObjListIfCloseable(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
         }
@@ -71,11 +91,11 @@ public final class Misc {
 
     private static <T> void freeObjList0(ObjList<T> list) {
         for (int i = 0, n = list.size(); i < n; i++) {
-            list.setQuick(i, free(list.getQuick(i)));
+            list.setQuick(i, freeIfCloseable(list.getQuick(i)));
         }
     }
 
-    public static <T> void freeObjListAndClear(ObjList<T> list) {
+    public static <T extends Closeable> void freeObjListAndClear(ObjList<T> list) {
         if (list != null) {
             for (int i = 0, n = list.size(); i < n; i++) {
                 free(list.getQuick(i));
@@ -84,7 +104,7 @@ public final class Misc {
         }
     }
 
-    public static <T> void free(T[] list) {
+    public static <T extends Closeable> void free(T[] list) {
         if (list != null) {
             for (int i = 0, n = list.length; i < n; i++) {
                 list[i] = Misc.free(list[i]);
@@ -92,7 +112,7 @@ public final class Misc {
         }
     }
 
-    public static <T> void freeObjListAndKeepObjects(ObjList<T> list) {
+    public static <T extends Closeable> void freeObjListAndKeepObjects(ObjList<T> list) {
         if (list != null) {
             for (int i = 0, n = list.size(); i < n; i++) {
                 free(list.getQuick(i));

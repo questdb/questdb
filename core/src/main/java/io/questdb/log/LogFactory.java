@@ -261,7 +261,7 @@ public class LogFactory implements Closeable {
     public void close() {
         haltThread();
         for (int i = 0, n = jobs.size(); i < n; i++) {
-            Misc.free(jobs.get(i));
+            Misc.freeIfCloseable(jobs.get(i));
         }
         for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
             Misc.free(scopeConfigs.getQuick(i));
@@ -285,7 +285,7 @@ public class LogFactory implements Closeable {
                     // Exception means we cannot log anymore. Perhaps network is down or disk is full.
                     // Switch to the next job.
                 }
-                Misc.free(job);
+                Misc.freeIfCloseable(job);
             }
         }
         for (int i = 0, n = scopeConfigs.size(); i < n; i++) {

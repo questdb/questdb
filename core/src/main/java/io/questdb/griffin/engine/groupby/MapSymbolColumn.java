@@ -83,7 +83,7 @@ public class MapSymbolColumn extends SymbolFunction {
         if (executionContext.getCloneSymbolTables()) {
             if (symbolTable != null) {
                 assert ownSymbolTable;
-                symbolTable = Misc.free(symbolTable);
+                symbolTable = Misc.freeIfCloseable(symbolTable);
             }
             symbolTable = symbolTableSource.newSymbolTable(cursorColumnIndex);
             ownSymbolTable = true;
@@ -108,7 +108,7 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public void close() {
         if (ownSymbolTable) {
-            symbolTable = Misc.free(symbolTable);
+            symbolTable = Misc.freeIfCloseable(symbolTable);
         }
     }
 }
