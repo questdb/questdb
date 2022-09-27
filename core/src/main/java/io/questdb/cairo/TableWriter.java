@@ -2784,13 +2784,13 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
-    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
+    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
         final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
         symbolMap.setPos(symbolMapDiff.getSize());
 
         // This is defensive. It validates that all the symbols used in WAL are set in SymbolMapDiff
         symbolMap.setAll(symbolMapDiff.getSize(), -1);
-        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
+        final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
         boolean identical = true;
 
         SymbolMapDiffEntry entry;
@@ -5133,7 +5133,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                             .put(", walPath=").put(walPath)
                             .put(']');
                 }
-                boolean identical = createWalSymbolMapping(symbolMapDiff, sym++, symbolRewriteMap);
+                boolean identical = createWalSymbolMapping(symbolMapDiff, columnIndex, symbolRewriteMap);
 
                 if (!identical) {
                     MemoryCR o3SymbolColumn = o3Columns.getQuick(getPrimaryColumnIndex(columnIndex));
@@ -5163,6 +5163,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                         long offset = rowId << 2;
 
                         int symKey = o3SymbolColumn.getInt(offset);
+                        assert (symKey >= 0 || symKey == SymbolTable.VALUE_IS_NULL);
                         if (symKey >= cleanSymbolCount) {
                             int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
                             if (newKey < 0) {
