@@ -71,18 +71,21 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
-size_t copyData0(int input, int output, off_t fromOffset, size_t length) {
+size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
     char buf[4096];
     size_t read_sz;
     off_t rd_off = fromOffset;
     off_t wrt_off = 0;
+    off_t len;
 
     if (length < 0) {
-        length = SIZE_MAX;
+        len = LONG_MAX - fromOffset;
+    } else {
+        len = length;
     }
-    off_t hi = fromOffset + (off_t)length;
+    off_t hi = fromOffset + len;
 
-    while ((read_sz = pread(input, buf, sizeof buf, rd_off)) > 0) {
+    while ((read_sz = pread(inFd, buf, sizeof buf, rd_off)) > 0) {
         char *out_ptr = buf;
 
         if (rd_off + read_sz > hi) {
@@ -91,7 +94,7 @@ size_t copyData0(int input, int output, off_t fromOffset, size_t length) {
 
         long wrtn;
         do {
-            wrtn = pwrite(output, out_ptr, read_sz, wrt_off);
+            wrtn = pwrite(outFd, out_ptr, read_sz, wrt_off);
             if (wrtn >= 0) {
                 read_sz -= wrtn;
                 out_ptr += wrtn;

@@ -572,7 +572,7 @@ public class FilesTest {
             ) {
                 long fd1 = Files.openRW(path1.$());
                 path2.put(".2").$();
-                long fd2 = Files.openRW(path2.$());
+                long fd2 = Files.openRW(path2);
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
