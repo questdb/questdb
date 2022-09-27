@@ -24,9 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.network.Net;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -102,7 +100,7 @@ public abstract class AbstractBootstrapTest {
         PG_CONNECTION_PROPERTIES.setProperty("binaryTransfer", "true");
     }
 
-    //final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
+    static final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
 
     static void createDummyConfiguration() throws Exception {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
@@ -181,22 +179,5 @@ public abstract class AbstractBootstrapTest {
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
         }
-    }
-
-    static void assertMemoryLeak(TestUtils.LeakProneCode runnable) throws Exception {
-        Path.clearThreadLocals();
-        Assert.assertTrue(Unsafe.getMemUsed() >= 0);
-        Assert.assertTrue(Files.getOpenFileCount() >= 0);
-        final int addrInfoCount = Net.getAllocatedAddrInfoCount();
-        Assert.assertTrue(addrInfoCount >= 0);
-        final int sockAddrCount = Net.getAllocatedSockAddrCount();
-        Assert.assertTrue(sockAddrCount >= 0);
-
-        runnable.run();
-
-        Path.clearThreadLocals();
-        Assert.assertEquals(0, Files.getOpenFileCount());
-        Assert.assertEquals(addrInfoCount, Net.getAllocatedAddrInfoCount());
-        Assert.assertEquals(sockAddrCount, Net.getAllocatedSockAddrCount());
     }
 }

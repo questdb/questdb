@@ -211,10 +211,16 @@ public class ServerMain implements Closeable {
     }
 
     public CairoEngine getCairoEngine() {
+        if (closed.get()) {
+            throw new IllegalStateException("close was called");
+        }
         return engine;
     }
 
     public WorkerPoolManager getWorkerPoolManager() {
+        if (closed.get()) {
+            throw new IllegalStateException("close was called");
+        }
         return workerPoolManager;
     }
 

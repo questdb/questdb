@@ -24,7 +24,12 @@
 
 package io.questdb;
 
+import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
 
 
 public class ServerMainTest extends AbstractBootstrapTest {
@@ -40,16 +45,55 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainStart() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
-                Assert.assertNotNull(serverMain.getConfiguration());
-                Assert.assertNotNull(serverMain.getCairoEngine());
-                Assert.assertNotNull(serverMain.getWorkerPoolManager());
-                Assert.assertFalse(serverMain.hasStarted());
-                Assert.assertFalse(serverMain.hasBeenClosed());
-                serverMain.start();
+    public void testServerMainStart() {
+        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            Assert.assertNotNull(serverMain.getConfiguration());
+            Assert.assertNotNull(serverMain.getCairoEngine());
+            Assert.assertNotNull(serverMain.getWorkerPoolManager());
+            Assert.assertFalse(serverMain.hasStarted());
+            Assert.assertFalse(serverMain.hasBeenClosed());
+            serverMain.start();
+        }
+    }
+
+    @Test
+    public void testServerMainNoStart() {
+        try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            Os.pause();
+        } catch (IllegalStateException ex) {
+            TestUtils.assertContains("start was not called at all", ex.getMessage());
+        }
+    }
+
+    @Test
+    public void testServerMainNoReStart() {
+        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            serverMain.start();
+            serverMain.start(); // <== no effect
+            serverMain.close();
+            try {
+                serverMain.getCairoEngine();
+            } catch (IllegalStateException ex) {
+                TestUtils.assertContains("close was called", ex.getMessage());
             }
-        });
+            try {
+                serverMain.getWorkerPoolManager();
+            } catch (IllegalStateException ex) {
+                TestUtils.assertContains("close was called", ex.getMessage());
+            }
+            serverMain.start(); // <== no effect
+            serverMain.close(); // <== no effect
+            serverMain.start(); // <== no effect
+        }
+    }
+
+    @Test
+    public void testServerMainPgWire() throws Exception {
+        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            serverMain.start();
+            try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                Os.pause();
+            }
+        }
     }
 }
