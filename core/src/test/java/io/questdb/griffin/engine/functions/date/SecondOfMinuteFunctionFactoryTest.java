@@ -33,7 +33,7 @@ public class SecondOfMinuteFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "second\n" +
                         "30\n",
-                "select second(to_timestamp('1997-04-11T22:00:30.555555Z'))",
+                "select second('1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,
@@ -47,7 +47,7 @@ public class SecondOfMinuteFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "second\n" +
                         "21\n",
-                "select second(to_timestamp('1901-07-11T22:00:21.555998Z'))",
+                "select second('1901-07-11T22:00:21.555998Z'::timestamp)",
                 null,
                 null,
                 true,

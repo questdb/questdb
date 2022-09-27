@@ -32,9 +32,9 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
     @Test
     public void testVanilla() throws Exception {
         assertQuery(
-                "to_timezone\n" +
+                "cast\n" +
                         "2022-03-11T22:00:30.555555Z\n",
-                "select to_timestamp('2022-03-11T22:00:30.555555Z') at time zone 'UTC'",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC'",
                 null,
                 null,
                 true,
@@ -48,7 +48,7 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
         assertQuery(
                 "zone\n" +
                         "2022-03-11T22:00:30.555555Z\n",
-                "select to_timestamp('2022-03-11T22:00:30.555555Z') zone",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp zone",
                 null,
                 null,
                 true,
@@ -62,7 +62,7 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
         assertQuery(
                 "time\n" +
                         "2022-03-11T22:00:30.555555Z\n",
-                "select to_timestamp('2022-03-11T22:00:30.555555Z') time",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp time",
                 null,
                 null,
                 true,
@@ -116,7 +116,7 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
         assertQuery(
                 "column\n" +
                         "2022-03-11T22:00:30.555560Z\n",
-                "select to_timestamp('2022-03-11T22:00:30.555555Z') at time zone 'UTC' + 5",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC' + 5",
                 null,
                 null,
                 true,
@@ -130,7 +130,7 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
         assertQuery(
                 "cast\n" +
                         "1647018030555555\n",
-                "select cast(to_timestamp('2022-03-11T22:00:30.555555Z') at time zone 'EST' as string)",
+                "select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)",
                 null,
                 null,
                 true,
@@ -162,7 +162,7 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
         assertQuery(
                 "date_trunc\n" +
                         "2022-03-11T00:00:00.000000Z\n",
-                "select date_trunc('day', to_timestamp('2022-03-11T22:00:30.555555Z') at time zone 'UTC')",
+                "select date_trunc('day', '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC')",
                 null,
                 null,
                 true,

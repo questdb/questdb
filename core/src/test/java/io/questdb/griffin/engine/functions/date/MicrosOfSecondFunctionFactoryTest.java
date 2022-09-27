@@ -33,7 +33,7 @@ public class MicrosOfSecondFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "micros\n" +
                         "555\n",
-                "select micros(to_timestamp('1997-04-11T22:00:30.555555Z'))",
+                "select micros('1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,
@@ -47,7 +47,7 @@ public class MicrosOfSecondFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "micros\n" +
                         "998\n",
-                "select micros(to_timestamp('1901-04-11T22:00:30.555998Z'))",
+                "select micros('1901-04-11T22:00:30.555998Z'::timestamp)",
                 null,
                 null,
                 true,

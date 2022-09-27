@@ -75,7 +75,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                 compiler.compile("select cast(cast('questdb' as geohash(6c)) as geohash(7c)) from long_sequence(1)", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "CAST cannot decrease precision from GEOHASH(30b) to GEOHASH(35b)");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "CAST cannot narrow values from GEOHASH(30b) to GEOHASH(35b)");
             }
         });
     }
@@ -88,7 +88,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                 executeInsert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
                 Assert.fail();
             } catch (ImplicitCastException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible value: f91t [STRING -> GEOHASH(8c)] tuple: 0");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible value: `f91t` [STRING -> GEOHASH(8c)]");
             }
         });
     }

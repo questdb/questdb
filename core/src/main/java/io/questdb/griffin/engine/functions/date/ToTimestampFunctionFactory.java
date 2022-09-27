@@ -31,7 +31,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -66,9 +65,7 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final CharSequence value = arg.getStr(rec);
             try {
-                if (value != null) {
-                    return IntervalUtils.parseFloorPartialTimestamp(value);
-                }
+                return Numbers.parseLong(value);
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NaN;
