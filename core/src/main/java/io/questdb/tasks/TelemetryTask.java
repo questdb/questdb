@@ -27,6 +27,7 @@ package io.questdb.tasks;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public final class TelemetryTask {
@@ -53,6 +54,7 @@ public final class TelemetryTask {
     ) {
         long cursor = telemetryPubSeq.next();
         while (cursor == -2) {
+            Os.pause();
             cursor = telemetryPubSeq.next();
         }
 

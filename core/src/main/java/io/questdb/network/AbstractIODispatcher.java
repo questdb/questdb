@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.LongMatrix;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -168,6 +169,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     public boolean processIOQueue(IORequestProcessor<C> processor) {
         long cursor = ioEventSubSeq.next();
         while (cursor == -2) {
+            Os.pause();
             cursor = ioEventSubSeq.next();
         }
 

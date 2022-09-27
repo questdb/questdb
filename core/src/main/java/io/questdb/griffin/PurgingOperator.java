@@ -28,7 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
@@ -176,6 +179,7 @@ public abstract class PurgingOperator {
                         .I$();
                 return;
             }
+            Os.pause();
         }
     }
 }
