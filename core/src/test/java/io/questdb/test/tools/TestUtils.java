@@ -1089,7 +1089,7 @@ public final class TestUtils {
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
-        WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
+        WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
                 return new int[1];
@@ -1102,11 +1102,6 @@ public final class TestUtils {
 
             @Override
             public boolean haltOnError() {
-                return true;
-            }
-
-            @Override
-            public boolean isEnabled() {
                 return true;
             }
         };

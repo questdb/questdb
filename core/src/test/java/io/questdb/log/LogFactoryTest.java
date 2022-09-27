@@ -86,7 +86,8 @@ public class LogFactoryTest {
 
         final int messageCount = 20;
         AtomicInteger counter = new AtomicInteger();
-        try (LogFactory factory = new LogFactory()) {
+        LogFactory factory = new LogFactory();
+        try {
             factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
                 @Override
                 public void bindProperties(LogFactory factory) {
@@ -125,6 +126,9 @@ public class LogFactoryTest {
             for (int i = 0; i < messageCount; i++) {
                 logger1.criticalW().$("test ").$(i).$();
             }
+        }
+        finally {
+            factory.close(true);
         }
         Assert.assertEquals(messageCount, counter.get());
     }

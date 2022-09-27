@@ -80,7 +80,7 @@ public class TableReaderReloadBenchmark {
 
         new Runner(opt).run();
 
-        LogFactory.getInstance().close(true);
+        LogFactory.getInstance().haltThread();
     }
 
     @Setup(Level.Iteration)

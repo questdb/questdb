@@ -321,7 +321,7 @@ public class LogFactory implements Closeable {
 
     @Override
     public void close() {
-        close(true);
+        close(false);
     }
 
     public void close(boolean flush) {

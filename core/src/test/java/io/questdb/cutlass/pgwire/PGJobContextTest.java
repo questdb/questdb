@@ -7553,23 +7553,23 @@ create table tab as (
                         }
                     }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                    ps.setString(1, "");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "inconvertible value:  [STRING -> DOUBLE] tuple: 0");
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                        ps.setString(1, "");
+                        try (ResultSet ignore1 = ps.executeQuery()) {
+                            Assert.fail();
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "inconvertible value:  [STRING -> DOUBLE] tuple: 0");
+                        }
                     }
-                }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                    ps.setString(1, "cah-cha-cha");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "inconvertible value: cah-cha-cha [STRING -> DOUBLE] tuple: 0");
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                        ps.setString(1, "cah-cha-cha");
+                        try (ResultSet ignore1 = ps.executeQuery()) {
+                            Assert.fail();
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "inconvertible value: cah-cha-cha [STRING -> DOUBLE] tuple: 0");
+                        }
                     }
-                }
 
                     try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
                         ps.setString(1, "NULL");
@@ -7634,67 +7634,68 @@ create table tab as (
 
                     // single key value in filter
 
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
-                    ps.setString(1, "d1");
-                    ps.setTimestamp(2, createTimestamp(1));
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                        "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                sink,
-                                rs
-                        );
+                    sink.clear();
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
+                        ps.setString(1, "d1");
+                        ps.setTimestamp(2, createTimestamp(1));
+                        try (ResultSet rs = ps.executeQuery()) {
+                            assertResultSet(
+                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                    sink,
+                                    rs
+                            );
+                        }
                     }
-                }
 
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ?")) {
-                    ps.setString(1, "d1");
-                    ps.setTimestamp(2, createTimestamp(1));
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                        "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
-                                sink,
-                                rs
-                        );
+                    sink.clear();
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ?")) {
+                        ps.setString(1, "d1");
+                        ps.setTimestamp(2, createTimestamp(1));
+                        try (ResultSet rs = ps.executeQuery()) {
+                            assertResultSet(
+                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                            "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                    sink,
+                                    rs
+                            );
+                        }
                     }
-                }
 
                     // multiple key values in filter
 
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in (?, ?) and timestamp > ?")) {
-                    ps.setString(1, "d1");
-                    ps.setString(2, "d2");
-                    ps.setTimestamp(3, createTimestamp(0));
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                        "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
-                                        "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
-                                        "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
-                                        "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                sink,
-                                rs
-                        );
+                    sink.clear();
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in (?, ?) and timestamp > ?")) {
+                        ps.setString(1, "d1");
+                        ps.setString(2, "d2");
+                        ps.setTimestamp(3, createTimestamp(0));
+                        try (ResultSet rs = ps.executeQuery()) {
+                            assertResultSet(
+                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                            "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
+                                            "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
+                                            "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                    sink,
+                                    rs
+                            );
+                        }
                     }
-                }
 
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ?")) {
-                    ps.setString(1, "d2");
-                    ps.setString(2, "d3");
-                    ps.setTimestamp(3, createTimestamp(0));
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                        "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
-                                        "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                sink,
-                                rs
-                        );
+                    sink.clear();
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ?")) {
+                        ps.setString(1, "d2");
+                        ps.setString(2, "d3");
+                        ps.setTimestamp(3, createTimestamp(0));
+                        try (ResultSet rs = ps.executeQuery()) {
+                            assertResultSet(
+                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                            "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
+                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                    sink,
+                                    rs
+                            );
+                        }
                     }
                 }
             }
@@ -7864,24 +7865,24 @@ create table tab as (
                             // just date
                             insert.setDate(2, new Date(micros / 1000));
 
-                        // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
-                        Timestamp ts;
+                            // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
+                            Timestamp ts;
 
-                        ts = new Timestamp(micros / 1000L);
-                        ts.setNanos((int) ((micros % 1_000_000L) * 1000L));
-                        insert.setTimestamp(3, ts);
+                            ts = new Timestamp(micros / 1000L);
+                            ts.setNanos((int) ((micros % 1_000_000L) * 1000L));
+                            insert.setTimestamp(3, ts);
 
-                        // DATE as jdbc's TIMESTAMP, both millis
-                        ts = new Timestamp(micros / 1000L);
-                        insert.setTimestamp(4, ts);
+                            // DATE as jdbc's TIMESTAMP, both millis
+                            ts = new Timestamp(micros / 1000L);
+                            insert.setTimestamp(4, ts);
 
-                        // TIMESTAMP as jdbc's DATE, DATE takes millis keep only date part
-                        insert.setDate(5, new Date(micros / 1000L));
+                            // TIMESTAMP as jdbc's DATE, DATE takes millis keep only date part
+                            insert.setDate(5, new Date(micros / 1000L));
 
-                        // TIMESTAMP as PG specific TIMESTAMP type
-                        PGTimestamp pgTs = new PGTimestamp(micros / 1000L);
-                        pgTs.setNanos((int) ((micros % 1_000_000L) * 1000));
-                        insert.setTimestamp(6, pgTs);
+                            // TIMESTAMP as PG specific TIMESTAMP type
+                            PGTimestamp pgTs = new PGTimestamp(micros / 1000L);
+                            pgTs.setNanos((int) ((micros % 1_000_000L) * 1000));
+                            insert.setTimestamp(6, pgTs);
 
                             insert.execute();
                             Assert.assertEquals(1, insert.getUpdateCount());
@@ -7944,11 +7945,11 @@ create table tab as (
                             insert.setNull(1, Types.SMALLINT);
                         }
 
-                    if (rnd.nextInt() % 4 > 0) {
-                        insert.setString(2, rnd.nextString(1));
-                    } else {
-                        insert.setNull(2, Types.VARCHAR);
-                    }
+                        if (rnd.nextInt() % 4 > 0) {
+                            insert.setString(2, rnd.nextString(1));
+                        } else {
+                            insert.setNull(2, Types.VARCHAR);
+                        }
 
                         if (rnd.nextInt() % 4 > 0) {
                             insert.setShort(3, rnd.nextShort());
