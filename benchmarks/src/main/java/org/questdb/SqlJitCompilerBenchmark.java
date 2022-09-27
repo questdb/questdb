@@ -95,7 +95,7 @@ public class SqlJitCompilerBenchmark {
 
         new Runner(opt).run();
 
-        LogFactory.getInstance().haltThread();
+        LogFactory.haltInstance();
     }
 
     @Setup(Level.Iteration)

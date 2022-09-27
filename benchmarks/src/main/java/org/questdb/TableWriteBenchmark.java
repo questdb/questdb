@@ -77,7 +77,7 @@ public class TableWriteBenchmark {
         executeDdl("create table if not exists test2(f timestamp) timestamp (f)", configuration);
         executeDdl("create table if not exists test3(f timestamp) timestamp (f) PARTITION BY DAY", configuration);
 
-        LogFactory.getInstance().haltThread();
+        LogFactory.haltInstance();
 
         writer = new TableWriter(configuration, "test1", Metrics.disabled());
         writer2 = new TableWriter(configuration, "test2", Metrics.disabled());

@@ -94,6 +94,21 @@ public class LogFactory implements Closeable {
         return logFactory;
     }
 
+    public static synchronized void haltInstance() {
+        LogFactory logFactory = INSTANCE;
+        if (logFactory != null) {
+            logFactory.haltThread();
+        }
+    }
+
+    public static synchronized void closeInstance() {
+        LogFactory logFactory = INSTANCE;
+        if (logFactory != null) {
+            logFactory.close(true);
+            INSTANCE = null;
+        }
+    }
+
 
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
@@ -247,7 +262,7 @@ public class LogFactory implements Closeable {
         }
     }
 
-    public void haltThread() {
+    private void haltThread() {
         if (running.compareAndSet(true, false)) {
             workerPool.halt();
         }

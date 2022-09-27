@@ -244,7 +244,7 @@ public class ServerMain implements Closeable {
                 System.err.println("QuestDB is shutting down...");
                 System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.sum());
                 close();
-                LogFactory.getInstance().close(true);
+                LogFactory.closeInstance();
             } catch (Error ignore) {
                 // ignore
             } finally {
