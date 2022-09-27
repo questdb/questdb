@@ -119,6 +119,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             String tableNameNoWal = testName.getMethodName() + "_nonwal";
 
             Rnd rnd = TestUtils.generateRandom(LOG);
+            // TODO: investigate slowness
+//            Rnd rnd = new Rnd(6734948462398L, 1664272837240L);
+
             int initialRowCount = 0;
             createInitialTable(tableNameWal, true, initialRowCount);
             createInitialTable(tableNameWal2, true, initialRowCount);
@@ -135,7 +138,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         rnd,
                         IntervalUtils.parseFloorPartialDate("2022-02-24T17"),
                         IntervalUtils.parseFloorPartialDate("2022-02-27T17"),
-                        1000_000,
+                        1_000_000,
                         false,
                         0.05,
                         0.2,

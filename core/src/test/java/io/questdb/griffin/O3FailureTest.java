@@ -267,6 +267,45 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testAllocateToResizeLastPartition() throws Exception {
+        // Failing to allocate concrete file is more stable than failing on a counter
+        String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
+        executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, new FilesFacadeImpl() {
+            private long theFd = 0;
+
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (fd == theFd && size == 1472) {
+                    theFd = -1;
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public long length(long fd) {
+                long len = super.length(fd);
+                if (fd == theFd) {
+                    if (len == Files.PAGE_SIZE) {
+                        return 0;
+                    }
+                }
+                return len;
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                long fd = Files.openRW(name, opts);
+                if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
+                    theFd = fd;
+                    return fd;
+                }
+                return fd;
+            }
+        });
+    }
+
+    @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTop() throws Exception {
         counter.set(1);
         executeWithoutPool(

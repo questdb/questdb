@@ -116,7 +116,7 @@ size_t copyData0(int input, int output, off_t fromOffset, size_t length) {
     return rd_off - fromOffset;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copyData
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
         (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length) {
     return copyData0((int)srcFd, (int)dstFd, srcOffset, length);
 }
