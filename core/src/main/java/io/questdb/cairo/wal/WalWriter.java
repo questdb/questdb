@@ -772,7 +772,9 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void freeSymbolMapWriters() {
-        Misc.freeObjList(symbolMapReaders);
+        // should we remove this? does not close anything
+        // not even symbol map writer as the method name suggests, these are readers
+        Misc.freeObjListIfCloseable(symbolMapReaders);
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -910,7 +912,8 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void removeSymbolMapWriter(int index) {
-        Misc.free(symbolMapReaders.getAndSetQuick(index, null));
+        // do we need to close something not Closable?
+        Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         initialSymbolCounts.setQuick(index, -1);
     }
 
