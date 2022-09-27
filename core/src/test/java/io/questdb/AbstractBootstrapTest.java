@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -53,7 +54,7 @@ public abstract class AbstractBootstrapTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        //fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests 
+        // fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests
         URL resource = ServerMain.class.getResource("/io/questdb/site/public.zip");
         if (resource == null) {
             File publicZip = new File(siteDir, "public.zip");
@@ -80,6 +81,7 @@ public abstract class AbstractBootstrapTest {
     @Before
     public void setUp() {
         try {
+            LogFactory.forgetInstance();
             root = temp.newFolder("QDB_DATA").getAbsolutePath();
             TestUtils.createTestPath(root);
         } catch (IOException e) {
@@ -91,6 +93,7 @@ public abstract class AbstractBootstrapTest {
     public void tearDown() {
         TestUtils.removeTestPath(root);
         temp.delete();
+        LogFactory.forgetInstance();
     }
 
     static final Properties PG_CONNECTION_PROPERTIES = new Properties();
