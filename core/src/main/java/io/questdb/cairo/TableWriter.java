@@ -2814,7 +2814,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         Misc.free(other);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
-        Misc.free(attachMetadata);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
@@ -2823,7 +2822,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         Misc.free(commandQueue);
         Misc.free(walEventReader);
         updateOperator = Misc.free(updateOperator);
-        dropIndexOperator = Misc.free(dropIndexOperator);
+        dropIndexOperator = null;
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -2950,7 +2949,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private void freeSymbolMapWriters() {
         if (denseSymbolMapWriters != null) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                Misc.free(denseSymbolMapWriters.getQuick(i));
+                Misc.freeIfCloseable(denseSymbolMapWriters.getQuick(i));
             }
             denseSymbolMapWriters.clear();
         }
@@ -5410,7 +5409,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 w.setSymbolIndexInTxWriter(symColIndex);
                 symColIndex++;
             }
-            Misc.free(writer);
+            Misc.freeIfCloseable(writer);
         }
     }
 

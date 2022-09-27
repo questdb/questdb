@@ -134,7 +134,7 @@ public class WorkerPool {
             }
             halted.await();
 
-            Misc.freeObjList(workers);
+            workers.clear();//Worker is not closable  
             Misc.freeObjList(freeOnHalt);
         }
     }

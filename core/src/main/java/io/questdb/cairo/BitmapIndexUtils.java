@@ -73,12 +73,12 @@ public final class BitmapIndexUtils {
      * <p>
      * List of value blocks is assumed to be ordered by value in ascending order.
      *
-     * @param valueCount           total count of values in all blocks
-     * @param blockOffset          offset of last value block in chain of blocks
-     * @param valueMem             value block memory
-     * @param maxValue             upper limit for block values
-     * @param blockValueCountMod   number of values in single block - 1
-     * @param seeker               interface that collects results of the search
+     * @param valueCount         total count of values in all blocks
+     * @param blockOffset        offset of last value block in chain of blocks
+     * @param valueMem           value block memory
+     * @param maxValue           upper limit for block values
+     * @param blockValueCountMod number of values in single block - 1
+     * @param seeker             interface that collects results of the search
      */
     static void seekValueBlockRTL(
             long valueCount,
@@ -214,18 +214,22 @@ public final class BitmapIndexUtils {
      * ^
      * <p>
      * Same index will be returned when we search for value of 3.
+     * <p>
+     * This method is meant to search for the position of a rowid (value), 100% guaranteed to exist, otherwise
+     * it means the index is corrupt.
      *
      * @param memory    virtual memory instance
      * @param offset    offset in virtual memory
      * @param cellCount length of the available memory measured in 64-bit cells
      * @param value     value we search of
-     * @return index directly behind the searched value or group of values if list contains duplicate values.
+     * @return index directly behind the searched value or group of values if list contains duplicate values
+     * @throws CairoException when the index is corrupted
      */
     static long searchValueBlock(MemoryR memory, long offset, long cellCount, long value) {
         // when block is "small", we just scan it linearly
         if (cellCount < 64) {
             // this will definitely exit because we had checked that at least the last value is greater than value
-            for (long i = offset; ; i += 8) {
+            for (long i = offset, limit = memory.size(); i < limit; i += 8) {
                 if (memory.getLong(i) > value) {
                     return (i - offset) / 8;
                 }
@@ -251,6 +255,11 @@ public final class BitmapIndexUtils {
 
             return low + 1;
         }
+        throw CairoException.critical(0)
+                .put("index is corrupt, rowid not found [offset=").put(offset)
+                .put(", cellCount=").put(cellCount)
+                .put(", value=").put(value)
+                .put(']');
     }
 
     @FunctionalInterface

@@ -37,7 +37,7 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(getMetadata());
+        Misc.freeIfCloseable(getMetadata());
     }
 
     @Override

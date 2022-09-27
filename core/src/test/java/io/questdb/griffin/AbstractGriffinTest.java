@@ -683,7 +683,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                Misc.freeObjList(clonedSymbolTables);
+                Misc.freeObjListIfCloseable(clonedSymbolTables);
             }
         }
     }
