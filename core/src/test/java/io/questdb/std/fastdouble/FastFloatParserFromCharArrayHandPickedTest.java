@@ -9,16 +9,16 @@ import io.questdb.std.NumericException;
 
 public class FastFloatParserFromCharArrayHandPickedTest extends AbstractFloatHandPickedTest {
     @Override
-    float parse(CharSequence str) throws NumericException {
+    float parse(CharSequence str, boolean rejectOverflow) throws NumericException {
         char[] chars = new char[str.length()];
         for (int i = 0; i < chars.length; i++) {
             chars[i] = str.charAt(i);
         }
-        return FastFloatParser.parseFloat(chars);
+        return FastFloatParser.parseFloat(chars, rejectOverflow);
     }
 
     @Override
-    protected float parse(String str, int offset, int length) throws NumericException {
-        return FastFloatParser.parseFloat(str.toCharArray(), offset, length);
+    protected float parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException {
+        return FastFloatParser.parseFloat(str.toCharArray(), offset, length, rejectOverflow);
     }
 }

@@ -147,7 +147,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 ColumnPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
-                task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
+                task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
                 ColumnPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
@@ -809,7 +809,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 ColumnPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
-                task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
+                task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
                 ColumnPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
@@ -887,7 +887,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     ) throws NumericException {
         ColumnPurgeTask tsk = new ColumnPurgeTask();
         tsk.of(tblName, colName, tableId, 0, columnType, PartitionBy.NONE, updateTxn, new LongList());
-        tsk.appendColumnInfo(columnVersion, IntervalUtils.parseFloorPartialDate(partitionTs), partitionNameTxn);
+        tsk.appendColumnInfo(columnVersion, IntervalUtils.parseFloorPartialTimestamp(partitionTs), partitionNameTxn);
         return tsk;
     }
 

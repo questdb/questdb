@@ -1085,7 +1085,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testFirstLastAggregationsNotSupported() {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.STRING, ":STRING"),};
+                new TypeVal(ColumnType.BINARY, ":BINARY"),};
 
         try {
             testAggregations(aggregateFunctions, aggregateColTypes);

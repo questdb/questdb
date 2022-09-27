@@ -218,6 +218,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'r';
     }
 
+    public static boolean isCancelKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i) | 32) == 'l';
+    }
+
     public static boolean isCapacityKeyword(CharSequence tok) {
         if (tok.length() != 8) {
             return false;
@@ -416,7 +430,24 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i) | 32) == 'e';
     }
-    
+
+    public static boolean isDateStyleKeyword(CharSequence tok) {
+        if (tok.length() != 9) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'y'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isDayKeyword(CharSequence tok) {
         if (tok.length() != 3) {
             return false;
@@ -459,7 +490,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'r';
     }
 
-
     public static boolean isDescKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
@@ -470,6 +500,20 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i) | 32) == 'c';
+    }
+
+    public static boolean isDetachKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i) | 32) == 'h';
     }
 
     public static boolean isDistinctKeyword(CharSequence tok) {
@@ -508,20 +552,6 @@ public class SqlKeywords {
         return (tok.charAt(i++) | 32) == 'd'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i) | 32) == 'y';
-    }
-
-    public static boolean isDetachKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'd'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i) | 32) == 'h';
     }
 
     public static boolean isDropKeyword(CharSequence tok) {
@@ -658,21 +688,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
-    // only for Python drivers, which use 'float' keyword to represent double in Java
-    // for example, 'NaN'::float   'Infinity'::float
-    public static boolean isFloatKeyword(CharSequence tok) {
-        if (tok.length() != 5) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'f'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i) | 32) == 't';
-    }
-
     public static boolean isFloat4Keyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -699,6 +714,21 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i)) == '8';
+    }
+
+    // only for Python drivers, which use 'float' keyword to represent double in Java
+    // for example, 'NaN'::float   'Infinity'::float
+    public static boolean isFloatKeyword(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isFormatKeyword(CharSequence tok) {
@@ -1456,23 +1486,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
-    public static boolean isDateStyleKeyword(CharSequence tok) {
-        if (tok.length() != 9) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'd'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'y'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i) | 32) == 'e';
-    }
-
     public static boolean isSecondKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -1894,20 +1907,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i) | 32) == 'h';
-    }
-
-    public static boolean isCancelKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i) | 32) == 'l';
     }
 
     static {
