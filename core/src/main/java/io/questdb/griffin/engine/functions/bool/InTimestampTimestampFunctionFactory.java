@@ -107,7 +107,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
     public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialDate(seq, 0, seq.length());
+            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }

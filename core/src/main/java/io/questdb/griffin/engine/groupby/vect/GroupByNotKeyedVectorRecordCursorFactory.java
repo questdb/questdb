@@ -42,7 +42,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;

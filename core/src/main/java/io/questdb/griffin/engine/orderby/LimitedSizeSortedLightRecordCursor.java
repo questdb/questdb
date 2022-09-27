@@ -46,6 +46,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final long skipFirst; //skip first N rows
     private final long skipLast;  //skip last N rows
     private long rowsLeft;
+    private boolean isOpen;
 
     public LimitedSizeSortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
@@ -60,12 +61,16 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         this.limit = limit;
         this.skipFirst = skipFirst;
         this.skipLast = skipLast;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        chain.clear();
-        base.close();
+        if (isOpen) {
+            chain.close();
+            base.close();
+            isOpen = false;
+        }
     }
 
     @Override
@@ -121,6 +126,10 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        if (!isOpen) {
+            chain.reopen();
+            isOpen = true;
+        }
         this.base = base;
         this.baseRecord = base.getRecord();
         final Record placeHolderRecord = base.getRecordB();

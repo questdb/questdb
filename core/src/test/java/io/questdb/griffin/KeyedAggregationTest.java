@@ -1086,7 +1086,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testFirstLastAggregationsNotSupported() {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.STRING, ":STRING"),};
+                new TypeVal(ColumnType.BINARY, ":BINARY"),};
 
         try {
             testAggregations(aggregateFunctions, aggregateColTypes);
@@ -1152,6 +1152,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         compiler.compile("create table tab as ( select cast(x as int) i, x as l, cast(x as date) dat, cast(x as timestamp) ts, cast(x as double) d, rnd_long256() l256  from long_sequence(1000));", sqlExecutionContext);
 
+        snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select count(*) cnt from " +
                 "(select i, count(*), min(i), avg(i), max(i), sum(i), " +
                 "min(l), avg(l), max(l), sum(l), " +
@@ -1189,6 +1190,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         compiler.compile("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
+        snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
 
         try {

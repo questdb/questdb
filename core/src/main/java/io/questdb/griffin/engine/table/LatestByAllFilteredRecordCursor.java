@@ -67,7 +67,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen()) {
-            map.reallocate();
+            map.reopen();
         }
         filter.init(this, executionContext);
 

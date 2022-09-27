@@ -79,8 +79,7 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
-import static io.questdb.test.tools.TestUtils.assertContains;
-import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.*;
 
 @SuppressWarnings("SqlNoDataSourceInspection")
@@ -1215,8 +1214,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
-        // todo: SIMPLE_TEXT is triggering unchecked type conversion bug in row copier generator
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test (id long,val int)");
                 statement.executeUpdate("create table test2(id long,val int)");
@@ -1368,6 +1366,161 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testBindVariableIsNotNullStringTransfer() throws Exception {
         testBindVariableIsNotNull(false);
+    }
+
+    @Test
+    public void testBindVariableIsNull() throws Exception {
+        // todo: in "simple" mode we do not support this SQL:
+        //    tab1 where 'NaN'::double precision is null
+        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+            connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+            connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+            connection.commit();
+            connection.setAutoCommit(true);
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
+                ps.setLong(1, 1066);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                // 'is' is an alias for '=', the matching type for this operator, with null
+                // on the right, is DOUBLE (EqDoubleFunctionFactory)
+                ps.setDouble(1, Double.NaN);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                // type information is lost in text mode; Numbers.INT_NaN is transmitted as "-2147483648" string
+                // and bind variable type is set to BYTEA, despite us calling setInt()
+                // server cannot assume that the client is sending null
+                ps.setInt(1, Numbers.INT_NaN);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (binary) {
+                        // in binary protocol DOUBLE.null == INT.null
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    } else {
+                        // in string protocol DOUBLE.null != INT.null
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                // 'is' is an alias for '=', the matching type for this operator
+                // (with null on the right) is DOUBLE, and thus INT is a valid
+                // value type
+                ps.setInt(1, 21);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                ps.setString(1, "");
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value:  [STRING -> DOUBLE] tuple: 0");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                ps.setString(1, "cha-cha-cha");
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: cha-cha-cha [STRING -> DOUBLE] tuple: 0");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                ps.setString(1, "NULL");
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                ps.setDouble(1, Double.NaN);
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                ps.setNull(1, Types.NULL);
+                try (ResultSet ignored1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                ps.setString(1, "NULL");
+                try (ResultSet ignored1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                }
+            }
+        });
     }
 
     @Test
@@ -4454,7 +4607,7 @@ nodejs code:
                         statement.executeQuery();
                     } catch (PSQLException ex) {
                         caught = true;
-                        Assert.assertEquals("ERROR: could not parse [value='abcd', as=TIMESTAMP, index=0]\n  Position: 1", ex.getMessage());
+                        Assert.assertEquals("ERROR: inconvertible value: abcd [STRING -> TIMESTAMP] tuple: 0", ex.getMessage());
                     }
                 }
 
@@ -4971,6 +5124,24 @@ nodejs code:
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         writerAsyncCommandBusyWaitTimeout = 10_000;
         assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
+    }
+
+    @Test
+    public void testRunSimpleQueryMultipleTimes() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement statement = connection.createStatement()) {
+                final String query = "select 42 as the_answer";
+                final String expected = "the_answer[INTEGER]\n" +
+                        "42\n";
+
+                ResultSet rs = statement.executeQuery(query);
+                assertResultSet(expected, sink, rs);
+
+                sink.clear();
+                rs = statement.executeQuery(query);
+                assertResultSet(expected, sink, rs);
+            }
+        });
     }
 
     @Test
@@ -5531,24 +5702,6 @@ create table tab as (
     }
 
     @Test
-    public void testRunSimpleQueryMultipleTimes() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (Statement statement = connection.createStatement()) {
-                final String query = "select 42 as the_answer";
-                final String expected = "the_answer[INTEGER]\n" +
-                        "42\n";
-
-                ResultSet rs = statement.executeQuery(query);
-                assertResultSet(expected, sink, rs);
-
-                sink.clear();
-                rs = statement.executeQuery(query);
-                assertResultSet(expected, sink, rs);
-            }
-        });
-    }
-
-    @Test
     public void testSingleInClause() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
@@ -5898,6 +6051,89 @@ create table tab as (
     }
 
     @Test
+    public void testStaleQueryCacheOnTableDropped() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                    "select timestamp_sequence(0, 1000000000) timestamp," +
+                    " rnd_symbol('a','b',null) symbol1 " +
+                    " from long_sequence(10)" +
+                    ") timestamp (timestamp)")) {
+                st1.execute();
+            }
+
+            try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y")) {
+                ResultSet rs0 = select.executeQuery();
+                rs0.close();
+
+                connection.prepareStatement("drop table y").execute();
+                connection.prepareStatement("create table y as ( " +
+                        " select " +
+                        " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
+                        " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
+                        " ,rnd_str('a','b',null) symbol1" +
+                        " from long_sequence(10)" +
+                        ")").execute();
+
+                ResultSet rs1 = select.executeQuery();
+                sink.clear();
+                assertResultSet("timestamp[TIMESTAMP],symbol1[VARCHAR]\n" +
+                        "1970-01-01 02:30:00.0,null\n" +
+                        "1970-01-01 02:46:40.0,b\n" +
+                        "1970-01-01 03:03:20.0,a\n" +
+                        "1970-01-01 03:20:00.0,b\n" +
+                        "1970-01-01 03:36:40.0,b\n" +
+                        "1970-01-01 03:53:20.0,a\n" +
+                        "1970-01-01 04:10:00.0,null\n" +
+                        "1970-01-01 04:26:40.0,b\n" +
+                        "1970-01-01 04:43:20.0,b\n" +
+                        "1970-01-01 05:00:00.0,a\n", sink, rs1);
+
+                rs1.close();
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolBindVariableInFilter() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
+            // create and initialize table outside of PG wire
+            // to ensure we do not collaterally initialize execution context on function parser
+            compiler.compile("CREATE TABLE x (\n" +
+                    "    ticker symbol index,\n" +
+                    "    sample_time timestamp,\n" +
+                    "    value int\n" +
+                    ") timestamp (sample_time)", sqlExecutionContext);
+            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
+                ps.setString(1, "ABC");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
+                                    "ABC,1970-01-01 00:00:00.0,0\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSyntaxErrorReporting() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try {
+                connection.prepareCall("drop table xyz;").execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "table does not exist [table=xyz]");
+                TestUtils.assertEquals("00000", e.getSQLState());
+            }
+        });
+    }
+
+    @Test
     public void testSyntaxErrorSimple() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -5979,44 +6215,15 @@ create table tab as (
                         ps.setTimestamp(2, aTs);
                         ps.execute();
 
-                        // Case 3: we create a timestamp from another, and clear the micro precision
-                        // -> microsecond precision is dropped by us
-                        Timestamp bTs = new Timestamp(ts.getTime() * 1000);
-                        bTs.setNanos(202000000);
+                        // Case 3: if we forget to setNanos, we get correct timestamp
+                        // -> this results in a broken timestamp 1970-...
+                        Timestamp bTs = new Timestamp(ts.getTime());
                         ps.setInt(1, rowId++);
                         ps.setTimestamp(2, bTs);
                         ps.execute();
 
-                        // Case 4: if we forget to setNanos, we get a broken timestamp
-                        // -> this results in a broken timestamp 1970-...
-                        Timestamp kaputTs = new Timestamp(ts.getTime());
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, kaputTs);
-                        ps.execute();
-
-                        // Case 4: if we setNanos to 0, we also get a broken timestamp! UNLESS we scale up time
-                        // to trick the constructor
-                        // -> microsecond precision is dropped by us, we keep millisecond precision
-                        Timestamp cTs = new Timestamp(ts.getTime() * 1000);
-                        cTs.setNanos(0); // <=== THIS requires ---- ^ ^
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, cTs);
-                        ps.execute();
-
-                        // Case 5: we use space-age mathematics to produce a long number which is
-                        // equivalent to a QuestDB timestamp WITH MICROSECOND precision, and then
-                        // we can feed it to java.sql.Timestamp without worrying for setNanos.
-                        // -> microsecond precision is lost in this case [*]
-                        long epochMicroNoMillis = (ts.getTime() / 1000) * 1000000;
-                        long actualTimestamp = epochMicroNoMillis + (ts.getNanos() / 1000);
-                        actualTimestamp = (actualTimestamp / 1000) * 1000; // [*] drop micros
-                        Timestamp dTs = new Timestamp(actualTimestamp);
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, dTs);
-                        ps.execute();
-
-                        // Case 6: the complementary approach to Case 5, where we take a QuestDB
-                        // timestamp WITH microsecond precision and we massage it to extract two
+                        // Case 6: where we take QuestDB
+                        // timestamp WITH microsecond precision, and we massage it to extract two
                         // numbers that can be used to create a java.sql.Timestamp.
                         // -> microsecond precision is kept
                         long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
@@ -6040,11 +6247,8 @@ create table tab as (
                                             "0,2021-09-27 16:45:03.202345\n" +
                                             "1,2021-09-27 16:45:03.202345\n" +
                                             "2,2021-09-27 16:45:03.202345\n" +
-                                            "3,2021-09-27 16:45:03.202202\n" +
-                                            "4,1970-01-19 21:32:41.103202\n" +
-                                            "5,2021-09-27 16:45:03.202\n" +
-                                            "6,2021-09-27 16:45:03.202\n" +
-                                            "7,2021-09-27 16:45:03.202345\n",
+                                            "3,2021-09-27 16:45:03.202\n" +
+                                            "4,2021-09-27 16:45:03.202345\n",
                                     sink,
                                     rs
                             );
@@ -6078,7 +6282,7 @@ create table tab as (
                     try (PreparedStatement insert = conn.prepareStatement("INSERT INTO ts VALUES (?)")) {
                         // QuestDB timestamps have MICROSECOND precision and require you to be aware
                         // of it if you use java.sql.Timestamp's constructor
-                        insert.setTimestamp(1, new Timestamp(ts.getTime() * 1000));
+                        insert.setTimestamp(1, ts);
                         insert.execute();
                     }
 
@@ -6094,6 +6298,47 @@ create table tab as (
 
                     // cleanup
                     conn.prepareStatement("drop table ts").execute();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateAndUpdateOnNonPartitionedTableWithDesignatedTs() throws Exception {
+        testTruncateAndUpdateOnTable("timestamp(ts)");
+    }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
+    @Test
+    public void testTruncateAndUpdateOnNonPartitionedTableWithoutDesignatedTs() throws Exception {
+        testTruncateAndUpdateOnTable("");
+    }
+
+    @Test
+    public void testTruncateAndUpdateOnPartitionedTable() throws Exception {
+        testTruncateAndUpdateOnTable("timestamp(ts) partition by DAY");
+    }
+
+    public void testTruncateAndUpdateOnTable(String config) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
+            }
+
+            try (Statement stat = connection.createStatement()) {
+                stat.execute("insert into tb values (1, true, now() );");
+                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("truncate table tb;");
+                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
+                stat.execute("insert into tb values (1, true, now() );");
+                stat.execute("update tb set i = 1, b = true;");
+
+                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
+                    StringSink sink = new StringSink();
+                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
                 }
             }
         });
@@ -6297,10 +6542,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
@@ -6644,8 +6885,11 @@ create table tab as (
             ResultSet rs = null;
             for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * 7) {
                 sink.clear();
-                statement.setTimestamp(1, new Timestamp(micros));
-                statement.setTimestamp(2, new Timestamp(micros));
+                // constructor requires millis
+                Timestamp ts = new Timestamp(micros / 1000L);
+                ts.setNanos((int) ((micros % 1_000_000) * 1000));
+                statement.setTimestamp(1, ts);
+                statement.setTimestamp(2, ts);
                 statement.executeQuery();
                 rs = statement.executeQuery();
 
@@ -7020,7 +7264,7 @@ create table tab as (
                     try (ResultSet ignore1 = ps.executeQuery()) {
                         Assert.fail();
                     } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value:  [STRING -> DOUBLE] tuple: 0");
                     }
                 }
 
@@ -7029,7 +7273,7 @@ create table tab as (
                     try (ResultSet ignore1 = ps.executeQuery()) {
                         Assert.fail();
                     } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='cah-cha-cha', as=DOUBLE, index=0]");
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: cah-cha-cha [STRING -> DOUBLE] tuple: 0");
                     }
                 }
 
@@ -7072,161 +7316,6 @@ create table tab as (
         });
     }
 
-    @Test
-    public void testBindVariableIsNull() throws Exception {
-        // todo: in "simple" mode we do not support this SQL:
-        //    tab1 where 'NaN'::double precision is null
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
-            connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
-            connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
-            connection.commit();
-            connection.setAutoCommit(true);
-
-            sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
-                try (ResultSet rs = ps.executeQuery()) {
-                    // all rows, null = null is always true
-                    assertResultSet(
-                            "value[INTEGER],ts[TIMESTAMP]\n" +
-                                    "100,1970-01-01 00:00:00.0\n" +
-                                    "null,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-
-            sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
-                ps.setLong(1, 1066);
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "value[INTEGER],ts[TIMESTAMP]\n" +
-                                    "100,1970-01-01 00:00:00.0\n" +
-                                    "null,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-
-            sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                // 'is' is an alias for '=', the matching type for this operator, with null
-                // on the right, is DOUBLE (EqDoubleFunctionFactory)
-                ps.setDouble(1, Double.NaN);
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "value[INTEGER],ts[TIMESTAMP]\n" +
-                                    "100,1970-01-01 00:00:00.0\n" +
-                                    "null,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-
-            sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                // type information is lost in text mode; Numbers.INT_NaN is transmitted as "-2147483648" string
-                // and bind variable type is set to BYTEA, despite us calling setInt()
-                // server cannot assume that the client is sending null
-                ps.setInt(1, Numbers.INT_NaN);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (binary) {
-                        // in binary protocol DOUBLE.null == INT.null
-                        assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n" +
-                                        "100,1970-01-01 00:00:00.0\n" +
-                                        "null,1970-01-01 00:00:00.000001\n",
-                                sink,
-                                rs
-                        );
-                    } else {
-                        // in string protocol DOUBLE.null != INT.null
-                        assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-            }
-
-            sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                // 'is' is an alias for '=', the matching type for this operator
-                // (with null on the right) is DOUBLE, and thus INT is a valid
-                // value type
-                ps.setInt(1, 21);
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "value[INTEGER],ts[TIMESTAMP]\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                ps.setString(1, "");
-                try (ResultSet ignore1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
-                }
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                ps.setString(1, "cha-cha-cha");
-                try (ResultSet ignore1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not parse [value='cha-cha-cha', as=DOUBLE, index=0]");
-                }
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
-                ps.setString(1, "NULL");
-                try (ResultSet ignore1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-
-                }
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
-                ps.setDouble(1, Double.NaN);
-                try (ResultSet ignore1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                }
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
-                ps.setNull(1, Types.NULL);
-                try (ResultSet ignored1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                }
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
-                ps.setString(1, "NULL");
-                try (ResultSet ignored1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                }
-            }
-        });
-    }
-
     private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -7250,7 +7339,7 @@ create table tab as (
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
                     ps.setString(1, "d1");
-                    ps.setTimestamp(2, new Timestamp(1));
+                    ps.setTimestamp(2, createTimestamp(1));
                     try (ResultSet rs = ps.executeQuery()) {
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
@@ -7264,7 +7353,7 @@ create table tab as (
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ?")) {
                     ps.setString(1, "d1");
-                    ps.setTimestamp(2, new Timestamp(1));
+                    ps.setTimestamp(2, createTimestamp(1));
                     try (ResultSet rs = ps.executeQuery()) {
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
@@ -7281,7 +7370,7 @@ create table tab as (
                 try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in (?, ?) and timestamp > ?")) {
                     ps.setString(1, "d1");
                     ps.setString(2, "d2");
-                    ps.setTimestamp(3, new Timestamp(0));
+                    ps.setTimestamp(3, createTimestamp(0));
                     try (ResultSet rs = ps.executeQuery()) {
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
@@ -7299,7 +7388,7 @@ create table tab as (
                 try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ?")) {
                     ps.setString(1, "d2");
                     ps.setString(2, "d3");
-                    ps.setTimestamp(3, new Timestamp(0));
+                    ps.setTimestamp(3, createTimestamp(0));
                     try (ResultSet rs = ps.executeQuery()) {
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
@@ -7352,98 +7441,98 @@ create table tab as (
 
     private void testInsert0(boolean simpleQueryMode, boolean binary) throws Exception {
         assertMemoryLeak(() -> {
-
+            // todo: pass thru various PG modes
             String expectedAll = "a[INTEGER],d[TIMESTAMP],t[TIMESTAMP],d1[TIMESTAMP],t1[TIMESTAMP],t2[TIMESTAMP]\n" +
-                    "0,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998,2011-04-11 14:39:50.4,2011-04-11 14:40:54.998821\n" +
-                    "1,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999,2011-04-11 14:39:50.4,2011-04-11 14:40:54.999821\n" +
-                    "2,2011-04-11 00:00:00.0,2011-04-11 14:40:55.000821,2011-04-11 14:40:55.0,2011-04-11 14:39:50.4,2011-04-11 14:40:55.000821\n" +
-                    "3,2011-04-11 00:00:00.0,2011-04-11 14:40:55.001821,2011-04-11 14:40:55.001,2011-04-11 14:39:50.4,2011-04-11 14:40:55.001821\n" +
-                    "4,2011-04-11 00:00:00.0,2011-04-11 14:40:55.002821,2011-04-11 14:40:55.002,2011-04-11 14:39:50.4,2011-04-11 14:40:55.002821\n" +
-                    "5,2011-04-11 00:00:00.0,2011-04-11 14:40:55.003821,2011-04-11 14:40:55.003,2011-04-11 14:39:50.4,2011-04-11 14:40:55.003821\n" +
-                    "6,2011-04-11 00:00:00.0,2011-04-11 14:40:55.004821,2011-04-11 14:40:55.004,2011-04-11 14:39:50.4,2011-04-11 14:40:55.004821\n" +
-                    "7,2011-04-11 00:00:00.0,2011-04-11 14:40:55.005821,2011-04-11 14:40:55.005,2011-04-11 14:39:50.4,2011-04-11 14:40:55.005821\n" +
-                    "8,2011-04-11 00:00:00.0,2011-04-11 14:40:55.006821,2011-04-11 14:40:55.006,2011-04-11 14:39:50.4,2011-04-11 14:40:55.006821\n" +
-                    "9,2011-04-11 00:00:00.0,2011-04-11 14:40:55.007821,2011-04-11 14:40:55.007,2011-04-11 14:39:50.4,2011-04-11 14:40:55.007821\n" +
-                    "10,2011-04-11 00:00:00.0,2011-04-11 14:40:55.008821,2011-04-11 14:40:55.008,2011-04-11 14:39:50.4,2011-04-11 14:40:55.008821\n" +
-                    "11,2011-04-11 00:00:00.0,2011-04-11 14:40:55.009821,2011-04-11 14:40:55.009,2011-04-11 14:39:50.4,2011-04-11 14:40:55.009821\n" +
-                    "12,2011-04-11 00:00:00.0,2011-04-11 14:40:55.010821,2011-04-11 14:40:55.01,2011-04-11 14:39:50.4,2011-04-11 14:40:55.010821\n" +
-                    "13,2011-04-11 00:00:00.0,2011-04-11 14:40:55.011821,2011-04-11 14:40:55.011,2011-04-11 14:39:50.4,2011-04-11 14:40:55.011821\n" +
-                    "14,2011-04-11 00:00:00.0,2011-04-11 14:40:55.012821,2011-04-11 14:40:55.012,2011-04-11 14:39:50.4,2011-04-11 14:40:55.012821\n" +
-                    "15,2011-04-11 00:00:00.0,2011-04-11 14:40:55.013821,2011-04-11 14:40:55.013,2011-04-11 14:39:50.4,2011-04-11 14:40:55.013821\n" +
-                    "16,2011-04-11 00:00:00.0,2011-04-11 14:40:55.014821,2011-04-11 14:40:55.014,2011-04-11 14:39:50.4,2011-04-11 14:40:55.014821\n" +
-                    "17,2011-04-11 00:00:00.0,2011-04-11 14:40:55.015821,2011-04-11 14:40:55.015,2011-04-11 14:39:50.4,2011-04-11 14:40:55.015821\n" +
-                    "18,2011-04-11 00:00:00.0,2011-04-11 14:40:55.016821,2011-04-11 14:40:55.016,2011-04-11 14:39:50.4,2011-04-11 14:40:55.016821\n" +
-                    "19,2011-04-11 00:00:00.0,2011-04-11 14:40:55.017821,2011-04-11 14:40:55.017,2011-04-11 14:39:50.4,2011-04-11 14:40:55.017821\n" +
-                    "20,2011-04-11 00:00:00.0,2011-04-11 14:40:55.018821,2011-04-11 14:40:55.018,2011-04-11 14:39:50.4,2011-04-11 14:40:55.018821\n" +
-                    "21,2011-04-11 00:00:00.0,2011-04-11 14:40:55.019821,2011-04-11 14:40:55.019,2011-04-11 14:39:50.4,2011-04-11 14:40:55.019821\n" +
-                    "22,2011-04-11 00:00:00.0,2011-04-11 14:40:55.020821,2011-04-11 14:40:55.02,2011-04-11 14:39:50.4,2011-04-11 14:40:55.020821\n" +
-                    "23,2011-04-11 00:00:00.0,2011-04-11 14:40:55.021821,2011-04-11 14:40:55.021,2011-04-11 14:39:50.4,2011-04-11 14:40:55.021821\n" +
-                    "24,2011-04-11 00:00:00.0,2011-04-11 14:40:55.022821,2011-04-11 14:40:55.022,2011-04-11 14:39:50.4,2011-04-11 14:40:55.022821\n" +
-                    "25,2011-04-11 00:00:00.0,2011-04-11 14:40:55.023821,2011-04-11 14:40:55.023,2011-04-11 14:39:50.4,2011-04-11 14:40:55.023821\n" +
-                    "26,2011-04-11 00:00:00.0,2011-04-11 14:40:55.024821,2011-04-11 14:40:55.024,2011-04-11 14:39:50.4,2011-04-11 14:40:55.024821\n" +
-                    "27,2011-04-11 00:00:00.0,2011-04-11 14:40:55.025821,2011-04-11 14:40:55.025,2011-04-11 14:39:50.4,2011-04-11 14:40:55.025821\n" +
-                    "28,2011-04-11 00:00:00.0,2011-04-11 14:40:55.026821,2011-04-11 14:40:55.026,2011-04-11 14:39:50.4,2011-04-11 14:40:55.026821\n" +
-                    "29,2011-04-11 00:00:00.0,2011-04-11 14:40:55.027821,2011-04-11 14:40:55.027,2011-04-11 14:39:50.4,2011-04-11 14:40:55.027821\n" +
-                    "30,2011-04-11 00:00:00.0,2011-04-11 14:40:55.028821,2011-04-11 14:40:55.028,2011-04-11 14:39:50.4,2011-04-11 14:40:55.028821\n" +
-                    "31,2011-04-11 00:00:00.0,2011-04-11 14:40:55.029821,2011-04-11 14:40:55.029,2011-04-11 14:39:50.4,2011-04-11 14:40:55.029821\n" +
-                    "32,2011-04-11 00:00:00.0,2011-04-11 14:40:55.030821,2011-04-11 14:40:55.03,2011-04-11 14:39:50.4,2011-04-11 14:40:55.030821\n" +
-                    "33,2011-04-11 00:00:00.0,2011-04-11 14:40:55.031821,2011-04-11 14:40:55.031,2011-04-11 14:39:50.4,2011-04-11 14:40:55.031821\n" +
-                    "34,2011-04-11 00:00:00.0,2011-04-11 14:40:55.032821,2011-04-11 14:40:55.032,2011-04-11 14:39:50.4,2011-04-11 14:40:55.032821\n" +
-                    "35,2011-04-11 00:00:00.0,2011-04-11 14:40:55.033821,2011-04-11 14:40:55.033,2011-04-11 14:39:50.4,2011-04-11 14:40:55.033821\n" +
-                    "36,2011-04-11 00:00:00.0,2011-04-11 14:40:55.034821,2011-04-11 14:40:55.034,2011-04-11 14:39:50.4,2011-04-11 14:40:55.034821\n" +
-                    "37,2011-04-11 00:00:00.0,2011-04-11 14:40:55.035821,2011-04-11 14:40:55.035,2011-04-11 14:39:50.4,2011-04-11 14:40:55.035821\n" +
-                    "38,2011-04-11 00:00:00.0,2011-04-11 14:40:55.036821,2011-04-11 14:40:55.036,2011-04-11 14:39:50.4,2011-04-11 14:40:55.036821\n" +
-                    "39,2011-04-11 00:00:00.0,2011-04-11 14:40:55.037821,2011-04-11 14:40:55.037,2011-04-11 14:39:50.4,2011-04-11 14:40:55.037821\n" +
-                    "40,2011-04-11 00:00:00.0,2011-04-11 14:40:55.038821,2011-04-11 14:40:55.038,2011-04-11 14:39:50.4,2011-04-11 14:40:55.038821\n" +
-                    "41,2011-04-11 00:00:00.0,2011-04-11 14:40:55.039821,2011-04-11 14:40:55.039,2011-04-11 14:39:50.4,2011-04-11 14:40:55.039821\n" +
-                    "42,2011-04-11 00:00:00.0,2011-04-11 14:40:55.040821,2011-04-11 14:40:55.04,2011-04-11 14:39:50.4,2011-04-11 14:40:55.040821\n" +
-                    "43,2011-04-11 00:00:00.0,2011-04-11 14:40:55.041821,2011-04-11 14:40:55.041,2011-04-11 14:39:50.4,2011-04-11 14:40:55.041821\n" +
-                    "44,2011-04-11 00:00:00.0,2011-04-11 14:40:55.042821,2011-04-11 14:40:55.042,2011-04-11 14:39:50.4,2011-04-11 14:40:55.042821\n" +
-                    "45,2011-04-11 00:00:00.0,2011-04-11 14:40:55.043821,2011-04-11 14:40:55.043,2011-04-11 14:39:50.4,2011-04-11 14:40:55.043821\n" +
-                    "46,2011-04-11 00:00:00.0,2011-04-11 14:40:55.044821,2011-04-11 14:40:55.044,2011-04-11 14:39:50.4,2011-04-11 14:40:55.044821\n" +
-                    "47,2011-04-11 00:00:00.0,2011-04-11 14:40:55.045821,2011-04-11 14:40:55.045,2011-04-11 14:39:50.4,2011-04-11 14:40:55.045821\n" +
-                    "48,2011-04-11 00:00:00.0,2011-04-11 14:40:55.046821,2011-04-11 14:40:55.046,2011-04-11 14:39:50.4,2011-04-11 14:40:55.046821\n" +
-                    "49,2011-04-11 00:00:00.0,2011-04-11 14:40:55.047821,2011-04-11 14:40:55.047,2011-04-11 14:39:50.4,2011-04-11 14:40:55.047821\n" +
-                    "50,2011-04-11 00:00:00.0,2011-04-11 14:40:55.048821,2011-04-11 14:40:55.048,2011-04-11 14:39:50.4,2011-04-11 14:40:55.048821\n" +
-                    "51,2011-04-11 00:00:00.0,2011-04-11 14:40:55.049821,2011-04-11 14:40:55.049,2011-04-11 14:39:50.4,2011-04-11 14:40:55.049821\n" +
-                    "52,2011-04-11 00:00:00.0,2011-04-11 14:40:55.050821,2011-04-11 14:40:55.05,2011-04-11 14:39:50.4,2011-04-11 14:40:55.050821\n" +
-                    "53,2011-04-11 00:00:00.0,2011-04-11 14:40:55.051821,2011-04-11 14:40:55.051,2011-04-11 14:39:50.4,2011-04-11 14:40:55.051821\n" +
-                    "54,2011-04-11 00:00:00.0,2011-04-11 14:40:55.052821,2011-04-11 14:40:55.052,2011-04-11 14:39:50.4,2011-04-11 14:40:55.052821\n" +
-                    "55,2011-04-11 00:00:00.0,2011-04-11 14:40:55.053821,2011-04-11 14:40:55.053,2011-04-11 14:39:50.4,2011-04-11 14:40:55.053821\n" +
-                    "56,2011-04-11 00:00:00.0,2011-04-11 14:40:55.054821,2011-04-11 14:40:55.054,2011-04-11 14:39:50.4,2011-04-11 14:40:55.054821\n" +
-                    "57,2011-04-11 00:00:00.0,2011-04-11 14:40:55.055821,2011-04-11 14:40:55.055,2011-04-11 14:39:50.4,2011-04-11 14:40:55.055821\n" +
-                    "58,2011-04-11 00:00:00.0,2011-04-11 14:40:55.056821,2011-04-11 14:40:55.056,2011-04-11 14:39:50.4,2011-04-11 14:40:55.056821\n" +
-                    "59,2011-04-11 00:00:00.0,2011-04-11 14:40:55.057821,2011-04-11 14:40:55.057,2011-04-11 14:39:50.4,2011-04-11 14:40:55.057821\n" +
-                    "60,2011-04-11 00:00:00.0,2011-04-11 14:40:55.058821,2011-04-11 14:40:55.058,2011-04-11 14:39:50.4,2011-04-11 14:40:55.058821\n" +
-                    "61,2011-04-11 00:00:00.0,2011-04-11 14:40:55.059821,2011-04-11 14:40:55.059,2011-04-11 14:39:50.4,2011-04-11 14:40:55.059821\n" +
-                    "62,2011-04-11 00:00:00.0,2011-04-11 14:40:55.060821,2011-04-11 14:40:55.06,2011-04-11 14:39:50.4,2011-04-11 14:40:55.060821\n" +
-                    "63,2011-04-11 00:00:00.0,2011-04-11 14:40:55.061821,2011-04-11 14:40:55.061,2011-04-11 14:39:50.4,2011-04-11 14:40:55.061821\n" +
-                    "64,2011-04-11 00:00:00.0,2011-04-11 14:40:55.062821,2011-04-11 14:40:55.062,2011-04-11 14:39:50.4,2011-04-11 14:40:55.062821\n" +
-                    "65,2011-04-11 00:00:00.0,2011-04-11 14:40:55.063821,2011-04-11 14:40:55.063,2011-04-11 14:39:50.4,2011-04-11 14:40:55.063821\n" +
-                    "66,2011-04-11 00:00:00.0,2011-04-11 14:40:55.064821,2011-04-11 14:40:55.064,2011-04-11 14:39:50.4,2011-04-11 14:40:55.064821\n" +
-                    "67,2011-04-11 00:00:00.0,2011-04-11 14:40:55.065821,2011-04-11 14:40:55.065,2011-04-11 14:39:50.4,2011-04-11 14:40:55.065821\n" +
-                    "68,2011-04-11 00:00:00.0,2011-04-11 14:40:55.066821,2011-04-11 14:40:55.066,2011-04-11 14:39:50.4,2011-04-11 14:40:55.066821\n" +
-                    "69,2011-04-11 00:00:00.0,2011-04-11 14:40:55.067821,2011-04-11 14:40:55.067,2011-04-11 14:39:50.4,2011-04-11 14:40:55.067821\n" +
-                    "70,2011-04-11 00:00:00.0,2011-04-11 14:40:55.068821,2011-04-11 14:40:55.068,2011-04-11 14:39:50.4,2011-04-11 14:40:55.068821\n" +
-                    "71,2011-04-11 00:00:00.0,2011-04-11 14:40:55.069821,2011-04-11 14:40:55.069,2011-04-11 14:39:50.4,2011-04-11 14:40:55.069821\n" +
-                    "72,2011-04-11 00:00:00.0,2011-04-11 14:40:55.070821,2011-04-11 14:40:55.07,2011-04-11 14:39:50.4,2011-04-11 14:40:55.070821\n" +
-                    "73,2011-04-11 00:00:00.0,2011-04-11 14:40:55.071821,2011-04-11 14:40:55.071,2011-04-11 14:39:50.4,2011-04-11 14:40:55.071821\n" +
-                    "74,2011-04-11 00:00:00.0,2011-04-11 14:40:55.072821,2011-04-11 14:40:55.072,2011-04-11 14:39:50.4,2011-04-11 14:40:55.072821\n" +
-                    "75,2011-04-11 00:00:00.0,2011-04-11 14:40:55.073821,2011-04-11 14:40:55.073,2011-04-11 14:39:50.4,2011-04-11 14:40:55.073821\n" +
-                    "76,2011-04-11 00:00:00.0,2011-04-11 14:40:55.074821,2011-04-11 14:40:55.074,2011-04-11 14:39:50.4,2011-04-11 14:40:55.074821\n" +
-                    "77,2011-04-11 00:00:00.0,2011-04-11 14:40:55.075821,2011-04-11 14:40:55.075,2011-04-11 14:39:50.4,2011-04-11 14:40:55.075821\n" +
-                    "78,2011-04-11 00:00:00.0,2011-04-11 14:40:55.076821,2011-04-11 14:40:55.076,2011-04-11 14:39:50.4,2011-04-11 14:40:55.076821\n" +
-                    "79,2011-04-11 00:00:00.0,2011-04-11 14:40:55.077821,2011-04-11 14:40:55.077,2011-04-11 14:39:50.4,2011-04-11 14:40:55.077821\n" +
-                    "80,2011-04-11 00:00:00.0,2011-04-11 14:40:55.078821,2011-04-11 14:40:55.078,2011-04-11 14:39:50.4,2011-04-11 14:40:55.078821\n" +
-                    "81,2011-04-11 00:00:00.0,2011-04-11 14:40:55.079821,2011-04-11 14:40:55.079,2011-04-11 14:39:50.4,2011-04-11 14:40:55.079821\n" +
-                    "82,2011-04-11 00:00:00.0,2011-04-11 14:40:55.080821,2011-04-11 14:40:55.08,2011-04-11 14:39:50.4,2011-04-11 14:40:55.080821\n" +
-                    "83,2011-04-11 00:00:00.0,2011-04-11 14:40:55.081821,2011-04-11 14:40:55.081,2011-04-11 14:39:50.4,2011-04-11 14:40:55.081821\n" +
-                    "84,2011-04-11 00:00:00.0,2011-04-11 14:40:55.082821,2011-04-11 14:40:55.082,2011-04-11 14:39:50.4,2011-04-11 14:40:55.082821\n" +
-                    "85,2011-04-11 00:00:00.0,2011-04-11 14:40:55.083821,2011-04-11 14:40:55.083,2011-04-11 14:39:50.4,2011-04-11 14:40:55.083821\n" +
-                    "86,2011-04-11 00:00:00.0,2011-04-11 14:40:55.084821,2011-04-11 14:40:55.084,2011-04-11 14:39:50.4,2011-04-11 14:40:55.084821\n" +
-                    "87,2011-04-11 00:00:00.0,2011-04-11 14:40:55.085821,2011-04-11 14:40:55.085,2011-04-11 14:39:50.4,2011-04-11 14:40:55.085821\n" +
-                    "88,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.086,2011-04-11 14:39:50.4,2011-04-11 14:40:55.086821\n" +
-                    "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.087,2011-04-11 14:39:50.4,2011-04-11 14:40:55.087821\n";
+                    "0,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821\n" +
+                    "1,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821\n" +
+                    "2,2011-04-11 00:00:00.0,2011-04-11 14:40:55.000821,2011-04-11 14:40:55.0,2011-04-11 00:00:00.0,2011-04-11 14:40:55.000821\n" +
+                    "3,2011-04-11 00:00:00.0,2011-04-11 14:40:55.001821,2011-04-11 14:40:55.001,2011-04-11 00:00:00.0,2011-04-11 14:40:55.001821\n" +
+                    "4,2011-04-11 00:00:00.0,2011-04-11 14:40:55.002821,2011-04-11 14:40:55.002,2011-04-11 00:00:00.0,2011-04-11 14:40:55.002821\n" +
+                    "5,2011-04-11 00:00:00.0,2011-04-11 14:40:55.003821,2011-04-11 14:40:55.003,2011-04-11 00:00:00.0,2011-04-11 14:40:55.003821\n" +
+                    "6,2011-04-11 00:00:00.0,2011-04-11 14:40:55.004821,2011-04-11 14:40:55.004,2011-04-11 00:00:00.0,2011-04-11 14:40:55.004821\n" +
+                    "7,2011-04-11 00:00:00.0,2011-04-11 14:40:55.005821,2011-04-11 14:40:55.005,2011-04-11 00:00:00.0,2011-04-11 14:40:55.005821\n" +
+                    "8,2011-04-11 00:00:00.0,2011-04-11 14:40:55.006821,2011-04-11 14:40:55.006,2011-04-11 00:00:00.0,2011-04-11 14:40:55.006821\n" +
+                    "9,2011-04-11 00:00:00.0,2011-04-11 14:40:55.007821,2011-04-11 14:40:55.007,2011-04-11 00:00:00.0,2011-04-11 14:40:55.007821\n" +
+                    "10,2011-04-11 00:00:00.0,2011-04-11 14:40:55.008821,2011-04-11 14:40:55.008,2011-04-11 00:00:00.0,2011-04-11 14:40:55.008821\n" +
+                    "11,2011-04-11 00:00:00.0,2011-04-11 14:40:55.009821,2011-04-11 14:40:55.009,2011-04-11 00:00:00.0,2011-04-11 14:40:55.009821\n" +
+                    "12,2011-04-11 00:00:00.0,2011-04-11 14:40:55.010821,2011-04-11 14:40:55.01,2011-04-11 00:00:00.0,2011-04-11 14:40:55.010821\n" +
+                    "13,2011-04-11 00:00:00.0,2011-04-11 14:40:55.011821,2011-04-11 14:40:55.011,2011-04-11 00:00:00.0,2011-04-11 14:40:55.011821\n" +
+                    "14,2011-04-11 00:00:00.0,2011-04-11 14:40:55.012821,2011-04-11 14:40:55.012,2011-04-11 00:00:00.0,2011-04-11 14:40:55.012821\n" +
+                    "15,2011-04-11 00:00:00.0,2011-04-11 14:40:55.013821,2011-04-11 14:40:55.013,2011-04-11 00:00:00.0,2011-04-11 14:40:55.013821\n" +
+                    "16,2011-04-11 00:00:00.0,2011-04-11 14:40:55.014821,2011-04-11 14:40:55.014,2011-04-11 00:00:00.0,2011-04-11 14:40:55.014821\n" +
+                    "17,2011-04-11 00:00:00.0,2011-04-11 14:40:55.015821,2011-04-11 14:40:55.015,2011-04-11 00:00:00.0,2011-04-11 14:40:55.015821\n" +
+                    "18,2011-04-11 00:00:00.0,2011-04-11 14:40:55.016821,2011-04-11 14:40:55.016,2011-04-11 00:00:00.0,2011-04-11 14:40:55.016821\n" +
+                    "19,2011-04-11 00:00:00.0,2011-04-11 14:40:55.017821,2011-04-11 14:40:55.017,2011-04-11 00:00:00.0,2011-04-11 14:40:55.017821\n" +
+                    "20,2011-04-11 00:00:00.0,2011-04-11 14:40:55.018821,2011-04-11 14:40:55.018,2011-04-11 00:00:00.0,2011-04-11 14:40:55.018821\n" +
+                    "21,2011-04-11 00:00:00.0,2011-04-11 14:40:55.019821,2011-04-11 14:40:55.019,2011-04-11 00:00:00.0,2011-04-11 14:40:55.019821\n" +
+                    "22,2011-04-11 00:00:00.0,2011-04-11 14:40:55.020821,2011-04-11 14:40:55.02,2011-04-11 00:00:00.0,2011-04-11 14:40:55.020821\n" +
+                    "23,2011-04-11 00:00:00.0,2011-04-11 14:40:55.021821,2011-04-11 14:40:55.021,2011-04-11 00:00:00.0,2011-04-11 14:40:55.021821\n" +
+                    "24,2011-04-11 00:00:00.0,2011-04-11 14:40:55.022821,2011-04-11 14:40:55.022,2011-04-11 00:00:00.0,2011-04-11 14:40:55.022821\n" +
+                    "25,2011-04-11 00:00:00.0,2011-04-11 14:40:55.023821,2011-04-11 14:40:55.023,2011-04-11 00:00:00.0,2011-04-11 14:40:55.023821\n" +
+                    "26,2011-04-11 00:00:00.0,2011-04-11 14:40:55.024821,2011-04-11 14:40:55.024,2011-04-11 00:00:00.0,2011-04-11 14:40:55.024821\n" +
+                    "27,2011-04-11 00:00:00.0,2011-04-11 14:40:55.025821,2011-04-11 14:40:55.025,2011-04-11 00:00:00.0,2011-04-11 14:40:55.025821\n" +
+                    "28,2011-04-11 00:00:00.0,2011-04-11 14:40:55.026821,2011-04-11 14:40:55.026,2011-04-11 00:00:00.0,2011-04-11 14:40:55.026821\n" +
+                    "29,2011-04-11 00:00:00.0,2011-04-11 14:40:55.027821,2011-04-11 14:40:55.027,2011-04-11 00:00:00.0,2011-04-11 14:40:55.027821\n" +
+                    "30,2011-04-11 00:00:00.0,2011-04-11 14:40:55.028821,2011-04-11 14:40:55.028,2011-04-11 00:00:00.0,2011-04-11 14:40:55.028821\n" +
+                    "31,2011-04-11 00:00:00.0,2011-04-11 14:40:55.029821,2011-04-11 14:40:55.029,2011-04-11 00:00:00.0,2011-04-11 14:40:55.029821\n" +
+                    "32,2011-04-11 00:00:00.0,2011-04-11 14:40:55.030821,2011-04-11 14:40:55.03,2011-04-11 00:00:00.0,2011-04-11 14:40:55.030821\n" +
+                    "33,2011-04-11 00:00:00.0,2011-04-11 14:40:55.031821,2011-04-11 14:40:55.031,2011-04-11 00:00:00.0,2011-04-11 14:40:55.031821\n" +
+                    "34,2011-04-11 00:00:00.0,2011-04-11 14:40:55.032821,2011-04-11 14:40:55.032,2011-04-11 00:00:00.0,2011-04-11 14:40:55.032821\n" +
+                    "35,2011-04-11 00:00:00.0,2011-04-11 14:40:55.033821,2011-04-11 14:40:55.033,2011-04-11 00:00:00.0,2011-04-11 14:40:55.033821\n" +
+                    "36,2011-04-11 00:00:00.0,2011-04-11 14:40:55.034821,2011-04-11 14:40:55.034,2011-04-11 00:00:00.0,2011-04-11 14:40:55.034821\n" +
+                    "37,2011-04-11 00:00:00.0,2011-04-11 14:40:55.035821,2011-04-11 14:40:55.035,2011-04-11 00:00:00.0,2011-04-11 14:40:55.035821\n" +
+                    "38,2011-04-11 00:00:00.0,2011-04-11 14:40:55.036821,2011-04-11 14:40:55.036,2011-04-11 00:00:00.0,2011-04-11 14:40:55.036821\n" +
+                    "39,2011-04-11 00:00:00.0,2011-04-11 14:40:55.037821,2011-04-11 14:40:55.037,2011-04-11 00:00:00.0,2011-04-11 14:40:55.037821\n" +
+                    "40,2011-04-11 00:00:00.0,2011-04-11 14:40:55.038821,2011-04-11 14:40:55.038,2011-04-11 00:00:00.0,2011-04-11 14:40:55.038821\n" +
+                    "41,2011-04-11 00:00:00.0,2011-04-11 14:40:55.039821,2011-04-11 14:40:55.039,2011-04-11 00:00:00.0,2011-04-11 14:40:55.039821\n" +
+                    "42,2011-04-11 00:00:00.0,2011-04-11 14:40:55.040821,2011-04-11 14:40:55.04,2011-04-11 00:00:00.0,2011-04-11 14:40:55.040821\n" +
+                    "43,2011-04-11 00:00:00.0,2011-04-11 14:40:55.041821,2011-04-11 14:40:55.041,2011-04-11 00:00:00.0,2011-04-11 14:40:55.041821\n" +
+                    "44,2011-04-11 00:00:00.0,2011-04-11 14:40:55.042821,2011-04-11 14:40:55.042,2011-04-11 00:00:00.0,2011-04-11 14:40:55.042821\n" +
+                    "45,2011-04-11 00:00:00.0,2011-04-11 14:40:55.043821,2011-04-11 14:40:55.043,2011-04-11 00:00:00.0,2011-04-11 14:40:55.043821\n" +
+                    "46,2011-04-11 00:00:00.0,2011-04-11 14:40:55.044821,2011-04-11 14:40:55.044,2011-04-11 00:00:00.0,2011-04-11 14:40:55.044821\n" +
+                    "47,2011-04-11 00:00:00.0,2011-04-11 14:40:55.045821,2011-04-11 14:40:55.045,2011-04-11 00:00:00.0,2011-04-11 14:40:55.045821\n" +
+                    "48,2011-04-11 00:00:00.0,2011-04-11 14:40:55.046821,2011-04-11 14:40:55.046,2011-04-11 00:00:00.0,2011-04-11 14:40:55.046821\n" +
+                    "49,2011-04-11 00:00:00.0,2011-04-11 14:40:55.047821,2011-04-11 14:40:55.047,2011-04-11 00:00:00.0,2011-04-11 14:40:55.047821\n" +
+                    "50,2011-04-11 00:00:00.0,2011-04-11 14:40:55.048821,2011-04-11 14:40:55.048,2011-04-11 00:00:00.0,2011-04-11 14:40:55.048821\n" +
+                    "51,2011-04-11 00:00:00.0,2011-04-11 14:40:55.049821,2011-04-11 14:40:55.049,2011-04-11 00:00:00.0,2011-04-11 14:40:55.049821\n" +
+                    "52,2011-04-11 00:00:00.0,2011-04-11 14:40:55.050821,2011-04-11 14:40:55.05,2011-04-11 00:00:00.0,2011-04-11 14:40:55.050821\n" +
+                    "53,2011-04-11 00:00:00.0,2011-04-11 14:40:55.051821,2011-04-11 14:40:55.051,2011-04-11 00:00:00.0,2011-04-11 14:40:55.051821\n" +
+                    "54,2011-04-11 00:00:00.0,2011-04-11 14:40:55.052821,2011-04-11 14:40:55.052,2011-04-11 00:00:00.0,2011-04-11 14:40:55.052821\n" +
+                    "55,2011-04-11 00:00:00.0,2011-04-11 14:40:55.053821,2011-04-11 14:40:55.053,2011-04-11 00:00:00.0,2011-04-11 14:40:55.053821\n" +
+                    "56,2011-04-11 00:00:00.0,2011-04-11 14:40:55.054821,2011-04-11 14:40:55.054,2011-04-11 00:00:00.0,2011-04-11 14:40:55.054821\n" +
+                    "57,2011-04-11 00:00:00.0,2011-04-11 14:40:55.055821,2011-04-11 14:40:55.055,2011-04-11 00:00:00.0,2011-04-11 14:40:55.055821\n" +
+                    "58,2011-04-11 00:00:00.0,2011-04-11 14:40:55.056821,2011-04-11 14:40:55.056,2011-04-11 00:00:00.0,2011-04-11 14:40:55.056821\n" +
+                    "59,2011-04-11 00:00:00.0,2011-04-11 14:40:55.057821,2011-04-11 14:40:55.057,2011-04-11 00:00:00.0,2011-04-11 14:40:55.057821\n" +
+                    "60,2011-04-11 00:00:00.0,2011-04-11 14:40:55.058821,2011-04-11 14:40:55.058,2011-04-11 00:00:00.0,2011-04-11 14:40:55.058821\n" +
+                    "61,2011-04-11 00:00:00.0,2011-04-11 14:40:55.059821,2011-04-11 14:40:55.059,2011-04-11 00:00:00.0,2011-04-11 14:40:55.059821\n" +
+                    "62,2011-04-11 00:00:00.0,2011-04-11 14:40:55.060821,2011-04-11 14:40:55.06,2011-04-11 00:00:00.0,2011-04-11 14:40:55.060821\n" +
+                    "63,2011-04-11 00:00:00.0,2011-04-11 14:40:55.061821,2011-04-11 14:40:55.061,2011-04-11 00:00:00.0,2011-04-11 14:40:55.061821\n" +
+                    "64,2011-04-11 00:00:00.0,2011-04-11 14:40:55.062821,2011-04-11 14:40:55.062,2011-04-11 00:00:00.0,2011-04-11 14:40:55.062821\n" +
+                    "65,2011-04-11 00:00:00.0,2011-04-11 14:40:55.063821,2011-04-11 14:40:55.063,2011-04-11 00:00:00.0,2011-04-11 14:40:55.063821\n" +
+                    "66,2011-04-11 00:00:00.0,2011-04-11 14:40:55.064821,2011-04-11 14:40:55.064,2011-04-11 00:00:00.0,2011-04-11 14:40:55.064821\n" +
+                    "67,2011-04-11 00:00:00.0,2011-04-11 14:40:55.065821,2011-04-11 14:40:55.065,2011-04-11 00:00:00.0,2011-04-11 14:40:55.065821\n" +
+                    "68,2011-04-11 00:00:00.0,2011-04-11 14:40:55.066821,2011-04-11 14:40:55.066,2011-04-11 00:00:00.0,2011-04-11 14:40:55.066821\n" +
+                    "69,2011-04-11 00:00:00.0,2011-04-11 14:40:55.067821,2011-04-11 14:40:55.067,2011-04-11 00:00:00.0,2011-04-11 14:40:55.067821\n" +
+                    "70,2011-04-11 00:00:00.0,2011-04-11 14:40:55.068821,2011-04-11 14:40:55.068,2011-04-11 00:00:00.0,2011-04-11 14:40:55.068821\n" +
+                    "71,2011-04-11 00:00:00.0,2011-04-11 14:40:55.069821,2011-04-11 14:40:55.069,2011-04-11 00:00:00.0,2011-04-11 14:40:55.069821\n" +
+                    "72,2011-04-11 00:00:00.0,2011-04-11 14:40:55.070821,2011-04-11 14:40:55.07,2011-04-11 00:00:00.0,2011-04-11 14:40:55.070821\n" +
+                    "73,2011-04-11 00:00:00.0,2011-04-11 14:40:55.071821,2011-04-11 14:40:55.071,2011-04-11 00:00:00.0,2011-04-11 14:40:55.071821\n" +
+                    "74,2011-04-11 00:00:00.0,2011-04-11 14:40:55.072821,2011-04-11 14:40:55.072,2011-04-11 00:00:00.0,2011-04-11 14:40:55.072821\n" +
+                    "75,2011-04-11 00:00:00.0,2011-04-11 14:40:55.073821,2011-04-11 14:40:55.073,2011-04-11 00:00:00.0,2011-04-11 14:40:55.073821\n" +
+                    "76,2011-04-11 00:00:00.0,2011-04-11 14:40:55.074821,2011-04-11 14:40:55.074,2011-04-11 00:00:00.0,2011-04-11 14:40:55.074821\n" +
+                    "77,2011-04-11 00:00:00.0,2011-04-11 14:40:55.075821,2011-04-11 14:40:55.075,2011-04-11 00:00:00.0,2011-04-11 14:40:55.075821\n" +
+                    "78,2011-04-11 00:00:00.0,2011-04-11 14:40:55.076821,2011-04-11 14:40:55.076,2011-04-11 00:00:00.0,2011-04-11 14:40:55.076821\n" +
+                    "79,2011-04-11 00:00:00.0,2011-04-11 14:40:55.077821,2011-04-11 14:40:55.077,2011-04-11 00:00:00.0,2011-04-11 14:40:55.077821\n" +
+                    "80,2011-04-11 00:00:00.0,2011-04-11 14:40:55.078821,2011-04-11 14:40:55.078,2011-04-11 00:00:00.0,2011-04-11 14:40:55.078821\n" +
+                    "81,2011-04-11 00:00:00.0,2011-04-11 14:40:55.079821,2011-04-11 14:40:55.079,2011-04-11 00:00:00.0,2011-04-11 14:40:55.079821\n" +
+                    "82,2011-04-11 00:00:00.0,2011-04-11 14:40:55.080821,2011-04-11 14:40:55.08,2011-04-11 00:00:00.0,2011-04-11 14:40:55.080821\n" +
+                    "83,2011-04-11 00:00:00.0,2011-04-11 14:40:55.081821,2011-04-11 14:40:55.081,2011-04-11 00:00:00.0,2011-04-11 14:40:55.081821\n" +
+                    "84,2011-04-11 00:00:00.0,2011-04-11 14:40:55.082821,2011-04-11 14:40:55.082,2011-04-11 00:00:00.0,2011-04-11 14:40:55.082821\n" +
+                    "85,2011-04-11 00:00:00.0,2011-04-11 14:40:55.083821,2011-04-11 14:40:55.083,2011-04-11 00:00:00.0,2011-04-11 14:40:55.083821\n" +
+                    "86,2011-04-11 00:00:00.0,2011-04-11 14:40:55.084821,2011-04-11 14:40:55.084,2011-04-11 00:00:00.0,2011-04-11 14:40:55.084821\n" +
+                    "87,2011-04-11 00:00:00.0,2011-04-11 14:40:55.085821,2011-04-11 14:40:55.085,2011-04-11 00:00:00.0,2011-04-11 14:40:55.085821\n" +
+                    "88,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.086,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821\n" +
+                    "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.087,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821\n";
 
             try (
                     final PGWireServer server = createPGServer(4);
@@ -7470,16 +7559,23 @@ create table tab as (
                         insert.setDate(2, new Date(micros / 1000));
 
                         // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
-                        insert.setTimestamp(3, new Timestamp(micros));
+                        Timestamp ts;
 
-                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
-                        insert.setTimestamp(4, new Timestamp(micros / 1000L));
+                        ts = new Timestamp(micros / 1000L);
+                        ts.setNanos((int) ((micros % 1_000_000L) * 1000L));
+                        insert.setTimestamp(3, ts);
 
-                        // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
-                        insert.setDate(5, new Date(micros));
+                        // DATE as jdbc's TIMESTAMP, both millis
+                        ts = new Timestamp(micros / 1000L);
+                        insert.setTimestamp(4, ts);
+
+                        // TIMESTAMP as jdbc's DATE, DATE takes millis keep only date part
+                        insert.setDate(5, new Date(micros / 1000L));
 
                         // TIMESTAMP as PG specific TIMESTAMP type
-                        insert.setTimestamp(6, new PGTimestamp(micros));
+                        PGTimestamp pgTs = new PGTimestamp(micros / 1000L);
+                        pgTs.setNanos((int) ((micros % 1_000_000L) * 1000));
+                        insert.setTimestamp(6, pgTs);
 
                         insert.execute();
                         Assert.assertEquals(1, insert.getUpdateCount());
@@ -7539,9 +7635,9 @@ create table tab as (
                     }
 
                     if (rnd.nextInt() % 4 > 0) {
-                        insert.setByte(2, (byte) rnd.nextChar());
+                        insert.setString(2, rnd.nextString(1));
                     } else {
-                        insert.setNull(2, Types.SMALLINT);
+                        insert.setNull(2, Types.VARCHAR);
                     }
 
                     if (rnd.nextInt() % 4 > 0) {
@@ -7800,7 +7896,7 @@ create table tab as (
                     ResultSet rs = ps.executeQuery()
             ) {
                 assertResultSet(
-                        "nspname[VARCHAR],relname[VARCHAR],attname[VARCHAR],atttypid[INTEGER],attnotnull[BIT],atttypmod[INTEGER],attlen[SMALLINT],typtypmod[INTEGER],attnum[BIGINT],attidentity[VARCHAR],attgenerated[VARCHAR],adsrc[VARCHAR],description[VARCHAR],typbasetype[INTEGER],typtype[CHAR]\n" +
+                        "nspname[VARCHAR],relname[VARCHAR],attname[VARCHAR],atttypid[INTEGER],attnotnull[BIT],atttypmod[INTEGER],attlen[SMALLINT],typtypmod[INTEGER],attnum[BIGINT],attidentity[CHAR],attgenerated[VARCHAR],adsrc[VARCHAR],description[VARCHAR],typbasetype[INTEGER],typtype[CHAR]\n" +
                                 "public,test,x,20,false,0,8,0,0,null,null,null,null,0,b\n",
                         sink,
                         rs
@@ -7909,126 +8005,6 @@ create table tab as (
                     final PreparedStatement statement = connection.prepareStatement(";;")
             ) {
                 statement.execute();
-            }
-        });
-    }
-
-    @Test
-    public void testStaleQueryCacheOnTableDropped() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (CallableStatement st1 = connection.prepareCall("create table y as (" +
-                    "select timestamp_sequence(0, 1000000000) timestamp," +
-                    " rnd_symbol('a','b',null) symbol1 " +
-                    " from long_sequence(10)" +
-                    ") timestamp (timestamp)")) {
-                st1.execute();
-            }
-
-            try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y")) {
-                ResultSet rs0 = select.executeQuery();
-                rs0.close();
-
-                connection.prepareStatement("drop table y").execute();
-                connection.prepareStatement("create table y as ( " +
-                        " select " +
-                        " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
-                        " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
-                        " ,rnd_str('a','b',null) symbol1" +
-                        " from long_sequence(10)" +
-                        ")").execute();
-
-                ResultSet rs1 = select.executeQuery();
-                sink.clear();
-                assertResultSet("timestamp[TIMESTAMP],symbol1[VARCHAR]\n" +
-                        "1970-01-01 02:30:00.0,null\n" +
-                        "1970-01-01 02:46:40.0,b\n" +
-                        "1970-01-01 03:03:20.0,a\n" +
-                        "1970-01-01 03:20:00.0,b\n" +
-                        "1970-01-01 03:36:40.0,b\n" +
-                        "1970-01-01 03:53:20.0,a\n" +
-                        "1970-01-01 04:10:00.0,null\n" +
-                        "1970-01-01 04:26:40.0,b\n" +
-                        "1970-01-01 04:43:20.0,b\n" +
-                        "1970-01-01 05:00:00.0,a\n", sink, rs1);
-
-                rs1.close();
-            }
-        });
-    }
-
-    @Test
-    public void testSymbolBindVariableInFilter() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary1) -> {
-            // create and initialize table outside of PG wire
-            // to ensure we do not collaterally initialize execution context on function parser
-            compiler.compile("CREATE TABLE x (\n" +
-                    "    ticker symbol index,\n" +
-                    "    sample_time timestamp,\n" +
-                    "    value int\n" +
-                    ") timestamp (sample_time)", sqlExecutionContext);
-            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
-                    ps.setString(1, "ABC");
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
-                                        "ABC,1970-01-01 00:00:00.0,0\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-        });
-    }
-
-    @Test
-    public void testSyntaxErrorReporting() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try {
-                connection.prepareCall("drop table xyz;").execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "table does not exist [table=xyz]");
-                TestUtils.assertEquals("00000", e.getSQLState());
-            }
-        });
-    }
-
-    @Test
-    public void testTruncateAndUpdateOnNonPartitionedTableWithoutDesignatedTs() throws Exception {
-        testTruncateAndUpdateOnTable("");
-    }
-
-    @Test
-    public void testTruncateAndUpdateOnNonPartitionedTableWithDesignatedTs() throws Exception {
-        testTruncateAndUpdateOnTable("timestamp(ts)");
-    }
-
-    @Test
-    public void testTruncateAndUpdateOnPartitionedTable() throws Exception {
-        testTruncateAndUpdateOnTable("timestamp(ts) partition by DAY");
-    }
-
-    public void testTruncateAndUpdateOnTable(String config) throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (Statement stat = connection.createStatement()) {
-                stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
-            }
-
-            try (Statement stat = connection.createStatement()) {
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
-                stat.execute("truncate table tb;");
-                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
-
-                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
-                    StringSink sink = new StringSink();
-                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
-                }
             }
         });
     }

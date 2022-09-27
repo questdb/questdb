@@ -31,7 +31,7 @@ public class FastDoubleParserFromMemLexicallyGeneratedTest extends AbstractLexic
             double actual = 0;
             boolean actualFailed = false;
             try {
-                actual = FastDoubleParser.parseDouble(mem, len);
+                actual = FastDoubleParser.parseDouble(mem, len, false);
             } catch (NumericException t) {
                 actualFailed = true;
             }

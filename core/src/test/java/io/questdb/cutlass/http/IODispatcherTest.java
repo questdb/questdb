@@ -131,6 +131,22 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void queryReturnsEncodedNonprintableCharacters() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                        "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
+                        "72\r\n" +
+                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"count\":1}\r\n"
+                                + "00\r\n"
+                                + "\r\n"
+                ));
+    }
+
+    @Test
     public void queryWithDoubleQuotesParsedCorrectly() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -148,22 +164,6 @@ public class IODispatcherTest {
                                     + "\r\n"
                     );
                 });
-    }
-
-    @Test
-    public void queryReturnsEncodedNonprintableCharacters() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                        "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
-                        "72\r\n" +
-                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"count\":1}\r\n"
-                                + "00\r\n"
-                                + "\r\n"
-                ));
     }
 
     @Before
@@ -457,6 +457,38 @@ public class IODispatcherTest {
                 Assert.assertEquals(1, closeCount.get());
             }
         });
+    }
+
+    @Test
+    public void testDDLinExp() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?query=create%20table%20balance%20(money%20float) HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "67\r\n" +
+                        "{\"query\":\"create table balance (money float)\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\":0}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
     }
 
     @Test
@@ -2164,6 +2196,56 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonImplicitCastException() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=create%20table%20op(a%20int)&timings=true HTTP/1.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Referer: http://localhost:9000/\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0d\r\n" +
+                        "{\"ddl\":\"OK\"}\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
+
+        testJsonQuery(0,
+                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=insert%20into%20op%20values%20(%27abc%27) HTTP/1.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Referer: http://localhost:9000/\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "72\r\n" +
+                        "{\"query\":\"insert into op values ('abc')\",\"error\":\"inconvertible value: abc [STRING -> INT] tuple: 0\",\"position\":0}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                , 1);
+    }
+
+    @Test
     public void testJsonNullColumnType() throws Exception {
         testJsonQuery(0,
                 "GET /query?limit=0%2C1000&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0ASELECT%20*%20FROM%20(%0D%0A%20%20SELECT%20%0D%0A%20%20%20%20n.nspname%0D%0A%20%20%20%20%2Cc.relname%0D%0A%20%20%20%20%2Ca.attname%0D%0A%20%20%20%20%2Ca.atttypid%0D%0A%20%20%20%20%2Ca.attnotnull%20OR%20(t.typtype%20%3D%20%27d%27%20AND%20t.typnotnull)%20AS%20attnotnull%0D%0A%20%20%20%20%2Ca.atttypmod%0D%0A%20%20%20%20%2Ca.attlen%0D%0A%20%20%20%20%2Ct.typtypmod%0D%0A%20%20%20%20%2Crow_number()%20OVER%20(PARTITION%20BY%20a.attrelid%20ORDER%20BY%20a.attnum)%20AS%20attnum%0D%0A%20%20%20%20%2C%20nullif(a.attidentity%2C%20%27%27)%20as%20attidentity%0D%0A%20%20%20%20%2Cnull%20as%20attgenerated%0D%0A%20%20%20%20%2Cpg_catalog.pg_get_expr(def.adbin%2C%20def.adrelid)%20AS%20adsrc%0D%0A%20%20%20%20%2Cdsc.description%0D%0A%20%20%20%20%2Ct.typbasetype%0D%0A%20%20%20%20%2Ct.typtype%20%20%0D%0A%20%20FROM%20pg_catalog.pg_namespace%20n%0D%0A%20%20JOIN%20pg_catalog.pg_class%20c%20ON%20(c.relnamespace%20%3D%20n.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_attribute%20a%20ON%20(a.attrelid%3Dc.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_type%20t%20ON%20(a.atttypid%20%3D%20t.oid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_attrdef%20def%20ON%20(a.attrelid%3Ddef.adrelid%20AND%20a.attnum%20%3D%20def.adnum)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_description%20dsc%20ON%20(c.oid%3Ddsc.objoid%20AND%20a.attnum%20%3D%20dsc.objsubid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_class%20dc%20ON%20(dc.oid%3Ddsc.classoid%20AND%20dc.relname%3D%27pg_class%27)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_namespace%20dn%20ON%20(dc.relnamespace%3Ddn.oid%20AND%20dn.nspname%3D%27pg_catalog%27)%0D%0A%20%20WHERE%20%0D%0A%20%20%20%20c.relkind%20in%20(%27r%27%2C%27p%27%2C%27v%27%2C%27f%27%2C%27m%27)%0D%0A%20%20%20%20and%20a.attnum%20%3E%200%20%0D%0A%20%20%20%20AND%20NOT%20a.attisdropped%0D%0A%20%20%20%20AND%20c.relname%20LIKE%20E%27x%27%0D%0A%20%20)%20c%20WHERE%20true%0D%0A%20%20ORDER%20BY%20nspname%2Cc.relname%2Cattnum HTTP/1.1\r\n" +
@@ -2189,8 +2271,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0a95\r\n" +
-                        "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"STRING\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"0\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"1\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"2\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"3\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"4\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"5\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"6\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"7\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"8\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"9\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"10\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"11\",null,null,null,null,0,\"b\"]],\"count\":12,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "0a7b\r\n" +
+                        "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"CHAR\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"0\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"1\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"2\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"3\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"4\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"5\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"6\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"7\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"8\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"9\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"10\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"11\",\"\",null,null,null,0,\"b\"]],\"count\":12,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
                 , 10);
@@ -3534,6 +3616,87 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryQuoteLargeNumber() throws Exception {
+        // don't quote large numbers (LONG) by default
+        testJsonQuery(
+                0,
+                "GET /query?query=select%201400055037509505337%20as%20l HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "7e\r\n" +
+                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[1400055037509505337]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+
+        // quote large numbers (LONG) to string, on param 'quoteLargeNum=true'
+        testJsonQuery(
+                0,
+                "GET /query?query=select%201400055037509505337%20as%20l&quoteLargeNum=true HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "80\r\n" +
+                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+
+        // quote large numbers (LONG) for questdb web console
+        testJsonQuery(
+                0,
+                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=select%201400055037509505337%20as%20l HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "a0\r\n" +
+                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"count\":1,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
     public void testJsonQueryRenameTable() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
@@ -3648,43 +3811,6 @@ public class IODispatcherTest {
                             "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
-    }
-
-    @Test
-    public void testJsonQueryVacuumTable() throws Exception {
-        testJsonQuery0(2, engine -> {
-            CairoTestUtils.createTestTable(
-                    engine.getConfiguration(),
-                    20,
-                    new Rnd(),
-                    new TestRecord.ArrayBinarySequence());
-
-            final String vacuumQuery = "vacuum table x";
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=" + HttpUtils.urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -4175,6 +4301,43 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryVacuumTable() throws Exception {
+        testJsonQuery0(2, engine -> {
+            CairoTestUtils.createTestTable(
+                    engine.getConfiguration(),
+                    20,
+                    new Rnd(),
+                    new TestRecord.ArrayBinarySequence());
+
+            final String vacuumQuery = "vacuum table x";
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=" + HttpUtils.urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            JSON_DDL_RESPONSE,
+                    1,
+                    0,
+                    false
+            );
+        }, false);
+    }
+
+    @Test
     public void testJsonQueryWithCompressedResults1() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {
@@ -4474,87 +4637,6 @@ public class IODispatcherTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testJsonQueryQuoteLargeNumber() throws Exception {
-        // don't quote large numbers (LONG) by default
-        testJsonQuery(
-                0,
-                "GET /query?query=select%201400055037509505337%20as%20l HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "7e\r\n" +
-                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[1400055037509505337]],\"count\":1}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
-
-        // quote large numbers (LONG) to string, on param 'quoteLargeNum=true'
-        testJsonQuery(
-                0,
-                "GET /query?query=select%201400055037509505337%20as%20l&quoteLargeNum=true HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "80\r\n" +
-                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"count\":1}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
-
-        // quote large numbers (LONG) for questdb web console
-        testJsonQuery(
-                0,
-                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=select%201400055037509505337%20as%20l HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "a0\r\n" +
-                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"count\":1,\"explain\":{\"jitCompiled\":false}}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
     }
 
     @Test
@@ -5028,199 +5110,6 @@ public class IODispatcherTest {
                 true,
                 1
         );
-    }
-
-    private void testQueuedConnectionTimeoutImpl(int port) throws Exception {
-        LOG.info().$("started testQueuedConnectionTimeout").$();
-        assertMemoryLeak(() -> {
-            final int activeConnectionLimit = 5;
-            final long queuedConnectionTimeoutInMs = 250;
-
-            final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
-                @Override
-                public int getLimit() {
-                    return activeConnectionLimit;
-                }
-
-                @Override
-                public long getQueueTimeout() {
-                    return queuedConnectionTimeoutInMs;
-                }
-
-                @Override
-                public int getBindPort() {
-                    return port;
-                }
-            };
-
-            final int listenBackLog = configuration.getListenBacklog();
-
-            final AtomicInteger nConnected = new AtomicInteger();
-            final LongHashSet serverConnectedFds = new LongHashSet();
-            final LongHashSet clientActiveFds = new LongHashSet();
-            IOContextFactory<IOContext> contextFactory = (fd, dispatcher) -> {
-                LOG.info().$(fd).$(" connected").$();
-                serverConnectedFds.add(fd);
-                nConnected.incrementAndGet();
-                return new IOContext() {
-                    @Override
-                    public void close() {
-                        LOG.info().$(fd).$(" disconnected").$();
-                        serverConnectedFds.remove(fd);
-                    }
-
-                    @Override
-                    public long getFd() {
-                        return fd;
-                    }
-
-                    @Override
-                    public boolean invalid() {
-                        return !serverConnectedFds.contains(fd);
-                    }
-
-                    @Override
-                    public IODispatcher<?> getDispatcher() {
-                        return dispatcher;
-                    }
-                };
-            };
-            final String request = "\n";
-            long mem = TestUtils.toMemory(request);
-
-            Thread serverThread;
-            long sockAddr = 0;
-            final CountDownLatch serverLatch = new CountDownLatch(1);
-            try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
-                final int resolvedPort = dispatcher.getPort();
-                sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
-                serverThread = new Thread("test-io-dispatcher") {
-                    @Override
-                    public void run() {
-                        long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-                        try {
-                            IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
-                                long fd = context.getFd();
-                                int rc;
-                                switch (operation) {
-                                    case IOOperation.READ:
-                                        rc = Net.recv(fd, smem, 1);
-                                        if (rc == 1) {
-                                            dispatcher.registerChannel(context, IOOperation.WRITE);
-                                        } else {
-                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                        }
-                                        break;
-                                    case IOOperation.WRITE:
-                                        rc = Net.send(fd, smem, 1);
-                                        if (rc == 1) {
-                                            dispatcher.registerChannel(context, IOOperation.READ);
-                                        } else {
-                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                        }
-                                        break;
-                                    default:
-                                        dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                }
-                            };
-                            do {
-                                dispatcher.run(0);
-                                dispatcher.processIOQueue(requestProcessor);
-                                Thread.yield();
-                            } while (!isInterrupted());
-                        } finally {
-                            Unsafe.free(smem, 1, MemoryTag.NATIVE_DEFAULT);
-                            serverLatch.countDown();
-                        }
-                    }
-                };
-                serverThread.setDaemon(true);
-                serverThread.start();
-
-                // Connect exactly the right amount of clients to fill the active connection and connection backlog, after the
-                // queuedConnectionTimeoutInMs the connections in the backlog should get refused
-                int nClientConnects = 0;
-                int nClientConnectRefused = 0;
-                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    long fd = Net.socketTcp(true);
-                    Assert.assertTrue(fd > -1);
-                    clientActiveFds.add(fd);
-                    if (Net.connect(fd, sockAddr) != 0) {
-                        nClientConnectRefused++;
-                        continue;
-                    }
-                    int rc = Net.send(fd, mem, request.length());
-                    if (rc < 0) {
-                        nClientConnectRefused++;
-                        continue;
-                    }
-                    rc = Net.recv(fd, mem, request.length());
-                    if (rc < 0) {
-                        nClientConnectRefused++;
-                    } else {
-                        nClientConnects++;
-                    }
-                }
-                Assert.assertEquals(activeConnectionLimit, nClientConnects);
-                Assert.assertEquals(listenBackLog, nClientConnectRefused);
-                Assert.assertFalse(dispatcher.isListening());
-
-                // Close all connections and wait for server to resume listening
-                while (clientActiveFds.size() > 0) {
-                    long fd = clientActiveFds.get(0);
-                    clientActiveFds.remove(fd);
-                    Net.close(fd);
-                }
-                long timeoutMs = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(1);
-                while (!dispatcher.isListening()) {
-                    if (System.currentTimeMillis() > timeoutMs) {
-                        Assert.fail("Timeout waiting for server to start listening again");
-                    }
-                }
-
-                // Try connections again to make sure server is listening
-                nClientConnects = 0;
-                nClientConnectRefused = 0;
-                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    long fd = Net.socketTcp(true);
-                    Assert.assertTrue(fd > -1);
-                    clientActiveFds.add(fd);
-                    if (Net.connect(fd, sockAddr) != 0) {
-                        nClientConnectRefused++;
-                        continue;
-                    }
-                    int rc = Net.send(fd, mem, request.length());
-                    if (rc < 0) {
-                        nClientConnectRefused++;
-                        continue;
-                    }
-                    rc = Net.recv(fd, mem, request.length());
-                    if (rc < 0) {
-                        nClientConnectRefused++;
-                    } else {
-                        nClientConnects++;
-                    }
-                }
-                Assert.assertEquals(activeConnectionLimit, nClientConnects);
-                Assert.assertEquals(listenBackLog, nClientConnectRefused);
-                Assert.assertFalse(dispatcher.isListening());
-
-                // Close all remaining client connections
-                for (int n = 0; n < clientActiveFds.size(); n++) {
-                    long fd = clientActiveFds.get(n);
-                    Net.close(fd);
-                }
-                serverThread.interrupt();
-                if (!serverLatch.await(1, TimeUnit.MINUTES)) {
-                    Assert.fail("Timeout waiting for server to end");
-                }
-            } finally {
-                if (sockAddr != 0) {
-                    Net.freeSockAddr(sockAddr);
-                }
-                Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
-            }
-        });
     }
 
     @Test
@@ -6207,6 +6096,110 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testTextQueryCopyFrom() throws Exception {
+        String copyInputRoot = TestUtils.getCsvRoot();
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withCopyInputRoot(copyInputRoot)
+                .withMicrosecondClock(new TestMicroClock(0, 0))
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .run((engine) -> {
+                    final String copyQuery = "copy test from 'test-numeric-headers.csv' with header true";
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "9b\r\n" +
+                                    "{\"query\":\"copy test from 'test-numeric-headers.csv' with header true\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\"]],\"count\":1}\r\n" +
+                                    "00\r\n\r\n",
+                            1,
+                            0,
+                            false,
+                            true
+                    );
+
+                    // Cancel should always succeed since we don't have text import jobs running here.
+                    final String cancelQuery = "copy '0000000000000000' cancel";
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(cancelQuery) + "&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false,
+                            true
+                    );
+
+                    final String incorrectCancelQuery = "copy 'ffffffffffffffff' cancel";
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(incorrectCancelQuery) + "&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 400 Bad request\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "61\r\n" +
+                                    "{\"query\":\"copy 'ffffffffffffffff' cancel\",\"error\":\"Active import has different id.\",\"position\":0}\r\n" +
+                                    "00\r\n\r\n",
+                            1,
+                            0,
+                            false,
+                            true
+                    );
+                });
+    }
+
+    @Test
     public void testTextQueryCreateTable() throws Exception {
         testJsonQuery(
                 20,
@@ -6232,38 +6225,6 @@ public class IODispatcherTest {
                         "0d\r\n" +
                         "{\"ddl\":\"OK\"}\n" +
                         "\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                1
-        );
-    }
-
-    @Test
-    public void testDDLinExp() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /exp?query=create%20table%20balance%20(money%20float) HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "67\r\n" +
-                        "{\"query\":\"create table balance (money float)\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1
@@ -6380,107 +6341,76 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testTextQueryCopyFrom() throws Exception {
-        String copyInputRoot = TestUtils.getCsvRoot();
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withCopyInputRoot(copyInputRoot)
-                .withMicrosecondClock(new TestMicroClock(0, 0))
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .run((engine) -> {
-                    final String copyQuery = "copy test from 'test-numeric-headers.csv' with header true";
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "X-Requested-With: XMLHttpRequest\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                    "Sec-Fetch-Site: same-origin\r\n" +
-                                    "Sec-Fetch-Mode: cors\r\n" +
-                                    "Referer: http://localhost:9000/index.html\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: application/json; charset=utf-8\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    "9b\r\n" +
-                                    "{\"query\":\"copy test from 'test-numeric-headers.csv' with header true\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\"]],\"count\":1}\r\n" +
-                                    "00\r\n\r\n",
-                            1,
-                            0,
-                            false,
-                            true
-                    );
+    public void testTextQueryPseudoRandomStability() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+from+long_sequence(10%2C+33%2C+55)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "39\r\n" +
+                        "\"sym\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\"b\"\r\n" +
+                        "\"b\"\r\n" +
+                        "\"a\"\r\n" +
+                        "\"a\"\r\n" +
+                        "\"a\"\r\n" +
+                        "\"a\"\r\n" +
+                        "\"a\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
 
-                    // Cancel should always succeed since we don't have text import jobs running here.
-                    final String cancelQuery = "copy '0000000000000000' cancel";
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(cancelQuery) + "&count=true HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "X-Requested-With: XMLHttpRequest\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                    "Sec-Fetch-Site: same-origin\r\n" +
-                                    "Sec-Fetch-Mode: cors\r\n" +
-                                    "Referer: http://localhost:9000/index.html\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: application/json; charset=utf-8\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    JSON_DDL_RESPONSE,
-                            1,
-                            0,
-                            false,
-                            true
-                    );
-
-                    final String incorrectCancelQuery = "copy 'ffffffffffffffff' cancel";
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(incorrectCancelQuery) + "&count=true HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "X-Requested-With: XMLHttpRequest\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                    "Sec-Fetch-Site: same-origin\r\n" +
-                                    "Sec-Fetch-Mode: cors\r\n" +
-                                    "Referer: http://localhost:9000/index.html\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 400 Bad request\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: application/json; charset=utf-8\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    "61\r\n" +
-                                    "{\"query\":\"copy 'ffffffffffffffff' cancel\",\"error\":\"Active import has different id.\",\"position\":0}\r\n" +
-                                    "00\r\n\r\n",
-                            1,
-                            0,
-                            false,
-                            true
-                    );
-                });
+    @Test
+    public void testTextQueryResponseLimit() throws Exception {
+        configuredMaxQueryResponseRowLimit = 3;
+        testJsonQuery(
+                20,
+                "GET /exp?query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+from+long_sequence(10%2C+33%2C+55)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "16\r\n" +
+                        "\"sym\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\"c\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n");
     }
 
     @Test
@@ -6610,79 +6540,6 @@ public class IODispatcherTest {
                             true
                     );
                 });
-    }
-
-    @Test
-    public void testTextQueryPseudoRandomStability() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /exp?query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+from+long_sequence(10%2C+33%2C+55)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "39\r\n" +
-                        "\"sym\"\r\n" +
-                        "\"c\"\r\n" +
-                        "\"c\"\r\n" +
-                        "\"c\"\r\n" +
-                        "\"b\"\r\n" +
-                        "\"b\"\r\n" +
-                        "\"a\"\r\n" +
-                        "\"a\"\r\n" +
-                        "\"a\"\r\n" +
-                        "\"a\"\r\n" +
-                        "\"a\"\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
-    }
-
-    @Test
-    public void testTextQueryResponseLimit() throws Exception {
-        configuredMaxQueryResponseRowLimit = 3;
-        testJsonQuery(
-                20,
-                "GET /exp?query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+from+long_sequence(10%2C+33%2C+55)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "16\r\n" +
-                        "\"sym\"\r\n" +
-                        "\"c\"\r\n" +
-                        "\"c\"\r\n" +
-                        "\"c\"\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n");
     }
 
     @Test
@@ -7393,6 +7250,199 @@ public class IODispatcherTest {
         } finally {
             Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private void testQueuedConnectionTimeoutImpl(int port) throws Exception {
+        LOG.info().$("started testQueuedConnectionTimeout").$();
+        assertMemoryLeak(() -> {
+            final int activeConnectionLimit = 5;
+            final long queuedConnectionTimeoutInMs = 250;
+
+            final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getLimit() {
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getBindPort() {
+                    return port;
+                }
+
+                @Override
+                public long getQueueTimeout() {
+                    return queuedConnectionTimeoutInMs;
+                }
+            };
+
+            final int listenBackLog = configuration.getListenBacklog();
+
+            final AtomicInteger nConnected = new AtomicInteger();
+            final LongHashSet serverConnectedFds = new LongHashSet();
+            final LongHashSet clientActiveFds = new LongHashSet();
+            IOContextFactory<IOContext> contextFactory = (fd, dispatcher) -> {
+                LOG.info().$(fd).$(" connected").$();
+                serverConnectedFds.add(fd);
+                nConnected.incrementAndGet();
+                return new IOContext() {
+                    @Override
+                    public void close() {
+                        LOG.info().$(fd).$(" disconnected").$();
+                        serverConnectedFds.remove(fd);
+                    }
+
+                    @Override
+                    public long getFd() {
+                        return fd;
+                    }
+
+                    @Override
+                    public boolean invalid() {
+                        return !serverConnectedFds.contains(fd);
+                    }
+
+                    @Override
+                    public IODispatcher<?> getDispatcher() {
+                        return dispatcher;
+                    }
+                };
+            };
+            final String request = "\n";
+            long mem = TestUtils.toMemory(request);
+
+            Thread serverThread;
+            long sockAddr = 0;
+            final CountDownLatch serverLatch = new CountDownLatch(1);
+            try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+                final int resolvedPort = dispatcher.getPort();
+                sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
+                serverThread = new Thread("test-io-dispatcher") {
+                    @Override
+                    public void run() {
+                        long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
+                                long fd = context.getFd();
+                                int rc;
+                                switch (operation) {
+                                    case IOOperation.READ:
+                                        rc = Net.recv(fd, smem, 1);
+                                        if (rc == 1) {
+                                            dispatcher.registerChannel(context, IOOperation.WRITE);
+                                        } else {
+                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                        }
+                                        break;
+                                    case IOOperation.WRITE:
+                                        rc = Net.send(fd, smem, 1);
+                                        if (rc == 1) {
+                                            dispatcher.registerChannel(context, IOOperation.READ);
+                                        } else {
+                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                        }
+                                        break;
+                                    default:
+                                        dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                }
+                            };
+                            do {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(requestProcessor);
+                                Thread.yield();
+                            } while (!isInterrupted());
+                        } finally {
+                            Unsafe.free(smem, 1, MemoryTag.NATIVE_DEFAULT);
+                            serverLatch.countDown();
+                        }
+                    }
+                };
+                serverThread.setDaemon(true);
+                serverThread.start();
+
+                // Connect exactly the right amount of clients to fill the active connection and connection backlog, after the
+                // queuedConnectionTimeoutInMs the connections in the backlog should get refused
+                int nClientConnects = 0;
+                int nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all connections and wait for server to resume listening
+                while (clientActiveFds.size() > 0) {
+                    long fd = clientActiveFds.get(0);
+                    clientActiveFds.remove(fd);
+                    Net.close(fd);
+                }
+                long timeoutMs = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(1);
+                while (!dispatcher.isListening()) {
+                    if (System.currentTimeMillis() > timeoutMs) {
+                        Assert.fail("Timeout waiting for server to start listening again");
+                    }
+                }
+
+                // Try connections again to make sure server is listening
+                nClientConnects = 0;
+                nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all remaining client connections
+                for (int n = 0; n < clientActiveFds.size(); n++) {
+                    long fd = clientActiveFds.get(n);
+                    Net.close(fd);
+                }
+                serverThread.interrupt();
+                if (!serverLatch.await(1, TimeUnit.MINUTES)) {
+                    Assert.fail("Timeout waiting for server to end");
+                }
+            } finally {
+                if (sockAddr != 0) {
+                    Net.freeSockAddr(sockAddr);
+                }
+                Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {

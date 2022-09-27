@@ -10,12 +10,12 @@ import io.questdb.std.NumericException;
 public class FastFloatParserFromCharSequenceHandPickedTest extends AbstractFloatHandPickedTest {
 
     @Override
-    float parse(CharSequence str) throws NumericException {
-        return FastFloatParser.parseFloat(str);
+    float parse(CharSequence str, boolean rejectOverflow) throws NumericException {
+        return FastFloatParser.parseFloat(str, rejectOverflow);
     }
 
     @Override
-    protected float parse(String str, int offset, int length) throws NumericException {
-        return FastFloatParser.parseFloat(str, offset, length);
+    protected float parse(String str, int offset, int length,  boolean rejectOverflow) throws NumericException {
+        return FastFloatParser.parseFloat(str, offset, length, rejectOverflow);
     }
 }

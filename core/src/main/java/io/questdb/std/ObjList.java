@@ -46,6 +46,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
     }
 
+    @SuppressWarnings("unchecked")
     public ObjList(T... other) {
         this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
         setPos(other.length);

@@ -17,7 +17,7 @@ public class FastDoubleParserFromMemNumericallyGeneratedTest extends AbstractDou
         long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             Chars.asciiStrCpy(str, mem);
-            return FastDoubleParser.parseDouble(mem, len);
+            return FastDoubleParser.parseDouble(mem, len, false);
         } finally {
             Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
         }

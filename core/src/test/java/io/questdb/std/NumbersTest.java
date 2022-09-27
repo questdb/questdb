@@ -604,11 +604,24 @@ public class NumbersTest {
         String s3 = "0.000000023E-30";
         Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
 
-        String s4 = "0.000000023E-38";
-        Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
+        // overflow
+        try {
+            Numbers.parseFloat("1.0000E-204");
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
 
-        String s5 = "0.0000E-204";
-        Assert.assertEquals(Float.parseFloat(s5), Numbers.parseFloat(s5), 0.000000001);
+        try {
+            Numbers.parseFloat("1E39");
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
+
+        try {
+            Numbers.parseFloat("1.0E39");
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
 
         String s6 = "200E2";
         Assert.assertEquals(Float.parseFloat(s6), Numbers.parseFloat(s6), 0.000000001);
@@ -618,6 +631,18 @@ public class NumbersTest {
 
         String s8 = "-Infinity";
         Assert.assertEquals(Float.parseFloat(s8), Numbers.parseFloat(s8), 0.000000001);
+
+        // min exponent float
+        String s9 = "1.4e-45";
+        Assert.assertEquals(1.4e-45f, Numbers.parseFloat(s9), 0.001);
+
+        // false overflow
+        String s10 = "0003000.0e-46";
+        Assert.assertEquals(1.4e-45f, Numbers.parseFloat(s10), 0.001);
+
+        // false overflow
+        String s11 = "0.00001e40";
+        Assert.assertEquals(1e35f, Numbers.parseFloat(s11), 0.001);
     }
 
     @Test
@@ -655,8 +680,12 @@ public class NumbersTest {
         String s3 = "9223372036854775808123.0123456789";
         Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
 
-        String s4 = "922337203685477580812392233720368547758081.01239223372036854775808123";//Infinity
-        Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
+        String s4 = "922337203685477580812392233720368547758081.01239223372036854775808123"; // overflow
+        try {
+            Numbers.parseFloat(s4);
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
     }
     
     @Test

@@ -27,11 +27,10 @@ package io.questdb.cairo;
 import java.io.Closeable;
 
 /**
- * Resource with native memory allocations that can be released with close(),
- * re-initialized with reallocate() and then used again.
+ * A resource that can be closed and then later reopened.
  */
-public interface Reallocatable extends Closeable {
+public interface Reopenable extends Closeable {
 
-    /* allocate native resource (usually using default sizes) */
-    void reallocate();
+    /** Re-initialize the resource after `.close()` was called. */
+    void reopen();
 }

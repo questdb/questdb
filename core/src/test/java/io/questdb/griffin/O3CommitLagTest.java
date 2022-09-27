@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCompiler.RecordToRowCopier;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -271,7 +270,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
                     for (int i = 0; i < length; i++) {
-                        long ts = IntervalUtils.parseFloorPartialDate(dates[i]);
+                        long ts = IntervalUtils.parseFloorPartialTimestamp(dates[i]);
                         Row r = writer.newRow(ts);
                         r.append();
 
@@ -435,7 +434,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
     private void appendRows(String ts1, String ts2, TableWriter tw, int count, Rnd rnd) throws NumericException {
         for (int i = 0; i < count; i++) {
-            long timestamp = IntervalUtils.parseFloorPartialDate(ts1) + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = IntervalUtils.parseFloorPartialTimestamp(ts1) + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
             row.putStr(0, "cc");
@@ -444,7 +443,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             row.putLong(4, 22222L);
             row.append();
 
-            row = tw.newRow(IntervalUtils.parseFloorPartialDate(ts2));
+            row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp(ts2));
             row.putStr(0, "cc");
             row.putLong(2, 333333L);
             row.putStr(3, "dd");
@@ -455,7 +454,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
     private void appendRowsWithDroppedColumn(String ts1, String ts2, TableWriter tw, int count, Rnd rnd) throws NumericException {
         for (int i = 0; i < count; i++) {
-            long timestamp = IntervalUtils.parseFloorPartialDate(ts1) + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = IntervalUtils.parseFloorPartialTimestamp(ts1) + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
             row.putStr(0, "cc");
@@ -464,7 +463,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             row.putLong(5, 22222L);
             row.append();
 
-            row = tw.newRow(IntervalUtils.parseFloorPartialDate(ts2));
+            row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp(ts2));
             row.putStr(0, "cc");
             row.putLong(2, 333333L);
             row.putStr(4, "dd");
@@ -497,7 +496,12 @@ public class O3CommitLagTest extends AbstractO3Test {
             EntityColumnFilter toColumnFilter = new EntityColumnFilter();
             toColumnFilter.of(metadata.getColumnCount());
             if (null == copier) {
-                copier = SqlCompiler.assembleRecordToRowCopier(new BytecodeAssembler(), metadata, writer.getMetadata(), toColumnFilter);
+                copier = RecordToRowCopierUtils.generateCopier(
+                        new BytecodeAssembler(),
+                        metadata,
+                        writer.getMetadata(),
+                        toColumnFilter
+                );
             }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
@@ -559,7 +563,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             }
         }
 
-        long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
+        long start = IntervalUtils.parseFloorPartialTimestamp("2021-04-27T08:00:00");
         long[] testCounts = new long[]{2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000};
         for (int c = 0; c < testCounts.length; c++) {
             long idCount = testCounts[c];

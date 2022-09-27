@@ -57,7 +57,7 @@ final class FastFloat {
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
-    static float parseFloatingPointLiteral(CharSequence str, int offset, int length) throws NumericException {
+    static float parseFloatingPointLiteral(CharSequence str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length()) {
             throw NumericException.INSTANCE;
@@ -95,11 +95,11 @@ final class FastFloat {
         if (hasLeadingZero) {
             ch = ++index < endIndex ? str.charAt(index) : 0;
             if (ch == 'x' || ch == 'X') {
-                return parseHexFloatLiteral(str, index + 1, offset, endIndex, isNegative);
+                return parseHexFloatLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
             }
         }
 
-        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero);
+        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
     }
 
     private static boolean isDigit(char c) {
@@ -134,7 +134,8 @@ final class FastFloat {
             int startIndex,
             int endIndex,
             boolean isNegative,
-            boolean hasLeadingZero
+            boolean hasLeadingZero,
+            boolean rejectOverflow
     ) throws NumericException {
         // Parse significand
         // -----------------
@@ -247,7 +248,8 @@ final class FastFloat {
                 significand,
                 exponent,
                 isSignificandTruncated,
-                exponentOfTruncatedSignificand
+                exponentOfTruncatedSignificand,
+                rejectOverflow
         );
     }
 
@@ -271,15 +273,17 @@ final class FastFloat {
      * @param startIndex the start index of the string
      * @param endIndex   the end index of the string
      * @param isNegative if the resulting number is negative
-     * @return the bit pattern of the parsed value, if the input is legal;
-     * otherwise, {@code -1L}.
+     * @param rejectOverflow reject parsed values that overflow double type
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException when input is illegal
      */
     private static float parseHexFloatLiteral(
             CharSequence str,
             int index,
             int startIndex,
             int endIndex,
-            boolean isNegative
+            boolean isNegative,
+            boolean rejectOverflow
     ) throws NumericException {
 
         // Parse HexSignificand
@@ -385,7 +389,8 @@ final class FastFloat {
                 significand,
                 exponent,
                 isSignificandTruncated,
-                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber
+                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber,
+                rejectOverflow
         );
     }
 
@@ -509,8 +514,9 @@ final class FastFloat {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         float f = FastFloatMath.decFloatLiteralToFloat(
                 isNegative,
                 significand,
@@ -518,7 +524,30 @@ final class FastFloat {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Float.isNaN(f) ? Float.parseFloat(str.subSequence(startIndex, endIndex).toString()) : f;
+
+        if (Float.isNaN(f)) {
+            f = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return f;
+    }
+
+    private static float fallbackToJavaParser(
+            CharSequence str,
+            int startIndex,
+            int endIndex,
+            boolean rejectOverflow
+    ) throws NumericException {
+        final float f = Float.parseFloat(str.subSequence(startIndex, endIndex).toString());
+        if (rejectOverflow &&
+                (
+                        f == Float.POSITIVE_INFINITY
+                                || f == Float.NEGATIVE_INFINITY
+                                || f == 0.0f
+                )
+        ) {
+            throw NumericException.INSTANCE;
+        }
+        return f;
     }
 
     static float valueOfHexLiteral(
@@ -529,8 +558,9 @@ final class FastFloat {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         float f = FastFloatMath.hexFloatLiteralToFloat(
                 isNegative,
                 significand,
@@ -538,6 +568,10 @@ final class FastFloat {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Float.isNaN(f) ? Float.parseFloat(str.subSequence(startIndex, endIndex).toString()) : f;
+
+        if (Float.isNaN(f)) {
+            f = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return f;
     }
 }

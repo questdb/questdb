@@ -48,13 +48,17 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
+import static org.hamcrest.Matchers.*;
+
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.sql.Timestamp;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -90,17 +94,17 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
-        long rc = connectAddrInfo(fd, sockAddrInfo);
-        if (rc != 0) {
-            Assert.fail("could not connect, errno=" + Os.errno());
-        }
-    }
-
     public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
         long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
+        }
+    }
+
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+        long rc = connectAddrInfo(fd, sockAddrInfo);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
@@ -663,8 +667,14 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
 
         StringBuilder sql = new StringBuilder();
         StringBuilder indexes = new StringBuilder();
@@ -736,96 +746,27 @@ public final class TestUtils {
         return sql.toString();
     }
 
-    public static void insertFromSelectIntoTable(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException, SqlException {
-        compiler.compile(
-                insertFromSelectPopulateTableStmt(
-                        tableModel,
-                        totalRows,
-                        startDate,
-                        partitionCount
-                ),
-                sqlExecutionContext
-        );
-    }
-
-    public static String insertFromSelectPopulateTableStmt(
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
-        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
-
-        StringBuilder insertFromSelect = new StringBuilder();
-        insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
-        for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            CharSequence colName = tableModel.getColumnName(i);
-            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
-                case ColumnType.INT:
-                    insertFromSelect.append("cast(x as int) ").append(colName);
-                    break;
-                case ColumnType.STRING:
-                    insertFromSelect.append("CAST(x as STRING) ").append(colName);
-                    break;
-                case ColumnType.LONG:
-                    insertFromSelect.append("x ").append(colName);
-                    break;
-                case ColumnType.DOUBLE:
-                    insertFromSelect.append("x / 1000.0 ").append(colName);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
-                    break;
-                case ColumnType.SYMBOL:
-                    insertFromSelect.append("rnd_symbol(4,4,4,2) ").append(colName);
-                    break;
-                case ColumnType.BOOLEAN:
-                    insertFromSelect.append("rnd_boolean() ").append(colName);
-                    break;
-                case ColumnType.FLOAT:
-                    insertFromSelect.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
-                    break;
-                case ColumnType.DATE:
-                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
-                    break;
-                case ColumnType.LONG256:
-                    insertFromSelect.append("CAST(x AS LONG256) ").append(colName);
-                    break;
-                case ColumnType.BYTE:
-                    insertFromSelect.append("CAST(x AS BYTE) ").append(colName);
-                    break;
-                case ColumnType.CHAR:
-                    insertFromSelect.append("CAST(x AS CHAR) ").append(colName);
-                    break;
-                case ColumnType.SHORT:
-                    insertFromSelect.append("CAST(x AS SHORT) ").append(colName);
-                    break;
-                default:
-                    throw new UnsupportedOperationException();
-            }
-            if (i < tableModel.getColumnCount() - 1) {
-                insertFromSelect.append("," + Misc.EOL);
-            }
-        }
-        insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
-        insertFromSelect.append(")" + Misc.EOL);
-        return insertFromSelect.toString();
-    }
-
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
                 return;
             }
             Files.mkdirs(path.of(root).slash$(), 509);
+        }
+    }
+
+    public static Timestamp createTimestamp(long epochMicros) {
+        // constructor requires epoch millis
+        Timestamp ts = new Timestamp(epochMicros / 1000);
+        ts.setNanos((int) ((epochMicros % 1_000_000) * 1000));
+        return ts;
+    }
+
+    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
         }
     }
 
@@ -882,6 +823,16 @@ public final class TestUtils {
         return new Rnd(s0, s1);
     }
 
+    public static String getCsvRoot() {
+        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
+        try {
+            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
+            return new File(rootSource.toURI()).getParent();
+        } catch (URISyntaxException e) {
+            throw new AssertionError("missing test-import.csv", e);
+        }
+    }
+
     public static int getJavaVersion() {
         String version = System.getProperty("java.version");
         if (version.startsWith("1.")) {
@@ -930,6 +881,71 @@ public final class TestUtils {
             insertMethod.execute();
             insertMethod.commit();
         }
+    }
+
+    public static String insertFromSelectPopulateTableStmt(
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+
+        StringBuilder insertFromSelect = new StringBuilder();
+        insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
+                case ColumnType.INT:
+                    insertFromSelect.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    insertFromSelect.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    insertFromSelect.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    insertFromSelect.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    insertFromSelect.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    insertFromSelect.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    insertFromSelect.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    insertFromSelect.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    insertFromSelect.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    insertFromSelect.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    insertFromSelect.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                insertFromSelect.append("," + Misc.EOL);
+            }
+        }
+        insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
+        insertFromSelect.append(")" + Misc.EOL);
+        return insertFromSelect.toString();
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
@@ -1066,7 +1082,41 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+    }
+
+    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
+        WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return new int[1];
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return true;
+            }
+        };
+        WorkerPool pool = new WorkerPool(config, Metrics.disabled());
+        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
+        try {
+            pool.assign(processingJob);
+            pool.freeOnHalt(processingJob);
+            pool.start(null);
+            task.run();
+        } finally {
+            pool.halt();
+        }
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -1140,47 +1190,5 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
-    }
-
-    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            while (processingJob.run(0)) {
-                Os.pause();
-            }
-        }
-    }
-
-    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
-        WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
-        WorkerPool pool = new WorkerPool(config);
-        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
-        try {
-            pool.assign(processingJob);
-            pool.freeOnHalt(processingJob);
-            pool.start(null);
-            task.run();
-        } finally {
-            pool.halt();
-        }
-    }
-
-    public static String getCsvRoot() {
-        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
-        try {
-            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
-            return new File(rootSource.toURI()).getParent();
-        } catch (URISyntaxException e) {
-            throw new AssertionError("missing test-import.csv", e);
-        }
     }
 }

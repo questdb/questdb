@@ -356,7 +356,7 @@ final public class Timestamps {
     }
 
     public static int getDayOfTheWeekOfEndOfYear(int year) {
-        return (year + Math.abs(year / 4) + Math.abs(year / 100) + Math.abs(year / 400)) % 7;
+        return (year + Math.abs(year / 4) - Math.abs(year / 100) + Math.abs(year / 400)) % 7;
     }
 
     public static int getDayOfWeek(long micros) {
@@ -852,6 +852,12 @@ final public class Timestamps {
     public static String toString(long micros) {
         CharSink sink = Misc.getThreadLocalBuilder();
         TimestampFormatUtils.appendDateTime(sink, micros);
+        return sink.toString();
+    }
+
+    public static String toUSecString(long micros) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
         return sink.toString();
     }
 

@@ -38,16 +38,16 @@ public class WriterRowUtils {
             final int typeBits = ColumnType.getGeoHashBits(type);
             final int charsRequired = (typeBits - 1) / 5 + 1;
             if (hashLen < charsRequired) {
-                val = GeoHashes.NULL;
+                throw ImplicitCastException.inconvertibleValue(0, hash, ColumnType.STRING, type);
             } else {
                 try {
-                    val = ColumnType.truncateGeoHashBits(
+                    val = GeoHashes.widen(
                             GeoHashes.fromString(hash, 0, charsRequired),
                             charsRequired * 5,
                             typeBits
                     );
                 } catch (NumericException e) {
-                    val = GeoHashes.NULL;
+                    throw ImplicitCastException.inconvertibleValue(0, hash, ColumnType.STRING, type);
                 }
             }
         } else {

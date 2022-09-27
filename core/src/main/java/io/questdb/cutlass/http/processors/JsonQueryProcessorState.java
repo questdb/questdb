@@ -169,10 +169,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 || Chars.equalsNc("con", request.getUrlParam("src"));
     }
 
-    public LogRecord debug() {
-        return LOG.debug().$('[').$(getFd()).$("] ");
-    }
-
     public LogRecord error() {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
@@ -250,8 +246,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 $(']').$();
     }
 
-    public void logSqlError(SqlException e) {
-        info().$("sql error [q=`").utf8(query).$("`, at=").$(e.getPosition()).$(", message=`").utf8(e.getFlyweightMessage()).$('`').$(']').$();
+    public void logSqlError(FlyweightMessageContainer container) {
+        info().$("sql error [q=`").utf8(query).$("`, at=").$(container.getPosition()).$(", message=`").utf8(container.getFlyweightMessage()).$('`').$(']').$();
     }
 
     public void logTimings() {

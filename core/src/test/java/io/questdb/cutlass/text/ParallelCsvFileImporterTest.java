@@ -1534,8 +1534,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             "false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" + //boolean parses anything other than true as false
                             "false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" + //short overflow
                             "false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" + //char adapter ignores anything after first character
-                            "true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" + //date format discovery is flawed
-                            "false\t61\t-1559\tH\t13\t13\t1970-01-13T00:00:00.000Z\t1970-01-14T00:00:00.000000Z\t13.1000\t13.2\ts13\tsy13\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\t\n",//geohash stores anything it can't parse as null
+                            "true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n", //date format discovery is flawed
                     //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values
                     "select * cnt from alltypes", "tstmp", true, false, true);
         });
@@ -2639,11 +2638,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
         executeWithPool(1, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try {
-                runAndFetchImportId("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", compiler, sqlExecutionContext);
+                executeCopy(compiler, sqlExecutionContext);
                 engine.getTextImportExecutionContext().resetActiveImportId();
-                runAndFetchImportId("copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", compiler, sqlExecutionContext);
+                executeCopy(compiler, sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. Another import request may be in progress."));
@@ -2659,11 +2656,13 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         return result;
     }
 
-    private String runAndFetchImportId(String copySql, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cq = compiler.compile(copySql, sqlExecutionContext);
+    private void executeCopy(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(
+                "copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
+                sqlExecutionContext
+        );
         try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
             Assert.assertTrue(cursor.hasNext());
-            return cursor.getRecord().getStr(0).toString();
         }
     }
 
