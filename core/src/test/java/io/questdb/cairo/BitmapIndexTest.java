@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemorySRImpl;
+import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -1090,6 +1091,16 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 assertEmptyCursor(reader);
             }
         });
+    }
+
+    @Test
+    public void testNullMemDoesNotCauseInfiniteLoops() {
+        try {
+            BitmapIndexUtils.searchValueBlock(new NullMemoryMR(), 0L, 63L, 1L);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains("index is corrupt, rowid not found [offset=0, cellCount=63, value=1]", e.getFlyweightMessage());
+        }
     }
 
     @Test
