@@ -69,7 +69,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             createTableAndCopy(tableName, tableCopyName);
 
             long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -98,7 +98,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             createTableAndCopy(tableName, tableCopyName);
 
             long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -313,7 +313,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             createTableAndCopy(tableName, tableCopyName);
 
             long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);

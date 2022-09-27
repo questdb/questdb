@@ -183,8 +183,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
-        } catch (SqlException e) {
-            syntaxError(context.getChunkedResponseSocket(), e, state);
+        } catch (SqlException | ImplicitCastException e) {
+            syntaxError(context.getChunkedResponseSocket(), state, e);
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponseSocket(), e, state);
@@ -571,14 +571,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void syntaxError(
             HttpChunkedResponseSocket socket,
-            SqlException sqlException,
-            TextQueryProcessorState state
+            TextQueryProcessorState state,
+            FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state)
                 .$("syntax-error [q=`").utf8(state.query)
-                .$("`, at=").$(sqlException.getPosition())
-                .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
+                .$("`, at=").$(container.getPosition())
+                .$(", message=`").$(container.getFlyweightMessage()).$('`')
                 .$(']').$();
-        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), state);
+        sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
     }
 }

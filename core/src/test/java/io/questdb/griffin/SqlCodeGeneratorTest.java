@@ -1957,6 +1957,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImplicitCastStrToDouble() throws Exception {
+        assertQuery("column\tprice\n" +
+                        "80.43224099968394\t0.8043224099968393\n" +
+                        "28.45577791213847\t0.2845577791213847\n" +
+                        "93.4460485739401\t0.9344604857394011\n" +
+                        "79.05675319675964\t0.7905675319675964\n" +
+                        "88.99286912289664\t0.8899286912289663\n" +
+                        "11.427984775756228\t0.11427984775756228\n" +
+                        "42.17768841969397\t0.4217768841969397\n" +
+                        "72.61136209823621\t0.7261136209823622\n" +
+                        "66.93837147631712\t0.6693837147631712\n" +
+                        "87.56771741121929\t0.8756771741121929\n",
+                "select '100'*price, price from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testInsertMissingQuery() throws Exception {
         assertFailure(
                 "insert into x (a,b)",

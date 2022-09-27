@@ -641,7 +641,7 @@ public class O3FailureTest extends AbstractO3Test {
                             sqlExecutionContext
                     );
 
-                    long maxTimestamp = IntervalUtils.parseFloorPartialDate("2022-02-24") + records * 1000L;
+                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {
@@ -1113,7 +1113,7 @@ public class O3FailureTest extends AbstractO3Test {
                             sqlExecutionContext
                     );
 
-                    long maxTimestamp = IntervalUtils.parseFloorPartialDate("2022-02-24") + records * 1000L;
+                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {

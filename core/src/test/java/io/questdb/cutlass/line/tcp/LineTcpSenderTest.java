@@ -145,7 +145,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long tsMicros = IntervalUtils.parseFloorPartialDate("2022-02-25");
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
                         .boolColumn("bool_field", true)
@@ -172,7 +172,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long ts = IntervalUtils.parseFloorPartialDate("2022-02-25");
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .doubleColumn("negative_inf", Double.NEGATIVE_INFINITY)
                         .doubleColumn("positive_inf", Double.POSITIVE_INFINITY)

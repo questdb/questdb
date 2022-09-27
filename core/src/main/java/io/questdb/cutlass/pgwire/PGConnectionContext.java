@@ -320,17 +320,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         circuitBreaker.resetMaxTimeToDefault();
     }
 
-    private void evictNamedStatementWrappersAndClear() {
-        if (namedStatementMap.size() > 0) {
-            ObjList<CharSequence> names = namedStatementMap.keys();
-            for (int i = 0, n = names.size(); i < n; i++) {
-                CharSequence name = names.getQuick(i);
-                namedStatementWrapperPool.push(namedStatementMap.get(name));
-            }
-            namedStatementMap.clear();
-        }
-    }
-
     @Override
     public PGConnectionContext of(long fd, IODispatcher<PGConnectionContext> dispatcher) {
         PGConnectionContext r = super.of(fd, dispatcher);
@@ -443,6 +432,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
             reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
+        } catch (ImplicitCastException e) {
+            reportNonCriticalError(-1, e.getFlyweightMessage());
         } catch (CairoException e) {
             if (e.isInterruption()) {
                 reportQueryCancelled(e.getFlyweightMessage());
@@ -479,11 +470,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
         dbcs.of(address, address + valueLen);
-        try {
-            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, locale));
-        } catch (NumericException ex) {
-            throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
-        }
+        bindVariableService.define(index, ColumnType.DATE, 0);
+        bindVariableService.setStr(index, dbcs);
     }
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -1271,6 +1259,17 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
+    private void evictNamedStatementWrappersAndClear() {
+        if (namedStatementMap.size() > 0) {
+            ObjList<CharSequence> names = namedStatementMap.keys();
+            for (int i = 0, n = names.size(); i < n; i++) {
+                CharSequence name = names.getQuick(i);
+                namedStatementWrapperPool.push(namedStatementMap.get(name));
+            }
+            namedStatementMap.clear();
+        }
+    }
+
     private void executeInsert() throws SqlException {
         final TableWriterFrontend writer;
         try {
@@ -1681,14 +1680,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void prepareNonCriticalError(int position, CharSequence message) {
-        prepareErrorResponse(position, message);
-        LOG.error()
-                .$("error [pos=").$(position)
-                .$(", msg=`").$(message).$('`')
-                .I$();
-    }
-
     private void prepareErrorResponse(int position, CharSequence message) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
@@ -1751,6 +1742,14 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void prepareNoDataMessage() {
         responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
         responseAsciiSink.putIntDirect(INT_BYTES_X);
+    }
+
+    private void prepareNonCriticalError(int position, CharSequence message) {
+        prepareErrorResponse(position, message);
+        LOG.error()
+                .$("error [pos=").$(position)
+                .$(", msg=`").$(message).$('`')
+                .I$();
     }
 
     private void prepareParameterDescription() {
@@ -1888,7 +1887,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
                 }
             }
-        } catch (SqlException e) {
+        } catch (SqlException | ImplicitCastException e) {
             freeFactory();
             typesAndUpdate = Misc.free(typesAndUpdate);
             throw e;
@@ -2414,8 +2413,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void reportError(CairoException ex)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void reportError(CairoException ex) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareError(ex);
         sendReadyForNewQuery();
         clearRecvBuffer();

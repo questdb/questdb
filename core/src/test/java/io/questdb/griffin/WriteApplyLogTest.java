@@ -124,7 +124,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     Path walPath = new Path()
             ) {
                 walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
-                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
+                long timestampLo = IntervalUtils.parseFloorPartialTimestamp(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
                 LOG.info().$("=== Applying WAL transaction ===").$();
@@ -133,7 +133,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
 
                 // Apply second WAL segment
                 LOG.info().$("=== Applying WAL transaction 2 ===").$();
-                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
+                long timestampLo2 = IntervalUtils.parseFloorPartialTimestamp(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
                 applyWalData(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
@@ -175,7 +175,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     Path walPath = new Path()
             ) {
                 walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
-                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
+                long timestampLo = IntervalUtils.parseFloorPartialTimestamp(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
                 LOG.info().$("=== Applying WAL transaction ===").$();
@@ -186,7 +186,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
 
                 // Apply second WAL segment
                 LOG.info().$("=== Applying WAL transaction 2 ===").$();
-                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
+                long timestampLo2 = IntervalUtils.parseFloorPartialTimestamp(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
                 applyWalData(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);

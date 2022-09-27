@@ -42,6 +42,18 @@ import io.questdb.std.ObjList;
 import static io.questdb.cairo.ColumnType.GEO_HASH_MAX_BITS_LENGTH;
 
 public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
+    public static Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
+        if (value.isConstant()) {
+            final int bits = ColumnType.getGeoHashBits(geoType);
+            assert bits > 0 && bits < GEO_HASH_MAX_BITS_LENGTH + 1;
+            return Constants.getGeoHashConstantWithType(
+                    getGeoHashImpl(value.getStr(null), argPosition, bits),
+                    geoType
+            );
+        }
+        return new Func(geoType, value, argPosition);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Sg)";
@@ -59,27 +71,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         return newInstance(argPosition, geoType, value);
     }
 
-    public static Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
-        if (value.isConstant()) {
-            try {
-                final int bits = ColumnType.getGeoHashBits(geoType);
-                assert bits > 0 && bits < GEO_HASH_MAX_BITS_LENGTH + 1;
-                return Constants.getGeoHashConstantWithType(
-                        getGeoHashImpl(value.getStr(null), argPosition, bits),
-                        geoType
-                );
-
-            } catch (NumericException e) {
-                // throw SqlException if string literal is invalid geohash
-                // runtime parsing errors will result in NULL geohash
-                throw SqlException.position(argPosition).put("invalid GEOHASH");
-            }
-        }
-        return new Func(geoType, value, argPosition);
-    }
-
-    // todo: consolidate
-    private static long getGeoHashImpl(CharSequence value, int position, int typeBits) throws SqlException, NumericException {
+    private static long getGeoHashImpl(CharSequence value, int position, int typeBits) throws SqlException {
         if (value == null || value.length() == 0) {
             return GeoHashes.NULL;
         }
@@ -91,8 +83,14 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
         // Don't parse full string, it can be over 12 chars and result in overflow
         int parseChars = (typeBits - 1) / 5 + 1;
-        long lvalue = GeoHashes.fromString(value, 0, parseChars);
-        return lvalue >>> (parseChars * 5 - typeBits);
+        try {
+            long lvalue = GeoHashes.fromString(value, 0, parseChars);
+            return lvalue >>> (parseChars * 5 - typeBits);
+        } catch (NumericException e) {
+            // throw SqlException if string literal is invalid geohash
+            // runtime parsing errors will result in NULL geohash
+            throw SqlException.position(position).put("invalid GEOHASH");
+        }
     }
 
     public static class Func extends GeoByteFunction implements UnaryFunction {
@@ -140,7 +138,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         private long getGeoHashLong0(Record rec) {
             try {
                 return getGeoHashImpl(arg.getStr(rec), position, bitsPrecision);
-            } catch (SqlException | NumericException e) {
+            } catch (SqlException e) {
                 return GeoHashes.NULL;
             }
         }

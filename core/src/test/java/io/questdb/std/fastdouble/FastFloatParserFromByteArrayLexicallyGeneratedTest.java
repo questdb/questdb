@@ -25,7 +25,7 @@ public class FastFloatParserFromByteArrayLexicallyGeneratedTest extends Abstract
         float actual = 0;
         boolean actualFailed = false;
         try {
-            actual = FastFloatParser.parseFloat(str.getBytes(StandardCharsets.ISO_8859_1));
+            actual = FastFloatParser.parseFloat(str.getBytes(StandardCharsets.ISO_8859_1), false);
             assertEquals("str=" + str, expected, actual, 0.001);
         } catch (NumericException t) {
             actualFailed = true;

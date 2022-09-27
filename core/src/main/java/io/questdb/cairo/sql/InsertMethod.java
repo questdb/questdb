@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.griffin.SqlException;
 
 import java.io.Closeable;
 
@@ -32,7 +33,7 @@ public interface InsertMethod extends Closeable {
     /**
      * @return inserted row count
      */
-    long execute();
+    long execute() throws SqlException;
 
     void commit();
 

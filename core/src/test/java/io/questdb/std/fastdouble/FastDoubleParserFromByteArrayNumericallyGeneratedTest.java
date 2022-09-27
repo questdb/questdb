@@ -12,6 +12,6 @@ import java.nio.charset.StandardCharsets;
 public class FastDoubleParserFromByteArrayNumericallyGeneratedTest extends AbstractDoubleNumericallyGeneratedTest {
     @Override
     protected double parse(String str) throws NumericException {
-        return FastDoubleParser.parseDouble(str.getBytes(StandardCharsets.ISO_8859_1));
+        return FastDoubleParser.parseDouble(str.getBytes(StandardCharsets.ISO_8859_1), false);
     }
 }

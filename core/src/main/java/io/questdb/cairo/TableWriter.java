@@ -6302,17 +6302,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         default void putTimestamp(int columnIndex, long value) {
             putLong(columnIndex, value);
         }
-
-        default void putTimestamp(int columnIndex, CharSequence value) {
-            // try UTC timestamp first (micro)
-            long l;
-            try {
-                l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
-            }
-            putTimestamp(columnIndex, l);
-        }
     }
 
     @FunctionalInterface

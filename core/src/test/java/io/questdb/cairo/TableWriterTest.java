@@ -1717,7 +1717,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsStringInvalid() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr("ooo", 15, GeoHashes.NULL));
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoStr("ooo", 15, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: ooo [STRING -> GEOHASH(3c)] tuple: 0", e.getFlyweightMessage());
+            }
+        });
     }
 
     @Test
@@ -1737,7 +1744,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsStringShorterThanType() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 44, GeoHashes.NULL));
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoStr("g912j", 44, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: g912j [STRING -> GEOHASH(44b)] tuple: 0", e.getFlyweightMessage());
+            }
+        });
     }
 
     @Test
@@ -1908,17 +1922,17 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = new TableWriter(configuration, "weather", metrics)) {
                 TableWriter.Row r;
-                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-01-31"));
+                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-31"));
                 r.putDouble(0, 1.0);
                 r.append();
 
                 // Out of order
-                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-01-30"));
+                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-30"));
                 r.putDouble(0, 1.0);
                 r.cancel();
 
                 // Back in order
-                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-02-01"));
+                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-02-01"));
                 r.putDouble(0, 1.0);
                 r.append();
 
@@ -1927,8 +1941,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             long[] expectedTs = new long[]{
-                    IntervalUtils.parseFloorPartialDate("2021-01-31"),
-                    IntervalUtils.parseFloorPartialDate("2021-02-01")
+                    IntervalUtils.parseFloorPartialTimestamp("2021-01-31"),
+                    IntervalUtils.parseFloorPartialTimestamp("2021-02-01")
             };
             try (TableReader reader = new TableReader(configuration, "weather")) {
                 int col = reader.getMetadata().getColumnIndex("timestamp");
@@ -1956,7 +1970,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
                 // Add 46 rows in partition 2020-07-13T00
-                long ts = IntervalUtils.parseFloorPartialDate("2020-07-13");
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2020-07-13");
                 long increment = Timestamps.SECOND_MICROS;
                 int rows = 46;
                 for (int i = 0; i < rows; i++) {
