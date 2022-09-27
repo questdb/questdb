@@ -855,6 +855,12 @@ final public class Timestamps {
         return sink.toString();
     }
 
+    public static String toUSecString(long micros) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
+        return sink.toString();
+    }
+
     public static long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
         return toTimezone(utcTimestamp, locale, timezone, 0, timezone.length());
     }

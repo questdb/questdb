@@ -1,5 +1,6 @@
 package io.questdb.griffin;
 
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -82,10 +83,9 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
         testInsert("double", "-9223372036854775250.0", "long", "-9223372036854774784");
     }
 
-    //input can't be -9223372036854775808 due to  #1615
     @Test
     public void testInsertDoubleAsLong_ReturnsMinValue() throws Exception {
-        testInsert("double", "-9223372036854775300.0", "long", "NaN");//-9223372036854775808L is interpreted as NaN
+        testInsertCausesException("double", "-9223372036854775300.0", "long");
     }
 
     @Test
@@ -221,7 +221,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
     //input can't be -9223372036854775808 due to  #1615
     @Test
     public void testInsertFloatAsLong_ReturnsMinValue() throws Exception {
-        testInsert("float", "-9223372036854775807.0", "long", "NaN");//-9223372036854775808 is interpreted as NaN
+        testInsertCausesException("float", "-9223372036854775807.0", "long");
     }
 
     @Test
@@ -257,7 +257,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertFloatAsInt_ReturnsMinValue() throws Exception {
-        testInsert("float", "-2147483648.0", "int", "NaN");//see Numbers.append:127
+        testInsertCausesException("float", "-2147483648.0", "int");
     }
 
     @Test
@@ -267,7 +267,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertFloatAsInt_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("float", "2147483648.0", "int");
+        testInsert("float", "2147483648.0", "int", "2147483647");
     }
 
     @Test
@@ -524,8 +524,8 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
             });
 
             Assert.fail("SqlException should be thrown!");
-        } catch (SqlException sqlE) {
-            TestUtils.assertContains(sqlE.getFlyweightMessage(), "inconvertible value");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }
 

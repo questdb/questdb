@@ -85,7 +85,9 @@ public final class Numbers {
             return;
         }
 
-        if (f < 0) {
+        // it is very awkward to distinguish between 0.0 and -0.0
+        // -0.0 < 0 is false
+        if (f < 0 || 1 / f == Float.NEGATIVE_INFINITY) {
             sink.put('-');
             f = -f;
         }
@@ -110,10 +112,6 @@ public final class Numbers {
             sink.put((char) ('0' + scaled / factor % 10));
             factor /= 10;
         }
-    }
-
-    public static boolean isPow2(int value) {
-        return (value & (value - 1)) == 0;
     }
 
     public static void append(CharSink sink, final int value) {
@@ -570,8 +568,30 @@ public final class Numbers {
         return Numbers.LONG_NaN;
     }
 
+    public static long interleaveBits(long x, long y) {
+        return spreadBits(x) | (spreadBits(y) << 1);
+    }
+
     public static boolean isFinite(double d) {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
+    }
+
+    public static boolean isPow2(int value) {
+        return (value & (value - 1)) == 0;
+    }
+
+    public static double longToDouble(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
+    public static float longToFloat(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Float.NaN;
     }
 
     public static int msb(int value) {
@@ -583,15 +603,15 @@ public final class Numbers {
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
-        return FastDoubleParser.parseDouble(sequence);
+        return FastDoubleParser.parseDouble(sequence, true);
     }
 
     public static double parseDouble(long str, int len) throws NumericException {
-        return FastDoubleParser.parseDouble(str, len);
+        return FastDoubleParser.parseDouble(str, len, true);
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
-        return FastFloatParser.parseFloat(sequence);
+        return FastFloatParser.parseFloat(sequence, true);
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {
@@ -835,10 +855,6 @@ public final class Numbers {
         v = (v | (v << 2)) & 0x3333333333333333L;
         v = (v | (v << 1)) & 0x5555555555555555L;
         return v;
-    }
-
-    public static long interleaveBits(long x, long y) {
-        return spreadBits(x) | (spreadBits(y) << 1);
     }
 
     @NotNull

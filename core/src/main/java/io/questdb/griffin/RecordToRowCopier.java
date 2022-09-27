@@ -22,13 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin;
+
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Record;
 
 @FunctionalInterface
-public interface FlyweightMessageContainer {
-    CharSequence getFlyweightMessage();
-
-    default int getPosition() {
-        return 0;
-    }
+public interface RecordToRowCopier {
+    void copy(Record record, TableWriter.Row row);
 }

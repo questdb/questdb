@@ -466,7 +466,7 @@ public class IntrinsicModelTest {
 
     private void assertDateFloor(String expected, String value) throws NumericException {
         sink.clear();
-        long t = IntervalUtils.parseFloorPartialDate(value);
+        long t = IntervalUtils.parseFloorPartialTimestamp(value);
         TimestampFormatUtils.appendDateTimeUSec(sink, t);
         TestUtils.assertEquals(expected, sink);
     }

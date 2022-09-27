@@ -99,8 +99,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandDropPartition() throws Exception {
         long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;
-        long day3 = IntervalUtils.parseFloorPartialDate("1970-03-03") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
+        long day3 = IntervalUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
         runInContext((server) -> {
                     String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
                     send(server, lineData);
@@ -334,7 +334,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandSequenceReleased() throws Exception {
         long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
         runInContext((server) -> {
                     String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
                     send(server, lineData);

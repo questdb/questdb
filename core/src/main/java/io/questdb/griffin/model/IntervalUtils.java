@@ -295,7 +295,7 @@ public final class IntervalUtils {
         return parseCCPartialDate(seq, 0, seq.length());
     }
 
-    public static long parseFloorPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
+    public static long parseFloorPartialTimestamp(CharSequence seq, final int pos, int lim) throws NumericException {
         long ts;
         if (lim - pos < 4) {
             throw NumericException.INSTANCE;
@@ -394,8 +394,8 @@ public final class IntervalUtils {
         return ts;
     }
 
-    public static long parseFloorPartialDate(CharSequence seq) throws NumericException {
-        return parseFloorPartialDate(seq, 0, seq.length());
+    public static long parseFloorPartialTimestamp(CharSequence seq) throws NumericException {
+        return parseFloorPartialTimestamp(seq, 0, seq.length());
     }
 
     public static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
@@ -545,7 +545,7 @@ public final class IntervalUtils {
                 }
 
                 try {
-                    long millis = parseFloorPartialDate(seq, lo, lim);
+                    long millis = parseFloorPartialTimestamp(seq, lo, lim);
                     addHiLoInterval(millis, millis, operation, out);
                     break;
                 } catch (NumericException e) {
@@ -596,7 +596,7 @@ public final class IntervalUtils {
 
     public static void parseSingleTimestamp(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
         try {
-            long millis = parseFloorPartialDate(seq, lo, lim);
+            long millis = parseFloorPartialTimestamp(seq, lo, lim);
             addHiLoInterval(millis, millis, operation, out);
         } catch (NumericException e) {
             for (int i = lo; i < lim; i++) {
@@ -615,7 +615,7 @@ public final class IntervalUtils {
 
     public static long tryParseTimestamp(CharSequence seq) throws CairoException {
         try {
-            return parseFloorPartialDate(seq, 0, seq.length());
+            return parseFloorPartialTimestamp(seq, 0, seq.length());
         } catch (NumericException e) {
             throw CairoException.nonCritical().put("Invalid timestamp: ").put(seq);
         }

@@ -21,24 +21,6 @@ import static org.junit.Assert.fail;
  */
 public class FastDoubleParserTest extends AbstractFastXParserTest {
     @Test
-    public void testParseDoubleBitsByteArrayIntInt() {
-        createAllTestDataForDouble()
-                .forEach(t -> testBits(t, u -> FastDoubleParser.parseDoubleBits(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength())));
-    }
-
-    @Test
-    public void testParseDoubleBitsCharArrayIntInt() {
-        createAllTestDataForDouble()
-                .forEach(t -> testBits(t, u -> FastDoubleParser.parseDoubleBits(u.input().toCharArray(), u.charOffset(), u.charLength())));
-    }
-
-    @Test
-    public void testParseDoubleBitsCharSequenceIntInt() {
-        createAllTestDataForDouble()
-                .forEach(t -> testBits(t, u -> FastDoubleParser.parseDoubleBits(u.input(), u.charOffset(), u.charLength())));
-    }
-
-    @Test
     public void testParseDoubleBitsMemIntInt() {
         createAllTestDataForDouble()
                 .forEach(t -> testBits(t, u -> {
@@ -52,7 +34,7 @@ public class FastDoubleParserTest extends AbstractFastXParserTest {
                                             throw NumericException.INSTANCE;
                                         }
                                         Chars.asciiStrCpy(s, len, mem);
-                                        return FastDoubleParser.parseDouble(mem, u.charOffset(), u.charLength());
+                                        return FastDoubleParser.parseDouble(mem, u.charOffset(), u.charLength(), false);
                                     } finally {
                                         Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
                                     }
@@ -66,13 +48,13 @@ public class FastDoubleParserTest extends AbstractFastXParserTest {
         createAllTestDataForDouble().stream()
                 .filter(t -> t.charLength() == t.input().length()
                         && t.charOffset() == 0)
-                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().getBytes(StandardCharsets.UTF_8))));
+                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().getBytes(StandardCharsets.UTF_8), false)));
     }
 
     @Test
     public void testParseDoubleByteArrayIntInt() {
         createAllTestDataForDouble()
-                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength())));
+                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength(), false)));
     }
 
     @Test
@@ -80,13 +62,13 @@ public class FastDoubleParserTest extends AbstractFastXParserTest {
         createAllTestDataForDouble().stream()
                 .filter(t -> t.charLength() == t.input().length()
                         && t.charOffset() == 0)
-                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().toCharArray())));
+                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().toCharArray(), false)));
     }
 
     @Test
     public void testParseDoubleCharArrayIntInt() {
         createAllTestDataForDouble()
-                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().toCharArray(), u.charOffset(), u.charLength())));
+                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input().toCharArray(), u.charOffset(), u.charLength(), false)));
     }
 
     @Test
@@ -94,7 +76,7 @@ public class FastDoubleParserTest extends AbstractFastXParserTest {
         createAllTestDataForDouble().stream()
                 .filter(t -> t.charLength() == t.input().length()
                         && t.charOffset() == 0)
-                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input())));
+                .forEach(t -> test(t, u -> FastDoubleParser.parseDouble(u.input(), false)));
     }
 
     @Test

@@ -67,7 +67,7 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
             final CharSequence value = arg.getStr(rec);
             try {
                 if (value != null) {
-                    return IntervalUtils.parseFloorPartialDate(value);
+                    return IntervalUtils.parseFloorPartialTimestamp(value);
                 }
             } catch (NumericException ignore) {
             }

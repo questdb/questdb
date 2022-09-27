@@ -4612,7 +4612,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testMissingTableInSubQuery() throws Exception {
-        // todo: 24 is the correct position
         assertSyntaxError(
                 "with x as (select a from) x",
                 25,

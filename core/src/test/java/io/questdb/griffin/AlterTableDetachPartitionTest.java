@@ -278,12 +278,12 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
 
-                    TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate("2022-06-03T12:00:00.000000Z"));
+                    TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-06-03T12:00:00.000000Z"));
                     row.putLong(0, 33L);
                     row.putInt(1, 33);
                     row.append();
 
-                    Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(IntervalUtils.parseFloorPartialDate(timestampDay)));
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(IntervalUtils.parseFloorPartialTimestamp(timestampDay)));
                 }
 
                 assertContent(
@@ -329,7 +329,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     row.putInt(1, 33);
                     row.append();
 
-                    Assert.assertEquals(AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS, writer.attachPartition(IntervalUtils.parseFloorPartialDate(timestampDay)));
+                    Assert.assertEquals(AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS, writer.attachPartition(IntervalUtils.parseFloorPartialTimestamp(timestampDay)));
                 }
 
                 assertContent(
@@ -1121,12 +1121,12 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
 
-                    TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate("2022-05-03T12:00:00.000000Z"));
+                    TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-05-03T12:00:00.000000Z"));
                     row.putLong(0, 33L);
                     row.putInt(1, 33);
                     row.append();
 
-                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialDate(timestampDay))));
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
                 }
 
                 renameDetachedToAttachable(tableName, timestampDay);
