@@ -127,7 +127,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.STRING:
-                                row.putStr(index, isNull ? null : rnd.nextString(rnd.nextInt(strLen)));
+                                row.putStr(index, isNull ? null : strLen == 0 ? "" : rnd.nextString(rnd.nextInt(strLen)));
                                 break;
 
                             default:

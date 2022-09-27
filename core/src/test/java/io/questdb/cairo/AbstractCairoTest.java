@@ -129,6 +129,7 @@ public abstract class AbstractCairoTest {
     private static long memoryUsage = -1;
 
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    public static long dataAppendPageSize = -1;
 
     protected static void assertFactoryMemoryUsage() {
         if (memoryUsage > -1) {
@@ -355,6 +356,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public long getDataAppendPageSize() {
+                return dataAppendPageSize > 0 ? super.getDataAppendPageSize() : dataAppendPageSize;
+            }
+
+            @Override
             public int getColumnPurgeQueueCapacity() {
                 return columnVersionPurgeQueueCapacity < 0 ? super.getColumnPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
             }
@@ -489,6 +495,7 @@ public abstract class AbstractCairoTest {
         sink.clear();
         ff = null;
         memoryUsage = -1;
+        dataAppendPageSize = -1;
     }
 
     protected static void configureForBackups() throws IOException {

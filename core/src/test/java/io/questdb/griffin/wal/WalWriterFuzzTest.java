@@ -87,26 +87,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
-        setFuzzProbabilities(0.05,
-                0.2,
-                0.1,
-                0.005,
-                0.05,
-                0.05,
-                0.05);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05);
         setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
-        setFuzzProbabilities(0.05,
-                0.2,
-                0.1,
-                0.005,
-                0.05,
-                0.05,
-                0.05);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000);
         runFuzz(TestUtils.generateRandom(LOG));
     }
@@ -121,7 +109,31 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteFullRandom() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        testWalWriteFullRandom(rnd);
+        dataAppendPageSize = (long) Math.pow(2, rnd.nextInt(30));
+        fullRandomFuzz(rnd);
+    }
+
+    private void fullRandomFuzz(Rnd rnd) throws Exception {
+        setFuzzProbabilities(
+                getZeroToOneDouble(rnd),
+                getZeroToOneDouble(rnd),
+                getZeroToOneDouble(rnd),
+                getZeroToOneDouble(rnd),
+                getZeroToOneDouble(rnd),
+                getZeroToOneDouble(rnd),
+                getZeroToOneDouble(rnd)
+        );
+
+        setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(2_000_000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000)
+        );
+        runFuzz(rnd);
     }
 
     public void testWalWriteFullRandom(Rnd rnd) throws Exception {
