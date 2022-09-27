@@ -146,7 +146,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
         pageAddressCache.clear();
-        symbolTableSource = Misc.free(symbolTableSource);
+        symbolTableSource = Misc.freeIfCloseable(symbolTableSource);
         // collect sequence may not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
@@ -164,7 +164,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     @Override
     public void close() {
         this.clear();
-        Misc.free(circuitBreaker);
+        Misc.freeIfCloseable(circuitBreaker);
         Misc.free(record);
     }
 
@@ -208,7 +208,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         .I$();
             }
         } catch (Throwable e) {
-            this.symbolTableSource = Misc.free(this.symbolTableSource);
+            this.symbolTableSource = Misc.freeIfCloseable(this.symbolTableSource);
             throw e;
         }
         return this;

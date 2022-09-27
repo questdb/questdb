@@ -104,7 +104,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             Misc.free(map);
-            Misc.free(partitionByRecord.getFunctions());
+            Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
         @Override
