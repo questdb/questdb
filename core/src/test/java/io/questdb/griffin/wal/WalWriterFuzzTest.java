@@ -417,7 +417,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         colRenameProb,
                         transactionCount,
                         strLen,
-                        generateSymbols(rnd, rnd.nextInt(symbolCountMax), symbolStrLenMax, tableNameNoWal)
+                        generateSymbols(rnd, rnd.nextInt(symbolCountMax - 5) + 5, symbolStrLenMax, tableNameNoWal)
                 );
             }
             try (TableReader reader = new TableReader(configuration, tableNameWal)) {

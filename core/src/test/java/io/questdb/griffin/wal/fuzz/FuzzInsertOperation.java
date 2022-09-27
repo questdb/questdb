@@ -115,7 +115,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.SYMBOL:
-                                row.putSym(index, isNull ? null : symbols[rnd.nextInt(symbols.length)]);
+                                row.putSym(index, isNull || symbols.length == 0 ? null : symbols[rnd.nextInt(symbols.length)]);
                                 break;
 
                             case ColumnType.FLOAT:
