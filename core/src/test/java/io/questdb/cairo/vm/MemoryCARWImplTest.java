@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ConversionException;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TestRecord;
+import io.questdb.cairo.*;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.std.*;
@@ -471,9 +468,11 @@ public class MemoryCARWImplTest {
             try {
                 mem.putLong256(padded);
                 Assert.fail();
-            } catch (ConversionException ex) {
-                Assert.assertTrue(ex.getMessage().contains("invalid long256"));
-                Assert.assertTrue(ex.getMessage().contains(padded));
+            } catch (ImplicitCastException ex) {
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
+                        "inconvertible value: JUNK0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfedMOREJUNK [STRING -> LONG256]"
+                );
             }
         }
     }

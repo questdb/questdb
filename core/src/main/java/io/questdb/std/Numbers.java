@@ -24,13 +24,10 @@
 
 package io.questdb.std;
 
-import io.questdb.std.fastdouble.*;
+import io.questdb.std.fastdouble.FastDoubleParser;
+import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -539,6 +536,14 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
+    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
+        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
+            Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
+            return true;
+        }
+        return false;
+    }
+
     public static int hexToDecimal(int c) throws NumericException {
         int r = hexNumbers[c];
         if (r == -1) {
@@ -837,26 +842,6 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
-    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
-        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
-            try {
-                Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
-                return true;
-            } catch (NumericException ignored) {
-            }
-        }
-        return false;
-    }
-
-    public static long spreadBits(long v) {
-        v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
-        v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
-        v = (v | (v << 4)) & 0X0F0F0F0F0F0F0F0FL;
-        v = (v | (v << 2)) & 0x3333333333333333L;
-        v = (v | (v << 1)) & 0x5555555555555555L;
-        return v;
-    }
-
     @NotNull
     public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
         return extractLong256(text, len, long256) ? long256 : Long256Impl.NULL_LONG256;
@@ -1072,6 +1057,15 @@ public final class Numbers {
         long signMask = valueBits & Numbers.SIGN_BIT_MASK;
         double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
+    }
+
+    public static long spreadBits(long v) {
+        v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
+        v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
+        v = (v | (v << 4)) & 0X0F0F0F0F0F0F0F0FL;
+        v = (v | (v << 2)) & 0x3333333333333333L;
+        v = (v | (v << 1)) & 0x5555555555555555L;
+        return v;
     }
 
     private static void appendLongHex4(CharSink sink, long value) {
