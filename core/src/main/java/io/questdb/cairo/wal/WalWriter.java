@@ -57,7 +57,7 @@ public class WalWriter implements TableWriterFrontend {
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
 
     private final ObjList<MemoryMA> columns;
-    private final ObjList<SymbolMapReader> symbolMapReaders;
+    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final IntList initialSymbolCounts = new IntList();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final MillisecondClock millisecondClock;
@@ -101,14 +101,14 @@ public class WalWriter implements TableWriterFrontend {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.tableRegistry = tableRegistry;
         this.configuration = configuration;
-        this.millisecondClock = this.configuration.getMillisecondClock();
-        this.mkDirMode = this.configuration.getMkDirMode();
-        this.ff = this.configuration.getFilesFacade();
+        this.millisecondClock = configuration.getMillisecondClock();
+        this.mkDirMode = configuration.getMkDirMode();
+        this.ff = configuration.getFilesFacade();
         this.tableName = tableName;
         final int walId = tableRegistry.getNextWalId(tableName);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = new Path().of(this.configuration.getRoot()).concat(tableName).concat(walName);
+        this.path = new Path().of(configuration.getRoot()).concat(tableName).concat(walName);
         this.rootLen = path.length();
         this.open = true;
 
@@ -122,7 +122,6 @@ public class WalWriter implements TableWriterFrontend {
             columns = new ObjList<>(columnCount * 2);
             nullSetters = new ObjList<>(columnCount);
 
-            symbolMapReaders = new ObjList<>();
             events = new WalWriterEvents(ff);
             events.of(symbolMaps, initialSymbolCounts);
 
@@ -287,7 +286,7 @@ public class WalWriter implements TableWriterFrontend {
         open = false;
         Misc.free(metadata);
         Misc.free(events);
-        freeSymbolMapWriters();
+        freeSymbolMapReaders();
         Misc.free(symbolMapMem);
         freeColumns(truncate);
 
@@ -771,10 +770,8 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void freeSymbolMapWriters() {
-        // should we remove this? does not close anything
-        // not even symbol map writer as the method name suggests, these are readers
-        Misc.freeObjListIfCloseable(symbolMapReaders);
+    private void freeSymbolMapReaders() {
+        symbolMapReaders.clear();
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -911,9 +908,8 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void removeSymbolMapWriter(int index) {
-        // do we need to close something not Closable?
-        Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
+    private void removeSymbolMapReader(int index) {
+        symbolMapReaders.getAndSetQuick(index, null);
         initialSymbolCounts.setQuick(index, -1);
     }
 
@@ -1397,7 +1393,7 @@ public class WalWriter implements TableWriterFrontend {
                         // it will add the column file / flush metadata on next row write.
 
                         if (ColumnType.isSymbol(type)) {
-                            removeSymbolMapWriter(index);
+                            removeSymbolMapReader(index);
                         }
                         markColumnRemoved(index);
                         LOG.info().$("removed column from wal [path=").$(path).$(", columnName=").$(columnName).I$();
