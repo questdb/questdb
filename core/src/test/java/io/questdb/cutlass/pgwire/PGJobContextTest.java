@@ -161,8 +161,9 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     private void mayDrainWalQueue() {
-        if (walEnabled)
+        if (walEnabled) {
             drainWalQueue();
+        }
     }
 
     private boolean isDisabledForWalRun() {
@@ -6442,6 +6443,8 @@ create table tab as (
 
     public void testTruncateAndUpdateOnTable(String config) throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            maySkipOnWalRun();  // Truncate table is not supported by WAL yet
+
             try (Statement stat = connection.createStatement()) {
                 stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
             }
@@ -6455,6 +6458,8 @@ create table tab as (
                 stat.execute("update tb set i = 1, b = true;");
 
                 try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
+                    mayDrainWalQueue();
+
                     StringSink sink = new StringSink();
                     assertResultSet("cnt[BIGINT]\n2\n", sink, result);
                 }
