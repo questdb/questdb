@@ -49,6 +49,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class Bootstrap {
+
+    public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
     private static final AtomicInteger NODE_ID = new AtomicInteger(-1);
     private static final String LOG_NAME = "server-main";
@@ -123,7 +125,7 @@ public class Bootstrap {
         // non /server.conf properties
         final CharSequenceObjHashMap<String> argsMap = processArgs(args);
         rootDirectory = argsMap.get("-d");
-        if (rootDirectory == null) {
+        if (Chars.isBlank(rootDirectory)) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
@@ -133,9 +135,10 @@ public class Bootstrap {
         // setup logger
         final int nodeId = NODE_ID.incrementAndGet();
         final String logName = nodeId > 0 ? String.format("%s-%d", LOG_NAME, nodeId) : LOG_NAME;
-        LogFactory logFactory = new LogFactory();
-        LogFactory.configureFromSystemProperties(logFactory, rootDirectory);
-        log = logFactory.getLog(logName);
+        if (argsMap.get(SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION) == null) {
+            LogFactory.configureFromSystemProperties(new LogFactory(), rootDirectory);
+        }
+        log = LogFactory.getInstance().getLog(logName);
 
         // report copyright and architecture
         log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion())

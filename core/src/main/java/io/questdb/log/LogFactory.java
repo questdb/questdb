@@ -51,6 +51,7 @@ public class LogFactory implements Closeable {
 
     //name of default logging configuration file (in jar and in $root/conf/ dir )
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
+    private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
 
     //placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
@@ -159,10 +160,6 @@ public class LogFactory implements Closeable {
         return logFactory;
     }
 
-    @TestOnly
-    public static synchronized void forgetInstance() {
-        INSTANCE = null;
-    }
 
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
@@ -373,7 +370,7 @@ public class LogFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
+        int level = DEFAULT_LOG_LEVEL;
         if (isForcedDebug()) {
             level = level | LogLevel.DEBUG;
         }

@@ -43,14 +43,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainStart() throws Exception {
         assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", root.toString())) {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 Assert.assertNotNull(serverMain.getConfiguration());
                 Assert.assertNotNull(serverMain.getCairoEngine());
                 Assert.assertNotNull(serverMain.getWorkerPoolManager());
                 Assert.assertFalse(serverMain.hasStarted());
                 Assert.assertFalse(serverMain.hasBeenClosed());
                 serverMain.start();
-                Os.sleep(500L); // simulate some activity
             }
         });
     }

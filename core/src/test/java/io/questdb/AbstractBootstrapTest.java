@@ -24,7 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -81,7 +80,6 @@ public abstract class AbstractBootstrapTest {
     @Before
     public void setUp() {
         try {
-            LogFactory.forgetInstance();
             root = temp.newFolder("QDB_DATA").getAbsolutePath();
             TestUtils.createTestPath(root);
         } catch (IOException e) {
@@ -93,7 +91,6 @@ public abstract class AbstractBootstrapTest {
     public void tearDown() {
         TestUtils.removeTestPath(root);
         temp.delete();
-        LogFactory.forgetInstance();
     }
 
     static final Properties PG_CONNECTION_PROPERTIES = new Properties();
@@ -162,9 +159,24 @@ public abstract class AbstractBootstrapTest {
         }
     }
 
+    static String [] extendArgsWith(String[] args, String... moreArgs) {
+        int argsLen = args != null ? args.length : 0;
+        int extLen = moreArgs != null ? moreArgs.length : 0;
+        int size = argsLen + extLen;
+        if (size < 1) {
+            Assert.fail("what are you trying to do?");
+        }
+        String [] extendedArgs = new String[size];
+        System.arraycopy(args, 0, extendedArgs, 0, argsLen);
+        for (int i=0; i < extLen; i++) {
+            extendedArgs[argsLen + i] = moreArgs[i];
+        }
+        return extendedArgs;
+    }
+
     void assertFail(String message, String... args) {
         try {
-            Bootstrap.withArgs(args);
+            Bootstrap.withArgs(extendArgsWith(args, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION));
             Assert.fail();
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);

@@ -51,11 +51,6 @@ public class LogFactoryTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
-    @After
-    public void teardown() {
-        LogFactory.forgetInstance();
-    }
-
     @Test
     public void testBadWriter() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
