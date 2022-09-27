@@ -771,7 +771,7 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void freeSymbolMapReaders() {
-        symbolMapReaders.clear();
+        Misc.freeObjListIfCloseable(symbolMapReaders);
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -909,7 +909,7 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void removeSymbolMapReader(int index) {
-        symbolMapReaders.getAndSetQuick(index, null);
+        Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         initialSymbolCounts.setQuick(index, -1);
     }
 
