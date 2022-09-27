@@ -39,7 +39,6 @@ public final class Misc {
     private Misc() {
     }
 
-    @SuppressWarnings("SameReturnValue")
     public static <T extends Closeable> T free(T object) {
         if (object != null) {
             try {
@@ -52,7 +51,6 @@ public final class Misc {
     }
 
     //same as free() but can be used when input object type is not guaranteed to be Closeable
-    @SuppressWarnings("SameReturnValue")
     public static <T> T freeIfCloseable(T object) {
         if (object instanceof Closeable) {
             try {

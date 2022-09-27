@@ -2751,7 +2751,6 @@ public class TableWriter implements Closeable {
         Misc.free(other);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
-        //Misc.free(attachMetadata);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
@@ -2759,7 +2758,7 @@ public class TableWriter implements Closeable {
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         updateOperator = Misc.free(updateOperator);
-        dropIndexOperator = null; //Misc.free(dropIndexOperator);
+        dropIndexOperator = null;
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
