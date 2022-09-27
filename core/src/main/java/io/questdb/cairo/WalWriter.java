@@ -473,7 +473,7 @@ public class WalWriter implements Closeable {
     }
 
     private void freeSymbolMapWriters() {
-        Misc.freeObjList(symbolMapReaders);
+        Misc.freeObjListIfCloseable(symbolMapReaders);
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -639,7 +639,7 @@ public class WalWriter implements Closeable {
     }
 
     private void removeSymbolMapWriter(int index) {
-        Misc.free(symbolMapReaders.getAndSetQuick(index, null));
+        Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         initialSymbolCounts.setQuick(index, -1);
     }
 
