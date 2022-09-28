@@ -212,7 +212,6 @@ public class Bootstrap {
         return log;
     }
 
-    @TestOnly
     void extractSite() throws IOException {
         URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
         long thisVersion = Long.MIN_VALUE;
@@ -391,7 +390,6 @@ public class Bootstrap {
         }
     }
 
-    @TestOnly
     static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
         final CharSequence dbRoot = cairoConfiguration.getRoot();
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
@@ -460,7 +458,6 @@ public class Bootstrap {
         ff.remove(path);
     }
 
-    @TestOnly
     static CharSequenceObjHashMap<String> processArgs(String... args) {
         final int n = args.length;
         if (n == 0) {

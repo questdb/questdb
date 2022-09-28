@@ -122,7 +122,6 @@ public class LogFactory implements Closeable {
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
 
-    @TestOnly
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
     }
@@ -318,7 +317,6 @@ public class LogFactory implements Closeable {
         configureFromSystemProperties(logFactory, null, false);
     }
 
-    @TestOnly
     static synchronized void configureFromSystemProperties(
             @NotNull LogFactory logFactory,
             @Nullable String rootDir,
