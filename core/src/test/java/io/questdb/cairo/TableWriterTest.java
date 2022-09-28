@@ -1722,7 +1722,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 assertGeoStr("ooo", 15, GeoHashes.NULL);
                 Assert.fail();
             } catch (ImplicitCastException e) {
-                TestUtils.assertEquals("inconvertible value: ooo [STRING -> GEOHASH(3c)] tuple: 0", e.getFlyweightMessage());
+                TestUtils.assertEquals("inconvertible value: `ooo` [STRING -> GEOHASH(3c)]", e.getFlyweightMessage());
             }
         });
     }
@@ -1749,7 +1749,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 assertGeoStr("g912j", 44, GeoHashes.NULL);
                 Assert.fail();
             } catch (ImplicitCastException e) {
-                TestUtils.assertEquals("inconvertible value: g912j [STRING -> GEOHASH(44b)] tuple: 0", e.getFlyweightMessage());
+                TestUtils.assertEquals("inconvertible value: `g912j` [STRING -> GEOHASH(44b)]", e.getFlyweightMessage());
             }
         });
     }

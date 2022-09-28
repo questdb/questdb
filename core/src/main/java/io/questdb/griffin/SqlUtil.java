@@ -109,21 +109,21 @@ public class SqlUtil {
         if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
             return (byte) value;
         }
-        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.BYTE);
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.BYTE);
     }
 
     public static char implicitCastAsChar(long value, int fromType) {
         if (value >= 0 && value <= 9) {
             return (char) (value + '0');
         }
-        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.CHAR);
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.CHAR);
     }
 
     public static float implicitCastAsFloat(double value, int fromType) {
         if ((value >= Float.MIN_VALUE && value <= Float.MAX_VALUE) || Double.isNaN(value)) {
             return (float) value;
         }
-        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.FLOAT);
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.FLOAT);
     }
 
     public static int implicitCastAsInt(long value, int fromType) {
@@ -131,20 +131,20 @@ public class SqlUtil {
             return (int) value;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.INT);
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.INT);
     }
 
     public static short implicitCastAsShort(long value, int fromType) {
         if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
             return (short) value;
         }
-        throw ImplicitCastException.inconvertibleValue(0, value, fromType, ColumnType.SHORT);
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.SHORT);
     }
 
     // used by bytecode assembler
     @SuppressWarnings("unused")
     public static byte implicitCastCharAsByte(char value, int toType) {
-        return implicitCastCharAsType(value, 0, toType);
+        return implicitCastCharAsType(value, toType);
     }
 
     @SuppressWarnings("unused")
@@ -163,15 +163,15 @@ public class SqlUtil {
                 return GeoHashes.encodeChar(value);
             }
         }
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.CHAR, toType);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);
     }
 
-    public static byte implicitCastCharAsType(char value, int tupleIndex, int toType) {
+    public static byte implicitCastCharAsType(char value, int toType) {
         byte v = (byte) (value - '0');
         if (v > -1 && v < 10) {
             return v;
         }
-        throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.CHAR, toType);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);
     }
 
     @SuppressWarnings("unused")
@@ -185,7 +185,7 @@ public class SqlUtil {
             return 0;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.BYTE);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
     }
 
     @SuppressWarnings("unused")
@@ -196,7 +196,7 @@ public class SqlUtil {
             return (float) value;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.DOUBLE, ColumnType.FLOAT);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.FLOAT);
     }
 
     @SuppressWarnings("unused")
@@ -219,7 +219,7 @@ public class SqlUtil {
             return Numbers.LONG_NaN;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.DOUBLE, ColumnType.LONG);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.LONG);
     }
 
     @SuppressWarnings("unused")
@@ -242,7 +242,7 @@ public class SqlUtil {
             return 0;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.BYTE);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
     }
 
     @SuppressWarnings("unused")
@@ -256,7 +256,7 @@ public class SqlUtil {
             return Numbers.INT_NaN;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.INT);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.INT);
     }
 
     @SuppressWarnings("unused")
@@ -270,7 +270,7 @@ public class SqlUtil {
             return Numbers.LONG_NaN;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.LONG);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.LONG);
     }
 
     @SuppressWarnings("unused")
@@ -284,7 +284,7 @@ public class SqlUtil {
             return 0;
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.FLOAT, ColumnType.SHORT);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.SHORT);
     }
 
     public static long implicitCastGeoHashAsGeoHash(long value, int fromType, int toType) {
@@ -354,7 +354,7 @@ public class SqlUtil {
                 }
             } catch (NumericException ignore) {
             }
-            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.BYTE);
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.BYTE);
         }
         return 0;
     }
@@ -368,7 +368,7 @@ public class SqlUtil {
             return value.charAt(0);
         }
 
-        throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.CHAR);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);
     }
 
     public static long implicitCastStrAsDate(CharSequence value) {
@@ -383,7 +383,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseLong(value, 0, hi);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.DATE);
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);
             }
         }
         return Numbers.LONG_NaN;
@@ -394,7 +394,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseDouble(value);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.DOUBLE);
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DOUBLE);
             }
         }
         return Double.NaN;
@@ -405,7 +405,7 @@ public class SqlUtil {
             try {
                 return FastFloatParser.parseFloat(value, 0, value.length(), true);
             } catch (NumericException ignored) {
-                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.FLOAT);
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.FLOAT);
             }
         }
         return Float.NaN;
@@ -416,7 +416,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseInt(value);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.INT);
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.INT);
             }
         }
         return Numbers.INT_NaN;
@@ -427,7 +427,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseLong(value);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.LONG);
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.LONG);
             }
         }
         return Numbers.LONG_NaN;
@@ -446,7 +446,7 @@ public class SqlUtil {
                 );
             }
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.LONG256);
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.LONG256);
         }
     }
 
@@ -454,7 +454,7 @@ public class SqlUtil {
         try {
             return value != null ? Numbers.parseShort(value) : 0;
         } catch (NumericException ignore) {
-            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.SHORT);
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.SHORT);
         }
     }
 
@@ -480,7 +480,7 @@ public class SqlUtil {
                 }
             }
 
-            throw ImplicitCastException.inconvertibleValue(0, value, ColumnType.STRING, ColumnType.TIMESTAMP);
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NaN;
     }

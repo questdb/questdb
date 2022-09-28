@@ -384,7 +384,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumnFails() throws Exception {
         assertInsertTimestamp(
-                "inconvertible value: 2021-01-03T02:00:00-:30 [STRING -> TIMESTAMP]",
+                "inconvertible value: `2021-01-03T02:00:00-:30` [STRING -> TIMESTAMP]",
                 "insert into tab values (1, '2021-01-03T02:00:00-:30')",
                 ImplicitCastException.class,
                 true
@@ -453,7 +453,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertInvalidDateStringTimestampColumn() throws Exception {
         assertInsertTimestamp(
-                "inconvertible value: 2021-23-03T00:00:00Z [STRING -> TIMESTAMP] tuple: 0",
+                "inconvertible value: `2021-23-03T00:00:00Z` [STRING -> TIMESTAMP]",
                 "insert into tab values (1, '2021-23-03T00:00:00Z')",
                 ImplicitCastException.class,
                 true

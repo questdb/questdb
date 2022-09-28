@@ -807,28 +807,28 @@ public class BindVariableServiceImpl implements BindVariableService {
         // treat char as string representation of numeric type
         switch (functionType) {
             case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.BYTE);
+                ((ByteBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.BYTE);
                 break;
             case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.SHORT);
+                ((ShortBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.SHORT);
                 break;
             case ColumnType.INT:
-                ((IntBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.INT);
+                ((IntBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.INT);
                 break;
             case ColumnType.LONG:
-                ((LongBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.LONG);
+                ((LongBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.LONG);
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.DATE);
+                ((DateBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.DATE);
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.TIMESTAMP);
+                ((TimestampBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.TIMESTAMP);
                 break;
             case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.FLOAT);
+                ((FloatBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.FLOAT);
                 break;
             case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, index, ColumnType.DOUBLE);
+                ((DoubleBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.DOUBLE);
                 break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = value;

@@ -745,7 +745,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     AbstractUnaryTimestampFunction castFn;
                     if (argTypeTag == ColumnType.STRING) {
-                        castFn = new CastStrToTimestampFunctionFactory.Func(position, arg);
+                        castFn = new CastStrToTimestampFunctionFactory.Func(arg);
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
                     }
@@ -763,7 +763,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.TIMESTAMP) {
-                    return new CastStrToTimestampFunctionFactory.Func(position, function);
+                    return new CastStrToTimestampFunctionFactory.Func(function);
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);

@@ -3434,7 +3434,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " rnd_str(5,5,0)" +
                         " from long_sequence(30)",
                 -1,
-                "inconvertible value: JWCPS [STRING -> FLOAT]",
+                "inconvertible value: `JWCPS` [STRING -> FLOAT]",
                 ImplicitCastException.class
         );
     }
@@ -3727,7 +3727,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 2020-01-10T18:00:01.800Zz [STRING -> TIMESTAMP]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `2020-01-10T18:00:01.800Zz` [STRING -> TIMESTAMP]");
             }
 
             assertSql(
