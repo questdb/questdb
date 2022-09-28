@@ -4963,23 +4963,23 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
+                        "0x123455\n" +
+                        "0x123455\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
                         "0x8802ff90\n",
                 "select cast(a as long256) x from tt order by x",
-                "create table tt as (select rnd_str('0x00123455', '0x8802ff90', 'z', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880z', '0xhello') a from long_sequence(20))",
+                "create table tt as (select rnd_str('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))",
                 null,
                 true,
                 true,
@@ -5297,23 +5297,23 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
+                        "0x123455\n" +
+                        "0x123455\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
                         "0x8802ff90\n",
                 "select cast(a as long256) x from tt order by x",
-                "create table tt as (select rnd_symbol('0x00123455', '0x8802ff90', 'z', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880z', '0xhello') a from long_sequence(20))",
+                "create table tt as (select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))",
                 null,
                 true,
                 true,
@@ -5328,7 +5328,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select cast(a as long256) x from tt order by x",
                 "create table tt (a symbol nocache)",
                 null,
-                "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', 'z', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880z', '0xhello') a from long_sequence(20)",
+                "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880') a from long_sequence(20)",
                 "x\n" +
                         "\n" +
                         "\n" +
@@ -5337,18 +5337,18 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
-                        "0x123455\n" +
-                        "0x123455\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
                         "0x8802ff90\n",
                 true,
                 true,

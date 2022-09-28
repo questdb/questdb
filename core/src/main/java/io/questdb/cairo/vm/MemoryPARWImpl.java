@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.ConversionException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -1214,11 +1213,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
-            try {
-                decode(hexString, start, end, inPageLong256Decoder);
-            } catch (NumericException e) {
-                throw ConversionException.instance("invalid long256 [hex=").put(hexString).put(']');
-            }
+            decode(hexString, start, end, inPageLong256Decoder);
             appendPointer += Long256.BYTES;
         }
     }
@@ -1245,11 +1240,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
-            try {
-                decode(hexString, start, end, this);
-            } catch (NumericException e) {
-                throw ConversionException.instance("invalid long256 [hex=").put(hexString).put(']');
-            }
+            decode(hexString, start, end, this);
         }
     }
 }
