@@ -6138,7 +6138,7 @@ create table tab as (
 
             try (
                     PGWireServer server = createPGServer(configuration);
-                    WorkerPool workerPool = server.getWorkerPool();
+                    WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
                 try (
@@ -6998,9 +6998,12 @@ create table tab as (
             assertMemoryLeak(() -> {
                 try (
                         final PGWireServer server = createPGServer(2);
-                        final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)
+                        WorkerPool workerPool = server.getWorkerPool()
                 ) {
-                    runnable.run(connection, binary);
+                    workerPool.start(LOG);
+                    try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
+                        runnable.run(connection, binary);
+                    }
                 }
             });
         } finally {
@@ -7056,14 +7059,15 @@ create table tab as (
             }
         };
 
-        return PGWireServer.create(
+
+        final WorkerPool workerPool = new TestWorkerPool(2, metrics);
+
+        return createPGWireServer(
                 conf,
-                null,
-                LOG,
                 engine,
+                workerPool,
                 compiler.getFunctionFactoryCache(),
                 snapshotAgent,
-                metrics,
                 createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount)
         );
     }
@@ -7525,23 +7529,23 @@ create table tab as (
                         }
                     }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                    ps.setString(1, "");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [STRING -> DOUBLE]");
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                        ps.setString(1, "");
+                        try (ResultSet ignore1 = ps.executeQuery()) {
+                            Assert.fail();
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [STRING -> DOUBLE]");
+                        }
                     }
-                }
 
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                    ps.setString(1, "cah-cha-cha");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `cah-cha-cha` [STRING -> DOUBLE]");
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                        ps.setString(1, "cah-cha-cha");
+                        try (ResultSet ignore1 = ps.executeQuery()) {
+                            Assert.fail();
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `cah-cha-cha` [STRING -> DOUBLE]");
+                        }
                     }
-                }
 
                     try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
                         ps.setString(1, "NULL");
@@ -7678,7 +7682,7 @@ create table tab as (
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool();
+                    final WorkerPool workerPool = server.getWorkerPool()
 
             ) {
                 workerPool.start(LOG);
