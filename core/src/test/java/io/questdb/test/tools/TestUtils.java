@@ -483,7 +483,7 @@ public final class TestUtils {
         Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                if (i == MemoryTag.LOG_FACTORY && ignoreLogFactory) {
+                if (i == MemoryTag.NATIVE_LOGGER && ignoreLogFactory) {
                     memAfter -= Unsafe.getMemUsedByTag(i);
                     continue;
                 }
