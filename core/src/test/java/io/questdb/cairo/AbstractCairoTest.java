@@ -357,7 +357,7 @@ public abstract class AbstractCairoTest {
 
             @Override
             public long getDataAppendPageSize() {
-                return dataAppendPageSize > 0 ? super.getDataAppendPageSize() : dataAppendPageSize;
+                return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
             }
 
             @Override
