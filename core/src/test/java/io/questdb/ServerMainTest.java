@@ -24,8 +24,11 @@
 
 package io.questdb;
 
+import io.questdb.network.Net;
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -68,12 +71,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainNoStart() {
-        try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
-            Os.pause();
-        } catch (IllegalStateException ex) {
-            TestUtils.assertContains("start was not called at all", ex.getMessage());
-        }
+    public void testServerMainNoStart() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Os.pause();
+            }
+        });
     }
 
     @Test
@@ -105,6 +108,52 @@ public class ServerMainTest extends AbstractBootstrapTest {
             try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                 Os.pause();
             }
+        }
+    }
+
+    private static void assertMemoryLeak(TestUtils.LeakProneCode runnable) throws Exception {
+        Path.clearThreadLocals();
+        long mem = Unsafe.getMemUsed();
+        long[] memoryUsageByTag = new long[MemoryTag.SIZE];
+        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+            memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
+        }
+
+        Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
+        long fileCount = Files.getOpenFileCount();
+        Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
+
+        int addrInfoCount = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
+
+        int sockAddrCount = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
+
+        runnable.run();
+        Path.clearThreadLocals();
+
+        // Checks that the same tag used for allocation and freeing native memory
+        long memAfter = Unsafe.getMemUsed();
+        Assert.assertTrue(memAfter > -1);
+        if (mem != memAfter) {
+            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+                long actualMemByTag = Unsafe.getMemUsedByTag(i);
+                if (memoryUsageByTag[i] != actualMemByTag) {
+                    Assert.assertTrue(actualMemByTag > -1);
+                }
+            }
+        }
+
+        int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue(addrInfoCountAfter > -1);
+        if (addrInfoCount != addrInfoCountAfter) {
+            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
+        }
+
+        int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue(sockAddrCountAfter > -1);
+        if (sockAddrCount != sockAddrCountAfter) {
+            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
         }
     }
 }

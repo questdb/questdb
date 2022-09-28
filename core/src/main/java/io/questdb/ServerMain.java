@@ -200,10 +200,6 @@ public class ServerMain implements Closeable {
             Misc.freeObjListAndClear(toBeClosed);
             // leave hasStarted as is, to disable start
         }
-        if (!running.get()) {
-            // if you instantiate ServerMain it is for the purpose of running, i.e. calling start
-            throw new IllegalStateException("start was not called at all");
-        }
     }
 
     public PropServerConfiguration getConfiguration() {
