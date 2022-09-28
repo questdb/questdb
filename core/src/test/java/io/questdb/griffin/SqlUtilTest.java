@@ -64,7 +64,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastCharAsGeoHash(c, ColumnType.getGeoHashTypeWithBits(bits));
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]", e.getFlyweightMessage());
         }
     }
 
@@ -75,7 +75,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains("inconvertible value: c [CHAR -> GEOHASH(6b)] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertContains("inconvertible value: c [CHAR -> GEOHASH(6b)]", e.getFlyweightMessage());
         }
     }
 
@@ -99,7 +99,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsByte("778");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: 778 [STRING -> BYTE] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `778` [STRING -> BYTE]", e.getFlyweightMessage());
         }
 
         // not a number
@@ -107,7 +107,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsByte("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> BYTE] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> BYTE]", e.getFlyweightMessage());
         }
     }
 
@@ -126,7 +126,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsDate("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> DATE] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DATE]", e.getFlyweightMessage());
         }
     }
 
@@ -141,7 +141,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsDouble("1e450");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: 1e450 [STRING -> DOUBLE] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `1e450` [STRING -> DOUBLE]", e.getFlyweightMessage());
         }
 
         // not a number
@@ -149,7 +149,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsDouble("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> DOUBLE] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DOUBLE]", e.getFlyweightMessage());
         }
     }
 
@@ -165,7 +165,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsFloat("1e210");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: 1e210 [STRING -> FLOAT] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `1e210` [STRING -> FLOAT]", e.getFlyweightMessage());
         }
 
         // not a number
@@ -173,7 +173,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsFloat("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> FLOAT] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> FLOAT]", e.getFlyweightMessage());
         }
     }
 
@@ -188,7 +188,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsInt("77823232322323233");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: 77823232322323233 [STRING -> INT] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `77823232322323233` [STRING -> INT]", e.getFlyweightMessage());
         }
 
         // not a number
@@ -196,7 +196,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsInt("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> INT] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> INT]", e.getFlyweightMessage());
         }
     }
 
@@ -213,7 +213,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsLong("778232323223232389080898083");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: 778232323223232389080898083 [STRING -> LONG] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `778232323223232389080898083` [STRING -> LONG]", e.getFlyweightMessage());
         }
 
         // not a number
@@ -221,7 +221,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsLong("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> LONG] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> LONG]", e.getFlyweightMessage());
         }
     }
 
@@ -236,7 +236,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsShort("77823232323");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: 77823232323 [STRING -> SHORT] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `77823232323` [STRING -> SHORT]", e.getFlyweightMessage());
         }
 
         // not a number
@@ -244,7 +244,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsShort("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> SHORT] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> SHORT]", e.getFlyweightMessage());
         }
     }
 
@@ -266,7 +266,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsDate("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: hello [STRING -> DATE] tuple: 0", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DATE]", e.getFlyweightMessage());
         }
     }
 

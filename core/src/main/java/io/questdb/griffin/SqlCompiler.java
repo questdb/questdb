@@ -1277,7 +1277,7 @@ public class SqlCompiler implements Closeable {
         while (cursor.hasNext()) {
             CharSequence str = record.getStr(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, 0, ColumnType.TIMESTAMP));
+            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.TIMESTAMP));
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {

@@ -61,7 +61,7 @@ public class StrFunctionTest {
             new StrConstant("").getByte(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> BYTE]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> BYTE]");
         }
     }
 
@@ -81,7 +81,7 @@ public class StrFunctionTest {
             new StrConstant("129").getByte(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 129 [STRING -> BYTE]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `129` [STRING -> BYTE]");
         }
     }
 
@@ -91,7 +91,7 @@ public class StrFunctionTest {
             new StrConstant("-129").getByte(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -129 [STRING -> BYTE]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `-129` [STRING -> BYTE]");
         }
     }
 
@@ -106,7 +106,7 @@ public class StrFunctionTest {
             new StrConstant("").getDate(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> DATE]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> DATE]");
         }
     }
 
@@ -126,7 +126,7 @@ public class StrFunctionTest {
             new StrConstant("").getDouble(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> DOUBLE]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> DOUBLE]");
         }
     }
 
@@ -156,7 +156,7 @@ public class StrFunctionTest {
             new StrConstant("-9E-410").getDouble(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -9E-410 [STRING -> DOUBLE]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `-9E-410` [STRING -> DOUBLE]");
         }
     }
 
@@ -176,7 +176,7 @@ public class StrFunctionTest {
             new StrConstant("1E350").getDouble(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 1E350 [STRING -> DOUBLE]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `1E350` [STRING -> DOUBLE]");
         }
     }
 
@@ -191,7 +191,7 @@ public class StrFunctionTest {
             new StrConstant("").getFloat(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> FLOAT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> FLOAT]");
         }
     }
 
@@ -226,7 +226,7 @@ public class StrFunctionTest {
             new StrConstant("1E250").getFloat(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 1E250 [STRING -> FLOAT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `1E250` [STRING -> FLOAT]");
         }
     }
 
@@ -236,7 +236,7 @@ public class StrFunctionTest {
             new StrConstant("-9E-210").getFloat(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -9E-210 [STRING -> FLOAT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `-9E-210` [STRING -> FLOAT]");
         }
     }
 
@@ -256,7 +256,7 @@ public class StrFunctionTest {
             new StrConstant("").getInt(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> INT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> INT]");
         }
     }
 
@@ -276,7 +276,7 @@ public class StrFunctionTest {
             new StrConstant("2147483648").getInt(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 2147483648 [STRING -> INT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `2147483648` [STRING -> INT]");
         }
     }
 
@@ -286,7 +286,7 @@ public class StrFunctionTest {
             new StrConstant("-2147483649").getInt(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -2147483649 [STRING -> INT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `-2147483649` [STRING -> INT]");
         }
     }
 
@@ -301,7 +301,7 @@ public class StrFunctionTest {
             new StrConstant("").getLong(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> LONG]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> LONG]");
         }
     }
 
@@ -321,7 +321,7 @@ public class StrFunctionTest {
             new StrConstant("9223372036854775808").getLong(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 9223372036854775808 [STRING -> LONG]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `9223372036854775808` [STRING -> LONG]");
         }
     }
 
@@ -331,7 +331,7 @@ public class StrFunctionTest {
             new StrConstant("-9223372036854775809").getLong(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -9223372036854775809 [STRING -> LONG]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `-9223372036854775809` [STRING -> LONG]");
         }
     }
 
@@ -346,7 +346,7 @@ public class StrFunctionTest {
             new StrConstant("").getShort(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> SHORT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> SHORT]");
         }
     }
 
@@ -366,7 +366,7 @@ public class StrFunctionTest {
             new StrConstant("32768").getShort(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 32768 [STRING -> SHORT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `32768` [STRING -> SHORT]");
         }
     }
 
@@ -376,7 +376,7 @@ public class StrFunctionTest {
             new StrConstant("-32769").getShort(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: -32769 [STRING -> SHORT]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `-32769` [STRING -> SHORT]");
         }
     }
 
@@ -396,7 +396,7 @@ public class StrFunctionTest {
             new StrConstant("").getTimestamp(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value:  [STRING -> TIMESTAMP]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> TIMESTAMP]");
         }
     }
 

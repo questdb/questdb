@@ -33,7 +33,7 @@ public class MinuteFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "minute\n" +
                         "8\n",
-                "select minute(to_timestamp('1997-04-11T22:08:30.555555Z'))",
+                "select minute('1997-04-11T22:08:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,
@@ -47,7 +47,7 @@ public class MinuteFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "minute\n" +
                         "11\n",
-                "select minute(to_timestamp('1901-07-11T22:11:21.555998Z'))",
+                "select minute('1901-07-11T22:11:21.555998Z'::timestamp)",
                 null,
                 null,
                 true,

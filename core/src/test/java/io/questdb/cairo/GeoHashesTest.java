@@ -502,7 +502,6 @@ public class GeoHashesTest {
         final int cap = 1;
         LongList bits = new LongList(cap * 2); // hash and mask
         final long h = rnd_geohash(5);
-        final long p = rnd_geohash(7);
 
         int pType = ColumnType.getGeoHashTypeWithBits(5 * 7);
         int hType = ColumnType.getGeoHashTypeWithBits(5 * 5);
@@ -697,9 +696,8 @@ public class GeoHashesTest {
         final long lo = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         final long hi = lo + len;
         try {
-            sun.misc.Unsafe unsafe = Unsafe.getUnsafe();
             for (long p = lo; p < hi; p++) {
-                unsafe.putByte(p, (byte) token.charAt((int) (p - lo)));
+                Unsafe.getUnsafe().putByte(p, (byte) token.charAt((int) (p - lo)));
             }
             code.apply(lo, hi);
         } finally {

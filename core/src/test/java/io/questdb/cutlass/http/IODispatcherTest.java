@@ -2238,8 +2238,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "72\r\n" +
-                        "{\"query\":\"insert into op values ('abc')\",\"error\":\"inconvertible value: abc [STRING -> INT] tuple: 0\",\"position\":0}\r\n" +
+                        "6b\r\n" +
+                        "{\"query\":\"insert into op values ('abc')\",\"error\":\"inconvertible value: `abc` [STRING -> INT]\",\"position\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
                 , 1);

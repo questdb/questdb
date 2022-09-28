@@ -1471,7 +1471,7 @@ public class PGJobContextTest extends BasePGTest {
                 try (ResultSet ignore1 = ps.executeQuery()) {
                     Assert.fail();
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "inconvertible value:  [STRING -> DOUBLE] tuple: 0");
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [STRING -> DOUBLE]");
                 }
             }
 
@@ -1480,7 +1480,7 @@ public class PGJobContextTest extends BasePGTest {
                 try (ResultSet ignore1 = ps.executeQuery()) {
                     Assert.fail();
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "inconvertible value: cha-cha-cha [STRING -> DOUBLE] tuple: 0");
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `cha-cha-cha` [STRING -> DOUBLE]");
                 }
             }
 
@@ -4607,7 +4607,7 @@ nodejs code:
                         statement.executeQuery();
                     } catch (PSQLException ex) {
                         caught = true;
-                        Assert.assertEquals("ERROR: inconvertible value: abcd [STRING -> TIMESTAMP] tuple: 0", ex.getMessage());
+                        Assert.assertEquals("ERROR: inconvertible value: `abcd` [STRING -> TIMESTAMP]", ex.getMessage());
                     }
                 }
 
@@ -7264,7 +7264,7 @@ create table tab as (
                     try (ResultSet ignore1 = ps.executeQuery()) {
                         Assert.fail();
                     } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "inconvertible value:  [STRING -> DOUBLE] tuple: 0");
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [STRING -> DOUBLE]");
                     }
                 }
 
@@ -7273,7 +7273,7 @@ create table tab as (
                     try (ResultSet ignore1 = ps.executeQuery()) {
                         Assert.fail();
                     } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "inconvertible value: cah-cha-cha [STRING -> DOUBLE] tuple: 0");
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `cah-cha-cha` [STRING -> DOUBLE]");
                     }
                 }
 
