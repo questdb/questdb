@@ -120,7 +120,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
         public PgClassCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
             this.cursor = new PgClassRecordCursor(configuration, path, tempMem);
         }
 
@@ -138,7 +138,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 

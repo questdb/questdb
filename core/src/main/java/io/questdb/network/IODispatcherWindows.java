@@ -202,7 +202,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         private FDSet(int size) {
             int l = SelectAccessor.ARRAY_OFFSET + 8 * size;
-            this.address = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
+            this.address = Unsafe.malloc(l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             this.size = size;
             this._wptr = address + SelectAccessor.ARRAY_OFFSET;
             this.lim = address + l;
@@ -219,7 +219,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         private void close() {
             if (address != 0) {
-                Unsafe.free(address, lim - address, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
                 address = 0;
             }
         }
@@ -243,9 +243,9 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         private void resize() {
             int sz = size * 2;
             int l = SelectAccessor.ARRAY_OFFSET + 8 * sz;
-            long _addr = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
+            long _addr = Unsafe.malloc(l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             Vect.memcpy(_addr, address, lim - address);
-            Unsafe.free(address, lim - address, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             lim = _addr + l;
             size = sz;
             _wptr = _addr + (_wptr - address);

@@ -68,7 +68,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     protected MemoryPARWImpl() {
         maxPages = Integer.MAX_VALUE;
-        memoryTag = MemoryTag.NATIVE_DEFAULT;
+        memoryTag = MemoryTag.MMAP_DEFAULT;
     }
 
     @Override

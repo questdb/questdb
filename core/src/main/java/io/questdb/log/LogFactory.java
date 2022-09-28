@@ -763,7 +763,7 @@ public class LogFactory implements Closeable {
                     LogRecordSink::new,
                     Numbers.ceilPow2(recordLength),
                     queueDepth,
-                    MemoryTag.LOG_FACTORY
+                    MemoryTag.NATIVE_LOGGER
             );
             this.lSeq = new MPSequence(queueDepth);
         }

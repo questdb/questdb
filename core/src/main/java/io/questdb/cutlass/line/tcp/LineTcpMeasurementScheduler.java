@@ -123,7 +123,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     ),
                     getEventSlotSize(maxMeasurementSize),
                     queueSize,
-                    MemoryTag.NATIVE_DEFAULT
+                    MemoryTag.NATIVE_ILP_RSS
             );
 
             queue[i] = q;
