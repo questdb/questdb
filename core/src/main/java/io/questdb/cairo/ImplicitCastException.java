@@ -34,34 +34,40 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
 
-    public static ImplicitCastException inconvertibleValue(int columnNumber, double value, int fromType, int toType) {
+    public static ImplicitCastException inconvertibleValue(double value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
                 .put(value)
                 .put(" [")
                 .put(ColumnType.nameOf(fromType))
                 .put(" -> ")
                 .put(ColumnType.nameOf(toType))
-                .put(']')
-                .put(" in target column number: ")
-                .put(columnNumber);
+                .put(']');
     }
 
-    public static ImplicitCastException inconvertibleValue(int tupleIndex, char value, int fromType, int toType) {
+    public static ImplicitCastException inconvertibleValue(char value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
                 .put(value)
                 .put(" [")
                 .put(ColumnType.nameOf(fromType))
                 .put(" -> ")
                 .put(ColumnType.nameOf(toType))
-                .put(']')
-                .put(" tuple: ")
-                .put(tupleIndex);
+                .put(']');
     }
 
     public static ImplicitCastException inconvertibleValue(int tupleIndex, CharSequence value, int fromType, int toType) {
-        return instance().put("inconvertible value: ")
-                .put(value)
-                .put(" [")
+        if (tupleIndex == -1) {
+            return inconvertibleValue(value, fromType, toType);
+        }
+
+        ImplicitCastException ice = instance();
+        ice.put("inconvertible value: ");
+        if (value != null) {
+            ice.put('`').put(value).put('`');
+        } else {
+            ice.put("null");
+        }
+
+        return ice.put(" [")
                 .put(ColumnType.nameOf(fromType))
                 .put(" -> ")
                 .put(ColumnType.nameOf(toType))
@@ -70,16 +76,30 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
                 .put(tupleIndex);
     }
 
-    public static ImplicitCastException inconvertibleValue(int columnNumber, long value, int fromType, int toType) {
+    public static ImplicitCastException inconvertibleValue(CharSequence value, int fromType, int toType) {
+        ImplicitCastException ice = instance();
+        ice.put("inconvertible value: ");
+        if (value != null) {
+            ice.put('`').put(value).put('`');
+        } else {
+            ice.put("null");
+        }
+
+        return ice.put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']');
+    }
+
+    public static ImplicitCastException inconvertibleValue(long value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
                 .put(value)
                 .put(" [")
                 .put(ColumnType.nameOf(fromType))
                 .put(" -> ")
                 .put(ColumnType.nameOf(toType))
-                .put(']')
-                .put(" in target column number: ")
-                .put(columnNumber);
+                .put(']');
     }
 
     public static ImplicitCastException instance() {

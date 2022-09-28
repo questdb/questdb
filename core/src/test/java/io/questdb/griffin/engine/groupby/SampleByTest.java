@@ -2262,7 +2262,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 0,
-                "inconvertible value: ab [STRING -> DOUBLE] tuple: 0"
+                "inconvertible value: `ab` [STRING -> DOUBLE]"
         );
     }
 
@@ -2280,7 +2280,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 0,
-                "inconvertible value: ac [STRING -> DOUBLE] tuple: 0"
+                "inconvertible value: `ac` [STRING -> DOUBLE]"
         );
     }
 

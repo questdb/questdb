@@ -33,7 +33,7 @@ public class MonthOfYearFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "month\n" +
                         "4\n",
-                "select month(to_timestamp('1997-04-11T22:00:30.555555Z'))",
+                "select month('1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,
@@ -47,7 +47,7 @@ public class MonthOfYearFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "month\n" +
                         "7\n",
-                "select month(to_timestamp('1901-07-11T22:00:30.555998Z'))",
+                "select month('1901-07-11T22:00:30.555998Z'::timestamp)",
                 null,
                 null,
                 true,
