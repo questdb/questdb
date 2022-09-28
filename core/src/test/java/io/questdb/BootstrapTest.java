@@ -47,16 +47,6 @@ public class BootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerConfFileDoesNotExist() {
-        String configFolder = root.toString() + Files.SEPARATOR + "conf";
-        TestUtils.createTestPath(configFolder);
-        File f = new File(configFolder);
-        Assert.assertTrue(f.exists());
-        Assert.assertTrue(f.isDirectory());
-        assertFail("java.nio.file.NoSuchFileException:", "-d", root.toString());
-    }
-
-    @Test
     public void testExtractSite() throws Exception {
         createDummyConfiguration();
         try (Path path = new Path().of(root)) {
