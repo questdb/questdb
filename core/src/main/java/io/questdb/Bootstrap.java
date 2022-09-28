@@ -52,7 +52,6 @@ public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
-    private static final AtomicInteger NODE_ID = new AtomicInteger(-1);
     private static final String LOG_NAME = "server-main";
     private static final String CONFIG_FILE = "/server.conf";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
@@ -80,14 +79,7 @@ public class Bootstrap {
 
     public static void logWebConsoleUrls(PropServerConfiguration config, Log log) {
         if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW()
-                    .$('\n')
-                    .$("     ___                  _   ____  ____\n")
-                    .$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n")
-                    .$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n")
-                    .$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n")
-                    .$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n")
-                    .$("web console URL(s):").$("\n\n");
+            final LogRecord r = log.infoW().$('\n').$("     ___                  _   ____  ____\n").$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n").$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n").$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n").$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n").$("web console URL(s):").$("\n\n");
             final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
@@ -117,7 +109,7 @@ public class Bootstrap {
     private final Metrics metrics;
     private final Log log;
 
-    private Bootstrap(String... args)  {
+    private Bootstrap(String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
@@ -128,23 +120,22 @@ public class Bootstrap {
         if (Chars.isBlank(rootDirectory)) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
+        final File rootPath = new File(rootDirectory);
+        if (!rootPath.exists()) {
+            throw new BootstrapException("Root directory does not exist: " + rootDirectory);
+        }
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
             Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
         }
 
         // setup logger
-        final int nodeId = NODE_ID.incrementAndGet();
-        final String logName = nodeId > 0 ? String.format("%s-%d", LOG_NAME, nodeId) : LOG_NAME;
         if (argsMap.get(SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION) == null) {
             LogFactory.configureFromSystemProperties(new LogFactory(), rootDirectory);
         }
-        log = LogFactory.getInstance().getLog(logName);
+        log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion())
-                .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
-                .$(", all rights reserved.")
-                .$();
+        log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
         String archName;
         boolean isOsSupported = true;
         switch (Os.type) {
@@ -181,9 +172,12 @@ public class Bootstrap {
             log.criticalW().$(archName).$(sb.toString()).I$();
         }
 
-        // /server.conf properties
         try {
-            java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
+            // site
+            extractSite();
+
+            // /server.conf properties
+            java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
             final Properties properties = new Properties();
             try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
                 properties.load(is);
@@ -203,13 +197,6 @@ public class Bootstrap {
         } else {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
-        }
-
-        // site
-        try {
-            extractSite();
-        } catch (IOException ioe) {
-            throw new BootstrapException(ioe);
         }
     }
 
@@ -301,8 +288,7 @@ public class Bootstrap {
             copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
         } catch (IOException exception) {
             // conf can be read-only, this is not critical
-            if (exception.getMessage() == null ||
-                    (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
+            if (exception.getMessage() == null || (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
                 throw exception;
             }
         }
@@ -411,44 +397,30 @@ public class Bootstrap {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         NativeLPSZ name = new NativeLPSZ();
-        try (
-                Path path = new Path().of(dbRoot).slash$();
-                Path other = new Path().of(dbRoot).slash$()
-        ) {
+        try (Path path = new Path().of(dbRoot).slash$(); Path other = new Path().of(dbRoot).slash$()) {
             int plen = path.length();
             AtomicInteger counter = new AtomicInteger(0);
-            FilesFacadeImpl.INSTANCE.iterateDir(
-                    path,
-                    (pUtf8NameZ, type) -> {
-                        if (Files.notDots(pUtf8NameZ)) {
-                            name.of(pUtf8NameZ);
-                            if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
-                                path.trimTo(plen).concat(pUtf8NameZ).$();
-                                boolean shouldRename = false;
-                                do {
-                                    other.trimTo(plen)
-                                            .concat(cairoConfiguration.getArchivedCrashFilePrefix())
-                                            .put(counter.getAndIncrement()).put(".log")
-                                            .$();
-                                    if (!ff.exists(other)) {
-                                        shouldRename = counter.get() <= maxFiles;
-                                        break;
-                                    }
-                                } while (counter.get() < maxFiles);
-                                if (shouldRename && ff.rename(path, other) == 0) {
-                                    log.criticalW().$("found crash file [path=").$(other).I$();
-                                } else {
-                                    log.criticalW()
-                                            .$("could not rename crash file [path=").$(path)
-                                            .$(", errno=").$(ff.errno())
-                                            .$(", index=").$(counter.get())
-                                            .$(", max=").$(maxFiles)
-                                            .I$();
-                                }
+            FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
+                if (Files.notDots(pUtf8NameZ)) {
+                    name.of(pUtf8NameZ);
+                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                        path.trimTo(plen).concat(pUtf8NameZ).$();
+                        boolean shouldRename = false;
+                        do {
+                            other.trimTo(plen).concat(cairoConfiguration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
+                            if (!ff.exists(other)) {
+                                shouldRename = counter.get() <= maxFiles;
+                                break;
                             }
+                        } while (counter.get() < maxFiles);
+                        if (shouldRename && ff.rename(path, other) == 0) {
+                            log.criticalW().$("found crash file [path=").$(other).I$();
+                        } else {
+                            log.criticalW().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
                         }
                     }
-            );
+                }
+            });
         }
     }
 
@@ -461,10 +433,7 @@ public class Bootstrap {
         // path will contain file system name
         long fsStatus = Files.getFileSystemStatus(path);
         path.seekZ();
-        LogRecord rec =  log.advisoryW()
-                .$(" - ").$(kind)
-                .$(" root: [path=").$(rootDir)
-                .$(", magic=0x");
+        LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
         if (fsStatus < 0) {
             rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
         } else {
@@ -474,24 +443,13 @@ public class Bootstrap {
 
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
-        path.of(cairoConfiguration.getRoot())
-                .concat("_verify_")
-                .put(cairoConfiguration.getRandom().nextPositiveInt())
-                .put(".d")
-                .$();
+        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
         long fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    TableUtils.writeLongOrFail(
-                            ff,
-                            fd,
-                            0,
-                            123456789L,
-                            mem,
-                            path
-                    );
+                    TableUtils.writeLongOrFail(ff, fd, 0, 123456789L, mem, path);
                 } finally {
                     Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }

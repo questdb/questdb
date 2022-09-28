@@ -43,6 +43,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
         assertFail("Root directory name expected (-d <root-path>)");
         assertFail("Root directory name expected (-d <root-path>)", "-d");
         assertFail("Root directory name expected (-d <root-path>)", "does not exist");
+        assertFail("Root directory does not exist: nope", "-d", "nope");
     }
 
     @Test
