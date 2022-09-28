@@ -123,11 +123,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void close(boolean truncate) {
+    public void close(boolean truncate, byte truncateMode) {
         if (pageAddress != 0) {
             long appendOffset = getAppendOffset();
-            // what can we truncate to ?
-            long truncateSize = Files.ceilPageSize(appendOffset);
+            long truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
             long sz = Math.min(size, truncateSize);
             if (appendOffset < sz) {
                 Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
@@ -135,7 +134,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             ff.munmap(pageAddress, size, memoryTag);
             this.pageAddress = 0;
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize);
+                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize, truncateMode);
             } finally {
                 fd = -1;
             }
@@ -165,8 +164,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(long fd, long offset) {
-        close();
+    public void switchTo(long fd, long offset, byte truncateMode) {
+        close(true, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);
     }

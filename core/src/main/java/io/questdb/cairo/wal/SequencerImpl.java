@@ -67,7 +67,7 @@ public class SequencerImpl implements Sequencer {
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
 
-            metadata = new SequencerMetadata(ff, SequencerMetadata.READ_WRITE);
+            metadata = new SequencerMetadata(ff);
             sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, tableName);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             catalog = new TxnCatalog(ff);

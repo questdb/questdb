@@ -46,6 +46,7 @@ class WalWriterEvents implements Closeable {
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
     private IntList initialSymbolCounts;
     private long txn = 0;
+    private long startOffset = 0;
 
     WalWriterEvents(FilesFacade ff) {
         this.ff = ff;
@@ -58,10 +59,18 @@ class WalWriterEvents implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(eventMem);
+        eventMem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    void rollback() {
+        eventMem.jumpTo(startOffset);
+        eventMem.putInt(-1);
     }
 
     void openEventFile(Path path, int pathLen) {
+        if (eventMem.getFd() > -1) {
+            close();
+        }
         openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
         init();
     }
@@ -94,7 +103,7 @@ class WalWriterEvents implements Closeable {
     }
 
     long data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
-        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
         eventMem.putLong(startRowID);
@@ -109,7 +118,7 @@ class WalWriterEvents implements Closeable {
     }
 
     long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
-        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
         eventMem.putInt(cmdType); //byte would be enough probably

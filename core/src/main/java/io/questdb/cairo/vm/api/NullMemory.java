@@ -50,7 +50,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void close(boolean truncate) {
+    public void close(boolean truncate, byte truncateMode) {
     }
 
     @Override
@@ -63,7 +63,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void switchTo(long fd, long offset) {
+    public void switchTo(long fd, long offset, byte truncateMode) {
     }
 
     @Override

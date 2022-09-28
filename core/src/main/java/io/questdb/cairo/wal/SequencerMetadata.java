@@ -27,7 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -39,23 +39,24 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends BaseRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
-    public static boolean READ_ONLY = true;
-    public static boolean READ_WRITE = false;
-
     private final FilesFacade ff;
     private final boolean readonly;
-    private final MemoryMAR metaMem;
+    private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
 
     private long structureVersion = -1;
     private int tableId;
     private String tableName;
 
+    public SequencerMetadata(FilesFacade ff) {
+        this(ff, false);
+    }
+
     public SequencerMetadata(FilesFacade ff, boolean readonly) {
         this.ff = ff;
         this.readonly = readonly;
         if (!readonly) {
-            roMetaMem = metaMem = Vm.getMARInstance();
+            roMetaMem = metaMem = Vm.getMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getMRInstance();
@@ -71,7 +72,11 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
 
     @Override
     public void close() {
-        clear();
+        clear(Vm.TRUNCATE_TO_PAGE);
+    }
+
+    public void close(byte truncateMode) {
+        clear(truncateMode);
     }
 
     public void copyFrom(TableDescriptor model, String tableName, int tableId, long structureVersion) {
@@ -96,10 +101,13 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
 
     public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {
         copyFrom(model, tableName, tableId, 0);
-        dumpTo(path, pathLen);
+        switchTo(path, pathLen);
     }
 
-    public void dumpTo(Path path, int pathLen) {
+    public void switchTo(Path path, int pathLen) {
+        if (metaMem.getFd() > -1) {
+            metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
         syncToMetaFile();
     }
@@ -154,7 +162,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
 
         // get written data size
-        if (readonly == READ_WRITE) {
+        if (!readonly) {
             metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
             int size = metaMem.getInt(0);
             metaMem.jumpTo(size);
@@ -166,7 +174,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
 
-        if (readonly == READ_ONLY) {
+        if (readonly) {
             // close early
             roMetaMem.close();
         }
@@ -205,26 +213,20 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         metaMem.putInt(0);
         metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putLong(structureVersion);
-        int metaSize = columnMetadata.size();
-        metaMem.putInt(metaSize);
+        metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
-        for (int i = 0; i < metaSize; i++) {
-            final int type = getColumnType(i);
-            metaMem.putInt(type);
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = getColumnType(i);
+            metaMem.putInt(columnType);
             metaMem.putStr(getColumnName(i));
         }
 
-        // Set metadata size
-        int size = (int) metaMem.getAppendOffset();
-        metaMem.jumpTo(0);
-        metaMem.putInt(size);
-        metaMem.jumpTo(size);
+        // update metadata size
+        metaMem.putInt(0, (int) metaMem.getAppendOffset());
     }
 
-    private void loadSequencerMetadata(
-            MemoryMR metaMem
-    ) {
+    private void loadSequencerMetadata(MemoryMR metaMem) {
         columnMetadata.clear();
         columnNameIndexMap.clear();
 
@@ -277,9 +279,11 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         columnCount++;
     }
 
-    protected void clear() {
+    protected void clear(byte truncateMode) {
         reset();
-        Misc.free(metaMem);
+        if (metaMem != null) {
+            metaMem.close(true, truncateMode);
+        }
         Misc.free(roMetaMem);
     }
 

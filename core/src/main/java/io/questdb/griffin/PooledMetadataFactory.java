@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.MetadataFactory;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.wal.Sequencer;
 import io.questdb.cairo.wal.SequencerMetadata;
 import io.questdb.std.*;
@@ -111,13 +112,13 @@ public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
         boolean closing = false;
 
         ReusableSequencerMetadata() {
-            super(ff, SequencerMetadata.READ_WRITE);
+            super(ff);
         }
 
         @Override
         public void close() {
             if (!isClosed && !closing) {
-                super.clear();
+                super.clear(Vm.TRUNCATE_TO_PAGE);
                 closing = true;
                 sequencerMetadataPool.push(this);
                 closing = false;

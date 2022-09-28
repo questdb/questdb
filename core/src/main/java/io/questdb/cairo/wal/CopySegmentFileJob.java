@@ -34,6 +34,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.WalWriter.*;
 
 public class CopySegmentFileJob {
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
@@ -56,7 +57,7 @@ public class CopySegmentFileJob {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.length();
         dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
-        long primaryFd = openRW(ff, newSegPath.$(), LOG, options);
+        long primaryFd = openRW(ff, newSegPath, LOG, options);
         long secondaryFd;
         if (ColumnType.isVariableLength(columnType)) {
             iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
@@ -95,15 +96,17 @@ public class CopySegmentFileJob {
             if (!success) {
                 return false;
             }
-            newOffsets.setQuick(columnIndex * 4, primaryFd);
-            newOffsets.setQuick(columnIndex * 4 + 1, varCopyLen);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, varStart);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, varCopyLen);
 
             long indexLen = (rowCount + 1) * Long.BYTES;
             long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MEMORY_TAG);
             try {
                 Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);
-                newOffsets.setQuick(columnIndex * 4 + 2, secondaryFd);
-                newOffsets.setQuick(columnIndex * 4 + 3, indexLen);
+                newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
+                newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);
+                newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, indexLen);
                 return true;
             } finally {
                 ff.munmap(dstIndexAddr, indexLen, MEMORY_TAG);
@@ -114,7 +117,7 @@ public class CopySegmentFileJob {
     }
 
     private static boolean copyTimestampFile(FilesFacade ff, MemoryMA primaryColumn, long primaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
-        // Timestamp columns is written as 2 long values
+        // Designated timestamp column is written as 2 long values
         if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex)) {
             return false;
         }
@@ -135,8 +138,9 @@ public class CopySegmentFileJob {
 
         boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
         if (success) {
-            newOffsets.setQuick(columnIndex * 4, primaryFd);
-            newOffsets.setQuick(columnIndex * 4 + 1, length);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);
         } else {
             ff.close(primaryFd);
         }

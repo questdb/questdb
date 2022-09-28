@@ -48,11 +48,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     public MemoryPMARImpl() {
     }
 
-    @Override
-    public final void close(boolean truncate) {
-        this.close(truncate, Vm.TRUNCATE_TO_PAGE);
-    }
-
     public final void close(boolean truncate, byte truncateMode) {
         long sz = getAppendOffset();
         releaseCurrentPage();
@@ -86,8 +81,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void switchTo(long fd, long offset) {
-        close();
+    public void switchTo(long fd, long offset, byte truncateMode) {
+        close(true, truncateMode);
         this.fd = fd;
         jumpTo(offset);
     }

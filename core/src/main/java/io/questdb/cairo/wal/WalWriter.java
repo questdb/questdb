@@ -55,6 +55,7 @@ public class WalWriter implements TableWriterFrontend {
     };
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
+    public static final int NEW_COL_RECORD_SIZE = 6;
 
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
@@ -115,7 +116,7 @@ public class WalWriter implements TableWriterFrontend {
         try {
             lock();
 
-            metadata = new SequencerMetadata(ff, SequencerMetadata.READ_WRITE);
+            metadata = new SequencerMetadata(ff);
             tableRegistry.copyMetadataTo(tableName, metadata);
 
             columnCount = metadata.getColumnCount();
@@ -284,7 +285,7 @@ public class WalWriter implements TableWriterFrontend {
 
     public void doClose(boolean truncate) {
         open = false;
-        Misc.free(metadata);
+        metadata.close(Vm.TRUNCATE_TO_POINTER);
         Misc.free(events);
         freeSymbolMapReaders();
         Misc.free(symbolMapMem);
@@ -366,32 +367,31 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     public void rollUncommittedToNewSegment() {
-        long uncommittedRows = rowCount - currentTxnStartRowNum;
-        long newSegmentId = segmentId + 1;
+        final long uncommittedRows = rowCount - currentTxnStartRowNum;
+        final long newSegmentId = segmentId + 1;
 
         path.trimTo(rootLen);
 
         if (uncommittedRows > 0) {
             createSegmentDir(newSegmentId);
             path.trimTo(rootLen);
-            LongList newColumnFiles = new LongList();
-            newColumnFiles.setPos(columnCount * 4);
-            newColumnFiles.fill(0, columnCount * 4, -1);
+            final LongList newColumnFiles = new LongList();
+            newColumnFiles.setPos(columnCount * NEW_COL_RECORD_SIZE);
+            newColumnFiles.fill(0, columnCount * NEW_COL_RECORD_SIZE, -1);
             rowValueIsNotNull.fill(0, columnCount, -1);
 
             try {
-                int timestampIndex = metadata.getTimestampIndex();
+                final int timestampIndex = metadata.getTimestampIndex();
                 LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                        .$(path).$(Files.SEPARATOR).$(segmentId + 1)
+                        .$(path).$(Files.SEPARATOR).$(newSegmentId)
                         .$(", rowCount=").$(uncommittedRows).I$();
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    int columnType = metadata.getColumnType(columnIndex);
-
+                    final int columnType = metadata.getColumnType(columnIndex);
                     if (columnType > 0) {
-                        MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
-                        MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
-                        String columnName = metadata.getColumnName(columnIndex);
+                        final MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
+                        final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
+                        final String columnName = metadata.getColumnName(columnIndex);
 
                         CopySegmentFileJob.rollColumnToSegment(ff,
                                 configuration.getWriterFileOpenOpts(),
@@ -558,7 +558,7 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
-        for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += 2) {
+        for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += NEW_COL_RECORD_SIZE) {
             long fd = newColumnFiles.get(fdIndex);
             if (fd > -1L) {
                 ff.close(fd);
@@ -754,8 +754,12 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
-        Misc.free(columns.getAndSetQuick(pi, NullMemory.INSTANCE));
-        Misc.free(columns.getAndSetQuick(si, NullMemory.INSTANCE));
+        final MemoryMA primaryColumn = columns.getAndSetQuick(pi, NullMemory.INSTANCE);
+        final MemoryMA secondaryColumn = columns.getAndSetQuick(si, NullMemory.INSTANCE);
+        primaryColumn.close(true, Vm.TRUNCATE_TO_POINTER);
+        if (secondaryColumn != null) {
+            secondaryColumn.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
     }
 
     private void freeColumns(boolean truncate) {
@@ -764,7 +768,7 @@ public class WalWriter implements TableWriterFrontend {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final MemoryMA m = columns.getQuick(i);
                 if (m != null) {
-                    m.close(truncate);
+                    m.close(truncate, Vm.TRUNCATE_TO_POINTER);
                 }
             }
         }
@@ -833,6 +837,7 @@ public class WalWriter implements TableWriterFrontend {
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
         try {
             final MemoryMA mem1 = getPrimaryColumn(columnIndex);
+            mem1.close(true, Vm.TRUNCATE_TO_POINTER);
             mem1.of(ff,
                     dFile(path.trimTo(pathTrimToLen), name),
                     configuration.getDataAppendPageSize(),
@@ -843,6 +848,7 @@ public class WalWriter implements TableWriterFrontend {
 
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
+                mem2.close(true, Vm.TRUNCATE_TO_POINTER);
                 mem2.of(ff,
                         iFile(path.trimTo(pathTrimToLen), name),
                         configuration.getDataAppendPageSize(),
@@ -882,7 +888,7 @@ public class WalWriter implements TableWriterFrontend {
             }
 
             rowCount = 0;
-            metadata.dumpTo(path, segmentPathLen);
+            metadata.switchTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
             lastSegmentTxn = 0;
@@ -914,33 +920,24 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void renameColumFiles(int columnType, CharSequence columnName, CharSequence newName) {
-        path.trimTo(rootLen);
-        Path tempPath = Path.PATH.get().of(path);
-
         path.trimTo(rootLen).slash().put(segmentId);
-        tempPath.trimTo(rootLen).slash().put(segmentId);
-        int trimTo = path.length();
+        final Path tempPath = Path.PATH.get().of(path);
 
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BINARY:
-            case ColumnType.STRING:
+        if (ColumnType.isVariableLength(columnType)) {
+            final int trimTo = path.length();
+            iFile(path, columnName);
+            iFile(tempPath, newName);
+            if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
+                throw CairoException.critical(ff.errno()).put("cannot rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
+            }
+            path.trimTo(trimTo);
+            tempPath.trimTo(trimTo);
+        }
 
-                iFile(path, columnName);
-                iFile(tempPath, newName);
-                if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
-                    throw CairoException.critical(ff.errno()).put("cannot rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
-                }
-                path.trimTo(trimTo);
-                tempPath.trimTo(trimTo);
-
-
-            default:
-
-                dFile(path, columnName);
-                dFile(tempPath, newName);
-                if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
-                    throw CairoException.critical(ff.errno()).put("cannot rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
-                }
+        dFile(path, columnName);
+        dFile(tempPath, newName);
+        if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
+            throw CairoException.critical(ff.errno()).put("cannot rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
         }
     }
 
@@ -953,6 +950,7 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void rollLastWalEventRecord(long newSegmentId, long uncommittedRows) {
+        events.rollback();
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.length());
         lastSegmentTxn = events.data(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
@@ -1097,17 +1095,21 @@ public class WalWriter implements TableWriterFrontend {
 
     private void switchColumnsToNewSegment(LongList newColumnFiles) {
         for (int i = 0; i < columnCount; i++) {
-            long newPrimaryFd = newColumnFiles.get(i * 4);
+            long newPrimaryFd = newColumnFiles.get(i * NEW_COL_RECORD_SIZE);
             if (newPrimaryFd > -1L) {
                 MemoryMA primaryColumnFile = getPrimaryColumn(i);
-                long writeOffset = newColumnFiles.get(i * 4 + 1);
-                primaryColumnFile.switchTo(newPrimaryFd, writeOffset);
+                long currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 1);
+                long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
+                primaryColumnFile.jumpTo(currentOffset);
+                primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
 
-                long newSecondaryFd = newColumnFiles.get(i * 4 + 2);
+                long newSecondaryFd = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1L) {
                     MemoryMA secondaryColumnFile = getSecondaryColumn(i);
-                    writeOffset = newColumnFiles.get(i * 4 + 3);
-                    secondaryColumnFile.switchTo(newSecondaryFd, writeOffset);
+                    currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
+                    newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);
+                    secondaryColumnFile.jumpTo(currentOffset);
+                    secondaryColumnFile.switchTo(newSecondaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
                 }
             }
         }
@@ -1332,14 +1334,16 @@ public class WalWriter implements TableWriterFrontend {
                     }
 
                     if (!rollSegmentOnNextRow) {
-                        // This is WAL writer receiving notification from another writer that the column is added
-                        // it has to add it to the open segment.
+                        // this means we have rolled uncommitted rows to a new segment already
+                        // we should switch metadata to this new segment
                         path.trimTo(rootLen).slash().put(segmentId);
-                        metadata.dumpTo(path, path.length());
+                        // this will close old _meta file and create the new one
+                        metadata.switchTo(path, path.length());
                         openColumnFiles(columnName, columnIndex, path.length());
                     }
-                    // If this is the WAL writer performing the add column operation
-                    // it will add the column file / flush metadata on next row write.
+                    // if we did not have to roll uncommitted rows to a new segment
+                    // it will add the column file and switch metadata file on next row write
+                    // as part of rolling to a new segment
 
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount);
@@ -1385,12 +1389,15 @@ public class WalWriter implements TableWriterFrontend {
                         columnCount = metadata.getColumnCount();
 
                         if (!rollSegmentOnNextRow) {
-                            // This is WAL writer receiving notification from another writer that the column is added
-                            // it has to add it to the open segment.
-                            metadata.syncToMetaFile();
+                            // this means we have rolled uncommitted rows to a new segment already
+                            // we should switch metadata to this new segment
+                            path.trimTo(rootLen).slash().put(segmentId);
+                            // this will close old _meta file and create the new one
+                            metadata.switchTo(path, path.length());
                         }
-                        // If this is the WAL writer performing the add column operation
-                        // it will add the column file / flush metadata on next row write.
+                        // if we did not have to roll uncommitted rows to a new segment
+                        // it will switch metadata file on next row write
+                        // as part of rolling to a new segment
 
                         if (ColumnType.isSymbol(type)) {
                             removeSymbolMapReader(index);
@@ -1423,16 +1430,21 @@ public class WalWriter implements TableWriterFrontend {
                         // We are not going to do any special for symbol readers which point
                         // to the files in the root of the table.
                         // We keep the symbol readers open against files with old name.
-                        // Incosistency between column name and symbol file names in the root
+                        // Inconsistency between column name and symbol file names in the root
                         // does not matter, these files are for re-lookup only for the WAL writer
                         // and should not be serialised to the WAL segment.
 
                         if (!rollSegmentOnNextRow) {
-                            // This is WAL writer receiving notification from another writer that the column is added
-                            // it has to add it to the open segment.
-                            metadata.syncToMetaFile();
+                            // this means we have rolled uncommitted rows to a new segment already
+                            // we should switch metadata to this new segment
+                            path.trimTo(rootLen).slash().put(segmentId);
+                            // this will close old _meta file and create the new one
+                            metadata.switchTo(path, path.length());
                             renameColumFiles(columnType, columnName, newColumnName);
                         }
+                        // if we did not have to roll uncommitted rows to a new segment
+                        // it will switch metadata file on next row write
+                        // as part of rolling to a new segment
 
                         LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumName=").$(newColumnName).I$();
                     } else {
