@@ -588,9 +588,7 @@ public abstract class AbstractCairoTest {
             long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
 
             if (value != 0L) {
-                System.err.print(MemoryTag.nameOf(i));
-                System.err.print(":");
-                System.err.println(value);
+                System.out.println(MemoryTag.nameOf(i) + ":" + value);
             }
         }
     }
@@ -601,15 +599,15 @@ public abstract class AbstractCairoTest {
     // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
     @TestOnly
     public static long getMemUsedByFactories() {
-        long tags = 0;
+        long memUsed = 0;
 
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (!FACTORY_TAGS[i]) {
-                tags = tags | 1L << i;
+            if (FACTORY_TAGS[i]) {
+                memUsed += Unsafe.getMemUsedByTag(i);
             }
         }
 
-        return getMemUsedExcept(tags);
+        return memUsed;
     }
 
     @TestOnly
