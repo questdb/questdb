@@ -378,10 +378,10 @@ public class HttpServer implements Closeable {
 
         @Override
         public void close() {
-            Misc.free(defaultRequestProcessor);
+            Misc.freeIfCloseable(defaultRequestProcessor);
             ObjList<CharSequence> processorKeys = processorMap.keys();
             for (int i = 0, n = processorKeys.size(); i < n; i++) {
-                Misc.free(processorMap.get(processorKeys.getQuick(i)));
+                Misc.freeIfCloseable(processorMap.get(processorKeys.getQuick(i)));
             }
         }
     }

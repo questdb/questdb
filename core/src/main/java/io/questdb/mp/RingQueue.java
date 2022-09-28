@@ -74,7 +74,7 @@ public class RingQueue<T> implements Closeable {
     @Override
     public void close() {
         for (int i = 0, n = buf.length; i < n; i++) {
-            Misc.free(buf[i]);
+            Misc.freeIfCloseable(buf[i]);
         }
         if (memorySize > 0) {
             Unsafe.free(memory, memorySize, memoryTag);
