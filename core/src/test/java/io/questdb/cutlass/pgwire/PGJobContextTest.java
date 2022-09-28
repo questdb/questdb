@@ -6667,25 +6667,29 @@ create table tab as (
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
-                    final Connection connection = getConnection(server.getPort(), false, true)
+                    final WorkerPool workerPool = server.getWorkerPool()
             ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
 
-                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    statement.setLong(1, 42);
-                    statement.executeUpdate();
-                }
+                    try (Statement statement = connection.createStatement()) {
+                        statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
 
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.executeUpdate("drop table update_after_drop");
-                    stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+                    try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        statement.setLong(1, 42);
+                        statement.executeUpdate();
+                    }
 
-                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    stmt.setLong(1, 42);
-                    stmt.executeUpdate();
+                    try (Statement stmt = connection.createStatement()) {
+                        stmt.executeUpdate("drop table update_after_drop");
+                        stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
+
+                    try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        stmt.setLong(1, 42);
+                        stmt.executeUpdate();
+                    }
                 }
             }
         });
@@ -6696,24 +6700,27 @@ create table tab as (
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
-                    final Connection connection = getConnection(server.getPort(), false, true)
+                    final WorkerPool workerPool = server.getWorkerPool()
             ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                    try (Statement statement = connection.createStatement()) {
+                        statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
 
-                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    statement.setLong(1, 42);
-                    statement.executeUpdate();
-                }
+                    try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        statement.setLong(1, 42);
+                        statement.executeUpdate();
+                    }
 
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.executeUpdate("alter table update_after_drop drop column val");
-                }
+                    try (Statement stmt = connection.createStatement()) {
+                        stmt.executeUpdate("alter table update_after_drop drop column val");
+                    }
 
-                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    stmt.setLong(1, 42);
-                    stmt.executeUpdate();
+                    try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        stmt.setLong(1, 42);
+                        stmt.executeUpdate();
+                    }
                 }
             }
         });
@@ -6724,27 +6731,31 @@ create table tab as (
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
-                    final Connection connection = getConnection(server.getPort(), false, true)
+                    final WorkerPool workerPool = server.getWorkerPool();
             ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
-                }
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
 
-                try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    statement.setLong(1, 42);
-                    statement.executeUpdate();
-                }
+                    try (Statement statement = connection.createStatement()) {
+                        statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                    }
 
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.executeUpdate("alter table update_after_drop drop column id");
-                }
+                    try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        statement.setLong(1, 42);
+                        statement.executeUpdate();
+                    }
 
-                try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
-                    stmt.setLong(1, 42);
-                    stmt.executeUpdate();
-                    fail("id column was dropped, the UPDATE should have failed");
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                    try (Statement stmt = connection.createStatement()) {
+                        stmt.executeUpdate("alter table update_after_drop drop column id");
+                    }
+
+                    try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
+                        stmt.setLong(1, 42);
+                        stmt.executeUpdate();
+                        fail("id column was dropped, the UPDATE should have failed");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                    }
                 }
             }
         });
@@ -8315,45 +8326,48 @@ create table tab as (
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(queryScheduledCount);
-                    final Connection connection = getConnection(server.getPort(), true, false)
+                    final WorkerPool workerPool = server.getWorkerPool()
             ) {
-                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
-                statement.execute();
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), true, false)) {
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                    statement.execute();
 
-                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                insert1.execute();
+                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                            "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                            "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                    insert1.execute();
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
-                    SOCountDownLatch finished = new SOCountDownLatch(1);
-                    new Thread(() -> {
-                        try {
-                            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
-                            int numOfRowsUpdated1 = update1.executeUpdate();
-                            assertEquals(2, numOfRowsUpdated1);
-                        } catch (Throwable e) {
-                            Assert.fail(e.getMessage());
-                            e.printStackTrace();
-                        } finally {
-                            finished.countDown();
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
+                        SOCountDownLatch finished = new SOCountDownLatch(1);
+                        new Thread(() -> {
+                            try {
+                                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                                int numOfRowsUpdated1 = update1.executeUpdate();
+                                assertEquals(2, numOfRowsUpdated1);
+                            } catch (Throwable e) {
+                                Assert.fail(e.getMessage());
+                                e.printStackTrace();
+                            } finally {
+                                finished.countDown();
+                            }
+                        }).start();
+
+                        MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                        long startTimeMicro = microsecondClock.getTicks();
+                        // Wait 1 min max for completion
+                        while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
+                            onTick.run(writer);
+                            writer.tick(true);
+                            finished.await(500_000);
                         }
-                    }).start();
-
-                    MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
-                    long startTimeMicro = microsecondClock.getTicks();
-                    // Wait 1 min max for completion
-                    while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
-                        onTick.run(writer);
-                        writer.tick(true);
-                        finished.await(500_000);
                     }
-                }
 
-                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
+                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
                 }
             }
         });
