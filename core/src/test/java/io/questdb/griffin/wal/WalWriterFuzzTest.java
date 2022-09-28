@@ -382,7 +382,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
 
         for (; symbolIndex < totalSymbols; symbolIndex++) {
-            symbols[symbolIndex] = Chars.toString(rnd.nextChars(rnd.nextInt(strLen)));
+            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
         }
         return symbols;
     }
