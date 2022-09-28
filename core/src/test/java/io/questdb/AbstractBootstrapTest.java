@@ -25,7 +25,9 @@
 package io.questdb;
 
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -37,6 +39,9 @@ import java.net.URL;
 import java.util.Properties;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 
 public abstract class AbstractBootstrapTest {
@@ -87,6 +92,8 @@ public abstract class AbstractBootstrapTest {
 
     @After
     public void tearDown() {
+        Path path = Path.getThreadLocal(root);
+        Files.rmdir(path.slash$());
         temp.delete();
     }
 
