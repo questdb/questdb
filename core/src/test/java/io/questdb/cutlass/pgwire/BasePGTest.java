@@ -192,10 +192,20 @@ public class BasePGTest extends AbstractGriffinTest {
                     public int getBindPort() {
                         return 0;  // Bind to ANY port.
                     }
+                };
+            }
+        };
+    }
 
+    @NotNull
+    protected DefaultPGWireConfiguration getStdPgWireConfig() {
+        return new DefaultPGWireConfiguration() {
+            @Override
+            public IODispatcherConfiguration getDispatcherConfiguration() {
+                return new DefaultIODispatcherConfiguration() {
                     @Override
-                    public boolean getPeerNoLinger() {
-                        return false;
+                    public int getBindPort() {
+                        return 0;  // Bind to ANY port.
                     }
                 };
             }
