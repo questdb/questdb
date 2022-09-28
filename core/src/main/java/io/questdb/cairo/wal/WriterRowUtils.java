@@ -42,7 +42,7 @@ public class WriterRowUtils {
             final int typeBits = ColumnType.getGeoHashBits(type);
             final int charsRequired = (typeBits - 1) / 5 + 1;
             if (hashLen < charsRequired) {
-                throw ImplicitCastException.inconvertibleValue(0, hash, ColumnType.STRING, type);
+                throw ImplicitCastException.inconvertibleValue(hash, ColumnType.STRING, type);
             } else {
                 try {
                     val = GeoHashes.widen(
@@ -51,7 +51,7 @@ public class WriterRowUtils {
                             typeBits
                     );
                 } catch (NumericException e) {
-                    throw ImplicitCastException.inconvertibleValue(0, hash, ColumnType.STRING, type);
+                    throw ImplicitCastException.inconvertibleValue(hash, ColumnType.STRING, type);
                 }
             }
         } else {
