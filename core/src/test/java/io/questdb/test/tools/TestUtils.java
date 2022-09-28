@@ -51,8 +51,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
-import static org.hamcrest.Matchers.*;
-
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -61,6 +59,9 @@ import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 public final class TestUtils {
 
@@ -413,8 +414,10 @@ public final class TestUtils {
     }
 
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
-        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
-             BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
+        try (
+                BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
+                BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))
+        ) {
             int byte1, byte2;
             long length = 0;
             do {
@@ -797,11 +800,6 @@ public final class TestUtils {
         }
     }
 
-    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        workerPool.assignCleaner(Path.CLEANER);
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
-    }
-
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runner,
@@ -1115,6 +1113,11 @@ public final class TestUtils {
         } finally {
             pool.halt();
         }
+    }
+
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        workerPool.assignCleaner(Path.CLEANER);
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
     }
 
     public static long toMemory(CharSequence sequence) {
