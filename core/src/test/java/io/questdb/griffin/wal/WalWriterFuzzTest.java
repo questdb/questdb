@@ -110,7 +110,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalWriteFullRandom() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2)) - 1;
-        dataAppendPageSize = 1L << (minPage + rnd.nextInt(30));
+        dataAppendPageSize = 1L << (minPage + rnd.nextInt(34 - minPage));
         fullRandomFuzz(rnd);
     }
 
