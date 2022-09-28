@@ -97,5 +97,5 @@ public interface CompiledQuery {
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
-    CompiledQuery withSqlStatement(String sqlStatement);
+    CompiledQuery withSqlStatement(CharSequence sqlStatement);
 }

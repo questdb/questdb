@@ -67,8 +67,7 @@ import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
-import static io.questdb.cairo.wal.WalTxnType.DATA;
-import static io.questdb.cairo.wal.WalTxnType.SQL;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -1342,6 +1341,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                 processWalSql(sqlInfo, sqlToOperation);
                 break;
+            case TRUNCATE:
+                truncate();
+                break;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
         }
@@ -1868,7 +1870,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
      * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
-    public final void truncate() {
+    @Override
+    public final long truncate() {
         rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
@@ -1877,7 +1880,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         if (size() == 0) {
-            return;
+            return -1;
         }
 
         // this is a crude block to test things for now
@@ -1924,6 +1927,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         LOG.info().$("truncated [name=").$(tableName).I$();
+        return txWriter.getTxn();
     }
 
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {

@@ -46,7 +46,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private TextLoader textLoader;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
-    private String sqlStatement;
+    private CharSequence sqlStatement;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
@@ -158,7 +158,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQueryImpl withSqlStatement(String sqlStatement) {
+    public CompiledQueryImpl withSqlStatement(CharSequence sqlStatement) {
         this.sqlStatement = sqlStatement;
         return this;
     }

@@ -6443,25 +6443,25 @@ create table tab as (
 
     public void testTruncateAndUpdateOnTable(String config) throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            maySkipOnWalRun();  // Truncate table is not supported by WAL yet
-
             try (Statement stat = connection.createStatement()) {
                 stat.execute("create table tb ( i int, b boolean, ts timestamp ) " + config + ";");
             }
 
             try (Statement stat = connection.createStatement()) {
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("insert into tb values (1, true, now());");
+                stat.execute("update tb set i = 10, b = true;");
                 stat.execute("truncate table tb;");
-                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("insert into tb values (2, true, cast(0 as timestamp));");
+                stat.execute("insert into tb values (1, true, '2022-09-28T17:00:00.000000Z');");
+                stat.execute("update tb set i = 12, b = true;");
 
-                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
-                    mayDrainWalQueue();
+                mayDrainWalQueue();
 
+                try (ResultSet result = stat.executeQuery("tb")) {
                     StringSink sink = new StringSink();
-                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
+                    assertResultSet("i[INTEGER],b[BIT],ts[TIMESTAMP]\n" +
+                            "12,true,1970-01-01 00:00:00.0\n" +
+                            "12,true,2022-09-28 17:00:00.0\n", sink, result);
                 }
             }
         });

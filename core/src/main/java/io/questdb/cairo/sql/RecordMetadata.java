@@ -178,6 +178,10 @@ public interface RecordMetadata extends ColumnTypes {
      */
     boolean isSymbolTableStatic(int columnIndex);
 
+    default boolean isWalEnabled() {
+        return false;
+    }
+
     /**
      * Create a JSON object with record metadata
      *

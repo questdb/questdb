@@ -131,6 +131,15 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
+    long truncate() {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.TRUNCATE);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+        return txn++;
+    }
+
     private void writeIndexedVariables(BindVariableService bindVariableService) {
         final int count = bindVariableService.getIndexedVariableCount();
         eventMem.putInt(count);

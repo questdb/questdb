@@ -2023,7 +2023,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
-                typesAndUpdate.of(cq.getUpdateOperation(), bindVariableService);
+                typesAndUpdate.of(cq.getUpdateOperation(), queryText, bindVariableService);
                 typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:

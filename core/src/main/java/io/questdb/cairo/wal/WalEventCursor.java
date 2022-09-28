@@ -112,6 +112,8 @@ public class WalEventCursor {
             case SQL:
                 sqlInfo.read();
                 break;
+            case TRUNCATE:
+                break;
             default:
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
         }

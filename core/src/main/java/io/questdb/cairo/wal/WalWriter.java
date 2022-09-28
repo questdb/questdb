@@ -202,6 +202,17 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     @Override
+    public long truncate() {
+        try {
+            lastSegmentTxn = events.truncate();
+            return getTableTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
+    }
+
+    @Override
     public void close() {
         if (isOpen()) {
             rollback();

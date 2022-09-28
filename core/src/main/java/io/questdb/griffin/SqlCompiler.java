@@ -97,7 +97,7 @@ public class SqlCompiler implements Closeable {
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final IntIntHashMap typeCast = new IntIntHashMap();
-    private final ObjList<TableWriter> tableWriters = new ObjList<>();
+    private final ObjList<TableWriterFrontend> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final FunctionParser functionParser;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
@@ -2283,7 +2283,7 @@ public class SqlCompiler implements Closeable {
                     tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
                     try {
-                        tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
+                        tableWriters.add(engine.getTableWriterFrontEnd(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
                     } catch (CairoException e) {
                         LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
@@ -2305,9 +2305,11 @@ public class SqlCompiler implements Closeable {
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                try (TableWriter writer = tableWriters.getQuick(i)) {
+                try (TableWriterFrontend writer = tableWriters.getQuick(i)) {
                     try {
-                        if (engine.lockReaders(writer.getTableName())) {
+                        if (writer.getMetadata().isWalEnabled()) {
+                            writer.truncate();
+                        } else if (engine.lockReaders(writer.getTableName())) {
                             try {
                                 writer.truncate();
                             } finally {
