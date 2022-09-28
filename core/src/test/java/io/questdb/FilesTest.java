@@ -607,7 +607,6 @@ public class FilesTest {
 
                     long1 = Files.readULong(fd2, fileSize - offset - 8);
                     Assert.assertEquals(testValue, long1);
-
                 } finally {
                     // Release mem, fd
                     Files.close(fd1);
