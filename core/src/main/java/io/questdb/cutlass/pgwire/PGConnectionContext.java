@@ -41,7 +41,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
@@ -49,7 +48,6 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
-import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 /**
  * Useful PostgreSQL documentation links:<br>
@@ -128,7 +126,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
-    private final DateLocale locale;
     private final CharSequenceObjHashMap<TableWriter> pendingWriters;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
@@ -216,7 +213,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
-        this.locale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32

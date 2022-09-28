@@ -594,7 +594,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "xyz");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: xyz [STRING -> FLOAT] tuple: 0");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `xyz` [STRING -> FLOAT]");
         }
     }
 
@@ -764,7 +764,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "ok");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: ok [STRING -> LONG] tuple: 0");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `ok` [STRING -> LONG]");
         }
     }
 
@@ -775,7 +775,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr("a", "ok");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: ok [STRING -> LONG] tuple: 0");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `ok` [STRING -> LONG]");
         }
     }
 

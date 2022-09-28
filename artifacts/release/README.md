@@ -24,7 +24,7 @@ Publishing release will create a git tag on the latest master.
 Compile using maven on Windows, Linux and FreeBSD and upload to GH release
 
 ```bash
-mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
+mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
 ## Release Docker image
