@@ -198,6 +198,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long maxRows;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private boolean sendRNQ = true;
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext) {
         this.engine = engine;
@@ -1491,6 +1492,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException, AuthenticationException {
 
         if (requireInitialMessage) {
+            sendRNQ = true;
             processInitialMessage(address, len);
             return;
         }
@@ -1539,11 +1541,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
         if (authenticationRequired) {
+            sendRNQ = true;
             doAuthentication(msgLo, msgLimit);
             return;
         }
         switch (type) {
             case 'P':
+                sendRNQ = true;
                 processParse(
                         address,
                         msgLo,
@@ -1557,17 +1561,21 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case 'C':
                 // close
                 processClose(msgLo, msgLimit);
+                sendRNQ = true;
                 break;
             case 'B': // bind
+                sendRNQ = true;
                 processBind(msgLo, msgLimit, compiler);
                 break;
             case 'E': // execute
+                sendRNQ = true;
                 processExec(msgLo, msgLimit, compiler);
                 break;
             case 'S': // sync
                 processSyncActions();
                 prepareReadyForQuery();
                 prepareForNewQuery();
+                sendRNQ = true;
                 // fall thru
             case 'H': // flush
                 // some clients (asyncpg) chose not to send 'S' (sync) message
@@ -1580,9 +1588,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 sendAndReset();
                 break;
             case 'D': // describe
+                sendRNQ = true;
                 processDescribe(msgLo, msgLimit, compiler);
                 break;
             case 'Q':
+                sendRNQ = true;
                 processQuery(msgLo, msgLimit, compiler);
                 break;
             case 'd':
@@ -1778,18 +1788,22 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     void prepareReadyForQuery() {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-        switch (transactionState) {
-            case IN_TRANSACTION:
-                responseAsciiSink.put(STATUS_IN_TRANSACTION);
-                break;
-            case ERROR_TRANSACTION:
-                responseAsciiSink.put(STATUS_IN_ERROR);
-                break;
-            default:
-                responseAsciiSink.put(STATUS_IDLE);
-                break;
+        if (sendRNQ) {
+            LOG.debug().$("RNQ sent").$();
+            responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+            responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+            switch (transactionState) {
+                case IN_TRANSACTION:
+                    responseAsciiSink.put(STATUS_IN_TRANSACTION);
+                    break;
+                case ERROR_TRANSACTION:
+                    responseAsciiSink.put(STATUS_IN_ERROR);
+                    break;
+                default:
+                    responseAsciiSink.put(STATUS_IDLE);
+                    break;
+            }
+            sendRNQ = false;
         }
     }
 
@@ -2694,6 +2708,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
         @Override
         public void preCompile(SqlCompiler compiler) {
+            sendRNQ = true;
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;
             PGConnectionContext.this.typesAndUpdate = null;
