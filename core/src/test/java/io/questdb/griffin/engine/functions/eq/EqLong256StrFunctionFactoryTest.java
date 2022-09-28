@@ -63,7 +63,7 @@ public class EqLong256StrFunctionFactoryTest extends AbstractGriffinTest {
                     true);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 0xG56 [STRING -> LONG256] tuple: 0");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `0xG56` [STRING -> LONG256]");
         }
     }
 }

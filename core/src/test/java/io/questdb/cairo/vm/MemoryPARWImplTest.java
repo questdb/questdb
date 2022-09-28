@@ -774,7 +774,7 @@ public class MemoryPARWImplTest {
             } catch (ImplicitCastException ex) {
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
-                        "inconvertible value: JUNK0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfedMOREJUNK [STRING -> LONG256] tuple: 0"
+                        "inconvertible value: `JUNK0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfedMOREJUNK` [STRING -> LONG256]"
                 );
             }
         }

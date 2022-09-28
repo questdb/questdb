@@ -43,7 +43,7 @@ public class Long256FromCharSequenceDecoderTest {
             assertDecoded("5g9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 5g9796963abad00001e5f6bbdb38 [STRING -> LONG256] tuple: 0");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `5g9796963abad00001e5f6bbdb38` [STRING -> LONG256]");
         }
     }
 
@@ -131,7 +131,7 @@ public class Long256FromCharSequenceDecoderTest {
         } catch (ImplicitCastException e) {
             TestUtils.assertContains(
                     e.getFlyweightMessage(),
-                    "inconvertible value: 10000000000000000000000000000000000000000000000000000000000000000 [STRING -> LONG256] tuple: 0"
+                    "inconvertible value: `10000000000000000000000000000000000000000000000000000000000000000` [STRING -> LONG256]"
                     );
         }
     }
