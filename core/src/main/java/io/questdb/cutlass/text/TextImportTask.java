@@ -699,6 +699,14 @@ public class TextImportTask {
             this.atomicity = -1;
         }
 
+        public long getErrorCount() {
+            return errorCount;
+        }
+
+        public long getLineCount() {
+            return lineCount;
+        }
+
         public LongList getPartitionKeysAndSizes() {
             return partitionKeysAndSizes;
         }
@@ -761,14 +769,6 @@ public class TextImportTask {
                 indexer.clear();
             }
         }
-
-        public long getLineCount() {
-            return lineCount;
-        }
-
-        public long getErrorCount() {
-            return errorCount;
-        }
     }
 
     public class PhasePartitionImport {
@@ -819,8 +819,20 @@ public class TextImportTask {
             this.utf8Sink = null;
         }
 
+        public long getErrors() {
+            return errors;
+        }
+
         public LongList getImportedRows() {
             return importedRows;
+        }
+
+        public long getRowsHandled() {
+            return rowsHandled;
+        }
+
+        public long getRowsImported() {
+            return rowsImported;
         }
 
         public void run(
@@ -1312,7 +1324,7 @@ public class TextImportTask {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
                 type.write(w, fieldIndex, dbcs, utf8Sink);
-            } catch (NumericException | Utf8Exception | ConversionException | ImplicitCastException ignore) {
+            } catch (NumericException | Utf8Exception | ImplicitCastException ignore) {
                 errors++;
                 logError(offset, fieldIndex, dbcs);
                 switch (atomicity) {
@@ -1404,18 +1416,6 @@ public class TextImportTask {
                 ff.munmap(addr, size, MemoryTag.MMAP_IMPORT);
             }
             mergeIndexes.clear();
-        }
-
-        public long getErrors() {
-            return errors;
-        }
-
-        public long getRowsHandled() {
-            return rowsHandled;
-        }
-
-        public long getRowsImported() {
-            return rowsImported;
         }
     }
 
