@@ -195,10 +195,13 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
+            if (!running.get()) {
+                workerPoolManager.start(null);
+            }
             ShutdownFlag.INSTANCE.shutdown();
             workerPoolManager.halt();
             Misc.freeObjListAndClear(toBeClosed);
-            // leave hasStarted as is, to disable start
+            // leave running as is, to disable start
         }
     }
 

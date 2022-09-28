@@ -24,7 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -57,15 +56,17 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainStart() {
-        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
-            Assert.assertNotNull(serverMain.getConfiguration());
-            Assert.assertNotNull(serverMain.getCairoEngine());
-            Assert.assertNotNull(serverMain.getWorkerPoolManager());
-            Assert.assertFalse(serverMain.hasStarted());
-            Assert.assertFalse(serverMain.hasBeenClosed());
-            serverMain.start();
-        }
+    public void testServerMainStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Assert.assertNotNull(serverMain.getConfiguration());
+                Assert.assertNotNull(serverMain.getCairoEngine());
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertFalse(serverMain.hasStarted());
+                Assert.assertFalse(serverMain.hasBeenClosed());
+                serverMain.start();
+            }
+        }, true);
     }
 
     @Test
@@ -74,30 +75,31 @@ public class ServerMainTest extends AbstractBootstrapTest {
             try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 Os.pause();
             }
-            LogFactory.closeInstance();
-        });
+        }, true);
     }
 
     @Test
-    public void testServerMainNoReStart() {
-        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
-            serverMain.start();
-            serverMain.start(); // <== no effect
-            serverMain.close();
-            try {
-                serverMain.getCairoEngine();
-            } catch (IllegalStateException ex) {
-                TestUtils.assertContains("close was called", ex.getMessage());
+    public void testServerMainNoReStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                serverMain.start();
+                serverMain.start(); // <== no effect
+                serverMain.close();
+                try {
+                    serverMain.getCairoEngine();
+                } catch (IllegalStateException ex) {
+                    TestUtils.assertContains("close was called", ex.getMessage());
+                }
+                try {
+                    serverMain.getWorkerPoolManager();
+                } catch (IllegalStateException ex) {
+                    TestUtils.assertContains("close was called", ex.getMessage());
+                }
+                serverMain.start(); // <== no effect
+                serverMain.close(); // <== no effect
+                serverMain.start(); // <== no effect
             }
-            try {
-                serverMain.getWorkerPoolManager();
-            } catch (IllegalStateException ex) {
-                TestUtils.assertContains("close was called", ex.getMessage());
-            }
-            serverMain.start(); // <== no effect
-            serverMain.close(); // <== no effect
-            serverMain.start(); // <== no effect
-        }
+        }, true);
     }
 
     @Test

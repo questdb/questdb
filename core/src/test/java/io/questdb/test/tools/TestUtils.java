@@ -451,6 +451,10 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
+        assertMemoryLeak(runnable, false);
+    }
+
+    public static void assertMemoryLeak(LeakProneCode runnable, boolean ignoreLogFactory) throws Exception {
         Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long[] memoryUsageByTag = new long[MemoryTag.SIZE];
@@ -479,6 +483,10 @@ public final class TestUtils {
         Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+                if (i == MemoryTag.LOG_FACTORY && ignoreLogFactory) {
+                    memAfter -= Unsafe.getMemUsedByTag(i);
+                    continue;
+                }
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
                     Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);

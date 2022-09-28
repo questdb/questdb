@@ -67,7 +67,8 @@ public final class MemoryTag {
     public static final int MMAP_PARALLEL_IMPORT = 39;
     public static final int NATIVE_PARALLEL_IMPORT = 40;
     public static final int NATIVE_JOIN_MAP = 41;
-    public static final int SIZE = NATIVE_JOIN_MAP + 1;
+    public static final int LOG_FACTORY = 42;
+    public static final int SIZE = LOG_FACTORY + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -117,5 +118,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_PARALLEL_IMPORT, "MMAP_PARALLEL_IMPORT");
         tagNameMap.extendAndSet(NATIVE_PARALLEL_IMPORT, "NATIVE_PARALLEL_IMPORT");
         tagNameMap.extendAndSet(NATIVE_JOIN_MAP, "NATIVE_JOIN_MAP");
+        tagNameMap.extendAndSet(LOG_FACTORY, "LOG_FACTORY");
     }
 }
