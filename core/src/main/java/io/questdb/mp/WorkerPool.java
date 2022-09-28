@@ -144,12 +144,9 @@ public class WorkerPool implements Closeable {
                         workerAffinity[i],
                         log,
                         (ex) -> {
-                            final ObjList<Closeable> cl = cleaners.getQuick(index);
-                            for (int j = 0, n = cl.size(); j < n; j++) {
-                                Misc.free(cl.getQuick(j));
-                            }
+                            Misc.freeObjList(cleaners.getQuick(index));
                             if (log != null) {
-                                log.info().$("cleaned [name=").$(poolName)
+                                log.info().$("cleaned worker [name=").$(poolName)
                                         .$(", worker=").$(index)
                                         .$(", total=").$(workerCount)
                                         .I$();
@@ -168,7 +165,7 @@ public class WorkerPool implements Closeable {
                 worker.start();
             }
             if (log != null) {
-                log.info().$("started").$();
+                log.info().$("worker pool started [pool=").$(poolName).I$();
             }
             started.countDown();
         }

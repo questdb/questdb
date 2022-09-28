@@ -90,11 +90,9 @@ public abstract class WorkerPoolManager {
         }
 
         if (config.getWorkerCount() < 1) {
-            LOG.info().$("using pool [name=").$(sharedPool.getPoolName())
+            LOG.info().$("using SHARED pool [requester=").$(requester)
                     .$(", workers=").$(sharedPool.getWorkerCount())
-                    .$(", requester=").$(requester)
-                    .$("] -> SHARED")
-                    .$();
+                    .I$();
             return sharedPool;
         }
 
@@ -105,10 +103,10 @@ public abstract class WorkerPoolManager {
             pool.assignCleaner(Path.CLEANER);
             dedicatedPools.put(poolName, pool);
         }
-        LOG.info().$("using pool [name=").$(poolName)
+        LOG.info().$("new DEDICATED pool [name=").$(poolName)
+                .$(", requester=").$(requester)
                 .$(", workers=").$(pool.getWorkerCount())
-                .$("] -> DEDICATED")
-                .$();
+                .I$();
         return pool;
     }
 

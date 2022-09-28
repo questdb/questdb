@@ -695,7 +695,7 @@ public class LogFactory implements Closeable {
          * <p>
          * Algorithm iterates over set of bits in "level" twice. First pass is to establish
          * minimum number of channel[] element out of those entries where bit in level is set.
-         * Additionally this pass will set channel[] elements to current consumer index where
+         * Additionally, this pass will set channel[] elements to current consumer index where
          * channel[] element is zero.
          * <p>
          * Second pass sets channel[] element to min value found on first pass.

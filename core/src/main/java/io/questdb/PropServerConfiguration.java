@@ -140,7 +140,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerYieldThreshold;
     private final long sharedWorkerSleepThreshold;
     private final long sharedWorkerSleepTimeout;
-    private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
+    private final WorkerPoolConfiguration sharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
@@ -1053,7 +1053,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     @Override
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return workerPoolConfiguration;
+        return sharedWorkerPoolConfiguration;
     }
 
     @Override
@@ -3080,7 +3080,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getPoolName() {
-            return "worker"; // name of the SHARED pool
+            return "shared";
         }
 
         @Override

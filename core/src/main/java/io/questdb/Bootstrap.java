@@ -36,7 +36,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.TestOnly;
 import sun.misc.Signal;
 
 import java.io.*;
@@ -79,7 +78,8 @@ public class Bootstrap {
 
     public static void logWebConsoleUrls(PropServerConfiguration config, Log log) {
         if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW().$('\n').$("     ___                  _   ____  ____\n").$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n").$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n").$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n").$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n").$("web console URL(s):").$("\n\n");
+            final LogRecord r = log.infoW().$('\n').$("     ___                  _   ____  ____\n").$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n").$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n").$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n").$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n")
+                    .$("Web Console URL(s):").$("\n\n");
             final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
@@ -186,9 +186,9 @@ public class Bootstrap {
             config = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
-        } catch (Throwable thr) {
-            log.errorW().$(thr.getMessage()).$();
-            throw new BootstrapException(thr);
+        } catch (Throwable e) {
+            log.errorW().$(e).$();
+            throw new BootstrapException(e);
         }
 
         // metrics
@@ -260,7 +260,7 @@ public class Bootstrap {
             }
         }
         if (!extracted) {
-            log.infoW().$("Web console is up to date").$();
+            log.infoW().$("Web Console is up to date").$();
         }
     }
 
