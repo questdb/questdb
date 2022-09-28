@@ -24,7 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.std.Files;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -34,13 +36,22 @@ import java.sql.DriverManager;
 
 public class ServerMainTest extends AbstractBootstrapTest {
 
-    @Before
-    public void setUp() {
-        super.setUp();
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractBootstrapTest.setUpStatic();
         try {
             createDummyConfiguration();
         } catch (Exception e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    @Before
+    public void setUp() {
+        try (Path path = new Path().of(root).concat("db")) {
+            int plen = path.length();
+            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
+            Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
         }
     }
 

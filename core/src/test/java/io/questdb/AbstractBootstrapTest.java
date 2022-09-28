@@ -27,7 +27,6 @@ package io.questdb;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.hamcrest.MatcherAssert;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -37,11 +36,9 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
-
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 
 public abstract class AbstractBootstrapTest {
@@ -68,6 +65,11 @@ public abstract class AbstractBootstrapTest {
             }
             publicZipStubCreated = true;
         }
+        try {
+            root = temp.newFolder(UUID.randomUUID().toString()).getAbsolutePath();
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError();
+        }
     }
 
     @AfterClass
@@ -78,20 +80,6 @@ public abstract class AbstractBootstrapTest {
                 publicZip.delete();
             }
         }
-    }
-
-    @Before
-    public void setUp() {
-        try {
-            root = temp.newFolder("QDB_DATA").getAbsolutePath();
-            TestUtils.createTestPath(root);
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
-    }
-
-    @After
-    public void tearDown() {
         Path path = Path.getThreadLocal(root);
         Files.rmdir(path.slash$());
         temp.delete();
@@ -163,16 +151,16 @@ public abstract class AbstractBootstrapTest {
         }
     }
 
-    static String [] extendArgsWith(String[] args, String... moreArgs) {
+    static String[] extendArgsWith(String[] args, String... moreArgs) {
         int argsLen = args != null ? args.length : 0;
         int extLen = moreArgs != null ? moreArgs.length : 0;
         int size = argsLen + extLen;
         if (size < 1) {
             Assert.fail("what are you trying to do?");
         }
-        String [] extendedArgs = new String[size];
+        String[] extendedArgs = new String[size];
         System.arraycopy(args, 0, extendedArgs, 0, argsLen);
-        for (int i=0; i < extLen; i++) {
+        for (int i = 0; i < extLen; i++) {
             extendedArgs[argsLen + i] = moreArgs[i];
         }
         return extendedArgs;
