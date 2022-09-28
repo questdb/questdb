@@ -172,14 +172,15 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            for (int i = 0; i < workerCount; i++) {
-                workers.getQuick(i).halt();
+        if (closed.compareAndSet(false, true)) {
+            if (running.compareAndSet(true, false)) {
+                started.await();
+                for (int i = 0; i < workerCount; i++) {
+                    workers.getQuick(i).halt();
+                }
+                halted.await();
             }
-            halted.await();
-
-            workers.clear();//Worker is not closable
+            workers.clear(); // Worker is not closable
             Misc.freeObjList(freeOnHalt);
         }
     }

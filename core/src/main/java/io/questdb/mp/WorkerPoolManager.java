@@ -44,8 +44,7 @@ public abstract class WorkerPoolManager {
         PG_WIRE_SERVER("pg-wire"),
         LINE_TCP_IO("line-tcp-io"),
         LINE_TCP_WRITER("line-tcp-writer"),
-        OTHER("other")
-        ;
+        OTHER("other");
 
         private final String requester;
 
@@ -130,22 +129,24 @@ public abstract class WorkerPoolManager {
     }
 
     public void halt() {
-        if (closed.compareAndSet(false, true)) {
-            ObjList<CharSequence> poolNames = dedicatedPools.keys();
-            for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-                CharSequence name = poolNames.getQuick(i);
-                WorkerPool pool = dedicatedPools.get(name);
-                LOG.info().$("closing dedicated pool [name=").$(name)
-                        .$(", workers=").$(pool.getWorkerCount())
-                        .I$();
-                pool.halt();
-            }
-            dedicatedPools.clear();
-
-            LOG.info().$("closing shared pool [name=").$(sharedPool.getPoolName())
-                    .$(", workers=").$(sharedPool.getWorkerCount())
+        // halt is idempotent, and start may have not been called, still
+        // we want to free pool resources, so we do not check the closed
+        // flag, but we ensure it is true at the end.
+        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            CharSequence name = poolNames.getQuick(i);
+            WorkerPool pool = dedicatedPools.get(name);
+            LOG.info().$("closing dedicated pool [name=").$(name)
+                    .$(", workers=").$(pool.getWorkerCount())
                     .I$();
-            sharedPool.halt();
+            pool.halt();
         }
+        dedicatedPools.clear();
+
+        LOG.info().$("closing shared pool [name=").$(sharedPool.getPoolName())
+                .$(", workers=").$(sharedPool.getWorkerCount())
+                .I$();
+        sharedPool.halt();
+        closed.set(true);
     }
 }
