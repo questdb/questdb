@@ -87,7 +87,6 @@ public abstract class AbstractBootstrapTest {
 
     @After
     public void tearDown() {
-        TestUtils.removeTestPath(root);
         temp.delete();
     }
 
