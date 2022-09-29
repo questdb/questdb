@@ -144,7 +144,7 @@ public class WorkerPool implements Closeable {
                         workerAffinity[i],
                         log,
                         (ex) -> {
-                            Misc.freeObjList(cleaners.getQuick(index));
+                            Misc.freeObjListAndClear(cleaners.getQuick(index));
                             if (log != null) {
                                 log.info().$("cleaned worker [name=").$(poolName)
                                         .$(", worker=").$(index)
@@ -181,7 +181,12 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
-            Misc.freeObjList(freeOnHalt);
+            Misc.freeObjListAndClear(freeOnHalt);
+
+            // try cleaners, if worker was started and stopped, cleaner will be empty
+            for (int i = 0, n = cleaners.size(); i < n; i++) {
+                Misc.freeObjListAndClear(cleaners.getQuick(i));
+            }
         }
     }
 

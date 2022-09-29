@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
 
 import java.io.*;
@@ -167,9 +168,9 @@ public class Bootstrap {
         sb.append(", ").append(System.getProperty("sun.arch.data.model")).append(" bits");
         sb.append(", ").append(Runtime.getRuntime().availableProcessors()).append(" processors");
         if (isOsSupported) {
-            log.advisoryW().$(archName).$(sb.toString()).I$();
+            log.advisoryW().$(archName).$(sb).I$();
         } else {
-            log.criticalW().$(archName).$(sb.toString()).I$();
+            log.criticalW().$(archName).$(sb).I$();
         }
 
         try {
@@ -177,12 +178,7 @@ public class Bootstrap {
             extractSite();
 
             // /server.conf properties
-            java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
-            final Properties properties = new Properties();
-            try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
-                properties.load(is);
-            }
-            log.advisoryW().$("Server config: ").$(configFile).$();
+            final Properties properties = loadProperties(rootPath);
             config = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
@@ -198,6 +194,18 @@ public class Bootstrap {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
+    }
+
+    @NotNull
+    private Properties loadProperties(File rootPath) throws IOException {
+        final Properties properties = new Properties();
+        java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
+        log.advisoryW().$("Server config: ").$(configFile).$();
+
+        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
+            properties.load(is);
+        }
+        return properties;
     }
 
     public PropServerConfiguration getConfiguration() {
@@ -395,7 +403,10 @@ public class Bootstrap {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         NativeLPSZ name = new NativeLPSZ();
-        try (Path path = new Path().of(dbRoot).slash$(); Path other = new Path().of(dbRoot).slash$()) {
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
             int plen = path.length();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
@@ -414,7 +425,12 @@ public class Bootstrap {
                         if (shouldRename && ff.rename(path, other) == 0) {
                             log.criticalW().$("found crash file [path=").$(other).I$();
                         } else {
-                            log.criticalW().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
+                            log.criticalW().
+                                    $("could not rename crash file [path=").$(path)
+                                    .$(", errno=").$(ff.errno())
+                                    .$(", index=").$(counter.get())
+                                    .$(", max=").$(maxFiles)
+                                    .I$();
                         }
                     }
                 }

@@ -51,6 +51,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
+import static org.hamcrest.Matchers.*;
+
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -59,9 +61,6 @@ import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 public final class TestUtils {
 
@@ -414,10 +413,8 @@ public final class TestUtils {
     }
 
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
-        try (
-                BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
-                BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))
-        ) {
+        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
+             BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
             int byte1, byte2;
             long length = 0;
             do {
@@ -451,10 +448,6 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        assertMemoryLeak(runnable, false);
-    }
-
-    public static void assertMemoryLeak(LeakProneCode runnable, boolean ignoreLogFactory) throws Exception {
         Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long[] memoryUsageByTag = new long[MemoryTag.SIZE];
@@ -483,10 +476,6 @@ public final class TestUtils {
         Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                if (i == MemoryTag.NATIVE_LOGGER && ignoreLogFactory) {
-                    memAfter -= Unsafe.getMemUsedByTag(i);
-                    continue;
-                }
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
                     Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
@@ -808,6 +797,11 @@ public final class TestUtils {
         }
     }
 
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        workerPool.assignCleaner(Path.CLEANER);
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+    }
+
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runner,
@@ -1121,11 +1115,6 @@ public final class TestUtils {
         } finally {
             pool.halt();
         }
-    }
-
-    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        workerPool.assignCleaner(Path.CLEANER);
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
     }
 
     public static long toMemory(CharSequence sequence) {

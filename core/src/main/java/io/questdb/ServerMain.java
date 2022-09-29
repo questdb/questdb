@@ -50,7 +50,7 @@ public class ServerMain implements Closeable {
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ObjList<Closeable> toBeClosed = new ObjList<>();
+    private final ObjList<Closeable> freeOnExistList = new ObjList<>();
     private final WorkerPoolManager workerPoolManager;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
@@ -69,8 +69,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = new CairoEngine(cairoConfig, metrics);
-        toBeClosed(engine);
+        engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -114,7 +113,7 @@ public class ServerMain implements Closeable {
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                        toBeClosed.add(telemetryJob);
+                        freeOnExistList.add(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
                         }
@@ -126,11 +125,10 @@ public class ServerMain implements Closeable {
         };
 
         // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(engine);
-        toBeClosed(snapshotAgent);
+        final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
 
         // http
-        toBeClosed(Services.createHttpServer(
+        freeOnExit(Services.createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -140,7 +138,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        toBeClosed(Services.createMinHttpServer(
+        freeOnExit(Services.createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 engine,
                 workerPoolManager,
@@ -148,7 +146,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        toBeClosed(Services.createPGWireServer(
+        freeOnExit(Services.createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
@@ -158,7 +156,7 @@ public class ServerMain implements Closeable {
         ));
 
         // ilp/tcp
-        toBeClosed(Services.createLineTcpReceiver(
+        freeOnExit(Services.createLineTcpReceiver(
                 config.getLineTcpReceiverConfiguration(),
                 engine,
                 workerPoolManager,
@@ -166,7 +164,7 @@ public class ServerMain implements Closeable {
         ));
 
         // ilp/udp
-        toBeClosed(Services.createLineUdpReceiver(
+        freeOnExit(Services.createLineUdpReceiver(
                 config.getLineUdpReceiverConfiguration(),
                 engine,
                 workerPoolManager
@@ -195,13 +193,12 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            if (!running.get()) {
-                workerPoolManager.start(null);
-            }
-            ShutdownFlag.INSTANCE.shutdown();
             workerPoolManager.halt();
-            Misc.freeObjListAndClear(toBeClosed);
-            // leave running as is, to disable start
+            // free instances in reverse order to which we allocated them
+            for (int i = freeOnExistList.size() - 1; i >= 0; i--) {
+                Misc.free(freeOnExistList.getQuick(i));
+            }
+            freeOnExistList.clear();
         }
     }
 
@@ -231,10 +228,11 @@ public class ServerMain implements Closeable {
         return closed.get();
     }
 
-    private void toBeClosed(Closeable closeable) {
+    private <T extends Closeable> T freeOnExit(T closeable) {
         if (closeable != null) {
-            toBeClosed.add(closeable);
+            freeOnExistList.add(closeable);
         }
+        return closeable;
     }
 
     private void addShutdownHook() {

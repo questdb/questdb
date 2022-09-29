@@ -99,7 +99,9 @@ public final class Services {
                 workerPool.getWorkerCount(),
                 sharedWorkerCount,
                 functionFactoryCache,
-                snapshotAgent);
+                snapshotAgent
+        );
+
         HttpServer.addDefaultEndpoints(
                 server,
                 configuration,

@@ -24,17 +24,26 @@
 
 package io.questdb;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-
 public class ServerMainTest extends AbstractBootstrapTest {
+
+    // log is needed to greedily allocate logger infra and
+    // exclude it from leak detector
+    @SuppressWarnings("unused")
+    private static final Log LOG = LogFactory.getLog(ServerMainTest.class);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -53,29 +62,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
             Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
             Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
         }
-    }
-
-    @Test
-    public void testServerMainStart() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
-                Assert.assertNotNull(serverMain.getConfiguration());
-                Assert.assertNotNull(serverMain.getCairoEngine());
-                Assert.assertNotNull(serverMain.getWorkerPoolManager());
-                Assert.assertFalse(serverMain.hasStarted());
-                Assert.assertFalse(serverMain.hasBeenClosed());
-                serverMain.start();
-            }
-        }, true);
-    }
-
-    @Test
-    public void testServerMainNoStart() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
-                Os.pause();
-            }
-        }, true);
     }
 
     @Test
@@ -99,7 +85,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.close(); // <== no effect
                 serverMain.start(); // <== no effect
             }
-        }, true);
+        });
+    }
+
+    @Test
+    public void testServerMainNoStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Os.pause();
+            }
+        });
     }
 
     @Test
@@ -110,5 +105,19 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 Os.pause();
             }
         }
+    }
+
+    @Test
+    public void testServerMainStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Assert.assertNotNull(serverMain.getConfiguration());
+                Assert.assertNotNull(serverMain.getCairoEngine());
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertFalse(serverMain.hasStarted());
+                Assert.assertFalse(serverMain.hasBeenClosed());
+                serverMain.start();
+            }
+        });
     }
 }

@@ -244,7 +244,6 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         backupAgent.close();
-        codeGenerator.close();
         vacuumColumnVersions.close();
         Misc.free(path);
         Misc.free(renamePath);
