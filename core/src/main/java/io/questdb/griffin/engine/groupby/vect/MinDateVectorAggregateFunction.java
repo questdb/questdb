@@ -115,8 +115,8 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
     }
 
     @Override

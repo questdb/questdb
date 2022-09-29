@@ -130,9 +130,9 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void wrapUp(long pRosti) {
+    public boolean wrapUp(long pRosti) {
         computeSum();
-        Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
+        return Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
     }
 
     @Override

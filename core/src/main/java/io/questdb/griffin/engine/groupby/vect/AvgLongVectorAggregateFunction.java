@@ -117,8 +117,8 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntAvgLongLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntAvgLongLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override

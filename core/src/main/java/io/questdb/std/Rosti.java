@@ -25,12 +25,16 @@
 package io.questdb.std;
 
 import io.questdb.cairo.ColumnTypes;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.Numbers.hexDigits;
 
 public final class Rosti {
 
     public static long alloc(ColumnTypes types, long capacity) {
+        //min capacity that works on all platforms is 16  
+        assert capacity >= 16;
+
         final int columnCount = types.getColumnCount();
         final long mem = Unsafe.malloc(4L * columnCount, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -291,4 +295,15 @@ public final class Rosti {
         Unsafe.recordMemAlloc(newSize - oldSize, MemoryTag.NATIVE_ROSTI);
     }
 
+    //triggers OOM on next allocation happening inside rosti
+    @TestOnly
+    public static native void enableOOMOnMalloc();
+
+    //turns on normal allocation inside rosti
+    @TestOnly
+    public static native void disableOOMOnMalloc();
+
+    //returns true if rosti is set to trigger OOM on  allocation
+    @TestOnly
+    public static native boolean isOOMOnMalloc();
 }
