@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -46,7 +46,7 @@ public interface LineTcpReceiverConfiguration {
 
     int getDefaultPartitionBy();
 
-    WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration();
+    WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
@@ -80,7 +80,7 @@ public interface LineTcpReceiverConfiguration {
 
     int getWriterQueueCapacity();
 
-    WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
+    WorkerPoolConfiguration getWriterWorkerPoolConfiguration();
 
     boolean isEnabled();
 

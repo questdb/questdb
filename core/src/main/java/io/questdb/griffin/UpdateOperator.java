@@ -42,7 +42,7 @@ import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class UpdateOperator extends PurgingOperator implements QuietClosable {
+public class UpdateOperator extends PurgingOperator implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
 
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();

@@ -39,7 +39,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     private long hi;
 
     public DirectCharSink(long capacity) {
-        ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         this.capacity = capacity;
         this.initialCapacity = capacity;
         this.lo = ptr;
@@ -53,7 +53,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
 
     @Override
     public void close() {
-        Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
     }
 
     public void resetCapacity() {
@@ -132,7 +132,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     private void resize(long cap) {
-        long temp = Unsafe.realloc(ptr, capacity, cap, MemoryTag.NATIVE_DEFAULT);
+        long temp = Unsafe.realloc(ptr, capacity, cap, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
         int len = (int) (lo - ptr);
         this.ptr = temp;
         this.capacity = cap;

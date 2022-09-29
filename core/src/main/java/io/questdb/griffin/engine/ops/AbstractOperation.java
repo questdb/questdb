@@ -26,12 +26,12 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.QuietClosable;
+import io.questdb.std.QuietCloseable;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class AbstractOperation implements AsyncWriterCommand, QuietClosable {
+public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
 
     private int cmdType;

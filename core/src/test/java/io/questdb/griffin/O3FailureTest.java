@@ -24,15 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.TestWorkerPool;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -3738,7 +3734,7 @@ public class O3FailureTest extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = new WorkerPool((WorkerPoolAwareConfiguration) () -> 1);
+            WorkerPool pool1 = new WorkerPool(() -> 1);
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -3760,7 +3756,6 @@ public class O3FailureTest extends AbstractO3Test {
                     return false;
                 }
             });
-            pool1.assignCleaner(Path.CLEANER);
 
             final WorkerPool pool2 = new TestWorkerPool(1);
 
@@ -3785,8 +3780,6 @@ public class O3FailureTest extends AbstractO3Test {
                 }
             });
 
-            pool2.assignCleaner(Path.CLEANER);
-
             pool1.start();
             pool2.start();
 
@@ -3806,7 +3799,7 @@ public class O3FailureTest extends AbstractO3Test {
                     return ff;
                 }
             };
-            TestUtils.execute(null, runnable, configuration);
+            TestUtils.execute(null, runnable, configuration, LOG);
         });
     }
 

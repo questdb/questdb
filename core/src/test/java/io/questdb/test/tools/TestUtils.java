@@ -25,7 +25,6 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -33,7 +32,6 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -71,7 +69,6 @@ public final class TestUtils {
     private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
-    private static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     private TestUtils() {
     }
@@ -784,7 +781,8 @@ public final class TestUtils {
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
             CairoConfiguration configuration,
-            Metrics metrics
+            Metrics metrics,
+            Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
@@ -794,9 +792,8 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine, null, null);
-                    pool.start(LOG);
+                    setupWorkerPool(pool, engine);
+                    pool.start(log);
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
@@ -810,12 +807,17 @@ public final class TestUtils {
         }
     }
 
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+    }
+
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runner,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            Log log
     ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled());
+        execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -1097,7 +1099,7 @@ public final class TestUtils {
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
-        WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
+        WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
             @Override
             public int[] getWorkerAffinity() {
                 return new int[1];
@@ -1112,17 +1114,12 @@ public final class TestUtils {
             public boolean haltOnError() {
                 return true;
             }
-
-            @Override
-            public boolean isEnabled() {
-                return true;
-            }
         };
-        WorkerPool pool = new WorkerPool(config, Metrics.disabled());
+        WorkerPool pool = new WorkerPool(config, Metrics.disabled().health());
         TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
         try {
             pool.assign(processingJob);
-            pool.freeOnHalt(processingJob);
+            pool.freeOnExit(processingJob);
             pool.start(null);
             task.run();
         } finally {

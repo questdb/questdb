@@ -64,7 +64,7 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
         for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
             Job job = new TextImportJob(messageBus);
             pool.assign(i, job);
-            pool.freeOnHalt((Closeable) job);
+            pool.freeOnExit((Closeable) job);
         }
     }
 

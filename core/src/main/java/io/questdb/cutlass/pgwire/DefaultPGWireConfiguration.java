@@ -194,4 +194,9 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     public int getWorkerCount() {
         return 1;
     }
+
+    @Override
+    public String getPoolName() {
+        return "pgwire";
+    }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.mp.WorkerPool;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -50,14 +51,17 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
-                    final Connection connection = getConnection(server.getPort(), true, true)
+                    WorkerPool workerPool = server.getWorkerPool()
             ) {
-                try (Statement statement = connection.createStatement()) {
-                    boolean result = statement.execute("SELECT pg_advisory_unlock_all();\nCLOSE ALL;\nUNLISTEN *;\nRESET ALL;");
-                    Assert.assertTrue(result);
-                    ResultSet results = statement.getResultSet();
-                    results.next();
-                    assertNull(null, results.getString(1));
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), true, true)) {
+                    try (Statement statement = connection.createStatement()) {
+                        boolean result = statement.execute("SELECT pg_advisory_unlock_all();\nCLOSE ALL;\nUNLISTEN *;\nRESET ALL;");
+                        Assert.assertTrue(result);
+                        ResultSet results = statement.getResultSet();
+                        results.next();
+                        assertNull(null, results.getString(1));
+                    }
                 }
             }
         });
@@ -223,7 +227,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test
     public void testCachedPgStatementReturnsDataUsingProperFormatOnRecompilation() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(2)) {
+            try (
+                    PGWireServer server = createPGServer(2);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
@@ -257,7 +265,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test
     public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(2)) {
+            try (
+                    PGWireServer server = createPGServer(2);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
@@ -272,7 +284,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 }
             }
 
-            try (PGWireServer server = createPGServer(2)) {
+            try (
+                    PGWireServer server = createPGServer(2);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
@@ -285,7 +301,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     pstmt.close();
                 }
             }
-
         });
     }
 
@@ -905,7 +920,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test//test interleaved extended query execution they don't spill bind formats
     public void testDifferentExtendedQueriesExecutedInExtendedModeDontSpillFormats() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(2)) {
+            try (
+                    PGWireServer server = createPGServer(2);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, -1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
@@ -920,7 +939,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 }
             }
 
-            try (PGWireServer server = createPGServer(2)) {
+            try (
+                    PGWireServer server = createPGServer(2);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
@@ -954,7 +977,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test//edge case - run the same query with binary protocol in extended mode and then the same in query block
     public void testQueryExecutedInBatchModeDoesntUseCachedStatementBinaryFormat() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server = createPGServer(2)) {
+            try (
+                    PGWireServer server = createPGServer(2);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
@@ -1676,6 +1703,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
         PGTestSetup(boolean useSimpleMode) throws SQLException {
             server = createPGServer(2);
+            server.getWorkerPool().start(LOG);
             connection = getConnection(server.getPort(), useSimpleMode, true);
             statement = connection.createStatement();
         }
@@ -1704,6 +1732,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 e.printStackTrace();
             }
 
+            server.getWorkerPool().halt();
             server.close();
         }
     }

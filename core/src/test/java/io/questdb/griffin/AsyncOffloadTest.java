@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
@@ -342,7 +341,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
+        WorkerPool pool = new WorkerPool(() -> workerCount);
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("create table x ( " +
@@ -393,7 +392,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, errors.get());
                 },
-                configuration
+                configuration,
+                LOG
         );
     }
 
@@ -402,7 +402,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
+        WorkerPool pool = new WorkerPool((() -> workerCount));
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     compiler.compile("CREATE TABLE 'test1' " +
@@ -470,7 +470,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(0, errors.get());
                 },
-                configuration
+                configuration,
+                LOG
         );
     }
 }

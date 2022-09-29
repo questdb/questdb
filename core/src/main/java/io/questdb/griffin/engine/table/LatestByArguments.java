@@ -38,11 +38,11 @@ public final class LatestByArguments {
     private static final long FILTERED_SIZE_OFFSET = 6 * 8;
 
     public static long allocateMemory() {
-        return Unsafe.calloc(MEMORY_SIZE, MemoryTag.NATIVE_DEFAULT);
+        return Unsafe.calloc(MEMORY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     public static long allocateMemoryArray(int elements) {
-        return Unsafe.calloc(MEMORY_SIZE * elements, MemoryTag.NATIVE_DEFAULT);
+        return Unsafe.calloc(MEMORY_SIZE * elements, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     public static long getFilteredSize(long address) {
@@ -78,11 +78,11 @@ public final class LatestByArguments {
     }
 
     public static void releaseMemory(long address) {
-        Unsafe.free(address, MEMORY_SIZE, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(address, MEMORY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     public static void releaseMemoryArray(long address, int elements) {
-        Unsafe.free(address, MEMORY_SIZE * elements, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(address, MEMORY_SIZE * elements, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     public static void setHashesAddress(long address, long addr) {
