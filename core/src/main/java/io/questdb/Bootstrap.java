@@ -79,7 +79,12 @@ public class Bootstrap {
 
     public static void logWebConsoleUrls(PropServerConfiguration config, Log log) {
         if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW().$('\n').$("     ___                  _   ____  ____\n").$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n").$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n").$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n").$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n")
+            final LogRecord r = log.infoW().$('\n')
+                    .$("     ___                  _   ____  ____\n")
+                    .$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n")
+                    .$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n")
+                    .$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n")
+                    .$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n")
                     .$("Web Console URL(s):").$("\n\n");
             final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();

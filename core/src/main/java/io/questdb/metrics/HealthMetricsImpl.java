@@ -24,8 +24,6 @@
 
 package io.questdb.metrics;
 
-import io.questdb.metrics.Counter;
-import io.questdb.metrics.MetricsRegistry;
 
 public class HealthMetricsImpl implements HealthMetrics {
 
