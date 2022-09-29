@@ -213,8 +213,8 @@ public class WalEventCursor {
         private void populateIndexedVariables(BindVariableService bindVariableService) throws SqlException {
             final int count = readInt();
             for (int i = 0; i < count; i++) {
-                final short type = readShort();
-                switch (type) {
+                final int type = readInt();
+                switch (ColumnType.tagOf(type)) {
                     case ColumnType.BOOLEAN:
                         bindVariableService.setBoolean(i, readBool());
                         break;
@@ -248,16 +248,16 @@ public class WalEventCursor {
                         bindVariableService.setBin(i, readBin());
                         break;
                     case ColumnType.GEOBYTE:
-                        bindVariableService.setGeoHash(i, readByte(), ColumnType.GEOBYTE);
+                        bindVariableService.setGeoHash(i, readByte(), type);
                         break;
                     case ColumnType.GEOSHORT:
-                        bindVariableService.setGeoHash(i, readShort(), ColumnType.GEOSHORT);
+                        bindVariableService.setGeoHash(i, readShort(), type);
                         break;
                     case ColumnType.GEOINT:
-                        bindVariableService.setGeoHash(i, readInt(), ColumnType.GEOINT);
+                        bindVariableService.setGeoHash(i, readInt(), type);
                         break;
                     case ColumnType.GEOLONG:
-                        bindVariableService.setGeoHash(i, readLong(), ColumnType.GEOLONG);
+                        bindVariableService.setGeoHash(i, readLong(), type);
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -270,8 +270,8 @@ public class WalEventCursor {
             for (int i = 0; i < count; i++) {
                 // garbage, string intern?
                 final CharSequence name = readStr().toString();
-                final short type = readShort();
-                switch (type) {
+                final int type = readInt();
+                switch (ColumnType.tagOf(type)) {
                     case ColumnType.BOOLEAN:
                         bindVariableService.setBoolean(name, readBool());
                         break;
@@ -305,16 +305,16 @@ public class WalEventCursor {
                         bindVariableService.setBin(name, readBin());
                         break;
                     case ColumnType.GEOBYTE:
-                        bindVariableService.setGeoHash(name, readByte(), ColumnType.GEOBYTE);
+                        bindVariableService.setGeoHash(name, readByte(), type);
                         break;
                     case ColumnType.GEOSHORT:
-                        bindVariableService.setGeoHash(name, readShort(), ColumnType.GEOSHORT);
+                        bindVariableService.setGeoHash(name, readShort(), type);
                         break;
                     case ColumnType.GEOINT:
-                        bindVariableService.setGeoHash(name, readInt(), ColumnType.GEOINT);
+                        bindVariableService.setGeoHash(name, readInt(), type);
                         break;
                     case ColumnType.GEOLONG:
-                        bindVariableService.setGeoHash(name, readLong(), ColumnType.GEOLONG);
+                        bindVariableService.setGeoHash(name, readLong(), type);
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
