@@ -192,12 +192,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean isEnabled() {
-        return true;
+    public int getWorkerCount() {
+        return 2;
     }
 
     @Override
-    public int getWorkerCount() {
-        return 2;
+    public String getPoolName() {
+        return "http";
     }
 }

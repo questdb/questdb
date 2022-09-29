@@ -163,18 +163,24 @@ public class FilesTest {
                 TestUtils.writeStringToFile(f2, "efgh");
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
-                try (Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$()) {
-                    Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
+                try (
+                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
+                        Path p2 = new Path().of(dst).slash$()
+                ) {
+                    try {
+                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
+                        dst.concat("file");
+                        src.concat("file");
+                        TestUtils.assertFileContentsEquals(src, dst);
+                        dst.parent();
+                        src.parent();
 
-                    dst.concat("file");
-                    src.concat("file");
-                    TestUtils.assertFileContentsEquals(src, dst);
-                    dst.parent();
-                    src.parent();
-
-                    src.concat("subdir").concat("file2");
-                    dst.concat("subdir").concat("file2");
-                    TestUtils.assertFileContentsEquals(src, dst);
+                        src.concat("subdir").concat("file2");
+                        dst.concat("subdir").concat("file2");
+                        TestUtils.assertFileContentsEquals(src, dst);
+                    } finally {
+                        Files.rmdir(p2);
+                    }
                 }
             }
         });
@@ -275,19 +281,28 @@ public class FilesTest {
                 TestUtils.writeStringToFile(f2, "efgh");
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
-                try (Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$()) {
-                    Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
+                try (
+                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
+                        Path p2 = new Path().of(dst).slash$()
+                ) {
+                    try {
+                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
 
-                    dst.concat("file");
-                    src.concat("file");
-                    TestUtils.assertFileContentsEquals(src, dst);
-                    dst.parent();
-                    src.parent();
+                        dst.concat("file");
+                        src.concat("file");
+                        TestUtils.assertFileContentsEquals(src, dst);
+                        dst.parent();
+                        src.parent();
 
-                    src.concat("subdir").concat("file2");
-                    dst.concat("subdir").concat("file2");
-                    TestUtils.assertFileContentsEquals(src, dst);
+                        src.concat("subdir").concat("file2");
+                        dst.concat("subdir").concat("file2");
+                        TestUtils.assertFileContentsEquals(src, dst);
+                    } finally {
+                        Files.rmdir(p2);
+                    }
                 }
+            } finally {
+                temporaryFolder.delete();
             }
         });
     }

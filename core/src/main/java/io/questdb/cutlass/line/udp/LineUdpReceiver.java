@@ -39,7 +39,7 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
             WorkerPool workerPool
     ) {
         super(configuration, engine, workerPool);
-        this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
+        this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         start();
     }
 
@@ -47,7 +47,7 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
     public void close() {
         super.close();
         if (buf != 0) {
-            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
             buf = 0;
         }
     }

@@ -363,13 +363,13 @@ public final class DelegatingTlsChannel implements LineChannel {
     private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
         int oldCapacity = buffer.capacity();
         int newCapacity = oldCapacity * 2;
-        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_DEFAULT);
+        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
         resetBufferToPointer(buffer, newAddress, newCapacity);
         return newAddress;
     }
 
     private static long allocateMemoryAndResetBuffer(ByteBuffer buffer, int capacity) {
-        long newAddress = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        long newAddress = Unsafe.malloc(capacity, MemoryTag.NATIVE_TLS_RSS);
         resetBufferToPointer(buffer, newAddress, capacity);
         return newAddress;
     }
@@ -412,19 +412,19 @@ public final class DelegatingTlsChannel implements LineChannel {
         long ptrToFree = wrapOutputBufferPtr;
         wrapOutputBuffer = null; // if there is an attempt to use a buffer after close() then it's better to throw NPE than segfaulting
         wrapOutputBufferPtr = 0;
-        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
 
         capacity = unwrapInputBuffer.capacity();
         ptrToFree = unwrapInputBufferPtr;
         unwrapInputBuffer = null;
         unwrapInputBufferPtr = 0;
-        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
 
         capacity = unwrapOutputBuffer.capacity();
         ptrToFree = unwrapOutputBufferPtr;
         unwrapOutputBuffer = null;
         unwrapOutputBufferPtr = 0;
-        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_TLS_RSS);
     }
 
     @Override

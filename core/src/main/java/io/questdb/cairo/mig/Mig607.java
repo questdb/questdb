@@ -175,7 +175,7 @@ final class Mig607 {
         long metaFileSize;
         long txFileSize;
         try (MemoryMARW metaMem = migrationContext.getRwMemory()) {
-            metaMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
+            metaMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
             final int columnCount = metaMem.getInt(0);
             final int partitionBy = metaMem.getInt(4);
             final long columnNameOffset = MigrationActions.prefixedBlockOffset(
@@ -189,7 +189,7 @@ final class Mig607 {
                     path.trimTo(plen).concat(TXN_FILE_NAME).$(),
                     ff.getPageSize(),
                     ff.length(path),
-                    MemoryTag.NATIVE_DEFAULT,
+                    MemoryTag.NATIVE_MIG_MMAP,
                     migrationContext.getConfiguration().getWriterFileOpenOpts()
             )
             ) {

@@ -22,12 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.metrics;
 
-import java.io.Closeable;
 
-public interface QuietClosable extends Closeable {
+public class HealthMetricsImpl implements HealthMetrics {
+
+    private final Counter unhandledErrorCounter;
+
+    public HealthMetricsImpl(MetricsRegistry metricsRegistry) {
+        this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
+    }
 
     @Override
-    void close();
+    public void incrementUnhandledErrors() {
+        unhandledErrorCounter.inc();
+    }
+
+    @Override
+    public long unhandledErrorsCount() {
+        return unhandledErrorCounter.getValue();
+    }
 }

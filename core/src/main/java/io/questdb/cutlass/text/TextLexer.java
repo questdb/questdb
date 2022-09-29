@@ -65,7 +65,7 @@ public class TextLexer implements Closeable, Mutable {
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
         this.lineRollBufSize = textConfiguration.getRollBufferSize();
         this.lineRollBufLimit = textConfiguration.getRollBufferLimit();
-        this.lineRollBufPtr = Unsafe.malloc(lineRollBufSize, MemoryTag.NATIVE_DEFAULT);
+        this.lineRollBufPtr = Unsafe.malloc(lineRollBufSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
     }
 
     @Override
@@ -80,7 +80,7 @@ public class TextLexer implements Closeable, Mutable {
     @Override
     public void close() {
         if (lineRollBufPtr != 0) {
-            Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
             lineRollBufPtr = 0;
         }
     }
@@ -242,12 +242,12 @@ public class TextLexer implements Closeable, Mutable {
 
         final int len = Math.min(lineRollBufLimit, requiredLength << 1);
         LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").$(tableName).$(']').$();
-        long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        long p = Unsafe.malloc(len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {
             Vect.memcpy(p, lineRollBufPtr, l);
         }
-        Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         if (updateFields) {
             shift(lineRollBufPtr - p);
         }

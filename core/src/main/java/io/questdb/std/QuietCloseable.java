@@ -22,13 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.io.Closeable;
 
-public enum ShutdownFlag {
-    INSTANCE;
-    private final AtomicBoolean flag = new AtomicBoolean(false);
-    public void shutdown() { flag.set(true); }
-    public boolean isShutdown() { return  flag.get(); }
+public interface QuietCloseable extends Closeable {
+
+    @Override
+    void close();
 }
