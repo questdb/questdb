@@ -29,6 +29,7 @@ import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -53,14 +54,14 @@ public class WorkerPool implements Closeable {
     private final ObjList<ObjHashSet<Job>> workerJobs;
     private final SOCountDownLatch halted;
     private final ObjList<Worker> workers = new ObjList<>();
-    private final ObjList<ObjList<Closeable>> cleaners;
+    private final ObjList<ObjList<Closeable>> threadLocalCleaners;
     private final boolean haltOnError;
     private final boolean daemons;
     private final String poolName;
     private final long yieldThreshold;
     private final long sleepThreshold;
     private final long sleepMs;
-    private final ObjList<Closeable> freeOnHalt = new ObjList<>();
+    private final ObjList<Closeable> freeOnExist = new ObjList<>();
     private final HealthMetrics metrics;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
@@ -87,10 +88,10 @@ public class WorkerPool implements Closeable {
         assert this.workerAffinity.length == workerCount;
 
         this.workerJobs = new ObjList<>(workerCount);
-        this.cleaners = new ObjList<>(workerCount);
+        this.threadLocalCleaners = new ObjList<>(workerCount);
         for (int i = 0; i < workerCount; i++) {
             workerJobs.add(new ObjHashSet<>());
-            cleaners.add(new ObjList<>());
+            threadLocalCleaners.add(new ObjList<>());
         }
     }
 
@@ -114,16 +115,14 @@ public class WorkerPool implements Closeable {
         workerJobs.getQuick(worker).add(job);
     }
 
-    public void assign(int worker, Closeable cleaner) {
+    public void assignThreadLocalCleaner(int worker, Closeable cleaner) {
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
-        cleaners.getQuick(worker).add(cleaner);
+        threadLocalCleaners.getQuick(worker).add(cleaner);
     }
 
-    public void assignCleaner(Closeable cleaner) {
-        assert !running.get() && !closed.get();
-
+    private void setupPathCleaner() {
         for (int i = 0; i < workerCount; i++) {
-            cleaners.getQuick(i).add(cleaner);
+            threadLocalCleaners.getQuick(i).add(Path.THREAD_LOCAL_CLEANER);
         }
     }
 
@@ -132,10 +131,10 @@ public class WorkerPool implements Closeable {
         halt();
     }
 
-    public void freeOnHalt(Closeable closeable) {
+    public void freeOnExit(Closeable closeable) {
         assert !running.get() && !closed.get();
 
-        freeOnHalt.add(closeable);
+        freeOnExist.add(closeable);
     }
 
     public String getPoolName() {
@@ -156,12 +155,7 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
-            Misc.freeObjListAndClear(freeOnHalt);
-
-            // try cleaners, if worker was started and stopped, cleaner will be empty
-            for (int i = 0, n = cleaners.size(); i < n; i++) {
-                Misc.freeObjListAndClear(cleaners.getQuick(i));
-            }
+            Misc.freeObjListAndClear(freeOnExist);
         }
     }
 
@@ -171,6 +165,12 @@ public class WorkerPool implements Closeable {
 
     public void start(@Nullable Log log) {
         if (!closed.get() && running.compareAndSet(false, true)) {
+
+            // very common cleaner
+            // it is setup from start() to make sure it is called last
+            // some other thread local cleaners are liable to access thread local Path instances
+            setupPathCleaner();
+
             for (int i = 0; i < workerCount; i++) {
                 final int index = i;
                 Worker worker = new Worker(
@@ -179,7 +179,7 @@ public class WorkerPool implements Closeable {
                         workerAffinity[i],
                         log,
                         (ex) -> {
-                            Misc.freeObjListAndClear(cleaners.getQuick(index));
+                            Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index));
                             if (log != null) {
                                 log.info().$("cleaned worker [name=").$(poolName)
                                         .$(", worker=").$(index)

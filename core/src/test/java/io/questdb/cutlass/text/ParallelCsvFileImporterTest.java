@@ -2777,7 +2777,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
                 try {
                     if (pool != null) {
-                        pool.assignCleaner(Path.CLEANER);
                         TextImportJob.assignToPool(engine.getMessageBus(), pool);
                         pool.start(LOG);
                     }

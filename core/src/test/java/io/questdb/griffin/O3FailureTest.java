@@ -3732,7 +3732,6 @@ public class O3FailureTest extends AbstractO3Test {
                     return false;
                 }
             });
-            pool1.assignCleaner(Path.CLEANER);
 
             final WorkerPool pool2 = new TestWorkerPool(1);
 
@@ -3756,8 +3755,6 @@ public class O3FailureTest extends AbstractO3Test {
                     return false;
                 }
             });
-
-            pool2.assignCleaner(Path.CLEANER);
 
             pool1.start();
             pool2.start();

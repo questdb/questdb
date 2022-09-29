@@ -43,7 +43,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -176,7 +175,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     }
                 });
 
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
                 TestUtils.assertConnect(clientFd, ilpSockAddr);
                 readGzResource(ilpResourceName);

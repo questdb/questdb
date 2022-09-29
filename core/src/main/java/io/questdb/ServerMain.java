@@ -38,7 +38,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
@@ -82,7 +81,6 @@ public class ServerMain implements Closeable {
             protected void configureSharedPool(WorkerPool sharedPool) {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
-                    sharedPool.assignCleaner(Path.CLEANER);
                     O3Utils.setupWorkerPool(
                             sharedPool,
                             engine,
@@ -106,7 +104,7 @@ public class ServerMain implements Closeable {
                                 ffCache
                         );
                         sharedPool.assign(textImportRequestJob);
-                        sharedPool.freeOnHalt(textImportRequestJob);
+                        sharedPool.freeOnExit(textImportRequestJob);
                     }
 
                     // telemetry

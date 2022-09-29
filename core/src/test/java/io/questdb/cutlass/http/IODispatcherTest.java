@@ -1810,7 +1810,6 @@ public class IODispatcherTest {
                         return "/upload";
                     }
                 });
-                workerPool.assignCleaner(Path.CLEANER);
                 workerPool.start(LOG);
 
                 // send multipart request to server

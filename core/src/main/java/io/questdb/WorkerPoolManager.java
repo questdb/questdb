@@ -100,7 +100,6 @@ public abstract class WorkerPoolManager {
         WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
             pool = new WorkerPool(config, metrics);
-            pool.assignCleaner(Path.CLEANER);
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("new DEDICATED pool [name=").$(poolName)

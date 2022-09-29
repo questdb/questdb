@@ -79,14 +79,13 @@ public class LineTcpReceiver implements Closeable {
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            ioWorkerPool.assign(i, contextFactory);
+            ioWorkerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
         }
     }
 
     @Override
     public void close() {
         Misc.free(scheduler);
-        Misc.free(contextFactory);
         Misc.free(dispatcher);
     }
 

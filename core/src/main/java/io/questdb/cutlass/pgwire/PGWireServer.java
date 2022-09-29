@@ -38,6 +38,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -49,7 +50,6 @@ public class PGWireServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
 
     private final IODispatcher<PGConnectionContext> dispatcher;
-    private final PGConnectionContextFactory contextFactory;
     private final Metrics metrics;
     private final WorkerPool workerPool;
 
@@ -61,7 +61,6 @@ public class PGWireServer implements Closeable {
             DatabaseSnapshotAgent snapshotAgent,
             PGConnectionContextFactory contextFactory
     ) {
-        this.contextFactory = contextFactory;
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
@@ -114,9 +113,9 @@ public class PGWireServer implements Closeable {
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            workerPool.assign(i, () -> {
+            workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            workerPool.freeOnExit((QuietCloseable) () -> {
                 Misc.free(jobContext);
-                contextFactory.close();
                 engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
                 queryCacheEventSubSeq.clear();
             });
@@ -130,7 +129,6 @@ public class PGWireServer implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(contextFactory);
         Misc.free(dispatcher);
     }
 

@@ -54,7 +54,7 @@ public final class QueryCache implements Closeable {
         );
     }
 
-    public static QueryCache getInstance() {
+    public static QueryCache getThreadLocalInstance() {
         return TL_QUERY_CACHE.get();
     }
 

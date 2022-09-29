@@ -342,8 +342,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 @Override
                 protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
                     byte[] rawSignature = new byte[64];
-                    byte[] signature = Base64.getEncoder().encode(rawSignature);
-                    return signature;
+                    return Base64.getEncoder().encode(rawSignature);
                 }
             };
             sender.authenticate(AUTH_KEY_ID1, null);
@@ -1093,7 +1092,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             minIdleMsBeforeWriterRelease = 100;
             try (LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool)) {
                 long startEpochMs = System.currentTimeMillis();
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
 
                 try {

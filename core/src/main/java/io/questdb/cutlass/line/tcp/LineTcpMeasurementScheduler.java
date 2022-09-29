@@ -88,7 +88,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
             netIoJobs[i] = netIoJob;
             ioWorkerPool.assign(i, netIoJob);
-            ioWorkerPool.assign(i, netIoJob::close);
         }
 
         // Worker count is set to 1 because we do not use this execution context
@@ -139,8 +138,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     this,
                     engine.getMetrics()
             );
-            writerWorkerPool.assign(i, (Job) lineTcpWriterJob);
-            writerWorkerPool.assign(i, (Closeable) lineTcpWriterJob);
+            writerWorkerPool.assign(i, lineTcpWriterJob);
+            writerWorkerPool.freeOnExit(lineTcpWriterJob);
         }
         this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy());
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();

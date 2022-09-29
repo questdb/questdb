@@ -38,7 +38,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -290,7 +289,6 @@ public class LatestByParallelTest {
             ) {
                 try {
                     if (pool != null) {
-                        pool.assignCleaner(Path.CLEANER);
                         pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
                         pool.start(LOG);
                     }

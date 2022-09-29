@@ -798,7 +798,6 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        workerPool.assignCleaner(Path.CLEANER);
         O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
     }
 
@@ -1109,7 +1108,7 @@ public final class TestUtils {
         TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
         try {
             pool.assign(processingJob);
-            pool.freeOnHalt(processingJob);
+            pool.freeOnExit(processingJob);
             pool.start(null);
             task.run();
         } finally {

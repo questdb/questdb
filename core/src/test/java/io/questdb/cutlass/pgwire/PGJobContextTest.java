@@ -6370,7 +6370,6 @@ create table tab as (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
-                workerPool.assignCleaner(Path.CLEANER);
                 workerPool.start(LOG);
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
 
@@ -7604,7 +7603,6 @@ create table tab as (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
-                workerPool.assignCleaner(Path.CLEANER);
                 workerPool.start(LOG);
                 try (final Connection connection = getConnection(server.getPort(), false, binary)) {
                     connection.setAutoCommit(false);

@@ -35,7 +35,6 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
@@ -719,8 +718,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             sharedPool.start();
 
             final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount);
-
-            stealingPool.assignCleaner(Path.CLEANER);
 
             SOCountDownLatch doneLatch = new SOCountDownLatch(1);
 

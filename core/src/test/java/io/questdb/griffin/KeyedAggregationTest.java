@@ -1293,7 +1293,6 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
                 try {
                     if (pool != null) {
-                        pool.assignCleaner(Path.CLEANER);
                         GroupByJob job = new GroupByJob(engine.getMessageBus());
                         pool.assign(job);
                         pool.start(LOG);

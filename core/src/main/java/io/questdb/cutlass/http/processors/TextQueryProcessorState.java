@@ -65,7 +65,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         record = null;
         if (null != recordCursorFactory) {
             if (queryCacheable) {
-                QueryCache.getInstance().push(query, recordCursorFactory);
+                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
             } else {
                 recordCursorFactory.close();
             }

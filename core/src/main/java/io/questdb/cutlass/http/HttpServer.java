@@ -36,10 +36,10 @@ import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.MutableIOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
+import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -91,7 +91,7 @@ public class HttpServer implements Closeable {
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.
                         LOG.info().$("flushing HTTP server query cache [worker=").$(workerId).$(']').$();
-                        QueryCache.getInstance().clear();
+                        QueryCache.getThreadLocalInstance().clear();
                         queryCacheEventSubSeq.done(seq);
                     }
 
@@ -104,10 +104,12 @@ public class HttpServer implements Closeable {
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            pool.assign(i, () -> {
-                Misc.free(selectors.getQuick(index));
-                httpContextFactory.close();
-                Misc.free(QueryCache.getInstance());
+            pool.assignThreadLocalCleaner(i, () -> {
+                httpContextFactory.freeThreadLocal();
+                Misc.free(QueryCache.getThreadLocalInstance());
+            });
+
+            pool.freeOnExit(() -> {
                 messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
                 queryCacheEventSubSeq.clear();
             });
@@ -215,9 +217,9 @@ public class HttpServer implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(httpContextFactory);
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
+        Misc.freeObjListAndClear(selectors);
     }
 
     @FunctionalInterface
