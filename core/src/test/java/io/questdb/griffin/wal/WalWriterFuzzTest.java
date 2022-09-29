@@ -96,7 +96,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalWriteFullRandom() throws Exception {
-//        Rnd rnd = new Rnd(99638111710000L, 1664372939672L);
         Rnd rnd = TestUtils.generateRandom(LOG);
         int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2));
         dataAppendPageSize = 1L << (minPage + rnd.nextInt(29 - minPage)); // MAX page size 512Kb
@@ -376,13 +375,25 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 tableId2 = metadata.getTableId();
             }
 
+            long startMicro = System.nanoTime() / 1000;
             applyNonWal(transactions, tableNameNoWal, tableId2);
+            long endNonWalMicro = System.nanoTime() / 1000;
+            long nonWalTotal = endNonWalMicro - startMicro;
 
             applyWal(transactions, tableNameWal, tableId1, getRndParallelWalCount(rnd));
+            long endWalMicro = System.nanoTime() / 1000;
+            long walTotal = endWalMicro - endNonWalMicro;
+
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
 
+            startMicro = System.nanoTime() / 1000;
             applyWalParallel(transactions, tableNameWal2, tableId1, getRndParallelWalCount(rnd));
+            endWalMicro = System.nanoTime() / 1000;
+            long totalWalParallel = endWalMicro - startMicro;
+
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+
+            LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
         });
     }
 

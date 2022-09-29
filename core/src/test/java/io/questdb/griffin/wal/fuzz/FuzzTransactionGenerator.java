@@ -34,6 +34,7 @@ import io.questdb.std.Rnd;
 import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 
 public class FuzzTransactionGenerator {
+    private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
             RecordMetadata tableMetadata,
@@ -62,6 +63,9 @@ public class FuzzTransactionGenerator {
         collRemove = collRemove / totalProbs;
         colRename = colRename / totalProbs;
 
+        // Reduce some random parameters if there is too much data so test can finish in reasonable time
+        transactionCount = Math.min(transactionCount, 20 * 1_000_000 / rowCount);
+
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = getZeroToOneDouble(rnd);
            if (transactionType < collRemove) {
@@ -80,7 +84,7 @@ public class FuzzTransactionGenerator {
                     metaVersion++;
                     tableMetadata = newTableMetadata;
                 }
-            } else  if (transactionType < collAdd + collRemove + colRename && getNonDeletedColumnCount(tableMetadata) < 200) {
+            } else  if (transactionType < collAdd + collRemove + colRename && getNonDeletedColumnCount(tableMetadata) < MAX_COLUMNS) {
                // generate column add
                tableMetadata = generateAddColumn(transactionList, metaVersion++, rnd, tableMetadata);
            } else {

@@ -52,6 +52,11 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.BYTE,
             ColumnType.LONG128,
             ColumnType.LONG256,
+            ColumnType.GEOBYTE,
+            ColumnType.GEOSHORT,
+            ColumnType.GEOINT,
+            ColumnType.GEOLONG,
+            ColumnType.BOOLEAN
     };
 
     private final double nullSet;
@@ -138,6 +143,10 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 row.putByte(index, isNull ? 0 : rnd.nextByte());
                                 break;
 
+                            case ColumnType.BOOLEAN:
+                                row.putBool(index, rnd.nextBoolean());
+                                break;
+
                             case ColumnType.LONG128:
                                 if (!isNull) {
                                     row.putLong128LittleEndian(index, rnd.nextLong(), rnd.nextLong());
@@ -165,6 +174,13 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                             case ColumnType.BINARY:
                                 int len = rnd.nextInt(strLen);
                                 row.putBin(index, isNull ? null : binarySequence.of(strLen == 0 ? new byte[0] : rnd.nextBytes(len)));
+                                break;
+
+                            case ColumnType.GEOBYTE:
+                            case ColumnType.GEOSHORT:
+                            case ColumnType.GEOINT:
+                            case ColumnType.GEOLONG:
+                                row.putGeoHash(index, rnd.nextLong());
                                 break;
 
                             default:
