@@ -24,10 +24,13 @@
 
 package io.questdb;
 
-import io.questdb.std.*;
+import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
@@ -35,7 +38,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
@@ -46,11 +48,11 @@ public abstract class AbstractBootstrapTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
-    protected static CharSequence root;
-
+    static final Properties PG_CONNECTION_PROPERTIES = new Properties();
+    static final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
     private static final File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
+    protected static CharSequence root;
     private static boolean publicZipStubCreated = false;
-
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -85,17 +87,6 @@ public abstract class AbstractBootstrapTest {
         Files.rmdir(path.slash$());
         temp.delete();
     }
-
-    static final Properties PG_CONNECTION_PROPERTIES = new Properties();
-
-    static {
-        PG_CONNECTION_PROPERTIES.setProperty("user", "admin");
-        PG_CONNECTION_PROPERTIES.setProperty("password", "quest");
-        PG_CONNECTION_PROPERTIES.setProperty("sslmode", "disable");
-        PG_CONNECTION_PROPERTIES.setProperty("binaryTransfer", "true");
-    }
-
-    static final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
 
     static void createDummyConfiguration() throws Exception {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
@@ -167,10 +158,17 @@ public abstract class AbstractBootstrapTest {
 
     void assertFail(String message, String... args) {
         try {
-            Bootstrap.withArgs(extendArgsWith(args, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION));
+            new Bootstrap(extendArgsWith(args, Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION));
             Assert.fail();
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), message);
         }
+    }
+
+    static {
+        PG_CONNECTION_PROPERTIES.setProperty("user", "admin");
+        PG_CONNECTION_PROPERTIES.setProperty("password", "quest");
+        PG_CONNECTION_PROPERTIES.setProperty("sslmode", "disable");
+        PG_CONNECTION_PROPERTIES.setProperty("binaryTransfer", "true");
     }
 }
