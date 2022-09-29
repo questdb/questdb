@@ -372,7 +372,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
-        metrics.healthCheck().incrementUnhandledErrors();
+        metrics.health().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);
     }
 

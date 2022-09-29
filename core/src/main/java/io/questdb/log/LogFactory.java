@@ -143,7 +143,7 @@ public class LogFactory implements Closeable {
             public String getPoolName() {
                 return "logging";
             }
-        }, Metrics.disabled());
+        }, Metrics.disabled().health());
     }
 
     public void add(final LogWriterConfig config) {

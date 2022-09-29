@@ -83,7 +83,7 @@ public class HttpHealthCheckTestBuilder {
 
                 if (injectUnhandledError && metrics.isEnabled()) {
                     for (int i = 0; i < 40; i++) {
-                        if (metrics.healthCheck().unhandledErrorsCount() > 0) {
+                        if (metrics.health().unhandledErrorsCount() > 0) {
                             break;
                         }
                         Os.sleep(50);

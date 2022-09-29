@@ -204,7 +204,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
-                metrics.healthCheck().incrementUnhandledErrors();
+                metrics.health().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }

@@ -583,7 +583,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } else {
             state.critical().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
             // This is a critical error, so we treat it as an unhandled one.
-            metrics.healthCheck().incrementUnhandledErrors();
+            metrics.health().incrementUnhandledErrors();
         }
         sendException(socket, 0, message, state.getQuery(), configuration.getKeepAliveHeader());
     }

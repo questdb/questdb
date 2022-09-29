@@ -24,15 +24,27 @@
 
 package io.questdb.mp;
 
-import io.questdb.Metrics;
 import io.questdb.log.Log;
-import io.questdb.std.*;
+import io.questdb.metrics.HealthMetrics;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
+    private static final HealthMetrics DISABLED = new HealthMetrics() {
+        @Override
+        public void incrementUnhandledErrors() {
+        }
+
+        @Override
+        public long unhandledErrorsCount() {
+            return 0;
+        }
+    };
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final int workerCount;
@@ -49,13 +61,13 @@ public class WorkerPool implements Closeable {
     private final long sleepThreshold;
     private final long sleepMs;
     private final ObjList<Closeable> freeOnHalt = new ObjList<>();
-    private final Metrics metrics;
+    private final HealthMetrics metrics;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
-        this(configuration, Metrics.disabled());
+        this(configuration, DISABLED);
     }
 
-    public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
+    public WorkerPool(WorkerPoolConfiguration configuration, HealthMetrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         int[] workerAffinity = configuration.getWorkerAffinity();
         if (workerAffinity != null && workerAffinity.length > 0) {
@@ -80,10 +92,6 @@ public class WorkerPool implements Closeable {
             workerJobs.add(new ObjHashSet<>());
             cleaners.add(new ObjList<>());
         }
-    }
-
-    public String getPoolName() {
-        return poolName;
     }
 
     /**
@@ -119,16 +127,43 @@ public class WorkerPool implements Closeable {
         }
     }
 
+    @Override
+    public void close() {
+        halt();
+    }
+
     public void freeOnHalt(Closeable closeable) {
         assert !running.get() && !closed.get();
 
         freeOnHalt.add(closeable);
     }
 
+    public String getPoolName() {
+        return poolName;
+    }
+
     public int getWorkerCount() {
         return workerCount;
     }
 
+    public void halt() {
+        if (closed.compareAndSet(false, true)) {
+            if (running.compareAndSet(true, false)) {
+                started.await();
+                for (int i = 0; i < workerCount; i++) {
+                    workers.getQuick(i).halt();
+                }
+                halted.await();
+            }
+            workers.clear(); // Worker is not closable
+            Misc.freeObjListAndClear(freeOnHalt);
+
+            // try cleaners, if worker was started and stopped, cleaner will be empty
+            for (int i = 0, n = cleaners.size(); i < n; i++) {
+                Misc.freeObjListAndClear(cleaners.getQuick(i));
+            }
+        }
+    }
 
     public void start() {
         start(null);
@@ -169,29 +204,5 @@ public class WorkerPool implements Closeable {
             }
             started.countDown();
         }
-    }
-
-    public void halt() {
-        if (closed.compareAndSet(false, true)) {
-            if (running.compareAndSet(true, false)) {
-                started.await();
-                for (int i = 0; i < workerCount; i++) {
-                    workers.getQuick(i).halt();
-                }
-                halted.await();
-            }
-            workers.clear(); // Worker is not closable
-            Misc.freeObjListAndClear(freeOnHalt);
-
-            // try cleaners, if worker was started and stopped, cleaner will be empty
-            for (int i = 0, n = cleaners.size(); i < n; i++) {
-                Misc.freeObjListAndClear(cleaners.getQuick(i));
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        halt();
     }
 }

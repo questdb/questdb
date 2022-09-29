@@ -43,8 +43,8 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolManager;
-import io.questdb.mp.WorkerPoolManager.Requester;
+import io.questdb.WorkerPoolManager;
+import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -69,7 +69,7 @@ public final class Services {
         return createHttpServer(
                 configuration,
                 cairoEngine,
-                workerPoolManager.getInstance(configuration, metrics, Requester.HTTP_SERVER),
+                workerPoolManager.getInstance(configuration, metrics.health(), Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
                 functionFactoryCache,
                 snapshotAgent,
@@ -132,7 +132,7 @@ public final class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics,
+                metrics.health(),
                 Requester.HTTP_MIN_SERVER
         );
         return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
@@ -195,7 +195,7 @@ public final class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics,
+                metrics.health(),
                 Requester.PG_WIRE_SERVER
         );
         return new PGWireServer(
@@ -240,12 +240,12 @@ public final class Services {
 
         final WorkerPool ioPool = workerPoolManager.getInstance(
                 config.getIOWorkerPoolConfiguration(),
-                metrics,
+                metrics.health(),
                 Requester.LINE_TCP_IO
         );
         final WorkerPool writerPool = workerPoolManager.getInstance(
                 config.getWriterWorkerPoolConfiguration(),
-                metrics,
+                metrics.health(),
                 Requester.LINE_TCP_WRITER
         );
         return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);

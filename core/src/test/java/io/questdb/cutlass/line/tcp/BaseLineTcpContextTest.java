@@ -129,7 +129,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
-        }, metrics);
+        }, metrics.health());
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {

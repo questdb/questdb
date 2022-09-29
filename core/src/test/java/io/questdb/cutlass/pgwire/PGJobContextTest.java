@@ -6731,7 +6731,7 @@ create table tab as (
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool();
+                    final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
@@ -7193,7 +7193,7 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics);
+        WorkerPool pool = new WorkerPool(conf, metrics.health());
         pool.assign(engine.getEngineMaintenanceJob());
         try (
                 final PGWireServer server = createPGWireServer(

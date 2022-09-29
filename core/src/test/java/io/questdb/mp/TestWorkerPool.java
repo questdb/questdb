@@ -51,6 +51,6 @@ public class TestWorkerPool extends WorkerPool {
             public String getPoolName() {
                 return poolName;
             }
-        }, metrics);
+        }, metrics.health());
     }
 }

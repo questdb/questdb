@@ -22,13 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.metrics;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+public interface HealthMetrics {
 
-public enum ShutdownFlag {
-    INSTANCE;
-    private final AtomicBoolean flag = new AtomicBoolean(false);
-    public void shutdown() { flag.set(true); }
-    public boolean isShutdown() { return  flag.get(); }
+    void incrementUnhandledErrors();
+
+    long unhandledErrorsCount();
 }

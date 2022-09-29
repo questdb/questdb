@@ -94,7 +94,7 @@ public class PGWireServer implements Closeable {
                     } catch (Throwable e) { //must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
-                        metrics.healthCheck().incrementUnhandledErrors();
+                        metrics.health().incrementUnhandledErrors();
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
                 };
