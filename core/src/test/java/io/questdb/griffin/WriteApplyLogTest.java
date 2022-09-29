@@ -124,7 +124,8 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                     Path walPath = new Path()
             ) {
-                TableUtils.createTablePath(walPath.of(configuration.getRoot()), "wal_all").concat("default");
+                CharSequence fileSystemName = engine.getFileSystemName("wal_all");
+                walPath.of(configuration.getRoot()).concat(fileSystemName).concat("default");
                 long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
@@ -175,7 +176,8 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                     Path walPath = new Path()
             ) {
-                TableUtils.createTablePath(walPath.of(configuration.getRoot()), "wal_all").concat("default");
+                CharSequence fileSystemName = engine.getFileSystemName("wal_all");
+                walPath.of(configuration.getRoot()).concat(fileSystemName).concat("default");
                 long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 

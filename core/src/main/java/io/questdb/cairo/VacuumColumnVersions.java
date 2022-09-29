@@ -60,7 +60,7 @@ public class VacuumColumnVersions implements Closeable {
 
     public VacuumColumnVersions(CairoEngine engine) {
         this.engine = engine;
-        this.purgeExecution = new ColumnPurgeOperator(engine.getConfiguration());
+        this.purgeExecution = new ColumnPurgeOperator(engine);
         this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.MMAP_UPDATE);
         this.ff = engine.getConfiguration().getFilesFacade();
     }
@@ -78,9 +78,12 @@ public class VacuumColumnVersions implements Closeable {
         fileNameSink = new StringSink();
 
         CairoConfiguration configuration = engine.getConfiguration();
-        Path path = TableUtils.createTablePath(Path.getThreadLocal(configuration.getRoot()), tableName);
+
+        CharSequence fsTableName = engine.getFileSystemName(tableName);
+        Path path = Path.getThreadLocal(configuration.getRoot());
+        path.concat(fsTableName);
         tablePathLen = path.length();
-        path2 = TableUtils.createTablePath(Path.getThreadLocal2(configuration.getRoot()), tableName);
+        path2 = Path.getThreadLocal2(configuration.getRoot()).concat(fsTableName);
 
         this.tableReader = reader;
         partitionBy = reader.getPartitionedBy();

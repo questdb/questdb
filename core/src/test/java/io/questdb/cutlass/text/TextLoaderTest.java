@@ -2075,7 +2075,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             try (Path path = new Path()) {
-                TableUtils.createTablePath(path.of(configuration.getRoot()),"test").$();
+                CharSequence fileSystemName = engine.getFileSystemName("test");
+                path.of(configuration.getRoot()).concat(fileSystemName).$();
                 Files.touch(path);
             }
 

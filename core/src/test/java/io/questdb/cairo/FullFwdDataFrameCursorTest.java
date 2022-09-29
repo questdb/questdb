@@ -61,7 +61,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            TableReader reader = new TableReader(configuration, "x", null);
+            TableReader reader = new TableReader(configuration, "x");
             FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
             cursor.of(reader);
             cursor.close();
@@ -93,7 +93,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 // create partition on disk but do not commit transaction nor row
 
-                try (TableReader reader = new TableReader(configuration, "x", null)) {
+                try (TableReader reader = new TableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
 
                     int frameCount = 0;
@@ -786,7 +786,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     private TableReader createTableReader(CairoConfiguration configuration, String name) {
-        return new TableReader(configuration, name, null);
+        return new TableReader(configuration, name);
     }
 
     @Test

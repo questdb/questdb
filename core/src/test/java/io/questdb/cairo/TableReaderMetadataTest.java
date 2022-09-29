@@ -170,10 +170,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
-        final Path path = new Path().of(root);
-        TableUtils.createTablePath(path, tableName);
-        return path.concat(TableUtils.META_FILE_NAME).$();
+        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        return new Path().of(root).concat(fileSystemName).concat(TableUtils.META_FILE_NAME).$();
     }
+
     @Test
     public void testDeleteTwoAddOneColumn() throws Exception {
         final String expected = "int:INT\n" +

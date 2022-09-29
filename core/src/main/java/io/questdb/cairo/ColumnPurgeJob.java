@@ -105,7 +105,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 sqlExecutionContext
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "QuestDB system");
-        this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
+        this.columnPurgeOperator = new ColumnPurgeOperator(engine, this.writer, "completed");
         putTasksFromTableToQueue();
     }
 

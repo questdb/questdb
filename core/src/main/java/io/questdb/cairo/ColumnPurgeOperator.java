@@ -46,6 +46,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final LongList completedRowIds = new LongList();
     private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
+    private final CairoEngine engine;
     private TxnScoreboard txnScoreboard;
     private TxReader txReader;
     private long longBytes;
@@ -53,7 +54,9 @@ public class ColumnPurgeOperator implements Closeable {
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
     private long purgeLogPartitionFd = -1L;
 
-    public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
+    public ColumnPurgeOperator(CairoEngine engine, TableWriter purgeLogWriter, String updateCompleteColumnName) {
+        CairoConfiguration configuration = engine.getConfiguration();
+        this.engine = engine;
         this.ff = configuration.getFilesFacade();
         this.purgeLogWriter = purgeLogWriter;
         this.updateCompleteColumnName = updateCompleteColumnName;
@@ -66,7 +69,9 @@ public class ColumnPurgeOperator implements Closeable {
         longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public ColumnPurgeOperator(CairoConfiguration configuration) {
+    public ColumnPurgeOperator(CairoEngine engine) {
+        CairoConfiguration configuration = engine.getConfiguration();
+        this.engine = engine;
         this.ff = configuration.getFilesFacade();
         this.purgeLogWriter = null;
         this.updateCompleteColumnName = null;
@@ -310,7 +315,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private void reopenPurgeLogPartition(int partitionIndex, long partitionTimestamp) {
         path.trimTo(pathRootLen);
-        TableUtils.createTablePath(path, purgeLogWriter.getTableName());
+        path.concat(engine.getFileSystemName(purgeLogWriter.getTableName()));
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
         TableUtils.setPathForPartition(
                 path,
@@ -369,7 +374,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private void setTablePath(String tableName) {
-        TableUtils.createTablePath(path.trimTo(pathRootLen), tableName);
+        path.trimTo(pathRootLen).concat(engine.getFileSystemName(tableName));
         pathTableLen = path.length();
     }
 

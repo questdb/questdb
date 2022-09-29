@@ -381,7 +381,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     },
                     s -> {
                         engine.clear();
-                        TableUtils.createTablePath(path.of(configuration.getRoot()), s.getName()).concat("2022-08-01").concat("sh.i").$();
+                        CharSequence fileSystemName = engine.getFileSystemName(s.getName());
+                        path.of(configuration.getRoot()).concat(fileSystemName).concat("2022-08-01").concat("sh.i").$();
                         long fd = Files.openRW(path);
                         Files.truncate(fd, Files.length(fd) / 4);
                         Files.close(fd);
@@ -447,9 +448,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     s -> {
                         // .v file
                         engine.clear();
-                        path.of(configuration.getRoot());
-                        TableUtils.createTablePath(path, s.getName());
-                        path.concat("2022-08-01").concat("sh.v").$();
+                        CharSequence fileSystemName = engine.getFileSystemName(s.getName());
+                        path.of(configuration.getRoot()).concat(fileSystemName).concat("2022-08-01").concat("sh.v").$();
                         long fd = Files.openRW(path);
                         Files.truncate(fd, Files.length(fd) / 2);
                         Files.close(fd);
@@ -527,9 +527,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     s -> {
                         // .d file
                         engine.clear();
-                        path.of(configuration.getRoot());
-                        TableUtils.createTablePath(path, s.getName());
-                        path.concat("2022-08-01").concat("sh.d").$();
+                        CharSequence fileSystemName = engine.getFileSystemName(s.getName());
+                        path.of(configuration.getRoot()).concat(fileSystemName).concat("2022-08-01").concat("sh.d").$();
                         long fd = Files.openRW(path);
                         Files.truncate(fd, Files.length(fd) / 10);
                         Files.close(fd);
@@ -616,9 +615,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     txn = writer.getTxn();
                     writer.attachPartition(timestamp);
                 }
-                path.of(configuration.getRoot());
-                TableUtils.createTablePath(path, dst.getName());
-                path.concat("2022-08-01");
+                CharSequence fileSystemName = engine.getFileSystemName(dst.getName());
+                path.of(configuration.getRoot()).concat(fileSystemName).concat("2022-08-01");
                 TableUtils.txnPartitionConditionally(path, txn);
                 int pathLen = path.length();
 
@@ -887,7 +885,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 // remove .k
                 engine.clear();
-                Assert.assertTrue(Files.remove(TableUtils.createTablePath(path.of(configuration.getRoot()), src.getName()).concat("2022-08-09").concat("s.k").$()));
+                CharSequence fileSystemName = engine.getFileSystemName(src.getName());
+                path.of(configuration.getRoot()).concat(fileSystemName).concat("2022-08-09").concat("s.k").$();
+                Assert.assertTrue(Files.remove(path));
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
@@ -1173,10 +1173,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
-            path.of(root);
-            TableUtils.createTablePath(path, dstTableName);
-            path.concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$();
-            Files.rmdir(path);
+            CharSequence fileSystemName = engine.getFileSystemName(dstTableName);
+            Files.rmdir(path.of(root).concat(fileSystemName).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
         }
     }
 
@@ -1193,10 +1191,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         engine.clear();
-        TableUtils.createTablePath(path.of(configuration.getRoot()), src.getName());
+
+        CharSequence fileSystemName = engine.getFileSystemName(src.getName());
+        path.of(configuration.getRoot()).concat(fileSystemName);
         int pathLen = path.length();
-        TableUtils.createTablePath(other.of(configuration.getRoot()), dst.getName());
+
+        CharSequence fileSystemName0 = engine.getFileSystemName(dst.getName());
+        other.of(configuration.getRoot()).concat(fileSystemName0);
         int otherLen = other.length();
+
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
             path.trimTo(pathLen).concat(partition).$();
@@ -1237,8 +1240,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             String dstTableName,
             String dstPartitionName
     ) {
-        TableUtils.createTablePath(path.of(configuration.getRoot()), srcTableName).concat(srcPartitionName).slash$();
-        TableUtils.createTablePath(other.of(configuration.getRoot()), dstTableName).concat(dstPartitionName).put(configuration.getAttachPartitionSuffix()).slash$();
+        CharSequence fileSystemName = engine.getFileSystemName(srcTableName);
+        path.of(configuration.getRoot())
+                .concat(fileSystemName)
+                .concat(srcPartitionName)
+                .slash$();
+        CharSequence fileSystemName1 = engine.getFileSystemName(dstTableName);
+        other.of(configuration.getRoot())
+                .concat(fileSystemName1)
+                .concat(dstPartitionName)
+                .put(configuration.getAttachPartitionSuffix())
+                .slash$();
 
         TestUtils.copyDirectory(path, other, DIR_MODE);
 
@@ -1326,7 +1338,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         try {
             // .i file
             engine.clear();
-            TableUtils.createTablePath(path.of(configuration.getRoot()), src.getName()).concat(partition).concat(columnFileName).$();
+            CharSequence fileSystemName = engine.getFileSystemName(src.getName());
+            path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).concat(columnFileName).$();
             fd = ff.openRW(path, CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);

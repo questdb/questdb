@@ -197,7 +197,7 @@ public class TextImportTask {
             CairoConfiguration cfg,
             CharSequence importRoot,
             TableWriter writer,
-            CharSequence table,
+            CharSequence fileSystemName,
             CharSequence column,
             int columnIndex,
             int symbolColumnIndex,
@@ -209,7 +209,7 @@ public class TextImportTask {
                 cfg,
                 importRoot,
                 writer,
-                table,
+                fileSystemName,
                 column,
                 columnIndex,
                 symbolColumnIndex,
@@ -451,7 +451,7 @@ public class TextImportTask {
         private CairoConfiguration cfg;
         private CharSequence importRoot;
         private TableWriter writer;
-        private CharSequence table;
+        private CharSequence fileSystemName;
         private CharSequence column;
         private int columnIndex;
         private int symbolColumnIndex;
@@ -462,7 +462,7 @@ public class TextImportTask {
             this.cfg = null;
             this.importRoot = null;
             this.writer = null;
-            this.table = null;
+            this.fileSystemName = null;
             this.column = null;
             this.columnIndex = -1;
             this.symbolColumnIndex = -1;
@@ -473,7 +473,7 @@ public class TextImportTask {
         public void of(CairoConfiguration cfg,
                        CharSequence importRoot,
                        TableWriter writer,
-                       CharSequence table,
+                       CharSequence fileSystemName,
                        CharSequence column,
                        int columnIndex,
                        int symbolColumnIndex,
@@ -483,7 +483,7 @@ public class TextImportTask {
             this.cfg = cfg;
             this.importRoot = importRoot;
             this.writer = writer;
-            this.table = table;
+            this.fileSystemName = fileSystemName;
             this.column = column;
             this.columnIndex = columnIndex;
             this.symbolColumnIndex = symbolColumnIndex;
@@ -493,11 +493,11 @@ public class TextImportTask {
 
         public void run(Path path) {
             final FilesFacade ff = cfg.getFilesFacade();
-            TableUtils.createTablePath(path.of(importRoot), table);
+            path.of(importRoot).concat(fileSystemName);
             int plen = path.length();
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
-                path.put("_").put(i).put("_");
+                path.put("_").put(i);
                 int tableLen = path.length();
                 try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
                     path.trimTo(tableLen);
@@ -569,7 +569,9 @@ public class TextImportTask {
 
         public void run(Path path) {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
-            TableUtils.createTablePath(path.of(root), tableStructure.getTableName()).put("_").put(index).put("_");
+
+            CharSequence fileSystemName = cairoEngine.getFileSystemName(tableStructure.getTableName());
+            path.of(root).concat(fileSystemName).put("_").put(index);
             int plen = path.length();
             PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
@@ -644,10 +646,16 @@ public class TextImportTask {
         public void run() {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             tableNameSink.clear();
-            tableNameSink.put(tableStructure.getTableName()).put('_').put('_').put(index);
+
+            CharSequence fileSystemName = cairoEngine.getFileSystemName(tableStructure.getTableName());
+            tableNameSink.put(fileSystemName).put('_').put(index);
+
+            CharSequence fileSystemName1 = cairoEngine.getFileSystemName(tableNameSink);
+            tableNameSink.put(fileSystemName).put('_').put(index);
             final int columnCount = metadata.getColumnCount();
             try (TableWriter w = new TableWriter(configuration,
                     tableNameSink,
+                    fileSystemName1,
                     cairoEngine.getMessageBus(),
                     null,
                     true,
@@ -835,16 +843,20 @@ public class TextImportTask {
 
             this.utf8Sink = utf8Sink;
             tableNameSink.clear();
-            tableNameSink.put(TableUtils.fsTableName(targetTableStructure.getTableName())).put('_').put(index);
+
+            CharSequence fileSystemName = cairoEngine.getFileSystemName(targetTableStructure.getTableName());
+            tableNameSink.put(fileSystemName).put('_').put(index);
 
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
             createTable(ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0, configuration);
 
+            CharSequence fileSystemName1 = cairoEngine.getFileSystemName(tableNameSink);
             try (
                     TableWriter writer = new TableWriter(
                             configuration,
                             tableNameSink,
+                            fileSystemName1,
                             cairoEngine.getMessageBus(),
                             null,
                             true,

@@ -231,14 +231,7 @@ public final class TableUtils {
             int tableId
     ) {
         LOG.debug().$("create table [name=").$(tableName).$(']').$();
-        path.of(root);
-
-        createTablePath(path, tableName);
-//        if (structure.isWalEnabled()) {
-//            createWalTablePath(path, tableName, tableId);
-//        } else {
-//            path.concat(tableName);
-//        }
+        path.of(root).concat(tableName);
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
@@ -425,13 +418,9 @@ public final class TableUtils {
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
-//        path.of(root).concat(name, lo, hi).$();
-        if (name.length() > 0) {
-            createTablePath(path.of(root), name, lo, hi);
-        } else {
-            path.of(root).concat(name, lo, hi).$();
-        }
-        if (ff.exists(path.$())) {
+        //todo: resolve fileSystemName
+        path.of(root).concat(name, lo, hi).$();
+        if (ff.exists(path)) {
             // prepare to replace trailing \0
             if (ff.exists(path.chop$().concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
@@ -1248,26 +1237,13 @@ public final class TableUtils {
         }
     }
 
-    public static void adjustTableName(final @NotNull Path root, final CharSequence tableName, int tableId, boolean isWal) {
-        root.concat(tableName);
-        if (isWal) {
-            root.put('_').put(tableId);
-        }
-    }
-
     public static Path createTablePath(final @NotNull Path root, final CharSequence tableName) {
-//        root.concat(tableName);
-        if (!tableName.equals("dbRoot")) {
-            root.concat(tableName).put('_');
-        } else {
-           root.concat(tableName);
-        }
-        return root;
-    }
-
-    public static Path createTablePath(final @NotNull Path root, final CharSequence tableName, int lo, int hi) {
-//        root.concat(tableName, lo, hi);
-        root.concat(tableName, lo, hi).put('_');
+        root.concat(tableName);
+//        if (!tableName.equals("dbRoot")) {
+//            root.concat(tableName).put('_');
+//        } else {
+//           root.concat(tableName);
+//        }
         return root;
     }
 
@@ -1277,24 +1253,14 @@ public final class TableUtils {
         return root;
     }
 
-    public static java.nio.file.Path createTablePath(final @NotNull CharSequence root, final @NotNull CharSequence tableName) {
-        return FileSystems.getDefault().getPath(root.toString(), tableName.toString() + '_');
-    }
-
-    public static java.nio.file.Path createTablePartitionPath(String root, String tableName, String partitionName) {
-        return java.nio.file.Path.of(root, tableName + '_', partitionName);
-    }
-
-    public static String fsTableName(final CharSequence root, final CharSequence tableName) {
-         return root.toString() + Files.SEPARATOR + tableName.toString() + '_';
-    }
-
     public static String fsTableName(final CharSequence tableName) {
-        return tableName.toString() + '_';
+//        return tableName.toString() + '_';
+        return tableName.toString();
     }
 
     public static CharSequence FsToUserTableName(final CharSequence tableName) {
-        return tableName.subSequence(0, tableName.length() - 1);
+//        return tableName.subSequence(0, tableName.length() - 1);
+        return tableName;
     }
 
     public interface FailureCloseable {

@@ -70,7 +70,8 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             spinLockTimeout = 1;
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+            String x = "x";
+            try (TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.LONG)
                     .timestamp()) {
@@ -79,7 +80,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    TableReader reader = new TableReader(configuration, "x");
+                    TableReader reader = new TableReader(configuration, x);
                     MemoryCMARW mem = Vm.getCMARWInstance()
             ) {
 
@@ -87,9 +88,10 @@ public class TableReadFailTest extends AbstractCairoTest {
                 final int N = 1000;
 
                 // home path at txn file
-                TableUtils.createTablePath(path.of(configuration.getRoot()), "x").concat(TableUtils.TXN_FILE_NAME).$();
+                CharSequence fileSystemName = engine.getFileSystemName(x);
+                path.of(configuration.getRoot()).concat(fileSystemName).concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
+                try (TableWriter w = new TableWriter(configuration, x, metrics)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
                         r.putInt(0, rnd.nextInt());
@@ -147,7 +149,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
-                try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
+                try (TableWriter w = new TableWriter(configuration, x, metrics)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();

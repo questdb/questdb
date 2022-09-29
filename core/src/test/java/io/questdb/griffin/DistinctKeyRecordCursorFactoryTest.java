@@ -86,7 +86,8 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             // remove partition
             final String partition = "2020-02";
 
-            try (Path path = TableUtils.createTablePath(new Path().of(engine.getConfiguration().getRoot()),"tab").concat(partition).$()) {
+            CharSequence fileSystemName = engine.getFileSystemName("tab");
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat(partition).$()) {
                 Assert.assertEquals(0, Files.rmdir(path));
             }
 
@@ -134,7 +135,8 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             // remove partition
             final String partition = "2020-02";
 
-            try (Path path = TableUtils.createTablePath(new Path().of(engine.getConfiguration().getRoot()),"tab").concat(partition).$()) {
+            CharSequence fileSystemName = engine.getFileSystemName("tab");
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat(partition).$()) {
                 Assert.assertEquals(0, Files.rmdir(path));
             }
 

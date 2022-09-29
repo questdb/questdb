@@ -109,6 +109,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private long importId;
     //input params start
     private CharSequence tableName;
+    private CharSequence fileSystemName;
     //name of file to process in inputRoot dir
     private CharSequence inputFileName;
     //name of timestamp column
@@ -253,6 +254,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         phaseErrors = 0;
         inputFileName = null;
         tableName = null;
+        fileSystemName = null;
         timestampColumn = null;
         timestampIndex = -1;
         partitionBy = -1;
@@ -295,7 +297,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.importRoot = TableUtils.createTablePath(tmpPath.of(inputWorkRoot), tableName).toString();
+        this.fileSystemName = cairoEngine.getFileSystemName(tableName);//todo: tableName doesn't exist!! fix it
+        this.importRoot = tmpPath.of(inputWorkRoot).concat(fileSystemName).toString();
         this.inputFileName = inputFileName;
         this.timestampColumn = timestampColumn;
         this.partitionBy = partitionBy;
@@ -655,8 +658,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
 
-                final Path srcPath = TableUtils.createTablePath(localImportJob.getTmpPath1().of(importRoot), tableName).put("_").put(index).put("_"); //todo: fix this
-                final Path dstPath = TableUtils.createTablePath(localImportJob.getTmpPath2().of(configuration.getRoot()), tableName);
+                final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(fileSystemName).put("_").put(index);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(fileSystemName);
+
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
 
@@ -1114,7 +1118,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 configuration,
                                 importRoot,
                                 writer,
-                                tableName,
+                                fileSystemName,
                                 symbolColumnName,
                                 columnIndex,
                                 tmpTableSymbolColumnIndex,
@@ -1144,7 +1148,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         int queuedCount = 0;
         int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
-            TableUtils.createTablePath(tmpPath.of(importRoot), tableName).put("_").put(t).put("_");//todo: fix this1
+
+            CharSequence fileSystemName = cairoEngine.getFileSystemName(tableName);
+            tmpPath.of(importRoot).concat(fileSystemName).put("_").put(t);
 
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txFile.unsafeLoadAll();

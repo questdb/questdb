@@ -149,7 +149,8 @@ public class TableListFunctionFactory implements FunctionFactory {
                         }
                     }
                     if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                        if (record.open(sink)) {
+                        CharSequence tableName = TableUtils.FsToUserTableName(sink);
+                        if (record.open(tableName, sink)) {
                             return true;
                         }
                     }
@@ -204,7 +205,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return sink.subSequence(0, sink.length() - 1);
+                        return TableUtils.FsToUserTableName(sink);
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);
@@ -235,15 +236,15 @@ public class TableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean open(CharSequence tableName) {
-                    tableName = TableUtils.FsToUserTableName(tableName);
+                public boolean open(CharSequence tableName, CharSequence fileSystemName) {
+
                     if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, sysTablePrefix))) {
                         return false;
                     }
 
                     int pathLen = path.length();
                     try {
-                        TableUtils.createTablePath(path.chop$(), tableName).concat(META_FILE_NAME).$();
+                        path.chop$().concat(fileSystemName).concat(META_FILE_NAME).$();
                         metaReader.deferredInit(path.$(), "<noname>", ColumnType.VERSION);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch

@@ -40,6 +40,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -62,6 +63,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final String tableName;
+    private final CharSequence fileSystemName;
     private final MessageBus messageBus;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -81,19 +83,24 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean txnAcquired = false;
     private final MillisecondClock clock;
 
+    @TestOnly
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
-        this(configuration, tableName, null);
+        this(configuration,  tableName, tableName, null);
     }
 
-    public TableReader(CairoConfiguration configuration, CharSequence tableName, @Nullable MessageBus messageBus) {
+    public TableReader(CairoConfiguration configuration,
+                       CharSequence tableName,
+                       CharSequence fileSystemName,
+                       @Nullable MessageBus messageBus
+    ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
+        this.fileSystemName = fileSystemName;
         this.messageBus = messageBus;
         this.path = new Path();
-        this.path.of(configuration.getRoot());
-        TableUtils.createTablePath(this.path, this.tableName);
+        this.path.of(configuration.getRoot()).concat(fileSystemName);
         this.rootLen = path.length();
         path.trimTo(rootLen);
         try {
@@ -751,7 +758,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private TableReaderMetadata openMetaFile() {
         TableReaderMetadata metadata = new TableReaderMetadata(ff, tableName);
         try {
-            metadata.readSafe(configuration.getRoot(), tableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            metadata.readSafe(configuration.getRoot(), tableName, fileSystemName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             return metadata;
         } catch (Throwable th) {
             metadata.close();

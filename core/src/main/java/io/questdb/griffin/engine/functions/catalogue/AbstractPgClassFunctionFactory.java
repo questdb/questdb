@@ -237,7 +237,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                 final long type = ff.findType(findFileStruct);
                 if (Files.isDir(pUtf8NameZ, type, sink)) {
                     path.trimTo(plimit);
-                    if (ff.exists(TableUtils.createTablePath(path, pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
+                    if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
                         // open metadata file and read id
                         long fd = ff.openRO(path);
                         if (fd > -1) {

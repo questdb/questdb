@@ -410,8 +410,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 2, 1);
                     fail("Segment 2 should not exist");
                 } catch (CairoException e) {
+                    CharSequence fileSystemName = engine.getFileSystemName(tableName);
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                            File.separatorChar + TableUtils.fsTableName(tableName) +
+                            File.separatorChar + fileSystemName +
                             File.separatorChar + walName +
                             File.separatorChar + "2" +
                             File.separatorChar + TableUtils.META_FILE_NAME + "]"));
@@ -1201,8 +1202,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 0);
                     fail("Segment 1 should not exist");
                 } catch (CairoException e) {
+                    CharSequence fileSystemName = engine.getFileSystemName(tableName);
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                            File.separatorChar + TableUtils.fsTableName(tableName) +
+                            File.separatorChar + fileSystemName +
                             File.separatorChar + walName +
                             File.separatorChar + "1" +
                             File.separatorChar + TableUtils.META_FILE_NAME + "]"));
@@ -2100,9 +2102,10 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
+        CharSequence fileSystemName = engine.getFileSystemName(tableName);
         return segment < 0
-                ? TableUtils.createTablePath(path, tableName).slash().concat(walName).slash().concat(fileName).$()
-                : TableUtils.createTablePath(path, tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
+                ? path.concat(fileSystemName).slash().concat(walName).slash().concat(fileName).$()
+                : path.concat(fileSystemName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
     }
 
     private void assertColumnMetadata(TableModel expected, WalReader reader) {

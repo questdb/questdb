@@ -89,8 +89,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.metrics = metrics;
         this.tableRegistry = new TableRegistry(this, configuration);
         this.messageBus = new MessageBusImpl(configuration);
-        this.writerPool = new WriterPool(configuration, messageBus, metrics);
-        this.readerPool = new ReaderPool(configuration, messageBus);
+        this.writerPool = new WriterPool(this, metrics);
+        this.readerPool = new ReaderPool(this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
@@ -185,6 +185,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public TableRegistry getTableRegistry() {
         return tableRegistry;
     }
+
+    public CharSequence getFileSystemName(final CharSequence tableName) {
+        return getTableRegistry().getFileSystemName(tableName);
+    }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
@@ -197,14 +202,21 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         if (struct.isWalEnabled()) {
             tableRegistry.registerTable(tableId, struct);
         }
-
+        final CharSequence fileSystemName = getFileSystemName(struct.getTableName());
         // only create the table after it has been registered
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence root = configuration.getRoot();
+        final int mkDirMode = configuration.getMkDirMode();
         TableUtils.createTable(
-                configuration,
-                mem,
-                path,
-                struct,
-                tableId
+               ff,
+               root,
+               mkDirMode,
+               mem,
+               path,
+               fileSystemName,
+               struct,
+               ColumnType.VERSION,
+               tableId
         );
     }
 
@@ -215,9 +227,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
+        CharSequence fileSystemName = getFileSystemName(tableName);
         return new TableWriter(
                 configuration,
                 tableName,
+                fileSystemName,
                 messageBus,
                 null,
                 true,
@@ -296,7 +310,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
-        TableUtils.createTablePath(rootPath.trimTo(rootPathLen), tableName).concat(TableUtils.TXN_FILE_NAME).$();
+        rootPath.trimTo(rootPathLen).concat(getFileSystemName(tableName)).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
             if (txReader.unsafeLoad(true)) {
                 if (txReader.getTxn() < txn) {
@@ -392,7 +406,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         if (tableRegistry.hasSequencer(tableName)) {
             // This is WAL table because sequencer exists
-            return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
+            CharSequence fileSystemName = this.getFileSystemName(tableName);
+            return new WalReader(configuration, tableName, fileSystemName, walName, segmentId, walRowCount);
         }
 
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
@@ -540,9 +555,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         CharSequence lockedReason = lock(securityContext, tableName, "removeTable");
         if (null == lockedReason) {
             try {
-                path.of(configuration.getRoot());
-                TableUtils.createTablePath(path, tableName);
-                path.$();
+                path.of(configuration.getRoot()).concat(getFileSystemName(tableName)).$();
                 int errno;
                 if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
                     LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
@@ -631,12 +644,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             throw CairoException.nonCritical().put("Rename failed. Table '").put(tableName).put("' does not exist");
         }
 
-        path.of(root);
-        TableUtils.createTablePath(path, tableName);
-        path.$();
-        otherPath.of(root);
-        TableUtils.createTablePath(otherPath, to);
-        otherPath.$();
+        path.of(root).concat(getFileSystemName(tableName)).$();
+        otherPath.of(root).concat(getFileSystemName(to)).$();
 
         if (ff.exists(otherPath)) {
             LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).$("']").$();

@@ -243,7 +243,8 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 String tableName = "x";
-                TableUtils.createTablePath(path.of(root), tableName);
+                CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                path.of(root).concat(fileSystemName);
                 final int rootLen = path.length();
                 if (FilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
                     throw CairoException.critical(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
@@ -301,9 +302,8 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
                 String tableName = "all";
-                path.of(root);
-                TableUtils.createTablePath(path, tableName);
-                path.concat(TableUtils.META_FILE_NAME).$();
+                CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                path.of(root).concat(fileSystemName).concat(TableUtils.META_FILE_NAME).$();
 
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 

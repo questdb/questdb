@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -261,7 +262,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
             assertPartitionResult("count\n44\n", "2020-01-01");
 
-            try (Path path = TableUtils.createTablePath(new Path().of(engine.getConfiguration().getRoot()), tableName)) {
+            CharSequence fileSystemName = engine.getFileSystemName(tableName);
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(fileSystemName)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
                 Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
                 if (Os.type == Os.WINDOWS) {
@@ -746,7 +748,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     }
 
                     // Delete partition folder
-                    File dir = new File(TableUtils.createTablePartitionPath(root.toString(), src.getName(), folderToDelete).toString());
+                    CharSequence fileSystemName = engine.getFileSystemName(src.getName());
+                    File dir = new File(Paths.get(root.toString(), Chars.toString(fileSystemName), folderToDelete).toString());
                     deleteDir(dir);
 
                     if (opened) {

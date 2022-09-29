@@ -129,7 +129,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
 
         FilesFacade filesFacade = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            TableUtils.createTablePath(path.concat(configuration.getRoot()), "table1").concat(META_FILE_NAME).$();
+            CharSequence fileSystemName = engine.getFileSystemName("table1");
+            path.concat(configuration.getRoot()).concat(fileSystemName).concat(META_FILE_NAME).$();
             filesFacade.remove(path);
         }
         assertSql(

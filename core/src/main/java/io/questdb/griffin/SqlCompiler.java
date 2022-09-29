@@ -136,7 +136,7 @@ public class SqlCompiler implements Closeable {
                 configuration.getSqlCharacterStoreCapacity(),
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
 
-        this.metadataFactory = new PooledMetadataFactory(configuration);
+        this.metadataFactory = new PooledMetadataFactory(this.engine);
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(
                 configuration,
@@ -1995,9 +1995,11 @@ public class SqlCompiler implements Closeable {
         TableWriter writer = null;
         final TableWriterFrontend writerFrontend;
         if (!isWalEnabled) {
+            CharSequence fileSystemName = engine.getFileSystemName(tableName);
             writerFrontend = writer = new TableWriter(
                     configuration,
                     tableName,
+                    fileSystemName,
                     messageBus,
                     null,
                     false,
@@ -2608,9 +2610,8 @@ public class SqlCompiler implements Closeable {
         }
         tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
         CharSequence tableName = tok;
-        path.of(configuration.getRoot());
-        TableUtils.createTablePath(path, tableName);
-        rebuildIndex.of(path, configuration);
+        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(fileSystemName), configuration);
 
         tok = SqlUtil.fetchNext(lexer);
         CharSequence columnName = null;
@@ -2657,7 +2658,8 @@ public class SqlCompiler implements Closeable {
 
     private boolean removeTableDirectory(CreateTableModel model) {
         int errno;
-        if ((errno = engine.removeDirectory(path, TableUtils.fsTableName(model.getName().token))) == 0) {
+        CharSequence fileSystemName = engine.getFileSystemName(model.getName().token);
+        if ((errno = engine.removeDirectory(path, fileSystemName)) == 0) {
             return true;
         }
         LOG.error()
@@ -3293,6 +3295,7 @@ public class SqlCompiler implements Closeable {
             }
 
             int renameRootLen = dstPath.length();
+            CharSequence fileSystemName = engine.getFileSystemName(tableName);
             try {
                 CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
                 try (TableReader reader = engine.getReader(securityContext, tableName)) {
@@ -3312,10 +3315,9 @@ public class SqlCompiler implements Closeable {
                         backupWriter.commit();
                     }
                 }
-
-                TableUtils.createTablePath(srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()), tableName).$();
+                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(fileSystemName).$();
                 try {
-                    TableUtils.createTablePath(dstPath.trimTo(renameRootLen), tableName).$();
+                    dstPath.trimTo(renameRootLen).concat(fileSystemName).$();
                     TableUtils.renameOrFail(ff, srcPath, dstPath);
                     LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(dstPath).$(']').$();
                 } finally {
@@ -3327,7 +3329,8 @@ public class SqlCompiler implements Closeable {
                         .$(", ex=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .$(']').$();
-                TableUtils.createTablePath(srcPath.of(cachedTmpBackupRoot), tableName).slash$();
+
+                srcPath.of(cachedTmpBackupRoot).concat(fileSystemName).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
                     LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
@@ -3345,7 +3348,8 @@ public class SqlCompiler implements Closeable {
         }
 
         private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-            TableUtils.createTablePath(srcPath.of(backupRoot), tableName).slash$();
+            CharSequence fileSystemName = engine.getFileSystemName(tableName);
+            srcPath.of(backupRoot).concat(fileSystemName).slash$();
 
             if (ff.exists(srcPath)) {
                 throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');

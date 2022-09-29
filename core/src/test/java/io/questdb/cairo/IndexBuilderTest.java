@@ -611,7 +611,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            String tablePath = TableUtils.fsTableName(configuration.getRoot(), "xxx");
+            CharSequence xxx = engine.getFileSystemName("xxx");
+            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx;
             changeTable.run(tablePath);
 
             indexBuilder.clear();

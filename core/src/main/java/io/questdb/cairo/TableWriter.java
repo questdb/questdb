@@ -107,6 +107,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private final int mkDirMode;
     private final int fileOperationRetryCount;
     private final String tableName;
+    private final String fileSystemName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -221,6 +222,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
+            CharSequence fileSystemName,
             MessageBus messageBus,
             MessageBus ownMessageBus,
             boolean lock,
@@ -244,17 +246,16 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
+        this.fileSystemName = Chars.toString(fileSystemName);
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.o3PartitionUpdateQueue = new RingQueue<>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCycle());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
-        this.path = new Path().of(root);
-        this.other = new Path().of(root);
 
-        TableUtils.createTablePath(this.path, tableName);
-        TableUtils.createTablePath(this.other, tableName);
+        this.path = new Path().of(root).concat(fileSystemName);
+        this.other = new Path().of(root).concat(fileSystemName);
 
         this.rootLen = path.length();
         try {
@@ -350,7 +351,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+        this(configuration, tableName, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
 
     @TestOnly
@@ -367,7 +368,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             LifecycleManager lifecycleManager,
             Metrics metrics
     ) {
-        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
+        this(configuration, tableName, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public static int getPrimaryColumnIndex(int index) {
@@ -640,7 +641,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = TableUtils.createTablePath(Path.PATH.get().of(configuration.getRoot()), tableName);
+        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(fileSystemName);
+
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachPartitionSuffix()).slash$();
         int detachedRootLen = detachedPath.length();
@@ -842,7 +844,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION_DIR;
             }
 
-            TableUtils.createTablePath(detachedPath.of(configuration.getRoot()), tableName);
+            detachedPath.of(configuration.getRoot()).concat(fileSystemName);
             int detachedRootLen = detachedPath.length();
             // detachedPath: detached partition folder
             if (!ff.exists(detachedPath.slash$())) {

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.MetadataFactory;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -38,10 +39,13 @@ public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
     private final CairoConfiguration configuration;
     private final WeakClosableObjectPool<ReusableTableReaderMetadata> readerMetadataPool;
     private final WeakClosableObjectPool<ReusableSequencerMetadata> sequencerMetadataPool;
+    private final CairoEngine engine;
     CharSequenceObjHashMap<String> tableNamePool = new CharSequenceObjHashMap<>();
     private boolean isClosed = false;
 
-    public PooledMetadataFactory(CairoConfiguration configuration) {
+    public PooledMetadataFactory(CairoEngine engine) {
+        CairoConfiguration configuration = engine.getConfiguration();
+        this.engine = engine;
         this.ff = configuration.getFilesFacade();
         this.dbRoot = configuration.getRoot();
         int poolCapacity = configuration.getMetadataPoolCapacity();
@@ -68,7 +72,8 @@ public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
     public TableRecordMetadata openTableReaderMetadata(CharSequence tableName) {
         TableReaderMetadata tableReaderMetadata = readerMetadataPool.pop();
         String tableNameStr = resolveString(tableNamePool, tableName);
-        tableReaderMetadata.readSafe(dbRoot, tableNameStr, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        tableReaderMetadata.readSafe(dbRoot, tableNameStr, fileSystemName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
         return tableReaderMetadata;
     }
 

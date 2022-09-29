@@ -66,6 +66,7 @@ public class WalWriter implements TableWriterFrontend {
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
     private final int mkDirMode;
     private final String tableName;
+    private final String fileSystemName;
     private final String walName;
     private final int walId;
     private final SequencerMetadata metadata;
@@ -101,10 +102,11 @@ public class WalWriter implements TableWriterFrontend {
         this.mkDirMode = this.configuration.getMkDirMode();
         this.ff = this.configuration.getFilesFacade();
         this.tableName = tableName;
+        this.fileSystemName = Chars.toString(tableRegistry.getFileSystemName(tableName));
         final int walId = tableRegistry.getNextWalId(tableName);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = TableUtils.createTablePath(new Path().of(this.configuration.getRoot()), tableName).concat(walName);
+        this.path = new Path().of(this.configuration.getRoot()).concat(fileSystemName).concat(walName);
         this.rootLen = path.length();
         this.open = true;
 
@@ -601,8 +603,7 @@ public class WalWriter implements TableWriterFrontend {
         // Copy or hard link symbol map files.
         FilesFacade ff = configuration.getFilesFacade();
         Path tempPath = Path.PATH.get();
-        tempPath.of(configuration.getRoot());
-        TableUtils.createTablePath(tempPath, tableName);
+        tempPath.of(configuration.getRoot()).concat(fileSystemName);
         int tempPathTripLen = tempPath.length();
 
         path.trimTo(rootLen);
@@ -679,17 +680,13 @@ public class WalWriter implements TableWriterFrontend {
             long spinLockTimeout = configuration.getSpinLockTimeout();
 
             Path path = Path.PATH2.get();
-            path.of(configuration.getRoot());
-            TableUtils.createTablePath(path, tableName);
-            path.concat(TXN_FILE_NAME).$();
+            path.of(configuration.getRoot()).concat(fileSystemName).concat(TXN_FILE_NAME).$();
 
             // Does not matter which PartitionBy, as long as it is partitioned
             // WAL tables must be partitioned
             txReader.ofRO(path, PartitionBy.DAY);
 
-            path.of(configuration.getRoot());
-            TableUtils.createTablePath(path, tableName);
-            path.concat(COLUMN_VERSION_FILE_NAME).$();
+            path.of(configuration.getRoot()).concat(fileSystemName).concat(COLUMN_VERSION_FILE_NAME).$();
             columnVersionReader.ofRO(ff, path);
 
             do {

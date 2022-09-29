@@ -496,7 +496,8 @@ public class TableBackupTest {
             // @formatter:on
 
             try (Path path = new Path()) {
-                TableUtils.createTablePath(path.of(mainConfiguration.getBackupRoot()).concat("tmp"), tableName).slash$();
+                CharSequence fileSystemName = mainEngine.getFileSystemName(tableName);
+                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(fileSystemName).slash$();
                 int rc = FilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
                 Assert.assertEquals(0, rc);
             }

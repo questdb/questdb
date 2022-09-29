@@ -25,16 +25,14 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -53,11 +51,21 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private final int maxSegments;
     private final MessageBus messageBus;
     private final int maxEntries;
+    private final CairoEngine engine;
 
-    public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
+    @TestOnly
+    public ReaderPool(CairoEngine engine, CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveReaderTTL());
+        this.engine = engine;
         this.maxSegments = configuration.getReaderPoolMaxSegments();
-        this.messageBus = messageBus;
+        this.messageBus = engine.getMessageBus();
+        this.maxEntries = maxSegments * ENTRY_SIZE;
+    }
+    public ReaderPool(CairoEngine engine) {
+        super(engine.getConfiguration(), engine.getConfiguration().getInactiveReaderTTL());
+        this.engine = engine;
+        this.maxSegments = engine.getConfiguration().getReaderPoolMaxSegments();
+        this.messageBus = engine.getMessageBus();
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
@@ -90,7 +98,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                                     .$("open '").utf8(name)
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .$(']').$();
-                            r = new R(this, e, i, name, messageBus);
+                            CharSequence fileSystemName = engine.getFileSystemName(name);
+                            r = new R(this, e, i, name, fileSystemName, messageBus);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -379,8 +388,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         private ReaderPool pool;
         private Entry entry;
 
-        public R(ReaderPool pool, Entry entry, int index, CharSequence name, MessageBus messageBus) {
-            super(pool.getConfiguration(), name, messageBus);
+        public R(ReaderPool pool, Entry entry, int index, CharSequence name, CharSequence fileSystemName, MessageBus messageBus) {
+            super(pool.getConfiguration(), name, fileSystemName, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

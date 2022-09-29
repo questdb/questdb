@@ -83,20 +83,25 @@ public class WriterPool extends AbstractPool {
     private final MessageBus messageBus;
     @NotNull
     private final Metrics metrics;
+    private final CairoEngine engine;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
-     * @param configuration configuration parameters.
-     * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
-     * @param metrics       metrics instance to be used by table writers.
+     * @param engine
+     * @param metrics metrics instance to be used by table writers.
      */
-    public WriterPool(CairoConfiguration configuration, @NotNull MessageBus messageBus, @NotNull Metrics metrics) {
+    public WriterPool(@NotNull CairoEngine engine, @NotNull Metrics metrics) {
+        this(engine, engine.getConfiguration(), metrics);
+    }
+
+    public WriterPool(@NotNull CairoEngine engine, @NotNull CairoConfiguration configuration, @NotNull Metrics metrics) {
         super(configuration, configuration.getInactiveWriterTTL());
+        this.engine = engine;
         this.configuration = configuration;
-        this.messageBus = messageBus;
-        this.clock = configuration.getMicrosecondClock();
-        this.root = configuration.getRoot();
+        this.messageBus = engine.getMessageBus();
+        this.clock = this.configuration.getMicrosecondClock();
+        this.root = this.configuration.getRoot();
         this.path.concat(this.root);
         this.rootLen = this.path.length();
         this.metrics = metrics;
@@ -241,6 +246,7 @@ public class WriterPool extends AbstractPool {
                 throw CairoException.critical(0).put("Writer ").put(name).put(" is not locked");
             }
 
+            CharSequence fileSystemName = engine.getFileSystemName(name);
             if (newTable) {
                 // Note that the TableUtils.createTable method will create files, but on some OS's these files
                 // will not immediately become visible on all threads, only in this thread will they definitely
@@ -248,7 +254,7 @@ public class WriterPool extends AbstractPool {
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, name, messageBus, null, false, e, root, metrics);
+                writer = new TableWriter(configuration, name, fileSystemName, messageBus, null, false, e, root, metrics);
             }
 
             if (writer == null) {
@@ -257,7 +263,7 @@ public class WriterPool extends AbstractPool {
                 if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
                     path.trimTo(rootLen);
-                    TableUtils.createTablePath(path, name);
+                    path.concat(fileSystemName);
                     TableUtils.lockName(path);
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
@@ -426,7 +432,8 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(configuration, name, messageBus, null, true, e, root, metrics);
+            CharSequence fileSystemName = engine.getFileSystemName(name);
+            e.writer = new TableWriter(configuration, name, fileSystemName, messageBus, null, true, e, root, metrics);
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
@@ -516,7 +523,7 @@ public class WriterPool extends AbstractPool {
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, String lockReason) {
         assertLockReasonIsNone(lockReason);
         path.trimTo(rootLen);
-        TableUtils.createTablePath(path, tableName);
+        path.concat(engine.getFileSystemName(tableName));
         TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {

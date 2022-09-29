@@ -498,7 +498,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.endsWith(path, TableUtils.fsTableName("x") + Files.SEPARATOR)) {
+                CharSequence fileSystemName = engine.getFileSystemName("x");
+                if (Chars.endsWith(path, Chars.toString(fileSystemName) + Files.SEPARATOR)) {
                     called = true;
                     return -1;
                 }
@@ -608,7 +609,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         try (Path path = new Path()) {
-            Files.mkdirs(TableUtils.createTablePath(path.of(root), "x").slash$(), configuration.getMkDirMode());
+            CharSequence fileSystemName = engine.getFileSystemName("x");
+            Files.mkdirs(path.of(root).concat(fileSystemName).slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));
         }

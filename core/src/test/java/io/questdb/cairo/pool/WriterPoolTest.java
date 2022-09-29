@@ -157,7 +157,8 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, TableUtils.fsTableName("z") + ".lock") && count-- > 0) {
+                CharSequence z = engine.getFileSystemName("z");
+                if (Chars.endsWith(name, z + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -596,6 +597,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             TableWriter writer = new TableWriter(
                     configuration,
                     "x",
+                    "x",
                     messageBus,
                     null,
                     false,
@@ -892,7 +894,8 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, TableUtils.fsTableName("z") + ".lock") && count-- > 0) {
+                CharSequence fileSystemName = engine.getFileSystemName("z");
+                if (Chars.endsWith(name, Chars.toString(fileSystemName) + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -936,7 +939,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, messageBus, metrics)) {
+            try (WriterPool pool = new WriterPool(engine, configuration, metrics)) {
                 code.run(pool);
             }
         });

@@ -44,7 +44,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
+        purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
     @AfterClass
@@ -174,16 +174,17 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
 
+            CharSequence fileSystemName = engine.getFileSystemName("tbl");
             try (Path path = new Path()) {
-                Files.mkdir(TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()),"tbl").concat("invalid_folder.123").$(), 509);
-                Files.mkdir(TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-01.invalid").$(), 509);
+                Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("invalid_folder.123").$(), 509);
+                Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-01.invalid").$(), 509);
 
                 runPartitionPurgeJobs();
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()),"tbl").concat("1970-01-10").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-10.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
             }
         });
@@ -254,7 +255,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ) {
                 for (int i = 0; i < tableCount; i++) {
                     String tableName = "tbl" + i;
-                    TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), tableName);
+                    CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                    path.of(engine.getConfiguration().getRoot()).concat(fileSystemName);
                     int len = path.length();
                     int partitionBy = PartitionBy.DAY;
                     txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
@@ -305,7 +307,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             runPartitionPurgeJobs();
 
             try (Path path = new Path()) {
-                TableUtils.createTablePath(path.concat(engine.getConfiguration().getRoot()), tableName).concat("1970-01-10");
+                CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                path.concat(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10");
                 int len = path.length();
                 for (int i = 0; i < 3; i++) {
                     path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
@@ -343,7 +346,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 Assert.assertEquals(2, deleteAttempts.get()); // One message from Writer, one from Reader
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-10.1").concat("x.d").$();
+                CharSequence fileSystemName = engine.getFileSystemName("tbl");
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
             }
         });
@@ -379,16 +383,17 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 Assert.assertEquals(2, deleteAttempts.get()); // One message from Writer, one from Reader
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()),"tbl").concat("1970-01-10").concat("x.d").$();
+                CharSequence fileSystemName = engine.getFileSystemName("tbl");
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-10.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                 // VACUUM SQL should delete partition version 1970-01-10 on attempt 3
                 compiler.compile("vacuum partitions tbl", sqlExecutionContext);
                 runPartitionPurgeJobs();
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-10").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
         });
@@ -415,7 +420,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                         startTimestamp += Timestamps.HOUR_MICROS;
                     }
 
-                    TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-01T01.0").concat("x.d").$();
+                    CharSequence fileSystemName = engine.getFileSystemName("tbl");
+                    path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-01T01.0").concat("x.d").$();
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     compiler.compile("vacuum table tbl", sqlExecutionContext);
@@ -472,14 +478,15 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 // OOO inserts partition 1970-01-09
                 compiler.compile("insert into tbl select 4, '1970-01-09T10'", sqlExecutionContext);
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-09.0").concat("x.d").$();
+                CharSequence fileSystemName = engine.getFileSystemName("tbl");
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
                     // OOO inserts partition 1970-01-09
                     compiler.compile("insert into tbl select 4, '1970-01-09T09'", sqlExecutionContext);
 
-                    TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-09.2").concat("x.d").$();
+                    path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-09.2").concat("x.d").$();
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
@@ -497,7 +504,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 }
                 runPartitionPurgeJobs();
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-09.0").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
         });
@@ -542,22 +549,23 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     , sqlExecutionContext);
 
             try (Path path = new Path()) {
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), tableName).concat("1970-01-10").concat("x.d").$();
+                CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), tableName).concat("1970-01-10.0").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), tableName).concat("1970-01-10.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), tableName).concat("1970-01-11").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-11").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), tableName).concat("1970-01-11.0").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-11.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
-                TableUtils.createTablePath(path.of(engine.getConfiguration().getRoot()), tableName).concat("1970-01-11.1").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-11.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
             }
         });
@@ -601,9 +609,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path()) {
-                path.concat(engine.getConfiguration().getRoot());
-                TableUtils.createTablePath(path, "tbl");
-                path.concat("1970-01-10");
+                CharSequence fileSystemName = engine.getFileSystemName("tbl");
+                path.concat(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10");
                 int len = path.length();
 
                 Assert.assertFalse(Chars.toString(path.concat("x.d")), Files.exists(path));
@@ -656,7 +663,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path()) {
-                TableUtils.createTablePath(path.concat(engine.getConfiguration().getRoot()), "tbl").concat("1970-01-10");
+                CharSequence fileSystemName = engine.getFileSystemName("tbl");
+                path.concat(engine.getConfiguration().getRoot()).concat(fileSystemName).concat("1970-01-10");
                 int len = path.length();
 
                 Assert.assertFalse(Chars.toString(path.concat("x.d")), Files.exists(path));

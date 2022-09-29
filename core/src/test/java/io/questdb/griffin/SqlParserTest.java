@@ -6905,7 +6905,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = TableUtils.createTablePath(tableModel.getPath().of(tableModel.getConfiguration().getRoot()), tableModel.getName()).slash$();
+                        CharSequence fileSystemName = engine.getFileSystemName(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(fileSystemName).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -6944,7 +6945,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = TableUtils.createTablePath(tableModel.getPath().of(tableModel.getConfiguration().getRoot()), tableModel.getName()).slash$();
+                        CharSequence fileSystemName = engine.getFileSystemName(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(fileSystemName).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -6958,7 +6960,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameReserved() throws Exception {
         try (Path path = new Path()) {
-            configuration.getFilesFacade().touch(TableUtils.createTablePath(path.of(root), "tab").$());
+            CharSequence fileSystemName = engine.getFileSystemName("tab");
+            configuration.getFilesFacade().touch(path.of(root).concat(fileSystemName).$());
         }
 
         assertSyntaxError(

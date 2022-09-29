@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
-    public static final String PRODUCT_FS = TableUtils.fsTableName(PRODUCT);
+    public static final String PRODUCT_FS = Chars.toString(engine.getFileSystemName(PRODUCT));
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
 
@@ -1763,23 +1763,23 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testIncorrectTodoCode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+            String all = "all";
+            CharSequence fileSystemName = engine.getFileSystemName(all);
             try (
                     MemoryCMARW mem = Vm.getCMARWInstance();
-                    Path path = new Path().of(root)
+                    Path path = new Path().of(root).concat(fileSystemName).concat(TableUtils.TODO_FILE_NAME).$()
             ) {
-                TableUtils.createTablePath(path, "all");
-                path.concat(TableUtils.TODO_FILE_NAME).$();
                 mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
                 mem.jumpTo(48);
             }
-            try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+            try (TableWriter writer = new TableWriter(configuration, all, metrics)) {
                 Assert.assertNotNull(writer);
                 Assert.assertTrue(writer.isOpen());
             }
 
-            try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+            try (TableWriter writer = new TableWriter(configuration, all, metrics)) {
                 Assert.assertNotNull(writer);
                 Assert.assertTrue(writer.isOpen());
             }
@@ -2080,9 +2080,11 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (Path path = new Path()) {
-                Assert.assertTrue(FF.remove(TableUtils.createTablePath(path.of(root),"all").concat(TableUtils.TXN_FILE_NAME).$()));
+                String all = "all";
+                CharSequence fileSystemName = engine.getFileSystemName(all);
+                Assert.assertTrue(FF.remove(path.of(root).concat(fileSystemName).concat(TableUtils.TXN_FILE_NAME).$()));
                 try {
-                    new TableWriter(configuration, "all", metrics);
+                    new TableWriter(configuration, all, metrics);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
@@ -3907,8 +3909,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.renameColumn("supplier", "sup");
 
                 try (Path path = new Path()) {
-                    path.of(root);
-                    TableUtils.createTablePath(path, model.getName());
+                    CharSequence fileSystemName = engine.getFileSystemName(model.getName());
+                    path.of(root).concat(fileSystemName);
                     final int plen = path.length();
                     if (columnTypeTag == ColumnType.SYMBOL) {
                         Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.v").$()));

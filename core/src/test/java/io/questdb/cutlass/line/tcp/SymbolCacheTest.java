@@ -98,18 +98,15 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
             Thread readerThread = new Thread(() -> {
                 ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
-
+                CharSequence fileSystemName = engine.getFileSystemName(tableName);
                 try (Path path = new Path();
-                     TxReader txReader = new TxReader(configuration.getFilesFacade());
+                     TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
+                             path.of(configuration.getRoot()).concat(fileSystemName).concat(TXN_FILE_NAME).$(),
+                             PartitionBy.DAY
+                     );
                      TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)
                 ) {
-                    path.of(configuration.getRoot());
-                    TableUtils.createTablePath(path, tableName);
-                    path.concat(TXN_FILE_NAME).$();
-                    txReader.ofRO(path, PartitionBy.DAY);
-
-                    path.of(configuration.getRoot());
-                    TableUtils.createTablePath(path, tableName);
+                    path.of(configuration.getRoot()).concat(fileSystemName);
                     start.await();
                     int colAdded = 0, newColsAdded;
                     while (colAdded < totalColAddCount) {
@@ -183,10 +180,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                CharSequence fileSystemName = engine.getFileSystemName(tableName);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
-                                TableUtils.createTablePath(path.of(configuration.getRoot()), tableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(fileSystemName).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -194,7 +192,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
                     cache.of(
                             configuration,
-                            TableUtils.createTablePath(path.of(configuration.getRoot()), tableName),
+                            path.of(configuration.getRoot()).concat(fileSystemName),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -240,16 +238,16 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             FilesFacade ff = new FilesFacadeImpl();
 
             compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-
+            CharSequence fileSystemName = engine.getFileSystemName("x");
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                     Path path = new Path();
                     TxReader txReader = new TxReader(ff).ofRO(
-                            TableUtils.createTablePath(path.of(configuration.getRoot()), "x").concat(TXN_FILE_NAME).$(),
+                            path.of(configuration.getRoot()).concat(fileSystemName).concat(TXN_FILE_NAME).$(),
                             PartitionBy.DAY
                     )
             ) {
-                TableUtils.createTablePath(path.of(configuration.getRoot()),"x");
+                path.of(configuration.getRoot()).concat(fileSystemName);
                 symbolCache.of(configuration, path, "b", 1, txReader, -1);
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -346,11 +344,12 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                CharSequence fileSystemName = engine.getFileSystemName(tableName);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                TableUtils.createTablePath(path.of(configuration.getRoot()), tableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(fileSystemName).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -368,7 +367,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
                     cache.of(
                             configuration,
-                            TableUtils.createTablePath(path.of(configuration.getRoot()), tableName),
+                            path.of(configuration.getRoot()).concat(fileSystemName),
                             "symCol2",
                             symColIndex2,
                             txReader,
@@ -450,11 +449,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.removeColumn("symCol1");
                     cache.close();
                     txMem.close();
-                    TableUtils.createTablePath(path.of(configuration.getRoot()), tableName);
+                    path.of(configuration.getRoot()).concat(fileSystemName);
 
                     cache.of(
                             configuration,
-                            TableUtils.createTablePath(path.of(configuration.getRoot()), tableName),
+                            path,
                             "symCol2",
                             0,
                             txReader,

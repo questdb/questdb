@@ -52,11 +52,16 @@ public class TableRegistry extends AbstractPool {
     private final ConcurrentHashMap<Entry> seqRegistry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
-
+    private final TableNameRegistry tableNameRegistry;
     public TableRegistry(CairoEngine engine, CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveWriterTTL()); //todo: separate config option
         this.engine = engine;
+        this.tableNameRegistry = new TableNameRegistry();
         notifyListener(Thread.currentThread().getId(), "TableRegistry", PoolListener.EV_POOL_OPEN);
+    }
+
+    public CharSequence getFileSystemName(final CharSequence tableName) {
+        return this.tableNameRegistry.getFileSystemName(tableName);
     }
 
     public long lastTxn(final CharSequence tableName) {
@@ -75,7 +80,7 @@ public class TableRegistry extends AbstractPool {
             ff.iterateDir(path, (name, type) -> {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
-                    final CharSequence nameStr = TableUtils.FsToUserTableName(nameSink);
+                    final CharSequence nameStr = engine.getFileSystemName(nameSink);
                     if (isWalTable(nameStr, path, ff)) {
                         try (SequencerImpl sequencer = openSequencer(nameStr)) {
                             callback.onTable(sequencer.getTableId(), nameStr, sequencer.lastTxn());
@@ -149,13 +154,13 @@ public class TableRegistry extends AbstractPool {
     }
 
     // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
-    private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
+    private boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
         return isWalTable(tableName, path, ff);
     }
 
-    private static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
-        TableUtils.createTablePath(root, tableName).concat(SEQ_DIR);
+    private boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
+        root.concat(engine.getFileSystemName(tableName)).concat(SEQ_DIR);
         return ff.exists(root.$());
     }
 
@@ -411,6 +416,17 @@ public class TableRegistry extends AbstractPool {
     }
 
     public static class TableNameRegistry {
+        ConcurrentHashMap<CharSequence> namesMap = new ConcurrentHashMap<>();
+        public CharSequence getFileSystemName(final CharSequence tableName) {
+            final String tableNameStr = Chars.toString(tableName);
+            namesMap.putIfAbsent(tableNameStr, tableNameStr);
+            return tableNameStr;
+        }
+    }
+
+    //todo:
+    /*
+    public static class TableNameRegistry {
         private static class TableNameEntry {
             String tableName;
             int tableId;
@@ -457,4 +473,5 @@ public class TableRegistry extends AbstractPool {
         }
 
     }
+     */
 }

@@ -196,13 +196,18 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         assertThat(expected, 11);
     }
 
+    private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
+        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        return new Path().of(root).concat(fileSystemName).concat(TableUtils.META_FILE_NAME).$();
+    }
+
+
     private void assertThat(String expected, int expectedInitialTimestampIndex) throws Exception {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (Path path = new Path().of(root)) {
-                TableUtils.createTablePath(path, tableName);
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
+            try (Path path = getMetaFilePath(root, tableName)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
@@ -238,9 +243,8 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                                             int expectedColumnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (Path path = new Path().of(root)) {
-                TableUtils.createTablePath(path, tableName);
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
+            try (Path path = getMetaFilePath(root, tableName)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
