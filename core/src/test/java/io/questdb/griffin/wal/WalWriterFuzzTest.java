@@ -36,7 +36,6 @@ import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -68,54 +67,46 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private double collAddProb;
     private double collRemoveProb;
     private double colRenameProb;
+    private double dataAddProb;
     private int transactionCount;
     private int strLen;
     private int symbolStrLenMax;
     private int symbolCountMax;
 
     @Test
-    public void testOneOfSymbolsNotWrittenAnyValues() throws Exception {
-        Rnd rnd = new Rnd(65515438461083L, 1664196196645L);
-        testWalWriteFullRandom(rnd);
-    }
-
-    @Test
-    public void testRollbackBeforeColumnAdd() throws Exception {
-        Rnd rnd = new Rnd(65781883724750L, 1664196463085L);
-        testWalWriteFullRandom(rnd);
-    }
-
-    @Test
     public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0);
         setFuzzCounts(false, 100_000, 300, 20, 1000, 1000, 100);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
     public void testWalWriteFullRandom() throws Exception {
+//        Rnd rnd = new Rnd(99638111710000L, 1664372939672L);
         Rnd rnd = TestUtils.generateRandom(LOG);
-        int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2)) - 1;
-        dataAppendPageSize = 1L << (minPage + rnd.nextInt(34 - minPage));
+        int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2));
+        dataAppendPageSize = 1L << (minPage + rnd.nextInt(29 - minPage)); // MAX page size 512Kb
+        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
         fullRandomFuzz(rnd);
     }
 
     private void fullRandomFuzz(Rnd rnd) throws Exception {
         setFuzzProbabilities(
+                getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
@@ -137,63 +128,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         runFuzz(rnd);
     }
 
-    public void testWalWriteFullRandom(Rnd rnd) throws Exception {
-        // Some tests rely on the random generator call sequence. Do not refactor to use runFuzz()
-        assertMemoryLeak(() -> {
-            String tableNameWal = testName.getMethodName() + "_wal";
-            String tableNameWal2 = testName.getMethodName() + "_wal_parallel";
-            String tableNameNoWal = testName.getMethodName() + "_nonwal";
-
-            createInitialTable(tableNameWal, true, 100);
-            createInitialTable(tableNameWal2, true, 100);
-            createInitialTable(tableNameNoWal, false, 100);
-
-            ObjList<FuzzTransaction> transactions;
-            int tableId1, tableId2;
-            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                tableId1 = metadata.getTableId();
-                transactions = FuzzTransactionGenerator.generateSet(
-                        metadata,
-                        rnd,
-                        IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17"),
-                        IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17") + (long) (Timestamps.DAY_MICROS * getZeroToOneDouble(rnd) * 30),
-                        10_000,
-                        rnd.nextBoolean(),
-                        getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        // 25% chance of column add
-                        getZeroToOneDouble(rnd),
-                        // 25% chance of column remove
-                        getZeroToOneDouble(rnd),
-                        // 25% chance of column rename
-                        getZeroToOneDouble(rnd),
-                        300,
-                        rnd.nextInt(50),
-                        generateSymbols(rnd, rnd.nextInt(1000), rnd.nextInt(1000), tableNameNoWal)
-                );
-            }
-            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                tableId2 = metadata.getTableId();
-            }
-
-            applyNonWal(transactions, tableNameNoWal, tableId2);
-
-            applyWal(transactions, tableNameWal, tableId1, getRndParallelWalCount(rnd));
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
-
-            applyWalParallel(transactions, tableNameWal2, tableId1, getRndParallelWalCount(rnd));
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
-        });
-    }
-
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
         Rnd rnd1 = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.7, 0.5, 0.1, 0.7, 0.05, 0.05, 0.05);
+        setFuzzProbabilities(0.7, 0.5, 0.1, 0.7, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100);
         runFuzz(rnd1);
     }
@@ -201,13 +139,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName, int tableId) {
         try (TableWriterFrontend writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test")) {
             IntList tempList = new IntList();
+            TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
             int transactionSize = transactions.size();
             for (int i = 0; i < transactionSize; i++) {
+                LOG.infoW().$("applying transaction ").$(i).$();
                 FuzzTransaction transaction = transactions.getQuick(i);
                 int size = transaction.operationList.size();
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                    operation.apply(writer, tableName, tableId, tempList);
+                    operation.apply(writer, tableName, tableId, tempList, tempBinarySequence);
                 }
 
                 if (transaction.rollback) {
@@ -226,6 +166,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         }
 
         IntList tempList = new IntList();
+        TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
         Rnd writerRnd = new Rnd();
         for (int i = 0, n = transactions.size(); i < n; i++) {
             WalWriter writer = writers.getQuick(writerRnd.nextPositiveInt() % walWriterCount);
@@ -233,7 +174,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             FuzzTransaction transaction = transactions.getQuick(i);
             for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                 FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                operation.apply(writer, tableName, tableId, tempList);
+                operation.apply(writer, tableName, tableId, tempList, tempBinarySequence);
             }
 
             if (transaction.rollback) {
@@ -263,6 +204,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
             Thread thread = new Thread(() -> {
                 IntList tempList = new IntList();
+                TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
                 int opIndex;
 
                 try {
@@ -286,7 +228,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         boolean increment = false;
                         for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                             FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                            increment |= operation.apply(walWriter, tableName, tableId, tempList);
+                            increment |= operation.apply(walWriter, tableName, tableId, tempList, tempBinarySequence);
                         }
 
                         if (transaction.rollback) {
@@ -420,12 +362,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         notSetProb,
                         nullSetProb,
                         rollbackProb,
-                        // 25% chance of column add
                         collAddProb,
-                        // 25% chance of column remove
                         collRemoveProb,
-                        // 25% chance of column rename
                         colRenameProb,
+                        dataAddProb,
                         transactionCount,
                         strLen,
                         generateSymbols(rnd, rnd.nextInt(symbolCountMax - 5) + 5, symbolStrLenMax, tableNameNoWal)
@@ -456,7 +396,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         this.initialRowCount = initialRowCount;
     }
 
-    private void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb) {
+    private void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -464,5 +404,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         this.collAddProb = collAddProb;
         this.collRemoveProb = collRemoveProb;
         this.colRenameProb = colRenameProb;
+        this.dataAddProb = dataAddProb;
     }
 }

@@ -26,9 +26,12 @@ package io.questdb.griffin.wal.fuzz;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 
@@ -43,7 +46,12 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.SYMBOL,
             ColumnType.FLOAT,
             ColumnType.DOUBLE,
-            ColumnType.STRING
+            ColumnType.STRING,
+            ColumnType.BINARY,
+            ColumnType.SHORT,
+            ColumnType.BYTE,
+            ColumnType.LONG128,
+            ColumnType.LONG256,
     };
 
     private final double nullSet;
@@ -70,7 +78,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList) {
+    public boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
         rnd.reset(this.s0, this.s1);
         TableWriter.Row row = tableWriter.newRow(timestamp);
 
@@ -122,12 +130,41 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 row.putFloat(index, isNull ? Float.NaN : rnd.nextFloat());
                                 break;
 
+                            case ColumnType.SHORT:
+                                row.putShort(index, isNull ? 0 : rnd.nextShort());
+                                break;
+
+                            case ColumnType.BYTE:
+                                row.putByte(index, isNull ? 0 : rnd.nextByte());
+                                break;
+
+                            case ColumnType.LONG128:
+                                if (!isNull) {
+                                    row.putLong128LittleEndian(index, rnd.nextLong(), rnd.nextLong());
+                                } else {
+                                    row.putLong128LittleEndian(index, Long128Constant.NULL_HI, Long128Constant.NULL_LO);
+                                }
+                                break;
+
+                            case ColumnType.LONG256:
+                                if (!isNull) {
+                                    row.putLong256(index, Long256Impl.NULL_LONG256);
+                                } else {
+                                    row.putLong256(index, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                                }
+                                break;
+
                             case ColumnType.DOUBLE:
                                 row.putDouble(index, isNull ? Double.NaN : rnd.nextDouble());
                                 break;
 
                             case ColumnType.STRING:
                                 row.putStr(index, isNull ? null : strLen == 0 ? "" : rnd.nextString(rnd.nextInt(strLen)));
+                                break;
+
+                            case ColumnType.BINARY:
+                                int len = rnd.nextInt(strLen);
+                                row.putBin(index, isNull ? null : binarySequence.of(strLen == 0 ? new byte[0] : rnd.nextBytes(len)));
                                 break;
 
                             default:

@@ -138,7 +138,13 @@ void re_shuffle_int64(const int64_t *src, int64_t *dest, const index_t *index, c
     re_shuffle_vanilla(src, dest, index, count);
 }
 
+// 30
 void re_shuffle_256bit(const long_256bit *src, long_256bit *dest, const index_t *index, const int64_t count) {
+    re_shuffle_vanilla(src, dest, index, count);
+}
+
+// 32
+void re_shuffle_128bit(const __int128 *src, __int128 *dest, const index_t *index, const int64_t count) {
     re_shuffle_vanilla(src, dest, index, count);
 }
 

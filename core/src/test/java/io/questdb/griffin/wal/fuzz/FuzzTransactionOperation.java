@@ -24,9 +24,10 @@
 
 package io.questdb.griffin.wal.fuzz;
 
+import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.std.IntList;
 
 public interface FuzzTransactionOperation {
-    boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList);
+    boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence);
 }

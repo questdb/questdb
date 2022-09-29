@@ -28,12 +28,21 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 
 public class FuzzTestColumnMeta extends GenericRecordMetadata {
+    int liveColumnCount = 0;
+
     @Override
     public GenericRecordMetadata add(TableColumnMetadata meta) {
         columnNameIndexMap.put(meta.getName(), columnCount);
         columnMetadata.extendAndSet(columnCount, meta);
         columnCount++;
+        if (meta.getType() > 0) {
+            liveColumnCount++;
+        }
         return this;
+    }
+
+    public int getLiveColumnCount() {
+        return liveColumnCount;
     }
 
     public void rename(int columnIndex, String name, String newName) {

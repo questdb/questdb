@@ -889,10 +889,16 @@ public class MemoryPARWImpl implements MemoryARW {
 
     private void jumpTo0(long offset) {
         int page = pageIndex(offset);
-        pageLo = mapWritePage(page, offset);
+        long pageAddress = pageLo = mapWritePage(page, offset);
+
         pageHi = pageLo + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         appendPointer = pageLo + offsetInPage(offset);
+
+        roOffsetLo = pageOffset(page) - 1;
+        roOffsetHi = roOffsetLo + getPageSize() + 1;
+        absolutePointer = pageAddress - roOffsetLo - 1;
+
         pageLo--;
     }
 

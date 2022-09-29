@@ -3980,11 +3980,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 // Var size column
                 if (o3RowCount > 0) {
                     size = o3IndexMem.getLong(o3RowCount * 8);
-                    o3IndexMem.jumpTo((o3RowCount + 1) * 8);
                 } else {
                     size = 0;
-                    o3IndexMem.jumpTo(0);
                 }
+                o3IndexMem.jumpTo((o3RowCount + 1) * 8);
             }
 
             o3DataMem.jumpTo(size);
@@ -4126,6 +4125,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 break;
             case 3:
                 Vect.indexReshuffle64Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
+            case 4:
+                Vect.indexReshuffle128Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
                 break;
             case 5:
                 Vect.indexReshuffle256Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
