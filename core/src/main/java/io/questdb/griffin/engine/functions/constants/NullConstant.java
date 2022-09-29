@@ -132,12 +132,12 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public long getLong128Hi(Record rec) {
-        return Numbers.LONG_NaN;
+        return Long128Constant.NULL_HI;
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return Numbers.LONG_NaN;
+        return Long128Constant.NULL_LO;
     }
 
     @Override

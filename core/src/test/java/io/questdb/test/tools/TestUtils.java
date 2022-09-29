@@ -197,6 +197,10 @@ public final class TestUtils {
                         case ColumnType.LONG256:
                             assertEquals(r.getLong256A(i), l.getLong256A(i));
                             break;
+                        case ColumnType.LONG128:
+                            Assert.assertEquals(r.getLong128Hi(i), l.getLong128Hi(i));
+                            Assert.assertEquals(r.getLong128Lo(i), l.getLong128Lo(i));
+                            break;
                         default:
                             // Unknown record type.
                             assert false;

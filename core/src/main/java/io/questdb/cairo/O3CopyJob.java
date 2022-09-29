@@ -1005,6 +1005,19 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     );
                 }
                 break;
+            case ColumnType.LONG128:
+                copyFixedSizeCol(
+                        ff,
+                        srcOooFixAddr,
+                        srcOooLo,
+                        srcOooHi,
+                        dstFixAddr,
+                        dstFixFileOffset,
+                        dstFixFd,
+                        4,
+                        directIoFlag
+                );
+                break;
             case ColumnType.LONG256:
                 copyFixedSizeCol(
                         ff,
@@ -1150,6 +1163,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 } else {
                     Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 }
+                break;
+            case ColumnType.LONG128:
+                Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
             case ColumnType.LONG256:
                 Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);

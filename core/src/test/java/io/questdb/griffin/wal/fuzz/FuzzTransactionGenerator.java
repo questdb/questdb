@@ -34,6 +34,7 @@ import io.questdb.std.Rnd;
 import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 
 public class FuzzTransactionGenerator {
+    private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
             RecordMetadata tableMetadata,
@@ -47,6 +48,7 @@ public class FuzzTransactionGenerator {
             double nullSet,
             double rollback,
             double collAdd,
+            double dataAdd,
             double collRemove,
             double colRename,
             int transactionCount,
@@ -56,13 +58,17 @@ public class FuzzTransactionGenerator {
         int metaVersion = 0;
 
         long lastTimestamp = minTimestamp;
+        double totalProbs = collAdd + collRemove + collRemove + dataAdd;
+        collAdd = collAdd / totalProbs;
+        collRemove = collRemove / totalProbs;
+        colRename = colRename / totalProbs;
+
+        // Reduce some random parameters if there is too much data so test can finish in reasonable time
+        transactionCount = Math.min(transactionCount, 20 * 1_000_000 / rowCount);
 
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = getZeroToOneDouble(rnd);
-            if (transactionType < collAdd) {
-                // generate column add
-                tableMetadata = generateAddColumn(transactionList, metaVersion++, rnd, tableMetadata);
-            } else if (transactionType < collAdd + collRemove) {
+           if (transactionType < collRemove) {
                 // generate column remove
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, tableMetadata);
                 if (newTableMetadata != null) {
@@ -70,7 +76,7 @@ public class FuzzTransactionGenerator {
                     metaVersion++;
                     tableMetadata = newTableMetadata;
                 }
-            } else if (transactionType < collAdd + collRemove + colRename) {
+            } else if (transactionType < collRemove + colRename) {
                 // generate column rename
                 RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, rnd, tableMetadata);
                 if (newTableMetadata != null) {
@@ -78,7 +84,10 @@ public class FuzzTransactionGenerator {
                     metaVersion++;
                     tableMetadata = newTableMetadata;
                 }
-            } else {
+            } else  if (transactionType < collAdd + collRemove + colRename && getNonDeletedColumnCount(tableMetadata) < MAX_COLUMNS) {
+               // generate column add
+               tableMetadata = generateAddColumn(transactionList, metaVersion++, rnd, tableMetadata);
+           } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
                 if (i < transactionCount - 1) {
@@ -110,6 +119,14 @@ public class FuzzTransactionGenerator {
         }
 
         return transactionList;
+    }
+
+    private static int getNonDeletedColumnCount(RecordMetadata tableMetadata) {
+        if (tableMetadata instanceof FuzzTestColumnMeta) {
+            return ((FuzzTestColumnMeta)tableMetadata).getLiveColumnCount();
+        } else {
+            return tableMetadata.getColumnCount();
+        }
     }
 
     private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, Rnd rnd, RecordMetadata tableMetadata) {

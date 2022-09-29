@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -508,6 +509,9 @@ public class WalWriter implements TableWriterFrontend {
                 break;
             case ColumnType.GEOLONG:
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
+                break;
+            case ColumnType.LONG128:
+                nullers.add(() -> mem1.putLong128LittleEndian(Long128Constant.NULL_HI, Long128Constant.NULL_LO));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

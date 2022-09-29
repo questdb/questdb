@@ -739,6 +739,10 @@ public class MemoryPARWImpl implements MemoryARW {
     private long computeHotPage(int page) {
         long pageAddress = getPageAddress(page);
         assert pageAddress > 0;
+        return computeHotPage(page, pageAddress);
+    }
+
+    private long computeHotPage(int page, long pageAddress) {
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + getPageSize() + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
@@ -887,22 +891,16 @@ public class MemoryPARWImpl implements MemoryARW {
         return value;
     }
 
-    private void jumpTo0(long offset) {
+    private long jumpTo0(long offset) {
         int page = pageIndex(offset);
-        pageLo = mapWritePage(page, offset);
+        long pageAddress = pageLo = mapWritePage(page, offset);
+
         pageHi = pageLo + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         appendPointer = pageLo + offsetInPage(offset);
         pageLo--;
-    }
 
-    private long mapRandomWritePage(long offset) {
-        int page = pageIndex(offset);
-        long pageAddress = mapWritePage(page, offset);
-        assert pageAddress != 0;
-        roOffsetLo = pageOffset(page) - 1;
-        roOffsetHi = roOffsetLo + getPageSize() + 1;
-        absolutePointer = pageAddress - roOffsetLo - 1;
+        computeHotPage(page, pageAddress);
         return pageAddress;
     }
 
@@ -964,7 +962,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     private void putByteRnd(long offset, byte value) {
-        Unsafe.getUnsafe().putByte(mapRandomWritePage(offset) + offsetInPage(offset), value);
+        Unsafe.getUnsafe().putByte(jumpTo0(offset) + offsetInPage(offset), value);
     }
 
     void putCharBytes(char value) {
@@ -1078,7 +1076,7 @@ public class MemoryPARWImpl implements MemoryARW {
                 offset += 2;
                 half++;
             } else {
-                mapRandomWritePage(offset);
+                jumpTo0(offset);
             }
 
             len -= half;
