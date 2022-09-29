@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
@@ -1502,7 +1502,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(new WorkerPoolAwareConfiguration() {
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
                     @Override
                     public int getWorkerCount() {
                         return workerCount - 1;
