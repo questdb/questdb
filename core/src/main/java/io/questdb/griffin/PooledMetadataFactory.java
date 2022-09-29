@@ -33,7 +33,7 @@ import io.questdb.cairo.wal.Sequencer;
 import io.questdb.cairo.wal.SequencerMetadata;
 import io.questdb.std.*;
 
-public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
+public class PooledMetadataFactory implements MetadataFactory, QuietCloseable {
     private final FilesFacade ff;
     private final CharSequence dbRoot;
     private final CairoConfiguration configuration;
