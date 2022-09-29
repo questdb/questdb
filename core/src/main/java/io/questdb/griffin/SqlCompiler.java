@@ -244,12 +244,14 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         backupAgent.close();
-        codeGenerator.close();
         vacuumColumnVersions.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
         Misc.free(rebuildIndex);
+        Misc.free(codeGenerator);
+        Misc.free(mem);
+        Misc.freeObjList(tableWriters);
     }
 
     @NotNull

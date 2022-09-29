@@ -57,7 +57,7 @@ final class Mig608 {
             final long thatMetaColumnDataSize = 16;
             final long thisMetaColumnDataSize = 32;
 
-            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
+            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
 
             // column count
             final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);

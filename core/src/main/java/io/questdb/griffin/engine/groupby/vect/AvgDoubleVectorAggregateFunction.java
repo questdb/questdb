@@ -56,7 +56,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumDouble;
         }
-        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
         this.workerCount = workerCount;
     }
 
@@ -125,7 +125,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public void close() {
         if (counts != 0) {
-            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
             counts = 0;
         }
         super.close();

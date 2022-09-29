@@ -29,10 +29,28 @@ import io.questdb.Metrics;
 public class TestWorkerPool extends WorkerPool {
 
     public TestWorkerPool(int workerCount) {
-        this(workerCount, Metrics.disabled());
+        this("testing", workerCount, Metrics.disabled());
+    }
+
+    public TestWorkerPool(String poolName, int workerCount) {
+        this(poolName, workerCount, Metrics.disabled());
     }
 
     public TestWorkerPool(int workerCount, Metrics metrics) {
-        super(() -> workerCount, metrics);
+        this("testing", workerCount, metrics);
+    }
+
+    private TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
+        super(new WorkerPoolConfiguration() {
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public String getPoolName() {
+                return poolName;
+            }
+        }, metrics.health());
     }
 }

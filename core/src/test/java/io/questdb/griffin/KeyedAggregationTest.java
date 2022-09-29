@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -439,7 +438,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compile("alter table tab add column s2 symbol cache", sqlExecutionContext);
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)", sqlExecutionContext);
 
-            try (//here
+            try (
                  RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[]{
@@ -1553,7 +1552,6 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
                 try {
                     if (pool != null) {
-                        pool.assignCleaner(Path.CLEANER);
                         GroupByJob job = new GroupByJob(engine.getMessageBus());
                         pool.assign(job);
                         pool.start(LOG);

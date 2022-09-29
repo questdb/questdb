@@ -119,7 +119,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
-            state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
+            state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getCairoSecurityContext(),
@@ -372,7 +372,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
-        metrics.healthCheck().incrementUnhandledErrors();
+        metrics.health().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);
     }
 

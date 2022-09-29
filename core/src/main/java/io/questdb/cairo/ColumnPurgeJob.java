@@ -61,7 +61,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
     private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
-    private final WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
+    private WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
     private final long retryDelayLimit;
     private final long retryDelay;
     private final double retryDelayMultiplier;
@@ -109,10 +109,11 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        this.writer = Misc.free(this.writer);
+        this.writer = Misc.free(writer);
         this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.columnPurgeOperator = Misc.free(columnPurgeOperator);
+        this.taskPool = Misc.free(taskPool);
     }
 
     @TestOnly

@@ -35,7 +35,6 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
@@ -713,21 +712,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         final Rnd rnd = new Rnd();
 
         assertMemoryLeak(() -> {
-            final WorkerPool sharedPool = new TestWorkerPool(sharedPoolWorkerCount);
+            final WorkerPool sharedPool = new TestWorkerPool("pool0", sharedPoolWorkerCount);
 
-            sharedPool.assignCleaner(Path.CLEANER);
-
-            O3Utils.setupWorkerPool(
-                    sharedPool,
-                    engine,
-                    null,
-                    null
-            );
+            TestUtils.setupWorkerPool(sharedPool, engine);
             sharedPool.start();
 
-            final WorkerPool stealingPool = new TestWorkerPool(stealingPoolWorkerCount);
-
-            stealingPool.assignCleaner(Path.CLEANER);
+            final WorkerPool stealingPool = new TestWorkerPool("pool1", stealingPoolWorkerCount);
 
             SOCountDownLatch doneLatch = new SOCountDownLatch(1);
 
@@ -783,15 +773,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
 
             WorkerPool pool = new TestWorkerPool(workerCount);
-
-            pool.assignCleaner(Path.CLEANER);
-
-            O3Utils.setupWorkerPool(
-                    pool,
-                    engine,
-                    null,
-                    null
-            );
+            TestUtils.setupWorkerPool(pool, engine);
             pool.start();
 
             try {

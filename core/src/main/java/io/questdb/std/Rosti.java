@@ -36,7 +36,7 @@ public final class Rosti {
         assert capacity >= 16;
 
         final int columnCount = types.getColumnCount();
-        final long mem = Unsafe.malloc(4L * columnCount, MemoryTag.NATIVE_DEFAULT);
+        final long mem = Unsafe.malloc(4L * columnCount, MemoryTag.NATIVE_ROSTI);
         try {
             long p = mem;
             for (int i = 0; i < columnCount; i++) {
@@ -51,7 +51,7 @@ public final class Rosti {
             }
             return pRosti;
         } finally {
-            Unsafe.free(mem, 4L * columnCount, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(mem, 4L * columnCount, MemoryTag.NATIVE_ROSTI);
         }
     }
 
