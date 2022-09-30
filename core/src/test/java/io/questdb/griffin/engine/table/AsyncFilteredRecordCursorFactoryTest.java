@@ -903,5 +903,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         public boolean getCloneSymbolTables() {
             return sqlExecutionContext.getCloneSymbolTables();
         }
+
+        @Override
+        public boolean isWalApplication() {
+            return sqlExecutionContext.isWalApplication();
+        }
     }
 }

@@ -173,18 +173,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public boolean isMetadataChange() {
         switch (command) {
-            case DROP_PARTITION:
-            case ATTACH_PARTITION:
-            case ADD_INDEX:
-            case DROP_INDEX:
-            case ADD_SYMBOL_CACHE:
-            case REMOVE_SYMBOL_CACHE:
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS:
-            case SET_PARAM_COMMIT_LAG:
-                return false;
-
-            default:
+            case ADD_COLUMN:
+            case RENAME_COLUMN:
+            case DROP_COLUMN:
                 return true;
+            default:
+                return false;
         }
     }
 

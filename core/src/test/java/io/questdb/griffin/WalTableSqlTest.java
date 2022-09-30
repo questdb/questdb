@@ -24,8 +24,13 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class WalTableSqlTest extends AbstractGriffinTest {
@@ -52,6 +57,45 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
+        });
+    }
+
+    @Test
+    public void testRogueTableWriterBlocksApplyJob() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            executeInsert("insert into " + tableName +
+                    " values (101, 'dfd', '2022-02-24T01', 'asd')");
+
+
+            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "Rogue")) {
+                drainWalQueue();
+                assertSql(tableName, "x\tsym\tts\tsym2\n");
+            }
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n");
+
+            // Next insert should fix it
+            executeInsert("insert into " + tableName +
+                    " values (101, 'dfd', '2022-02-24T01', 'asd')");
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
         });
     }

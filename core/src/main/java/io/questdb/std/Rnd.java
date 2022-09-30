@@ -27,7 +27,6 @@ package io.questdb.std;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.TestOnly;
 
 public class Rnd {
     private static final long mask = (1L << 48) - 1;
@@ -43,16 +42,6 @@ public class Rnd {
 
     public Rnd() {
         reset();
-    }
-
-    @TestOnly
-    public long getSeed0() {
-        return s0;
-    }
-
-    @TestOnly
-    public long getSeed1() {
-        return s1;
     }
 
     public boolean nextBoolean() {

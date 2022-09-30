@@ -126,7 +126,12 @@ public class SequencerImpl implements Sequencer {
                 txn = catalog.addMetadataChangeEntry(expectedSchemaVersion + 1, alterCommandWalFormatter, operation);
                 try {
                     applyToMetadata(operation);
-                    assert metadata.getStructureVersion() == expectedSchemaVersion + 1;
+                    if (metadata.getStructureVersion() != expectedSchemaVersion + 1) {
+                        throw CairoException.critical(0)
+                                .put("applying structure change to WAL table failed [table=").put(tableName)
+                                .put(", oldVersion: ").put(expectedSchemaVersion)
+                                .put(", newVersion: ").put(metadata.getStructureVersion());
+                    }
                 } catch (Throwable th) {
                     // TODO: handle errors in updating the metadata by destroying the sequencer and safe reload from txn catalog
                     throw th;

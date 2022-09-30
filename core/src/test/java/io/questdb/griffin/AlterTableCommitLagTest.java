@@ -166,7 +166,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 @Override
                 public long openRO(LPSZ path) {
-                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 2) {
+                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 1) {
                         return -1;
                     }
                     return super.openRO(path);

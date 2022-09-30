@@ -41,12 +41,15 @@ public class SqlToOperation implements Closeable {
     public SqlToOperation(CairoEngine engine) {
         compiler = new SqlCompiler(engine);
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                )
+                .withWalApplication();
     }
 
     public AlterOperation toAlterOperation(CharSequence alterStatement) throws SqlException {

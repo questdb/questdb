@@ -79,7 +79,7 @@ public class WalWriter implements TableWriterFrontend {
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
     private final TableWriterBackend walMetadataUpdater = new WalMetadataUpdaterBackend();
-    private final TableWriterBackend alterOperationValidationBackend = new AlterOperationValidationBackend();
+    private final AlterOperationValidationBackend alterOperationValidationBackend = new AlterOperationValidationBackend();
     private long lockFd = -1;
     private int columnCount;
     private long currentTxnStartRowNum = -1;
@@ -145,7 +145,13 @@ public class WalWriter implements TableWriterFrontend {
             long txn;
             do {
                 try {
+                    alterOperationValidationBackend.startAlterValidation();
                     operation.apply(alterOperationValidationBackend, true);
+                    if (alterOperationValidationBackend.structureVersion != metadata.getStructureVersion() + 1) {
+                        throw CairoException.nonCritical().put("table structure change did not contain 1 transaction [table=").put(tableName)
+                                .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                                .put(", newStructureVersion=").put(alterOperationValidationBackend.structureVersion).put(']');
+                    }
                 } catch (SqlException e) {
                     // Table schema (metadata) changed and this Alter is not valid anymore.
                     // Try to update WAL metadata to latest and repeat one more time.
@@ -153,7 +159,7 @@ public class WalWriter implements TableWriterFrontend {
                     try {
                         operation.apply(alterOperationValidationBackend, true);
                     } catch (SqlException e2) {
-                        throw CairoException.critical(0).put(e2.getFlyweightMessage());
+                        throw CairoException.nonCritical().put(e2.getFlyweightMessage());
                     }
                 }
 
@@ -216,8 +222,11 @@ public class WalWriter implements TableWriterFrontend {
     @Override
     public void close() {
         if (isOpen()) {
-            rollback();
-            doClose(true);
+            try {
+                rollback();
+            } finally {
+                doClose(true);
+            }
         }
     }
 
@@ -280,18 +289,25 @@ public class WalWriter implements TableWriterFrontend {
             }
             return row;
         } catch (Throwable e) {
-            throw new CairoError(e);
+            distressed = true;
+            throw e;
         }
     }
 
     @Override
     public void rollback() {
-        if (inTransaction() || hasDirtyColumns(currentTxnStartRowNum)) {
-            setAppendPosition(currentTxnStartRowNum);
-            rowCount = currentTxnStartRowNum;
-            txnMinTimestamp = Long.MAX_VALUE;
-            txnMaxTimestamp = -1;
-            txnOutOfOrder = false;
+        try {
+            if (inTransaction() || hasDirtyColumns(currentTxnStartRowNum)) {
+                setAppendPosition(currentTxnStartRowNum);
+                rowCount = currentTxnStartRowNum;
+                txnMinTimestamp = Long.MAX_VALUE;
+                txnMaxTimestamp = -1;
+                txnOutOfOrder = false;
+            }
+        } catch (Throwable th) {
+            // Set to dissatisfied state, otherwise the pool will keep trying to rollback until the stack overflow
+            distressed = true;
+            throw th;
         }
     }
 
@@ -977,7 +993,8 @@ public class WalWriter implements TableWriterFrontend {
             openNewSegment();
             return rolledRowCount;
         } catch (Throwable e) {
-            throw new CairoError(e);
+            distressed = true;
+            throw e;
         }
     }
 
@@ -1474,6 +1491,8 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private class AlterOperationValidationBackend implements SequencerMetadataWriterBackend {
+        public long structureVersion;
+
         @Override
         public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
@@ -1485,6 +1504,7 @@ public class WalWriter implements TableWriterFrontend {
             if (columnType <= 0 || columnType >= ColumnType.MAX) {
                 throw CairoException.critical(0).put("invalid column type: ").put(columnType);
             }
+            structureVersion++;
         }
 
         @Override
@@ -1509,6 +1529,7 @@ public class WalWriter implements TableWriterFrontend {
                 throw CairoException.critical(0).put("cannot remove designated timestamp column [table=").put(tableName)
                         .put(", column=").put(columnName);
             }
+            structureVersion++;
         }
 
         @Override
@@ -1531,6 +1552,11 @@ public class WalWriter implements TableWriterFrontend {
             if (!TableUtils.isValidColumnName(newName, newName.length())) {
                 throw CairoException.critical(0).put("invalid column name: ").put(columnName);
             }
+            structureVersion++;
+        }
+
+        public void startAlterValidation() {
+            structureVersion = metadata.getStructureVersion();
         }
     }
 }

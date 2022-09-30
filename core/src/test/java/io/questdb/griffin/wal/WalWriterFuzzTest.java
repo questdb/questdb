@@ -301,6 +301,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 " timestamp_sequence('2022-02-24', 1000000L) ts, " +
                 " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                 " cast(x as int) c3," +
+                " rnd_bin() c4," +
+                " to_long128(6 * x, 3 * x) c5," +
                 " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') " +
                 " from long_sequence(" + rowCount + ")" +
                 ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));

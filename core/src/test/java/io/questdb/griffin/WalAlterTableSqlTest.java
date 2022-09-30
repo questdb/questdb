@@ -81,7 +81,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void createWalAndDetachAttachPartition() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -99,6 +98,8 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     "alter table " + tableName + " detach partition list '" + partition + "'",
                     CompiledQuery.ALTER
             );
+
+            drainWalQueue();
 
             try (Path path = new Path(); Path other = new Path()) {
                 path.of(configuration.getRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
@@ -120,7 +121,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n");
         });
     }
-
 
     @Test
     public void createWalAndDropAddIndex() throws Exception {

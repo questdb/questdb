@@ -36,7 +36,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlToOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -243,7 +242,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             return sequencerMetadata;
         }
 
-        return metadataFactory.openTableReaderMetadata(tableName);
+        TableRecordMetadata metadata = null;
+        try {
+            return metadataFactory.openTableReaderMetadata(tableName);
+        } catch (CairoException e) {
+            try (TableReader reader = tryGetReaderRepairWithWriter(securityContext, tableName, e)) {
+                return metadataFactory.openTableReaderMetadata(reader);
+            }
+        }
     }
 
     public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {
@@ -421,29 +427,31 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
     }
 
-    public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
+    public TableReader getReaderWithRepair(CairoSecurityContext securityContext, CharSequence tableName) {
         checkTableName(tableName);
         try {
-            return getReader(executionContext.getCairoSecurityContext(), tableName);
+            return getReader(securityContext, tableName);
         } catch (CairoException ex) {
             // Cannot open reader on existing table is pretty bad.
-            LOG.critical().$("error opening reader for ").$(statement)
-                    .$(" statement [table=").$(tableName)
+            LOG.critical().$("error opening reader [table=").$(tableName)
                     .$(",errno=").$(ex.getErrno())
                     .$(",error=").$(ex.getMessage()).I$();
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
             // but writer can be. Opening writer fixes the table mess.
-            try (TableWriter ignored = getWriter(executionContext.getCairoSecurityContext(), tableName, statement + " statement")) {
-                return getReader(executionContext.getCairoSecurityContext(), tableName);
-            } catch (EntryUnavailableException wrOpEx) {
-                // This is fine, writer is busy. Throw back origin error.
-                throw ex;
-            } catch (Throwable th) {
-                LOG.error().$("error preliminary opening writer for ").$(statement)
-                        .$(" statement [table=").$(tableName)
-                        .$(",error=").$(ex.getMessage()).I$();
-                throw ex;
-            }
+            return tryGetReaderRepairWithWriter(securityContext, tableName, ex);
+        }
+    }
+
+    private TableReader tryGetReaderRepairWithWriter(CairoSecurityContext securityContext, CharSequence tableName, RuntimeException originException) {
+        try (TableWriter ignored = getWriter(securityContext, tableName, "repair")) {
+            return getReader(securityContext, tableName);
+        } catch (EntryUnavailableException wrOpEx) {
+            // This is fine, writer is busy. Throw back origin error.
+            throw originException;
+        } catch (Throwable th) {
+            LOG.error().$("error preliminary opening writer for [table=").$(tableName)
+                    .$(",error=").$(th.getMessage()).I$();
+            throw originException;
         }
     }
 
