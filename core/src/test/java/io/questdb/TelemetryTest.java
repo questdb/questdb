@@ -80,10 +80,12 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                CharSequence telemetry = engine.getFileSystemName("telemetry");
+                CharSequence telemetry_config = engine.getFileSystemName("telemetry_config");
                 final TelemetryJob telemetryJob = new TelemetryJob(engine, null);
                 try (Path path = new Path()) {
-                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry"));
-                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry_config"));
+                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry));
+                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry_config));
                 }
 
                 Misc.free(telemetryJob);

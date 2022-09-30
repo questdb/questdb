@@ -588,16 +588,18 @@ public class WriterPoolTest extends AbstractCairoTest {
     public void testReplaceWriterAfterUnlock() throws Exception {
 
         assertWithPool(pool -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            String x = "x";
+            try (TableModel model = new TableModel(configuration, x, PartitionBy.NONE).col("ts", ColumnType.DATE)) {
                 CairoTestUtils.create(model);
             }
 
-            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock("x", "testing"));
+            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(x, "testing"));
 
+            CharSequence fileSystemName = engine.getFileSystemName(x);
             TableWriter writer = new TableWriter(
                     configuration,
-                    "x",
-                    "x",
+                    x,
+                    fileSystemName,
                     messageBus,
                     null,
                     false,
@@ -612,14 +614,14 @@ public class WriterPoolTest extends AbstractCairoTest {
             }
             writer.commit();
 
-            pool.unlock("x", writer, false);
+            pool.unlock(x, writer, false);
 
             // make sure our writer stays in pool and close() doesn't destroy it
-            Assert.assertSame(writer, pool.get("x", "testing"));
+            Assert.assertSame(writer, pool.get(x, "testing"));
             writer.close();
 
             // this isn't a mistake, need to check that writer is still alive after close
-            Assert.assertSame(writer, pool.get("x", "testing"));
+            Assert.assertSame(writer, pool.get(x, "testing"));
             writer.close();
         });
     }

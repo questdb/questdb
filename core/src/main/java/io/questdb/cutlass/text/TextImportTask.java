@@ -849,7 +849,7 @@ public class TextImportTask {
 
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
-            createTable(ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0, configuration);
+            createTable(cairoEngine, ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0, configuration);
 
             CharSequence fileSystemName1 = cairoEngine.getFileSystemName(tableNameSink);
             try (

@@ -612,7 +612,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             CharSequence fileSystemName = engine.getFileSystemName("x");
             Files.mkdirs(path.of(root).concat(fileSystemName).slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
-            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));
+            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, fileSystemName));
         }
     }
 

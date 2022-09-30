@@ -2062,10 +2062,7 @@ public class SqlCompiler implements Closeable {
         final ExpressionNode name = createTableModel.getName();
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        if (createTableModel.isIgnoreIfExists()
-                &&
-                engine.getStatus(executionContext.getCairoSecurityContext(), path,
-                        name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
+        if (createTableModel.isIgnoreIfExists() && engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
             return compiledQuery.ofCreateTable();
         }
 
@@ -2077,8 +2074,7 @@ public class SqlCompiler implements Closeable {
             TableWriter tableWriter = null;
             boolean newTable = false;
             try {
-                if (engine.getStatus(executionContext.getCairoSecurityContext(), path,
-                        name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
+                if (engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
                     if (createTableModel.isIgnoreIfExists()) {
                         return compiledQuery.ofCreateTable();
                     }
@@ -2794,7 +2790,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
+        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName);
         if (status != TableUtils.TABLE_EXISTS) {
             throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
         }
@@ -3463,7 +3459,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.getPosition()).put("expected a table name");
                     }
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-                    int status = engine.getStatus(executionContext.getCairoSecurityContext(), srcPath, tableName, 0, tableName.length());
+                    int status = engine.getStatus(executionContext.getCairoSecurityContext(), srcPath, tableName);
                     if (status != TableUtils.TABLE_EXISTS) {
                         throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
                     }

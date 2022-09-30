@@ -216,7 +216,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTable(ff, root, mkDirMode, memory, path, structure.getTableName(), structure, tableVersion, tableId);
+        createTable(ff, root, mkDirMode, memory, path, TableUtils.fsTableName(structure.getTableName()), structure, tableVersion, tableId);
     }
 
     public static void createTable(
@@ -231,7 +231,7 @@ public final class TableUtils {
             int tableId
     ) {
         LOG.debug().$("create table [name=").$(tableName).$(']').$();
-        path.of(root).concat(tableName);
+        path.of(root).concat(tableName); //.put('_');
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
@@ -418,7 +418,6 @@ public final class TableUtils {
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
-        //todo: resolve fileSystemName
         path.of(root).concat(name, lo, hi).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
@@ -1237,30 +1236,27 @@ public final class TableUtils {
         }
     }
 
-    public static Path createTablePath(final @NotNull Path root, final CharSequence tableName) {
-        root.concat(tableName);
-//        if (!tableName.equals("dbRoot")) {
-//            root.concat(tableName).put('_');
-//        } else {
-//           root.concat(tableName);
-//        }
-        return root;
-    }
-
-    public static Path createTablePath(final @NotNull Path root, long pUtf8NameZ) {
-//        root.concat(pUtf8NameZ);
-        root.concat(pUtf8NameZ);
-        return root;
-    }
-
     public static String fsTableName(final CharSequence tableName) {
+        return tableName.toString() + '_';
+//        return tableName.toString();
+    }
+
+    public static String fsTableName(final CharSequence tableName, int lo, int hi) {
+        final CharSink b = Misc.getThreadLocalBuilder();
+        int i = lo;
+        while (i < hi) {
+            char c = tableName.charAt(i++);
+            b.put(c);
+        }
+        String tableName1 = TableUtils.fsTableName(b.toString()); //todo: resolve name
+        return tableName1;
 //        return tableName.toString() + '_';
-        return tableName.toString();
+//        return tableName.toString();
     }
 
     public static CharSequence FsToUserTableName(final CharSequence tableName) {
-//        return tableName.subSequence(0, tableName.length() - 1);
-        return tableName;
+        return tableName.subSequence(0, tableName.length() - 1);
+//        return tableName;
     }
 
     public interface FailureCloseable {

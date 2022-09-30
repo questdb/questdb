@@ -85,7 +85,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     @TestOnly
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
-        this(configuration,  tableName, tableName, null);
+        this(configuration,  tableName, TableUtils.fsTableName(tableName), null);
     }
 
     public TableReader(CairoConfiguration configuration,

@@ -351,7 +351,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
     @TestOnly
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        this(configuration, tableName, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+        this(configuration, tableName, TableUtils.fsTableName(tableName), null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
 
     @TestOnly
@@ -368,7 +368,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             LifecycleManager lifecycleManager,
             Metrics metrics
     ) {
-        this(configuration, tableName, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
+        this(configuration, tableName, TableUtils.fsTableName(tableName), messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public static int getPrimaryColumnIndex(int index) {

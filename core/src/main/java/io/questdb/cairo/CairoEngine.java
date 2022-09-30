@@ -446,7 +446,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             int lo,
             int hi
     ) {
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
+        CharSequence fileSystemName = getFileSystemName(tableName.subSequence(lo, hi));
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), fileSystemName);
     }
 
     public int getStatus(
@@ -454,7 +455,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             Path path,
             CharSequence tableName
     ) {
-        return getStatus(securityContext, path, tableName, 0, tableName.length());
+        CharSequence fileSystemName = getFileSystemName(tableName);
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), fileSystemName);
     }
 
     public Sequence getTelemetryPubSequence() {
@@ -639,13 +641,15 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
-        if (TableUtils.exists(ff, path, root, tableName) != TableUtils.TABLE_EXISTS) {
+        CharSequence fileSystemName = getFileSystemName(tableName);
+        CharSequence dstFileName = getFileSystemName(to);
+        if (TableUtils.exists(ff, path, root, fileSystemName) != TableUtils.TABLE_EXISTS) {
             LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
             throw CairoException.nonCritical().put("Rename failed. Table '").put(tableName).put("' does not exist");
         }
 
-        path.of(root).concat(getFileSystemName(tableName)).$();
-        otherPath.of(root).concat(getFileSystemName(to)).$();
+        path.of(root).concat(fileSystemName).$();
+        otherPath.of(root).concat(dstFileName).$();
 
         if (ff.exists(otherPath)) {
             LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).$("']").$();

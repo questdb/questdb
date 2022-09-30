@@ -195,7 +195,20 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.taskDistribution = new IntList();
     }
 
+    public void createTable(
+            final FilesFacade ff,
+            int mkDirMode,
+            final CharSequence root,
+            final CharSequence tableName,
+            TableStructure structure,
+            int tableId,
+            CairoConfiguration configuration
+    ) {
+        createTable(cairoEngine, ff, mkDirMode, root, tableName, structure, tableId, configuration);
+    }
+
     public static void createTable(
+            CairoEngine engine,
             final FilesFacade ff,
             int mkDirMode,
             final CharSequence root,
@@ -205,8 +218,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             CairoConfiguration configuration
     ) {
         checkTableName(tableName, configuration);
+        final CharSequence fileSystemName = engine.getFileSystemName(tableName);
         try (Path path = new Path()) {
-            switch (TableUtils.exists(ff, path, root, tableName, 0, tableName.length())) {
+            switch (TableUtils.exists(ff, path, root, fileSystemName)) {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
@@ -221,7 +235,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 mkDirMode,
                                 memory,
                                 path,
-                                tableName,
+                                fileSystemName,
                                 structure,
                                 ColumnType.VERSION,
                                 tableId
@@ -1150,7 +1164,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int t = 0; t < tmpTableCount; ++t) {
 
             CharSequence fileSystemName = cairoEngine.getFileSystemName(tableName);
-            tmpPath.of(importRoot).concat(fileSystemName).put("_").put(t);
+            tmpPath.of(importRoot).concat(fileSystemName).put('_').put(t);
 
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txFile.unsafeLoadAll();

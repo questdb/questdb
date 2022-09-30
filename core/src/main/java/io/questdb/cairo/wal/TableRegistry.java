@@ -80,10 +80,10 @@ public class TableRegistry extends AbstractPool {
             ff.iterateDir(path, (name, type) -> {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
-                    final CharSequence nameStr = engine.getFileSystemName(nameSink);
-                    if (isWalTable(nameStr, path, ff)) {
-                        try (SequencerImpl sequencer = openSequencer(nameStr)) {
-                            callback.onTable(sequencer.getTableId(), nameStr, sequencer.lastTxn());
+                    if (isWalTable(nameSink, path, ff)) {
+                        CharSequence tableName = TableUtils.FsToUserTableName(nameSink);
+                        try (SequencerImpl sequencer = openSequencer(tableName)) {
+                            callback.onTable(sequencer.getTableId(), tableName, sequencer.lastTxn());
                         }
                     }
                 }
@@ -156,11 +156,12 @@ public class TableRegistry extends AbstractPool {
     // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
     private boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
-        return isWalTable(tableName, path, ff);
+        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        return isWalTable(fileSystemName, path, ff);
     }
 
-    private boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
-        root.concat(engine.getFileSystemName(tableName)).concat(SEQ_DIR);
+    private boolean isWalTable(final CharSequence fileSystemName, final Path root, final FilesFacade ff) {
+        root.concat(fileSystemName).concat(SEQ_DIR);
         return ff.exists(root.$());
     }
 
@@ -419,8 +420,8 @@ public class TableRegistry extends AbstractPool {
         ConcurrentHashMap<CharSequence> namesMap = new ConcurrentHashMap<>();
         public CharSequence getFileSystemName(final CharSequence tableName) {
             final String tableNameStr = Chars.toString(tableName);
-            namesMap.putIfAbsent(tableNameStr, tableNameStr);
-            return tableNameStr;
+//            namesMap.putIfAbsent(tableNameStr, tableNameStr);
+            return tableNameStr + '_';
         }
     }
 
