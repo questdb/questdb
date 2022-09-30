@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -236,6 +237,10 @@ public class ServerMain {
             final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(cairoEngine);
             workerPool.assign(applyWal2TableJob);
             workerPool.freeOnHalt(applyWal2TableJob);
+
+            final WalPurgeJob walPurgeJob = new WalPurgeJob(cairoEngine);
+            workerPool.assign(walPurgeJob);
+            workerPool.freeOnHalt(walPurgeJob);
 
             if (configuration.getCairoConfiguration().getSqlCopyInputRoot() != null) {
                 final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(

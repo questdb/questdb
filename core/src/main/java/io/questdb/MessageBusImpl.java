@@ -97,6 +97,10 @@ public class MessageBusImpl implements MessageBus {
     private final Sequence walTxnNotificationPubSequence;
     private final Sequence walTxnNotificationSubSequence;
 
+    private final RingQueue<WalPurgeNotificationTask> walPurgeNotificationQueue;
+    private final Sequence walPurgeNotificationPubSequence;
+    private final Sequence walPurgeNotificationSubSequence;
+
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
         this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, configuration.getColumnIndexerQueueCapacity());
@@ -200,6 +204,11 @@ public class MessageBusImpl implements MessageBus {
         walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
         walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
         walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);
+
+        walPurgeNotificationQueue = new RingQueue<>(WalPurgeNotificationTask::new,256);
+        walPurgeNotificationPubSequence = new MPSequence(walPurgeNotificationQueue.getCycle());
+        walPurgeNotificationSubSequence = new MCSequence(walPurgeNotificationQueue.getCycle());
+        walPurgeNotificationPubSequence.then(walPurgeNotificationSubSequence).then(walPurgeNotificationPubSequence);
     }
 
     @Override
@@ -447,5 +456,20 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getWalTxnNotificationSubSequence() {
         return walTxnNotificationSubSequence;
+    }
+
+    @Override
+    public RingQueue<WalPurgeNotificationTask> getWalPurgeNotificationQueue() {
+        return walPurgeNotificationQueue;
+    }
+
+    @Override
+    public Sequence getWalPurgeNotificationPubSequence() {
+        return walPurgeNotificationPubSequence;
+    }
+
+    @Override
+    public Sequence getWalPurgeNotificationSubSequence() {
+        return walPurgeNotificationSubSequence;
     }
 }
