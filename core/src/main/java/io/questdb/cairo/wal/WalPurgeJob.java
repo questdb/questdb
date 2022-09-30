@@ -48,7 +48,7 @@ public class WalPurgeJob extends AbstractQueueConsumerJob<WalTxnNotificationTask
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
     }
 
     @Override

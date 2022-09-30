@@ -31,6 +31,7 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
@@ -624,6 +625,14 @@ public abstract class AbstractCairoTest {
 
     protected static void drainWalQueue() {
         ApplyWal2TableJob job = new ApplyWal2TableJob(engine);
+        while (job.run(0)) {
+            // run until empty
+        }
+        job.close();
+    }
+
+    protected static void purgeWalSegments() {
+        WalPurgeJob job = new WalPurgeJob(engine);
         while (job.run(0)) {
             // run until empty
         }
