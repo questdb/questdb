@@ -51,7 +51,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
         createDummyConfiguration();
         try (Path path = new Path().of(root)) {
             int plen = path.length();
-            Bootstrap bootstrap = Bootstrap.withArgs("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            Bootstrap bootstrap = new Bootstrap(new String[]{"-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION});
             Assert.assertNotNull(bootstrap.getLog());
             Assert.assertNotNull(bootstrap.getConfiguration());
             Assert.assertNotNull(bootstrap.getMetrics());

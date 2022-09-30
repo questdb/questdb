@@ -24,7 +24,10 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
@@ -38,7 +41,8 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
@@ -53,18 +57,20 @@ public class ServerMain implements Closeable {
     private final WorkerPoolManager workerPoolManager;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
+    private final String banner;
 
     public ServerMain(String... args) {
-        this(Bootstrap.withArgs(args));
+        this(new Bootstrap(args));
     }
 
     public ServerMain(final Bootstrap bootstrap) {
-        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog());
+        this(bootstrap.getConfiguration(), bootstrap.getMetrics(), bootstrap.getLog(), bootstrap.getBanner());
     }
 
-    public ServerMain(final PropServerConfiguration config, final Metrics metrics, final Log log) {
+    public ServerMain(final PropServerConfiguration config, final Metrics metrics, final Log log, String banner) {
         this.config = config;
         this.log = log;
+        this.banner = banner;
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
@@ -176,19 +182,12 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("bootstrap complete").$();
     }
 
-    public void start() {
-        start(false);
-    }
-
-    public void start(boolean addShutdownHook) {
-        if (!closed.get() && running.compareAndSet(false, true)) {
-            if (addShutdownHook) {
-                addShutdownHook();
-            }
-            workerPoolManager.start(log);
-            Bootstrap.logWebConsoleUrls(config, log);
-            System.gc(); // final GC
-            log.advisoryW().$("enjoy").$();
+    public static void main(String[] args) throws Exception {
+        try {
+            new ServerMain(args).start(true);
+        } catch (Throwable thr) {
+            thr.printStackTrace();
+            System.exit(55);
         }
     }
 
@@ -204,15 +203,15 @@ public class ServerMain implements Closeable {
         }
     }
 
-    public PropServerConfiguration getConfiguration() {
-        return config;
-    }
-
     public CairoEngine getCairoEngine() {
         if (closed.get()) {
             throw new IllegalStateException("close was called");
         }
         return engine;
+    }
+
+    public PropServerConfiguration getConfiguration() {
+        return config;
     }
 
     public WorkerPoolManager getWorkerPoolManager() {
@@ -222,19 +221,28 @@ public class ServerMain implements Closeable {
         return workerPoolManager;
     }
 
-    public boolean hasStarted() {
-        return running.get();
-    }
-
     public boolean hasBeenClosed() {
         return closed.get();
     }
 
-    private <T extends Closeable> T freeOnExit(T closeable) {
-        if (closeable != null) {
-            freeOnExistList.add(closeable);
+    public boolean hasStarted() {
+        return running.get();
+    }
+
+    public void start() {
+        start(false);
+    }
+
+    public void start(boolean addShutdownHook) {
+        if (!closed.get() && running.compareAndSet(false, true)) {
+            if (addShutdownHook) {
+                addShutdownHook();
+            }
+            workerPoolManager.start(log);
+            Bootstrap.logWebConsoleUrls(config, log, banner);
+            System.gc(); // final GC
+            log.advisoryW().$("enjoy").$();
         }
-        return closeable;
     }
 
     private void addShutdownHook() {
@@ -252,12 +260,10 @@ public class ServerMain implements Closeable {
         }));
     }
 
-    public static void main(String[] args) throws Exception {
-        try {
-            new ServerMain(args).start(true);
-        } catch (Throwable thr) {
-            thr.printStackTrace();
-            System.exit(55);
+    private <T extends Closeable> T freeOnExit(T closeable) {
+        if (closeable != null) {
+            freeOnExistList.add(closeable);
         }
+        return closeable;
     }
 }

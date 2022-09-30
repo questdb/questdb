@@ -51,74 +51,33 @@ import java.util.zip.ZipInputStream;
 public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
+    private static final String BANNER =
+            "     ___                  _   ____  ____\n" +
+                    "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
+                    "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
+                    "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
+                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
+
     private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
     private static final String LOG_NAME = "server-main";
     private static final String CONFIG_FILE = "/server.conf";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-
-    static {
-        if (Os.type == Os._32Bit) {
-            throw new Error("QuestDB requires 64-bit JVM");
-        }
-    }
-
-    public static class BootstrapException extends RuntimeException {
-        public BootstrapException(String message) {
-            super(message);
-        }
-
-        public BootstrapException(Throwable thr) {
-            super(thr);
-        }
-    }
-
-    public static Bootstrap withArgs(String... args) {
-        return new Bootstrap(args);
-    }
-
-    public static void logWebConsoleUrls(PropServerConfiguration config, Log log) {
-        if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW().$('\n')
-                    .$("     ___                  _   ____  ____\n")
-                    .$("    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n")
-                    .$("   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n")
-                    .$("   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n")
-                    .$("    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n")
-                    .$("Web Console URL(s):").$("\n\n");
-            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
-            final int bindIP = httpConf.getBindIPv4Address();
-            final int bindPort = httpConf.getBindPort();
-            if (bindIP == 0) {
-                try {
-                    for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
-                        for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
-                            InetAddress inetAddress = addr.nextElement();
-                            if (inetAddress instanceof Inet4Address) {
-                                r.$('\t').$("http://").$(inetAddress).$(':').$(bindPort).$('\n');
-                            }
-                        }
-                    }
-                } catch (SocketException se) {
-                    throw new Bootstrap.BootstrapException("Cannot access network interfaces");
-                }
-                r.$('\n').$();
-            } else {
-                r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
-            }
-        }
-    }
-
-
     private final String rootDirectory;
     private final PropServerConfiguration config;
     private final Metrics metrics;
     private final Log log;
+    private final String banner;
 
-    private Bootstrap(String... args) {
+    public Bootstrap(String... args) {
+        this(BANNER, args);
+    }
+
+    public Bootstrap(String banner, String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
+        this.banner = banner;
 
         // non /server.conf properties
         final CharSequenceObjHashMap<String> argsMap = processArgs(args);
@@ -201,28 +160,190 @@ public class Bootstrap {
         }
     }
 
-    @NotNull
-    private Properties loadProperties(File rootPath) throws IOException {
-        final Properties properties = new Properties();
-        java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
-        log.advisoryW().$("Server config: ").$(configFile).$();
-
-        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
-            properties.load(is);
-        }
-        return properties;
+    public String getBanner() {
+        return banner;
     }
 
     public PropServerConfiguration getConfiguration() {
         return config;
     }
 
+    public Log getLog() {
+        return log;
+    }
+
     public Metrics getMetrics() {
         return metrics;
     }
 
-    public Log getLog() {
-        return log;
+    static void logWebConsoleUrls(PropServerConfiguration config, Log log, String banner) {
+        if (config.getHttpServerConfiguration().isEnabled()) {
+            final LogRecord r = log.infoW().$('\n')
+                    .$(banner)
+                    .$("Web Console URL(s):").$("\n\n");
+
+            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
+            final int bindIP = httpConf.getBindIPv4Address();
+            final int bindPort = httpConf.getBindPort();
+            if (bindIP == 0) {
+                try {
+                    for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
+                        for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
+                            InetAddress inetAddress = addr.nextElement();
+                            if (inetAddress instanceof Inet4Address) {
+                                r.$('\t').$("http://").$(inetAddress).$(':').$(bindPort).$('\n');
+                            }
+                        }
+                    }
+                } catch (SocketException se) {
+                    throw new Bootstrap.BootstrapException("Cannot access network interfaces");
+                }
+                r.$('\n').$();
+            } else {
+                r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
+            }
+        }
+    }
+
+    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
+        File out = new File(dir, res);
+        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
+            if (is != null) {
+                copyInputStream(force, buffer, out, is, log);
+            }
+        }
+    }
+
+    private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
+        final boolean exists = out.exists();
+        if (force || !exists) {
+            File dir = out.getParentFile();
+            if (!dir.exists() && !dir.mkdirs()) {
+                log.errorW().$("could not create directory [path=").$(dir).I$();
+                return;
+            }
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                int n;
+                while ((n = is.read(buffer, 0, buffer.length)) > 0) {
+                    fos.write(buffer, 0, n);
+                }
+            }
+            log.infoW().$("extracted [path=").$(out).I$();
+            return;
+        }
+        log.debugW().$("skipped [path=").$(out).I$();
+    }
+
+    private static String getPublicVersion(String publicDir) throws IOException {
+        File f = new File(publicDir, PUBLIC_VERSION_TXT);
+        if (f.exists()) {
+            try (FileInputStream fis = new FileInputStream(f)) {
+                byte[] buf = new byte[128];
+                int len = fis.read(buf);
+                return new String(buf, 0, len);
+            }
+        }
+        return null;
+    }
+
+    private static void setPublicVersion(String publicDir, String version) throws IOException {
+        File f = new File(publicDir, PUBLIC_VERSION_TXT);
+        File publicFolder = f.getParentFile();
+        if (!publicFolder.exists()) {
+            if (!publicFolder.mkdirs()) {
+                throw new BootstrapException("Cannot create folder: " + publicFolder);
+            }
+        }
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            byte[] buf = version.getBytes();
+            fos.write(buf, 0, buf.length);
+        }
+    }
+
+    static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
+        final CharSequence dbRoot = cairoConfiguration.getRoot();
+        final FilesFacade ff = cairoConfiguration.getFilesFacade();
+        final int maxFiles = cairoConfiguration.getMaxCrashFiles();
+        NativeLPSZ name = new NativeLPSZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.length();
+            AtomicInteger counter = new AtomicInteger(0);
+            FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
+                if (Files.notDots(pUtf8NameZ)) {
+                    name.of(pUtf8NameZ);
+                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                        path.trimTo(plen).concat(pUtf8NameZ).$();
+                        boolean shouldRename = false;
+                        do {
+                            other.trimTo(plen).concat(cairoConfiguration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
+                            if (!ff.exists(other)) {
+                                shouldRename = counter.get() <= maxFiles;
+                                break;
+                            }
+                        } while (counter.get() < maxFiles);
+                        if (shouldRename && ff.rename(path, other) == 0) {
+                            log.criticalW().$("found crash file [path=").$(other).I$();
+                        } else {
+                            log.criticalW().
+                                    $("could not rename crash file [path=").$(path)
+                                    .$(", errno=").$(ff.errno())
+                                    .$(", index=").$(counter.get())
+                                    .$(", max=").$(maxFiles)
+                                    .I$();
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
+        final FilesFacade ff = cairoConfiguration.getFilesFacade();
+        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
+        long fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
+        try {
+            if (fd > -1) {
+                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    TableUtils.writeLongOrFail(ff, fd, 0, 123456789L, mem, path);
+                } finally {
+                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        } finally {
+            ff.close(fd);
+        }
+        ff.remove(path);
+    }
+
+    static CharSequenceObjHashMap<String> processArgs(String... args) {
+        final int n = args.length;
+        if (n == 0) {
+            throw new BootstrapException("Arguments expected, non provided");
+        }
+        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
+        for (int i = 0; i < n; i++) {
+            String arg = args[i];
+            if (arg.length() > 1 && arg.charAt(0) == '-') {
+                if (i + 1 < n) {
+                    String nextArg = args[i + 1];
+                    if (nextArg.length() > 1 && nextArg.charAt(0) == '-') {
+                        optHash.put(arg, "");
+                    } else {
+                        optHash.put(arg, nextArg);
+                        i++;
+                    }
+                } else {
+                    optHash.put(arg, "");
+                }
+            } else {
+                optHash.put("$" + i, arg);
+            }
+        }
+        return optHash;
     }
 
     void extractSite() throws IOException {
@@ -308,59 +429,16 @@ public class Bootstrap {
         copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
     }
 
-    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
-        File out = new File(dir, res);
-        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
-            if (is != null) {
-                copyInputStream(force, buffer, out, is, log);
-            }
-        }
-    }
+    @NotNull
+    private Properties loadProperties(File rootPath) throws IOException {
+        final Properties properties = new Properties();
+        java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
+        log.advisoryW().$("Server config: ").$(configFile).$();
 
-    private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
-        final boolean exists = out.exists();
-        if (force || !exists) {
-            File dir = out.getParentFile();
-            if (!dir.exists() && !dir.mkdirs()) {
-                log.errorW().$("could not create directory [path=").$(dir).I$();
-                return;
-            }
-            try (FileOutputStream fos = new FileOutputStream(out)) {
-                int n;
-                while ((n = is.read(buffer, 0, buffer.length)) > 0) {
-                    fos.write(buffer, 0, n);
-                }
-            }
-            log.infoW().$("extracted [path=").$(out).I$();
-            return;
+        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
+            properties.load(is);
         }
-        log.debugW().$("skipped [path=").$(out).I$();
-    }
-
-    private static String getPublicVersion(String publicDir) throws IOException {
-        File f = new File(publicDir, PUBLIC_VERSION_TXT);
-        if (f.exists()) {
-            try (FileInputStream fis = new FileInputStream(f)) {
-                byte[] buf = new byte[128];
-                int len = fis.read(buf);
-                return new String(buf, 0, len);
-            }
-        }
-        return null;
-    }
-
-    private static void setPublicVersion(String publicDir, String version) throws IOException {
-        File f = new File(publicDir, PUBLIC_VERSION_TXT);
-        File publicFolder = f.getParentFile();
-        if (!publicFolder.exists()) {
-            if (!publicFolder.mkdirs()) {
-                throw new BootstrapException("Cannot create folder: " + publicFolder);
-            }
-        }
-        try (FileOutputStream fos = new FileOutputStream(f)) {
-            byte[] buf = version.getBytes();
-            fos.write(buf, 0, buf.length);
-        }
+        return properties;
     }
 
     private void reportValidateConfig() {
@@ -403,46 +481,6 @@ public class Bootstrap {
         }
     }
 
-    static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
-        final CharSequence dbRoot = cairoConfiguration.getRoot();
-        final FilesFacade ff = cairoConfiguration.getFilesFacade();
-        final int maxFiles = cairoConfiguration.getMaxCrashFiles();
-        NativeLPSZ name = new NativeLPSZ();
-        try (
-                Path path = new Path().of(dbRoot).slash$();
-                Path other = new Path().of(dbRoot).slash$()
-        ) {
-            int plen = path.length();
-            AtomicInteger counter = new AtomicInteger(0);
-            FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
-                if (Files.notDots(pUtf8NameZ)) {
-                    name.of(pUtf8NameZ);
-                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
-                        path.trimTo(plen).concat(pUtf8NameZ).$();
-                        boolean shouldRename = false;
-                        do {
-                            other.trimTo(plen).concat(cairoConfiguration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
-                            if (!ff.exists(other)) {
-                                shouldRename = counter.get() <= maxFiles;
-                                break;
-                            }
-                        } while (counter.get() < maxFiles);
-                        if (shouldRename && ff.rename(path, other) == 0) {
-                            log.criticalW().$("found crash file [path=").$(other).I$();
-                        } else {
-                            log.criticalW().
-                                    $("could not rename crash file [path=").$(path)
-                                    .$(", errno=").$(ff.errno())
-                                    .$(", index=").$(counter.get())
-                                    .$(", max=").$(maxFiles)
-                                    .I$();
-                        }
-                    }
-                }
-            });
-        }
-    }
-
     private void verifyFileSystem(Path path, CharSequence rootDir, String kind) {
         if (rootDir == null) {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
@@ -460,49 +498,19 @@ public class Bootstrap {
         }
     }
 
-    private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
-        final FilesFacade ff = cairoConfiguration.getFilesFacade();
-        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        long fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
-        try {
-            if (fd > -1) {
-                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    TableUtils.writeLongOrFail(ff, fd, 0, 123456789L, mem, path);
-                } finally {
-                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                }
-            }
-        } finally {
-            ff.close(fd);
+    public static class BootstrapException extends RuntimeException {
+        public BootstrapException(String message) {
+            super(message);
         }
-        ff.remove(path);
+
+        public BootstrapException(Throwable thr) {
+            super(thr);
+        }
     }
 
-    static CharSequenceObjHashMap<String> processArgs(String... args) {
-        final int n = args.length;
-        if (n == 0) {
-            throw new BootstrapException("Arguments expected, non provided");
+    static {
+        if (Os.type == Os._32Bit) {
+            throw new Error("QuestDB requires 64-bit JVM");
         }
-        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
-        for (int i = 0; i < n; i++) {
-            String arg = args[i];
-            if (arg.length() > 1 && arg.charAt(0) == '-') {
-                if (i + 1 < n) {
-                    String nextArg = args[i + 1];
-                    if (nextArg.length() > 1 && nextArg.charAt(0) == '-') {
-                        optHash.put(arg, "");
-                    } else {
-                        optHash.put(arg, nextArg);
-                        i++;
-                    }
-                } else {
-                    optHash.put(arg, "");
-                }
-            } else {
-                optHash.put("$" + i, arg);
-            }
-        }
-        return optHash;
     }
 }
