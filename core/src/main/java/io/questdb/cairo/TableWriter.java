@@ -3171,7 +3171,7 @@ public class TableWriter implements Closeable {
             // to determine that 'ooTimestampLo' goes into current partition
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-            LOG.info().$("sorting o3 [table=").$(tableName).I$();
+            LOG.debug().$("sorting o3 [table=").$(tableName).I$();
             final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
             // ensure there is enough size
@@ -3233,10 +3233,11 @@ public class TableWriter implements Closeable {
                         srcOooMax = 0;
                     }
                 }
-                LOG.debug().$("o3 commit lag [table=").$(tableName)
-                        .$(", lag=").$(lag)
+                LOG.info().$("o3 commit lag [table=").$(tableName)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
-                        .$(", o3max=").$ts(o3TimestampMax)
+                        .$(", o3TimestampMin=").$ts(o3TimestampMin)
+                        .$(", o3TimestampMax=").$ts(o3TimestampMax)
+                        .$(", lagUs=").$(lag)
                         .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
                         .$(", o3LagRowCount=").$(o3LagRowCount)
                         .$(", srcOooMax=").$(srcOooMax)
@@ -3263,7 +3264,10 @@ public class TableWriter implements Closeable {
 
             // reshuffle all columns according to timestamp index
             o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
-            LOG.info().$("sorted [table=").utf8(tableName).I$();
+            LOG.info()
+                    .$("sorted [table=").utf8(tableName)
+                    .$(", o3RowCount=").$(o3LagRowCount)
+                    .I$();
 
             processO3Block(o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin, o3TimestampMax, true, 0L);
         } finally {
@@ -4456,13 +4460,13 @@ public class TableWriter implements Closeable {
     }
 
     private void processO3Block(
-            long o3LagRowCount,
+            final long o3LagRowCount,
             int timestampIndex,
             long sortedTimestampsAddr,
-            long srcOooMax,
+            final long srcOooMax,
             long o3TimestampMin,
             long o3TimestampMax,
-            boolean flattenTimestamp1,
+            boolean flattenTimestamp,
             long rowLo
     ) {
         o3ErrorCount.set(0);
@@ -4480,7 +4484,6 @@ public class TableWriter implements Closeable {
         boolean success = true;
         int latchCount = 0;
         long srcOoo = rowLo;
-        boolean flattenTimestamp = flattenTimestamp1;
         int pCount = 0;
         try {
             // We do not know upfront which partition is going to be last because this is
@@ -4548,21 +4551,27 @@ public class TableWriter implements Closeable {
                     // Final partition size after current insertions.
                     final long partitionSize = srcDataMax + srcOooBatchRowSize;
 
-                    LOG.debug().
+                    pCount++;
+
+                    LOG.info().
                             $("o3 partition task [table=").$(tableName)
                             .$(", srcOooLo=").$(srcOooLo)
                             .$(", srcOooHi=").$(srcOooHi)
                             .$(", srcOooMax=").$(srcOooMax)
+                            .$(", o3RowCount=").$(o3RowCount)
+                            .$(", o3LagRowCount=").$(o3LagRowCount)
+                            .$(", srcDataMax=").$(srcDataMax)
                             .$(", o3TimestampMin=").$ts(o3TimestampMin)
                             .$(", o3Timestamp=").$ts(o3Timestamp)
                             .$(", o3TimestampMax=").$ts(o3TimestampMax)
                             .$(", partitionTimestamp=").$ts(partitionTimestamp)
                             .$(", partitionIndex=").$(partitionIndex)
-                            .$(", srcDataMax=").$(srcDataMax)
+                            .$(", partitionSize=").$(partitionSize)
                             .$(", maxTimestamp=").$ts(maxTimestamp)
                             .$(", last=").$(last)
-                            .$(", partitionSize=").$(partitionSize)
                             .$(", append=").$(append)
+                            .$(", pCount=").$(pCount)
+                            .$(", flattenTimestamp=").$(flattenTimestamp)
                             .$(", memUsed=").$(Unsafe.getMemUsed())
                             .I$();
 
@@ -4578,7 +4587,6 @@ public class TableWriter implements Closeable {
                         prevTransientRowCount = partitionSize;
                     }
 
-                    pCount++;
                     o3PartitionUpdRemaining.incrementAndGet();
                     final O3Basket o3Basket = o3BasketPool.next();
                     o3Basket.ensureCapacity(columnCount, indexCount);
