@@ -461,14 +461,15 @@ public class LogFactory implements Closeable {
 
     private static String getProperty(final Properties properties, String key) {
         if (envEnabled) {
-            final String envValue = System.getenv("QDB_LOG_" + key.replace('.', '_').toUpperCase());
+            final String envVar = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
+            final String envValue = System.getenv(envVar);
             if (envValue == null) {
                 return properties.getProperty(key);
             }
+            System.err.printf("Reading log setting '%s=%s' from environment%n", envVar, envValue);
             return envValue;
         }
         return properties.getProperty(key);
-    }
 
     @SuppressWarnings("rawtypes")
     private static LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
