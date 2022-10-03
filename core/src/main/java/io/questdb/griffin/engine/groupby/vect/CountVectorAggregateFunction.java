@@ -81,7 +81,8 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public void wrapUp(long pRosti) {
+    public boolean wrapUp(long pRosti) {
+        return true;
     }
 
     @Override

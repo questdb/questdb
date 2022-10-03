@@ -122,7 +122,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void wrapUp(long pRosti) {
+    public boolean wrapUp(long pRosti) {
         double sum = 0;
         long count = 0;
         double c = 0;
@@ -133,7 +133,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
             sum = t;
             count += this.count[i * COUNT_PADDING];
         }
-        Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
+        return Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
 
     @Override

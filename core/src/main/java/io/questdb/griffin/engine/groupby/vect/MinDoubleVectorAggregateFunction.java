@@ -108,8 +108,8 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
     }
 
     @Override

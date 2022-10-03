@@ -102,7 +102,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 for (int k = i - 1; k > -1; k--) {
                     raf.free(pRosti[k]);
                 }
-                Misc.free(base);
                 throw new OutOfMemoryError();
             }
             pRosti[i] = ptr;
@@ -181,7 +180,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
-            Rosti.clear(pRosti[i]);
+            raf.clear(pRosti[i]);
         }
 
         oomCounter.set(0);
@@ -249,16 +248,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (!vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId)) {
                                 oomCounter.incrementAndGet();
                             }
-                            Rosti.updateMemoryUsage(pRosti[workerId], oldSize);
+                            raf.updateMemoryUsage(pRosti[workerId], oldSize);
                         }
                         ownCount++;
                     } else {
                         if (keyAddress != 0 || valueAddress != 0) {
                             final VectorAggregateEntry entry = entryPool.next();
                             if (keyAddress == 0) {
-                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter);
+                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, null);
                             } else {
-                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter);
+                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, raf);
                             }
                             activeEntries.add(entry);
                             queue.get(seq).entry = entry;
@@ -270,6 +269,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         } catch (Throwable e) {
             Misc.free(cursor);
+            resetRostiMemorySize();
             throw e;
         } finally {
             // all done? great start consuming the queue we just published
@@ -286,6 +286,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         if (oomCounter.get() > 0) {
             Misc.free(cursor);
+            resetRostiMemorySize();
+
             throw new OutOfMemoryError();
         }
 
@@ -297,9 +299,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             LOG.debug().$("merging").$();
 
             //due to uneven load distribution some rostis could be much bigger and some empty
-            long size = Rosti.getSize(pRostiBig);
+            long size = raf.getSize(pRostiBig);
             for (int i = 1, n = pRosti.length; i < n; i++) {
-                long curSize = Rosti.getSize(pRosti[i]);
+                long curSize = raf.getSize(pRosti[i]);
                 if (curSize > size) {
                     size = curSize;
                     pRostiBig = pRosti[i];
@@ -310,17 +312,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 final VectorAggregateFunction vaf = vafList.getQuick(j);
                 for (int i = 0, n = pRosti.length; i < n; i++) {
                     if (pRostiBig == pRosti[i] ||
-                            Rosti.getSize(pRosti[i]) < 1) {
+                            raf.getSize(pRosti[i]) < 1) {
                         continue;
                     }
                     long oldSize = Rosti.getAllocMemory(pRostiBig);
                     if (!vaf.merge(pRostiBig, pRosti[i])) {
                         Misc.free(cursor);
+                        resetRostiMemorySize();
                         throw new OutOfMemoryError();
                     }
-                    Rosti.updateMemoryUsage(pRostiBig, oldSize);
+                    raf.updateMemoryUsage(pRostiBig, oldSize);
                 }
-                vaf.wrapUp(pRostiBig);
+                if (!vaf.wrapUp(pRostiBig)) {
+                    Misc.free(cursor);
+                    resetRostiMemorySize();
+                    throw new OutOfMemoryError();
+                }
             }
 
             for (int i = 0, n = pRosti.length; i < n; i++) {
@@ -328,19 +335,30 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     continue;
                 }
 
-                if (!Rosti.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
-                    Misc.free(cursor);
-                    throw new OutOfMemoryError();
+                if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
+                    LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
                 }
             }
 
         } else {
             for (int j = 0; j < vafCount; j++) {
-                vafList.getQuick(j).wrapUp(pRostiBig);
+                if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
+                    Misc.free(cursor);
+                    resetRostiMemorySize();
+                    throw new OutOfMemoryError();
+                }
             }
         }
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
         return this.cursor.of(pRostiBig, cursor);
+    }
+
+    private void resetRostiMemorySize() {
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
+                LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
+            }
+        }
     }
 
     @Override
@@ -395,7 +413,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             Misc.free(parent);
-            Rosti.reset(pRosti, ROSTI_MINIMIZED_SIZE);
+            raf.reset(pRosti, ROSTI_MINIMIZED_SIZE);
         }
 
         @Override
@@ -437,7 +455,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         public void toTop() {
             this.ctrl = this.ctrlStart = Rosti.getCtrl(pRosti);
             this.slots = Rosti.getSlots(pRosti);
-            this.size = Rosti.getSize(pRosti);
+            this.size = raf.getSize(pRosti);
             this.shift = Rosti.getSlotShift(pRosti);
             this.count = 0;
         }
