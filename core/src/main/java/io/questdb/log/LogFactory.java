@@ -471,7 +471,7 @@ public class LogFactory implements Closeable {
         }
         return properties.getProperty(key);
     }
-    
+
     @SuppressWarnings("rawtypes")
     private static LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
         final String writer = "w." + writerName + '.';
