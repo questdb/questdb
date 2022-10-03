@@ -1238,7 +1238,7 @@ public final class SqlParser {
                             model.setSampleByTimezoneName(expectExpr(lexer));
                             tok = optTok(lexer);
 
-                            if (tok != null) {
+                            if (tok != null && !isSemicolon(tok)) {
                                 if (isWithKeyword(tok)) {
                                     tok = parseWithOffset(lexer, model);
                                 } else {

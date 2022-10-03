@@ -157,6 +157,24 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignedToCalendarWithTimezoneEndingWithSemicolon() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n" +
+                        "1970-01-03T06:00:00.000000Z\t6\n" +
+                        "1970-01-03T12:00:00.000000Z\t6\n" +
+                        "1970-01-03T18:00:00.000000Z\t2\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC';", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_geohash(30) b," +
+                " timestamp_sequence(172800000000, 3600000000) k" +
+                " from" +
+                " long_sequence(20)" +
+                ") timestamp(k) partition by NONE", "k", false);
+    }
+
+    @Test
     public void testGroupByAllTypes() throws Exception {
         assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +

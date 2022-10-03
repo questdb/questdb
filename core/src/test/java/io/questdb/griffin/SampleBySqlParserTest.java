@@ -339,6 +339,15 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
         );
     }
 
+    @Test
+    public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00'",
+                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
+                model()
+        );
+    }
+
     private static TableModel model() {
         return modelOf("x")
                 .col("a", ColumnType.DOUBLE)
