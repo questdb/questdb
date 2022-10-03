@@ -148,8 +148,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
             Path tempPath = Path.PATH.get();
-            tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName());
-            int rootLen = tempPath.length();
 
             while (sequencerCursor.hasNext()) {
                 int walId = sequencerCursor.getWalId();
@@ -160,7 +158,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (nextTableTxn != writer.getTxn() + 1) {
                     throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
-                tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+
+                // Always set full path when using thread static path
+                tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName()).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                 if (walId != TxnCatalog.METADATA_WALID) {
                     writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
                 } else {

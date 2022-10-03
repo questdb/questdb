@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.AbstractPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.PoolClosedException;
@@ -319,6 +316,7 @@ public class TableRegistry extends AbstractPool {
                 Entry obj;
                 do {
                     obj = cache.poll();
+
                     if (obj == null) {
                         obj = new Entry(tableName, tableRegistry, configuration, this);
                     } else {

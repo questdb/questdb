@@ -242,7 +242,10 @@ public class WalWriter implements TableWriterFrontend {
                 return tableTxn;
             }
         } catch (Throwable th) {
-            rollback();
+            if (!isDistressed()) {
+                // If distressed, not point to rollback, WalWriter will be not re-used anymore.
+                rollback();
+            }
             throw th;
         }
         return NO_TXN;
@@ -329,10 +332,6 @@ public class WalWriter implements TableWriterFrontend {
 
     public long getSegment() {
         return segmentId;
-    }
-
-    public long getTransientRowCount() {
-        return rowCount - currentTxnStartRowNum;
     }
 
     public int getWalId() {
@@ -543,7 +542,9 @@ public class WalWriter implements TableWriterFrontend {
             lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
             return getTableTxn();
         } catch (Throwable th) {
-            rollback();
+            if (!isDistressed()) {
+                rollback();
+            }
             throw th;
         }
     }

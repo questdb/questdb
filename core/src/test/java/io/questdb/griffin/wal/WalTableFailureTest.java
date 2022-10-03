@@ -29,16 +29,15 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.TableWriterBackend;
 import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
@@ -49,6 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.CoreMatchers.is;
 
 public class WalTableFailureTest extends AbstractGriffinTest {
     @Test
@@ -455,6 +455,200 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             // No SQL applied
             assertSql(tableName, "x\tsym\tts\tsym2\tabcd\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testTableWriterDirectDropColumnStopsWall() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            try(TableWriter writer = engine.getWriter(
+                    sqlExecutionContext.getCairoSecurityContext(),
+                    tableName,
+                    "wal killer")
+            ) {
+                writer.removeColumn("x");
+                writer.removeColumn("sym");
+            }
+
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-25', 'abcd')");
+            compile("insert into " + tableName + " values (2, 'ab', '2022-02-25', 'abcd')");
+            compile("alter table " + tableName + " add column dddd2 long");
+            compile("insert into " + tableName + " values (3, 'ab', '2022-02-25', 'abcd', 123L)");
+
+            drainWalQueue();
+
+            // No SQL applied
+            assertSql(tableName, "ts\tsym2\n" +
+                    "2022-02-24T00:00:00.000000Z\tEF\n");
+        });
+    }
+
+    @Test
+    public void testDataTxnFailToCommitInWalWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                 WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                 WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+
+                MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
+                MatcherAssert.assertThat(walWriter2.getWalId(), is(2));
+                MatcherAssert.assertThat(walWriter3.getWalId(), is(3));
+            }
+
+            AlterOperation alterOperation = null;
+            try (TableWriterFrontend alterWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                TableWriterFrontend insertWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
+                AlterOperation serializeAlterOperation = alterBuilder.ofDropColumn("non_existing_column").build();
+                alterOperation = serializeAlterOperation;
+
+                // Serialize into WAL sequencer a drop column operation of non-existing column
+                // So that it will fail during application to other WAL writers
+                AlterOperation dodgyAlter = new AlterOperation() {
+                    @Override
+                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                        tableWriter.removeColumn("x");
+                        return 0;
+                    }
+
+                    @Override
+                    public void serializeBody(MemoryA sink) {
+                        serializeAlterOperation.serializeBody(sink);
+                    }
+
+                    @Override
+                    public boolean isMetadataChange() {
+                        return true;
+                    }
+                };
+                alterWriter.applyAlter(dodgyAlter, true);
+
+                TableWriter.Row row = insertWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+                row.putLong(0, 123L);
+                row.append();
+
+                try {
+                    insertWriter.commit();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction. Invalid column: non_existing_column");
+                }
+
+            } finally {
+                Misc.free(alterOperation);
+            }
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
+                MatcherAssert.assertThat(walWriter1.getSegment(), is(0L));
+
+                // Assert wal writer 2 is not in the pool after failure to apply structure change
+                // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
+
+                try(WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    MatcherAssert.assertThat(walWriter2.getWalId(), is(4));
+                    MatcherAssert.assertThat(walWriter1.getSegment(), is(0L));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDataTxnFailToRenameWalColumnOnCommit() throws Exception {
+        FilesFacade dodgyFf = new FilesFacadeImpl() {
+            int counter = 0;
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "wal2" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
+                    return -1;
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(dodgyFf, () -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                 WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                 WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+
+                MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
+                MatcherAssert.assertThat(walWriter2.getWalId(), is(2));
+                MatcherAssert.assertThat(walWriter3.getWalId(), is(3));
+            }
+
+            AlterOperation alterOperation = null;
+            try (TableWriterFrontend alterWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                 TableWriterFrontend insertWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+
+                AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofRenameColumn(1, tableName, 0);
+                alterBuilder.ofRenameColumn("x", "x2");
+                alterOperation = alterBuilder.build();
+                alterWriter.applyAlter(alterOperation, true);
+
+                TableWriter.Row row = insertWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+                row.putLong(0, 123L);
+                row.append();
+
+                try {
+                    insertWriter.commit();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction. cannot rename column \"x\", errno=");
+                }
+
+            } finally {
+                Misc.free(alterOperation);
+            }
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
+
+                // Assert wal writer 2 is not in the pool after failure to apply structure change
+                try(WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    MatcherAssert.assertThat(walWriter2.getWalId(), is(3));
+                }
+            }
+
+            compile("insert into " + tableName + " values (3, 'ab', '2022-02-25', 'abcd')");
+            drainWalQueue();
+
+            // No SQL applied
+            assertSql(tableName, "x2\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n");
         });
     }
 }

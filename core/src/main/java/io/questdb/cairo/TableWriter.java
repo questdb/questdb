@@ -1255,7 +1255,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     public boolean processWalBlock(
-            Path walPath,
+            @Transient Path walPath,
             int timestampIndex,
             boolean ordered,
             long rowLo,
@@ -1325,7 +1325,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    public void processWalCommit(Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
+    public void processWalCommit(@Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
         final WalEventCursor walEventCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
         final byte walTxnType = walEventCursor.getType();
         switch (walTxnType) {
@@ -1375,7 +1375,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     public void processWalData(
-            Path walPath,
+            @Transient Path walPath,
             boolean inOrder,
             long rowLo,
             long rowHi,
@@ -3133,7 +3133,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
+    private void mmapWalColumn(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
         int walPathLen = walPath.length();
         final int columnCount = metadata.getColumnCount();
