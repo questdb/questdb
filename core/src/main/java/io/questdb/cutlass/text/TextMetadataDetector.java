@@ -36,7 +36,7 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closeable {
+public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Closeable {
     private static final Log LOG = LogFactory.getLog(TextMetadataDetector.class);
     private final StringSink tempSink = new StringSink();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
