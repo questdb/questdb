@@ -300,6 +300,6 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-This project follows the
+This project adheres to the
 [all-contributors](https://github.com/all-contributors/all-contributors)
-specification. Contributions of any kind welcome!
+specification. Contributions of any kind are welcome!
