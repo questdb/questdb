@@ -178,7 +178,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     boolean hasNext;
                     if (reusableStructureChangeCursor == null || !(hasNext = reusableStructureChangeCursor.hasNext())) {
                         reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
-                        hasNext = reusableStructureChangeCursor.hasNext();
+                        hasNext = reusableStructureChangeCursor != null && reusableStructureChangeCursor.hasNext();
                     }
 
                     if (hasNext) {
@@ -186,9 +186,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             reusableStructureChangeCursor.next().apply(writer, true);
                         } catch (SqlException e) {
                             throw CairoException.critical(0)
-                                    .put("cannot apply structure change from WAL to table. ").put(e.getFlyweightMessage());
+                                    .put("cannot apply structure change from WAL to table [error=")
+                                    .put(e.getFlyweightMessage()).put(']');
                         }
                     } else {
+                        // Something messed up in sequencer.
+                        // There is a transaction in WAL but no structure change record.
+                        // TODO: make sequencer distressed and try to reconcile on sequencer opening
+                        //  or skip the transaction?
                         throw CairoException.critical(0)
                                 .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                 .put(newStructureVersion)

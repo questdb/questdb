@@ -187,6 +187,7 @@ public class ServerMain implements Closeable {
             new ServerMain(args).start(true);
         } catch (Throwable thr) {
             thr.printStackTrace();
+            LogFactory.closeInstance();
             System.exit(55);
         }
     }

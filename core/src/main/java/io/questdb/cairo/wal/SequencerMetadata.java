@@ -153,6 +153,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
                     if (i == timestampIndex) {
                         timestampIndex = copyTo;
                     }
+                    columnNameIndexMap.put(columnMeta.getName(), copyTo);
                 }
                 copyTo++;
             }

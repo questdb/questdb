@@ -200,6 +200,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         clear();
         long readPtr = offset;
         long hi = buffer.size();
+        if (readPtr + 10 > hi) {
+            throw CairoException.critical(0).put("cannot read alter statement serialized, data is too short to read 10 bytes header [offset=").put(offset).put(", size=").put(hi);
+        }
         command = buffer.getShort(readPtr);
         readPtr += 2;
         tableNamePosition = buffer.getInt(readPtr);

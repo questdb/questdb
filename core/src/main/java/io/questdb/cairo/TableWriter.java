@@ -1306,18 +1306,22 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             } finally {
                 finishO3Append(0L);
                 o3Columns = o3MemColumns;
-                for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                    MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                    if (mappedColumnMem != null) {
-                        Misc.free(mappedColumnMem);
-                        walColumnMemoryPool.push(mappedColumnMem);
-                    }
-                }
+                closeWalColumns();
             }
 
             return finishO3Commit(partitionTimestampHiLimit);
         } finally {
             walPath.trimTo(walRootPathLen);
+        }
+    }
+
+    private void closeWalColumns() {
+        for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
+            MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+            if (mappedColumnMem != null) {
+                Misc.free(mappedColumnMem);
+                walColumnMemoryPool.push(mappedColumnMem);
+            }
         }
     }
 
@@ -3134,67 +3138,72 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         int walPathLen = walPath.length();
         final int columnCount = metadata.getColumnCount();
 
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int type = metadata.getColumnType(columnIndex);
-            o3RowCount = rowHi - rowLo;
-            if (type > 0) {
-                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
-                if (columnIndex == timestampIndex) {
-                    sizeBitsPow2 += 1;
-                }
+        try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int type = metadata.getColumnType(columnIndex);
+                o3RowCount = rowHi - rowLo;
+                if (type > 0) {
+                    int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
+                    if (columnIndex == timestampIndex) {
+                        sizeBitsPow2 += 1;
+                    }
 
-                if (!ColumnType.isVariableLength(type)) {
-                    MemoryCMOR primary = walColumnMemoryPool.pop();
+                    if (!ColumnType.isVariableLength(type)) {
+                        MemoryCMOR primary = walColumnMemoryPool.pop();
 
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    primary.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            rowHi << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
+                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        primary.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                rowLo << sizeBitsPow2,
+                                rowHi << sizeBitsPow2,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
 
-                    walMappedColumns.add(primary);
-                    walMappedColumns.add(null);
+                        walMappedColumns.add(primary);
+                        walMappedColumns.add(null);
+                    } else {
+                        sizeBitsPow2 = 3;
+                        MemoryCMOR fixed = walColumnMemoryPool.pop();
+                        MemoryCMOR var = walColumnMemoryPool.pop();
+
+                        iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        fixed.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                rowLo << sizeBitsPow2,
+                                (rowHi + 1) << sizeBitsPow2,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
+
+                        long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
+                        long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
+                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        var.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                varOffset,
+                                varOffset + varLen,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
+
+                        walMappedColumns.add(var);
+                        walMappedColumns.add(fixed);
+                    }
                 } else {
-                    sizeBitsPow2 = 3;
-                    MemoryCMOR fixed = walColumnMemoryPool.pop();
-                    MemoryCMOR var = walColumnMemoryPool.pop();
-
-                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    fixed.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            (rowHi + 1) << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
-                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    var.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            varOffset,
-                            varOffset + varLen,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    walMappedColumns.add(var);
-                    walMappedColumns.add(fixed);
+                    walMappedColumns.add(null);
+                    walMappedColumns.add(null);
                 }
-            } else {
-                walMappedColumns.add(null);
-                walMappedColumns.add(null);
             }
+        } catch(Throwable th) {
+            closeWalColumns();
+            throw th;
         }
     }
 

@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.wal;
 
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
