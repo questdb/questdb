@@ -172,8 +172,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.BINARY:
-                                int len = rnd.nextInt(strLen);
-                                row.putBin(index, isNull ? null : binarySequence.of(strLen == 0 ? new byte[0] : rnd.nextBytes(len)));
+                                int len = strLen > 0 ? rnd.nextInt(strLen) : 0;
+                                row.putBin(index, isNull ? null : binarySequence.of(len == 0 ? new byte[0] : rnd.nextBytes(len)));
                                 break;
 
                             case ColumnType.GEOBYTE:

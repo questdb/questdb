@@ -196,7 +196,7 @@ public class MessageBusImpl implements MessageBus {
         this.textImportRequestSubSeq = new SCSequence();
         textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
 
-        walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new,256);
+        walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
         walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
         walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
         walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);

@@ -74,7 +74,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
+        engine = freeOnExit(new CairoEngine(cairoConfig, metrics, getTotalWorkerCount(config)));
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -196,6 +196,13 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
+    }
+
+    private static int getTotalWorkerCount(PropServerConfiguration config) {
+        return Math.min(1, config.getWorkerPoolConfiguration().getWorkerCount()
+                + config.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount()
+                + config.getHttpServerConfiguration().getWorkerCount()
+                + config.getPGWireConfiguration().getWorkerCount());
     }
 
     public static void main(String[] args) throws Exception {

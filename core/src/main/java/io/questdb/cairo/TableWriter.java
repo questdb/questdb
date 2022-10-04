@@ -38,7 +38,6 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlToOperation;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;

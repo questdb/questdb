@@ -36,7 +36,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlToOperation;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -72,17 +72,17 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableRegistry tableRegistry;
     private final Path rootPath;
     private final int rootPathLen;
-
     private final TextImportExecutionContext textImportExecutionContext;
     private TxReader tempTxReader;
+    private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled());
+        this(configuration, Metrics.disabled(), 5);
     }
 
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
+    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalIoThreads) {
         this.configuration = configuration;
         this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
@@ -125,6 +125,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
         this.rootPath = new Path().of(configuration.getRoot());
         this.rootPathLen = rootPath.length();
+        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalIoThreads);
     }
 
     public void checkMissingWalTransactions() {
@@ -181,6 +182,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         } else {
             throw EntryUnavailableException.instance(lockedReason);
         }
+    }
+
+    ClosableInstance<SqlCompiler> getAdhocSqlCompiler() {
+        return sqlCompilerPool.get();
     }
 
     public TableRegistry getTableRegistry() {
@@ -558,6 +563,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         useful |= readerPool.releaseInactive();
         useful |= tableRegistry.releaseInactive();
         return useful;
+    }
+
+    @TestOnly
+    public void clearPools() {
+        sqlCompilerPool.releaseInactive();
     }
 
     public void remove(

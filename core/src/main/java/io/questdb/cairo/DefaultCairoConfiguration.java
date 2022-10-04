@@ -274,6 +274,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return 4096;
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
     }

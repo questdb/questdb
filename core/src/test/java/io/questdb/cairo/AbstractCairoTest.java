@@ -130,6 +130,7 @@ public abstract class AbstractCairoTest {
 
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     public static long dataAppendPageSize = -1;
+    public static int walTxnNotificationQueueCapacity = -1;
 
     protected static void assertFactoryMemoryUsage() {
         if (memoryUsage > -1) {
@@ -419,9 +420,14 @@ public abstract class AbstractCairoTest {
             public String getAttachPartitionSuffix() {
                 return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
             }
+
+            @Override
+            public int getWalTxnNotificationQueueCapacity() {
+                return walTxnNotificationQueueCapacity > 0 ? walTxnNotificationQueueCapacity : 256;
+            }
         };
         metrics = Metrics.enabled();
-        engine = new CairoEngine(configuration, metrics);
+        engine = new CairoEngine(configuration, metrics, 2);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
     }
@@ -444,6 +450,7 @@ public abstract class AbstractCairoTest {
         engine.getTableIdGenerator().reset();
         SharedRandom.RANDOM.set(new Rnd());
         memoryUsage = -1;
+        walTxnNotificationQueueCapacity = -1;
     }
 
     @After
@@ -515,6 +522,7 @@ public abstract class AbstractCairoTest {
             try {
                 code.run();
                 engine.releaseInactive();
+                engine.clearPools();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
