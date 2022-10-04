@@ -540,8 +540,13 @@ public final class SqlParser {
         tok = tok(lexer, "'(' or 'as'");
 
         if (Chars.equals(tok, '(')) {
-            lexer.unparseLast();
-            parseCreateTableColumns(lexer, model);
+            tok = tok(lexer, "like");
+            if (isLikeKeyword(tok)) {
+                parseLikeTableName(lexer, model);
+            } else {
+                lexer.unparseLast();
+                parseCreateTableColumns(lexer, model);
+            }
         } else if (isAsKeyword(tok)) {
             parseCreateTableAsSelect(lexer, model, executionContext);
         } else {
@@ -651,6 +656,18 @@ public final class SqlParser {
         throw errUnexpected(lexer, tok);
     }
 
+    private void parseLikeTableName(GenericLexer lexer, CreateTableModel model) throws SqlException {
+        CharSequence tok;
+        tok = tok(lexer, "table name");
+        model.setLikeTableName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
+        tok = tok(lexer, ")");
+        if(!Chars.equals(tok, ")"))
+            throw errUnexpected(lexer, tok);
+        tok = optTok(lexer);
+        if(tok !=null && !Chars.equals(tok, ";"))
+            throw errUnexpected(lexer, tok);
+    }
+
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         expectTok(lexer, '(');
         QueryModel queryModel = optimiser.optimise(parseDml(lexer, null, lexer.getPosition()), executionContext);
@@ -725,8 +742,6 @@ public final class SqlParser {
     }
 
     private void parseCreateTableColumns(GenericLexer lexer, CreateTableModel model) throws SqlException {
-        expectTok(lexer, '(');
-
         while (true) {
             final int position = lexer.lastTokenPosition();
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));

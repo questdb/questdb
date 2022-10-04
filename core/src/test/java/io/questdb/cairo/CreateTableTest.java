@@ -161,6 +161,69 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertColumnsIndexed("new", "s");
     }
 
+    @Test
+    public void testCreateTableFromLikeTableWithNoIndex() throws Exception {
+        assertCompile("create table y (s1 symbol)");
+        assertQuery("s1\n","select * from tab", "create table tab (like y)", null);
+    }
+
+    @Test
+    public void testCreateTableFromLikeTableWithIndex() throws Exception {
+        assertCompile("create table tab (s symbol), index(s)");
+        assertQuery("s\n", "select * from x", "create table x (like tab)", null);
+        assertColumnsIndexed("x", "s");
+    }
+
+    @Test
+    public void testCreateTableFromLikeTableWithMultipleIndexes() throws Exception {
+        assertCompile("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
+        assertQuery("s1\ts2\ts3\n", "select * from x", "create table x(like tab)",null);
+        assertColumnsIndexed("x", "s1", "s2", "s3");
+    }
+
+    @Test
+    public void testCreateTableFromLikeTableCreatedAsSelectWithNoIndex() throws Exception {
+        assertCompile("create table old(s1 symbol)");
+        assertCompile("create table new as (select * from old)");
+        assertQuery("s1\n", "select * from x", "create table x(like new)",null);
+    }
+
+    @Test
+    public void testCreateTableFromLikeTableWithPartition() throws Exception {
+        assertCompile("create table x (" +
+                "a INT," +
+                "t timestamp) timestamp(t) partition by MONTH");
+        assertQuery("a\tt\n", "select * from tab", "create table tab (like x)","t");
+        assertPartitionIndex("tab", PartitionBy.MONTH, 1);
+    }
+
+    @Test
+    public void testCreateTableFromLikeTableSymbolCapacityNotSame() throws Exception {
+        assertCompile("create table x (" +
+                "a INT," +
+                "y SYMBOL capacity 100 cache,"+
+                "t timestamp) timestamp(t) partition by MONTH");
+        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
+        assertSymbolCapacityNotSame("tab",1,100);
+    }
+
+    private void assertSymbolCapacityNotSame(String tableName, int colIndex, int symbolCapacity) throws Exception {
+        assertMemoryLeak(() -> {
+            try(TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertNotEquals(symbolCapacity, reader.getSymbolMapReader(colIndex).getSymbolCapacity());
+            }
+        });
+    }
+
+    private void assertPartitionIndex(String tableName, int partitionIndex, int timestampIndex) throws Exception {
+        assertMemoryLeak(() -> {
+            try(TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(partitionIndex, reader.getPartitionedBy());
+                Assert.assertEquals(timestampIndex, reader.getMetadata().getTimestampIndex());
+            }
+        });
+    }
+
     private void assertColumnsIndexed(String tableName, String... columnNames) throws Exception {
         assertMemoryLeak(() -> {
             try (TableReader r = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {

@@ -1072,6 +1072,50 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableLike() throws Exception {
+        assertCreateTable("create table x (like y)",
+                "create table x (like y)");
+    }
+
+    @Test
+    public void testCreateLikeTableNameAsDot() throws Exception {
+        assertSyntaxError(
+                "create table newtab ( like . )",
+                27,
+                "'.' is an invalid table name");
+    }
+
+    @Test
+    public void testCreateLikeTableNameWithDot() throws Exception {
+        assertSyntaxError(
+                "create table x (like Y.z)",
+                22,
+                "unexpected token: .");
+    }
+
+    @Test
+    public void testCreateLikeTableNameFullOfHacks() throws Exception {
+        assertSyntaxError(
+                "create table x (like '../../../')",
+                21,
+                "'.' is not allowed");
+    }
+
+    @Test
+    public void testCreateLikeTableInvalidSyntax() throws Exception {
+        assertSyntaxError("create table x (like y), index(s1)",
+                23,
+                "unexpected token: ");
+    }
+
+    @Test
+    public void testCreateTableFromMissingLikeTable() throws Exception {
+        assertSyntaxError("create table x (like y) ",
+                13,
+                "Could not create table");
+    }
+
+    @Test
     public void testCreateTableMissing() throws Exception {
         assertSyntaxError(
                 "create",

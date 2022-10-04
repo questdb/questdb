@@ -98,6 +98,7 @@ public class SqlCompiler implements Closeable {
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final TableStructureAdapterLikeTableMetadata tableStructureAdapterLikeTable = new TableStructureAdapterLikeTableMetadata();
     private final FunctionParser functionParser;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final TextLoader textLoader;
@@ -1417,7 +1418,11 @@ public class SqlCompiler implements Closeable {
                 }
                 try {
                     if (createTableModel.getQueryModel() == null) {
-                        engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                        if (createTableModel.getLikeTableName() != null) {
+                            engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableStructureFromLikeTableMetadata(executionContext, createTableModel));
+                        } else {
+                            engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                        }
                         newTable = true;
                     } else {
                         writer = createTableFromCursor(createTableModel, executionContext);
@@ -1437,6 +1442,12 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofCreateTable();
         } else {
             return compiledQuery.ofCreateTableAsSelect(insertCount);
+        }
+    }
+
+    private TableStructure createTableStructureFromLikeTableMetadata(SqlExecutionContext executionContext, CreateTableModel model) {
+        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), model.getLikeTableName().token)) {
+            return tableStructureAdapterLikeTable.of(model, rdr.getMetadata());
         }
     }
 
@@ -2415,6 +2426,95 @@ public class SqlCompiler implements Closeable {
         public static final int DROP = 1;
         public static final int ATTACH = 2;
         public static final int DETACH = 3;
+    }
+
+    private static class TableStructureAdapterLikeTableMetadata implements TableStructure {
+        private CreateTableModel model;
+        private TableReaderMetadata tableReaderMetadata;
+
+        @Override
+        public int getColumnCount() {
+            return tableReaderMetadata.getColumnCount();
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            return tableReaderMetadata.getColumnHash(columnIndex);
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return tableReaderMetadata.getColumnName(columnIndex);
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            // TODO: how to handle cast columns?
+            return tableReaderMetadata.getColumnType(columnIndex);
+        }
+
+        @Override
+        public long getCommitLag() {
+            return tableReaderMetadata.getCommitLag();
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return tableReaderMetadata.getIndexValueBlockCapacity(columnIndex);
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return tableReaderMetadata.getMaxUncommittedRows();
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return tableReaderMetadata.getPartitionBy();
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            // TODO: should we read it from TableReader.getSymbolMapReader(colIndex).isCached()?
+            return model.getSymbolCacheFlag(columnIndex);
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            // TODO: should we read it from TableReader.getSymbolMapReader(colIndex).getSymbolCapacity()?
+            return model.getSymbolCapacity(columnIndex);
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return model.getTableName();
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return tableReaderMetadata.getTimestampIndex();
+        }
+
+        @Override
+        public boolean isWallEnabled() {
+            return tableReaderMetadata.isWalEnabled();
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return tableReaderMetadata.getColumnQuick(columnIndex).isIndexed();
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return model.isSequential(columnIndex);
+        }
+
+        TableStructureAdapterLikeTableMetadata of(CreateTableModel model, TableReaderMetadata tableReaderMetadata) {
+            this.model = model;
+            this.tableReaderMetadata = tableReaderMetadata;
+            return this;
+        }
     }
 
     private static class TableStructureAdapter implements TableStructure {
