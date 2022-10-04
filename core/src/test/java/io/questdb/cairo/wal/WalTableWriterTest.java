@@ -454,7 +454,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash(13, rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
                 sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
                 sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(30), ColumnType.getGeoHashTypeWithBits(30));
+                sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
 
                 executeOperation("UPDATE " + tableName + " SET " +
                         "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
@@ -542,7 +542,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOBYTEVAL", rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOSHORTVAL", rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(30), ColumnType.getGeoHashTypeWithBits(30));
+                sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
 
                 executeOperation("UPDATE " + tableName + " SET " +
                         "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
@@ -860,7 +860,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("geoByte", ColumnType.getGeoHashTypeWithBits(5))
                 .col("geoInt", ColumnType.getGeoHashTypeWithBits(20))
                 .col("geoShort", ColumnType.getGeoHashTypeWithBits(10))
-                .col("geoLong", ColumnType.getGeoHashTypeWithBits(30))
+                .col("geoLong", ColumnType.getGeoHashTypeWithBits(35))
                 .col("stringc", ColumnType.STRING)
                 .col("label", ColumnType.SYMBOL)
                 .col("bin", ColumnType.BINARY)

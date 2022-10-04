@@ -327,7 +327,7 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    public long getSegment() {
+    public long getSegmentId() {
         return segmentId;
     }
 

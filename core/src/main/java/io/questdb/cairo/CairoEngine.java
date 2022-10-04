@@ -183,10 +183,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
-
     public TableRegistry getTableRegistry() {
         return tableRegistry;
     }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,

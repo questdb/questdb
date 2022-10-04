@@ -2226,7 +2226,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(1, expectedKey);
                     assertNull(dataInfo.nextSymbolMapDiff());
 
-//                    assertFalse(eventCursor.hasNext());
+                    assertFalse(eventCursor.hasNext());
                 }
             }
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
