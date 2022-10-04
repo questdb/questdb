@@ -1238,12 +1238,8 @@ public final class SqlParser {
                             model.setSampleByTimezoneName(expectExpr(lexer));
                             tok = optTok(lexer);
 
-                            if (tok != null && !isSemicolon(tok)) {
-                                if (isWithKeyword(tok)) {
-                                    tok = parseWithOffset(lexer, model);
-                                } else {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "'with offset' expected");
-                                }
+                            if (tok != null && isWithKeyword(tok)) {
+                                tok = parseWithOffset(lexer, model);
                             } else {
                                 model.setSampleByOffset(nextConstant("'00:00'"));
                             }
