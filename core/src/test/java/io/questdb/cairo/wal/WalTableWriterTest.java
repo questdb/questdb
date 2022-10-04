@@ -366,7 +366,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 addRowsToWal(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
 
                 drainWalQueue(true);
-                engine.getTableRegistry().forAllWalTables(engine::checkNotifyOutstandingTxnInWal);
+                engine.checkMissingWalTransactions();
                 drainWalQueue(false);
 
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
