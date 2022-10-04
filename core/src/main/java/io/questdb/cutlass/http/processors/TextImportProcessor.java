@@ -169,7 +169,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             }
 
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
-            transientState.textLoader.setSkipRowsWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
+            transientState.textLoader.setSkipLinesWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
             CharSequence delimiter = rh.getUrlParam("delimiter");
             if (delimiter != null && delimiter.length() == 1) {
                 transientState.textLoader.configureColumnDelimiter((byte) delimiter.charAt(0));
