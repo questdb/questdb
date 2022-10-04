@@ -115,8 +115,8 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());
     }
 
     @Override
