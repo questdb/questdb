@@ -35,31 +35,44 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class CsvLexerBenchmark {
     public static void main(String[] args) {
-        long BUF_SIZE = 64 * 1024;
+        final long BUF_SIZE = 64 * 1024;
+        // "worldcitiespop.csv" is quite large and is not included with this repository.
+        // you can google for "worldcitiespop.txt.gz", download and unpack. Then specify
+        // path to the unpacked file here.
+        // Latest known download location was:
+        // https://github.com/CODAIT/redrock/blob/master/twitter-decahose/src/main/resources/Location/worldcitiespop.txt.gz
+        final String pathToCsv = "/home/vlad/Downloads/worldcitiespop.txt";
+
+
         long buf = Unsafe.malloc(BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
-        long fd = Files.openRO(new Path().of("C:\\Users\\Vlad\\dev\\csv-parsers-comparison\\worldcitiespop.txt").$());
-        assert fd > 0;
-        AtomicInteger counter = new AtomicInteger();
+        try {
+            try (Path path = new Path().of(pathToCsv).$()) {
+                long fd = Files.openRO(path);
+                assert fd > 0;
+                AtomicInteger counter = new AtomicInteger();
 
-        CsvTextLexer lexer = new CsvTextLexer(new DefaultTextConfiguration());
-        CsvTextLexer.Listener listener = (line, fields, hi) -> counter.incrementAndGet();
-
-
-        for (int i = 0; i < 20; i++) {
-            long o = 0;
-            long t = System.nanoTime();
-            counter.set(0);
-            lexer.setupLimits(Integer.MAX_VALUE, listener);
-            while (true) {
-                long r = Files.read(fd, buf, BUF_SIZE, o);
-                if (r < 1) {
-                    break;
+                try (CsvTextLexer lexer = new CsvTextLexer(new DefaultTextConfiguration())) {
+                    CsvTextLexer.Listener listener = (line, fields, hi) -> counter.incrementAndGet();
+                    for (int i = 0; i < 20; i++) {
+                        long o = 0;
+                        long t = System.nanoTime();
+                        counter.set(0);
+                        lexer.setupLimits(Integer.MAX_VALUE, listener);
+                        while (true) {
+                            long r = Files.read(fd, buf, BUF_SIZE, o);
+                            if (r < 1) {
+                                break;
+                            }
+                            lexer.parse(buf, buf + r);
+                            o += r;
+                        }
+                        lexer.parseLast();
+                        System.out.println(System.nanoTime() - t);
+                    }
                 }
-                lexer.parse(buf, buf + r);
-                o += r;
             }
-            lexer.parseLast();
-            System.out.println(System.nanoTime() - t);
+        } finally {
+            Unsafe.free(buf, BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }
