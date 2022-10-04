@@ -4125,7 +4125,8 @@ public class TableWriter implements Closeable {
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts()
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_SEQUENTIAL
             );
             if (mem2 != null) {
                 mem2.of(
@@ -4134,7 +4135,8 @@ public class TableWriter implements Closeable {
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_SEQUENTIAL
                 );
             }
         } finally {

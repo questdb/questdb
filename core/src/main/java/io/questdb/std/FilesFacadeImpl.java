@@ -86,6 +86,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void madvise(long address, long len, int advise) {
+        Files.madvise(address, len, advise);
+    }
+
+    @Override
     public long findClose(long findPtr) {
         if (findPtr != 0) {
             Files.findClose(findPtr);
