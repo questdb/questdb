@@ -22,41 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.text;
 
-import io.questdb.cairo.ColumnTypes;
+public class GenericTextLexer extends AbstractTextLexer {
+    private byte delimiter;
 
-public class RostiAllocFacadeImpl implements RostiAllocFacade {
-
-    public static final RostiAllocFacade INSTANCE = new RostiAllocFacadeImpl();
-
-    @Override
-    public long alloc(ColumnTypes types, long capacity) {
-        return Rosti.alloc(types, capacity);
+    public GenericTextLexer(TextConfiguration textConfiguration) {
+        super(textConfiguration);
     }
 
-    @Override
-    public void clear(long pRosti) {
-        Rosti.clear(pRosti);
+    public void of(byte delimiter) {
+        this.delimiter = delimiter;
     }
 
-    @Override
-    public void free(long pRosti) {
-        Rosti.free(pRosti);
-    }
-
-    @Override
-    public boolean reset(long pRosti, int toSize) {
-        return Rosti.reset(pRosti, toSize);
-    }
-
-    @Override
-    public void updateMemoryUsage(long pRosti, long oldSize) {
-        Rosti.updateMemoryUsage(pRosti, oldSize);
-    }
-
-    @Override
-    public long getSize(long pRosti) {
-        return Rosti.getSize(pRosti);
+    protected void doSwitch(long lo, long ptr, byte c) throws LineLimitException {
+        if (c == delimiter) {
+            onColumnDelimiter(lo);
+        } else if (c == '"') {
+            onQuote();
+        } else if (c == '\n' || c == '\r') {
+            onLineEnd(ptr);
+        } else {
+            checkEol(lo);
+        }
     }
 }
+

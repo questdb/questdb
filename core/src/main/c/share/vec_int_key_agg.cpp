@@ -1300,7 +1300,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     const auto shift = map->slot_size_shift_;
     const auto slots = map->slots_;
 
-    if (valueAtNull < D_MIN) {
+    if (valueAtNull > D_MIN) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
         // maps must have identical structure to use "shift" from map B on map A

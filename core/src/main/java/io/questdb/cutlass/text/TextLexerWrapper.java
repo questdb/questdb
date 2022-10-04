@@ -22,41 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.text;
 
-import io.questdb.cairo.ColumnTypes;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 
-public class RostiAllocFacadeImpl implements RostiAllocFacade {
+public class TextLexerWrapper implements QuietCloseable {
+    private final TextConfiguration configuration;
+    private final CsvTextLexer csvLexer;
+    private GenericTextLexer genericTextLexer;
 
-    public static final RostiAllocFacade INSTANCE = new RostiAllocFacadeImpl();
+    public TextLexerWrapper(TextConfiguration configuration) {
+        this.configuration = configuration;
+        this.csvLexer = new CsvTextLexer(configuration);
+    }
 
-    @Override
-    public long alloc(ColumnTypes types, long capacity) {
-        return Rosti.alloc(types, capacity);
+    public AbstractTextLexer getLexer(byte delimiter) {
+        if (delimiter == ',') {
+            csvLexer.clear();
+            return csvLexer;
+        } else {
+            if (genericTextLexer == null) {
+                this.genericTextLexer = new GenericTextLexer(configuration);
+            }
+            this.genericTextLexer.clear();
+            this.genericTextLexer.of(delimiter);
+            return this.genericTextLexer;
+        }
     }
 
     @Override
-    public void clear(long pRosti) {
-        Rosti.clear(pRosti);
-    }
-
-    @Override
-    public void free(long pRosti) {
-        Rosti.free(pRosti);
-    }
-
-    @Override
-    public boolean reset(long pRosti, int toSize) {
-        return Rosti.reset(pRosti, toSize);
-    }
-
-    @Override
-    public void updateMemoryUsage(long pRosti, long oldSize) {
-        Rosti.updateMemoryUsage(pRosti, oldSize);
-    }
-
-    @Override
-    public long getSize(long pRosti) {
-        return Rosti.getSize(pRosti);
+    public void close() {
+        Misc.free(csvLexer);
+        genericTextLexer = Misc.free(genericTextLexer);
     }
 }

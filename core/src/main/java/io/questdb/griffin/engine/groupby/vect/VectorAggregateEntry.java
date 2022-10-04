@@ -39,6 +39,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     private VectorAggregateFunction func;
     private CountDownLatchSPI doneLatch;
     private AtomicInteger oomCounter;
+    private RostiAllocFacade raf;
 
     @Override
     public void clear() {
@@ -54,7 +55,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
                 if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {
                     oomCounter.incrementAndGet();
                 }
-                Rosti.updateMemoryUsage(pRosti[workerId], oldSize);
+                raf.updateMemoryUsage(pRosti[workerId], oldSize);
             } else {
                 func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
             }
@@ -74,7 +75,8 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
             int columnSizeShr,
             CountDownLatchSPI doneLatch,
             // oom is not possible when aggregation is not keyed
-            @Nullable AtomicInteger oomCounter
+            @Nullable AtomicInteger oomCounter,
+            RostiAllocFacade raf
     ) {
         of(sequence);
         this.pRosti = pRosti;
@@ -85,5 +87,6 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
         this.columnSizeShr = columnSizeShr;
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
+        this.raf = raf;
     }
 }

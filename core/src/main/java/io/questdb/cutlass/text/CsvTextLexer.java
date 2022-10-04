@@ -22,41 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.text;
 
-import io.questdb.cairo.ColumnTypes;
-
-public class RostiAllocFacadeImpl implements RostiAllocFacade {
-
-    public static final RostiAllocFacade INSTANCE = new RostiAllocFacadeImpl();
-
-    @Override
-    public long alloc(ColumnTypes types, long capacity) {
-        return Rosti.alloc(types, capacity);
+public class CsvTextLexer extends AbstractTextLexer {
+    public CsvTextLexer(TextConfiguration textConfiguration) {
+        super(textConfiguration);
     }
 
-    @Override
-    public void clear(long pRosti) {
-        Rosti.clear(pRosti);
-    }
-
-    @Override
-    public void free(long pRosti) {
-        Rosti.free(pRosti);
-    }
-
-    @Override
-    public boolean reset(long pRosti, int toSize) {
-        return Rosti.reset(pRosti, toSize);
-    }
-
-    @Override
-    public void updateMemoryUsage(long pRosti, long oldSize) {
-        Rosti.updateMemoryUsage(pRosti, oldSize);
-    }
-
-    @Override
-    public long getSize(long pRosti) {
-        return Rosti.getSize(pRosti);
+    protected void doSwitch(long lo, long ptr, byte c) throws LineLimitException {
+        switch (c) {
+            case ',':
+                onColumnDelimiter(lo);
+                break;
+            case '"':
+                onQuote();
+                break;
+            case '\n':
+            case '\r':
+                onLineEnd(ptr);
+                break;
+            default:
+                checkEol(lo);
+                break;
+        }
     }
 }
+
