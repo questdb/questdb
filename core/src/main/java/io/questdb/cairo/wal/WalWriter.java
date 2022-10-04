@@ -141,7 +141,7 @@ public class WalWriter implements TableWriterFrontend {
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
         }
-        if (operation.isMetadataChange()) {
+        if (operation.isStructureChange()) {
             long txn;
             do {
                 try {
@@ -538,13 +538,15 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private long applyNonStructuralOperation(AbstractOperation operation) {
+        if (operation.getSqlExecutionContext() == null) {
+            throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
+        }
         try {
             lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
             return getTableTxn();
         } catch (Throwable th) {
-            if (!isDistressed()) {
-                rollback();
-            }
+            // perhaps half record was written to WAL-e, better to not use this WAL writer instance
+            distressed = true;
             throw th;
         }
     }
@@ -590,7 +592,9 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
-        for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += NEW_COL_RECORD_SIZE) {
+        // Each record is about primary and secondary file. File descriptor is set every half a record.
+        int halfRecord = NEW_COL_RECORD_SIZE / 2;
+        for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += halfRecord) {
             long fd = newColumnFiles.get(fdIndex);
             if (fd > -1L) {
                 ff.close(fd);
@@ -1522,12 +1526,12 @@ public class WalWriter implements TableWriterFrontend {
         public void removeColumn(CharSequence columnName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                throw CairoException.critical(0).put("cannot remove column, column does not exists [table=").put(tableName)
+                throw CairoException.nonCritical().put("cannot remove column, column does not exists [table=").put(tableName)
                         .put(", column=").put(columnName).put(']');
             }
 
             if (columnIndex == metadata.getTimestampIndex()) {
-                throw CairoException.critical(0).put("cannot remove designated timestamp column [table=").put(tableName)
+                throw CairoException.nonCritical().put("cannot remove designated timestamp column [table=").put(tableName)
                         .put(", column=").put(columnName);
             }
             structureVersion++;
@@ -1537,21 +1541,21 @@ public class WalWriter implements TableWriterFrontend {
         public void renameColumn(CharSequence columnName, CharSequence newName) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
-                throw CairoException.critical(0).put("cannot rename column, column does not exists [table=").put(tableName)
+                throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableName)
                         .put(", column=").put(columnName).put(']');
             }
             if (columnIndex == metadata.getTimestampIndex()) {
-                throw CairoException.critical(0).put("cannot rename designated timestamp column [table=").put(tableName)
+                throw CairoException.nonCritical().put("cannot rename designated timestamp column [table=").put(tableName)
                         .put(", column=").put(columnName).put(']');
             }
 
             int columnIndexNew = metadata.getColumnIndexQuiet(newName);
             if (columnIndexNew > -1) {
-                throw CairoException.critical(0).put("cannot rename column, column with the name already exists [table=").put(tableName)
+                throw CairoException.nonCritical().put("cannot rename column, column with the name already exists [table=").put(tableName)
                         .put(", newName=").put(newName).put(']');
             }
             if (!TableUtils.isValidColumnName(newName, newName.length())) {
-                throw CairoException.critical(0).put("invalid column name: ").put(columnName);
+                throw CairoException.nonCritical().put("invalid column name: ").put(newName);
             }
             structureVersion++;
         }

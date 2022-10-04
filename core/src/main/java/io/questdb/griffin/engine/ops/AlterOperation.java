@@ -171,7 +171,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
-    public boolean isMetadataChange() {
+    public boolean isStructureChange() {
         switch (command) {
             case ADD_COLUMN:
             case RENAME_COLUMN:
@@ -361,7 +361,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 writer.removeColumn(columnName);
             } catch (CairoException e) {
                 LOG.error().$("cannot drop column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot drop column. Try again later [errno=").put(e.getErrno()).put(']');
+                throw SqlException.$(tableNamePosition, e.getFlyweightMessage()).put('[').put(e.getErrno()).put(']');
             }
         }
     }

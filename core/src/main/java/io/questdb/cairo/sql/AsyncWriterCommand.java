@@ -50,7 +50,7 @@ public interface AsyncWriterCommand extends Closeable {
 
     long getCorrelationId();
 
-    boolean isMetadataChange();
+    boolean isStructureChange();
 
     void startAsync();
 

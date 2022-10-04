@@ -71,7 +71,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public boolean isMetadataChange() {
+    public boolean isStructureChange() {
         return false;
     }
 
