@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateOperation extends AbstractOperation {
 
-    public final static String CMD_NAME = "UPDATE";
+    public static final String CMD_NAME = "UPDATE";
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
@@ -48,6 +48,15 @@ public class UpdateOperation extends AbstractOperation {
     private volatile boolean requesterTimeout;
     private boolean executingAsync;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+
+    public UpdateOperation(
+            String tableName,
+            int tableId,
+            long tableVersion,
+            int tableNamePosition
+    ) {
+        this(tableName, tableId, tableVersion, tableNamePosition, null);
+    }
 
     public UpdateOperation(
             String tableName,
@@ -140,6 +149,6 @@ public class UpdateOperation extends AbstractOperation {
     @Override
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         super.withContext(sqlExecutionContext);
-        this.circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
+        circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
     }
 }

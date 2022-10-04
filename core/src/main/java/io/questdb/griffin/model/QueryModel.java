@@ -884,6 +884,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isUpdateModel;
     }
 
+    public boolean containsJoin() {
+        QueryModel current = this;
+        do {
+            if (current.getJoinModels().size() > 1) {
+                return true;
+            }
+        } while ((current = current.getNestedModel()) != null);
+        return false;
+    }
+
     public void moveGroupByFrom(QueryModel model) {
         this.groupBy.addAll(model.groupBy);
         // clear the source

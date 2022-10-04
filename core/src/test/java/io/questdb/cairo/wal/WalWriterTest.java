@@ -30,6 +30,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
@@ -2270,12 +2271,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    private static void removeColumn(WalWriter walWriter, String columnName) {
-        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(walWriter.getTableName()), 0);
-        removeColumnOperation.ofDropColumn(columnName);
-        walWriter.applyAlter(removeColumnOperation.build(), true);
-    }
-
     @Test
     public void testRollSegmentByInterval() throws Exception {
         assertMemoryLeak(() -> {
@@ -2916,16 +2911,22 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    private static void addColumn(WalWriter walWriter, String columnName, int columnType) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter.getTableName()), 0);
+    static void addColumn(TableWriterFrontend writer, String columnName, int columnType) throws SqlException {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
         addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        walWriter.applyAlter(addColumnC.build(), true);
+        writer.applyAlter(addColumnC.build(), true);
     }
 
-    private static void renameColumn(WalWriter walWriter, String columnName, String newColumnName) {
-        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(walWriter.getTableName()), 0);
+    static void removeColumn(TableWriterFrontend writer, String columnName) throws SqlException {
+        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
+        removeColumnOperation.ofDropColumn(columnName);
+        writer.applyAlter(removeColumnOperation.build(), true);
+    }
+
+    static void renameColumn(TableWriterFrontend writer, String columnName, String newColumnName) throws SqlException {
+        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
         renameColumnC.ofRenameColumn(columnName, newColumnName);
-        walWriter.applyAlter(renameColumnC.build(), true);
+        writer.applyAlter(renameColumnC.build(), true);
     }
 
     static void prepareBinPayload(long pointer, int limit) {
@@ -3021,19 +3022,19 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void createTable(String tableName) {
+    static void createTable(String tableName) {
         try (TableModel model = defaultModel(tableName)) {
             createTable(model);
         }
     }
 
-    private void createTable(String tableName, boolean withTimestamp) {
+    static void createTable(String tableName, boolean withTimestamp) {
         try (TableModel model = defaultModel(tableName, withTimestamp)) {
             createTable(model);
         }
     }
 
-    private void createTable(TableModel model) {
+    static void createTable(TableModel model) {
         engine.createTableUnsafe(
                 AllowAllCairoSecurityContext.INSTANCE,
                 model.getMem(),
@@ -3042,12 +3043,12 @@ public class WalWriterTest extends AbstractGriffinTest {
         );
     }
 
-    private TableModel defaultModel(String tableName) {
+    private static TableModel defaultModel(String tableName) {
         return defaultModel(tableName, false);
     }
 
     @SuppressWarnings("resource")
-    private TableModel defaultModel(String tableName, boolean withTimestamp) {
+    private static TableModel defaultModel(String tableName, boolean withTimestamp) {
         return withTimestamp
                 ? new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("a", ColumnType.BYTE)

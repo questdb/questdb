@@ -186,12 +186,11 @@ public class WalWriter implements TableWriterFrontend {
     // Returns table transaction number
     @Override
     public long applyUpdate(UpdateOperation operation) {
-        if (operation.getFactory().recordCursorSupportsRandomAccess() && operation.getFactory().supportsUpdateRowId(tableName)) {
-            // no join in UPDATE statement
-            return applyNonStructuralOperation(operation);
-        }
+        // it is guaranteed that there is no join in UPDATE statement
+        // because SqlCompiler rejects the UPDATE if it contains join
+        return applyNonStructuralOperation(operation);
 
-        // here we have 2 options instead of throwing exception
+        // when join is allowed in UPDATE we have 2 options
         // 1. we could write the updated partitions into WAL.
         //   since we cannot really rely on row ids we should probably create
         //   a PARTITION_REWRITE event and use it here to replace the updated
@@ -204,8 +203,6 @@ public class WalWriter implements TableWriterFrontend {
         //   put it into the SQL event as a requirement for running the SQL.
         //   when the WAL event is processed we would need to query the exact
         //   versions of each table involved in the join when running the SQL.
-        operation.close();
-        throw new UnsupportedOperationException("UPDATE statements with join are not supported yet for WAL tables");
     }
 
     @Override

@@ -234,15 +234,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName, MetadataFactory metadataFactory) {
         securityContext.checkWritePermission();
-        String tableNameStr = Chars.toString(tableName);
+        final String tableNameStr = Chars.toString(tableName);
         if (tableRegistry.hasSequencer(tableNameStr)) {
             // This is WAL table because sequencer exists
-            SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
-            tableRegistry.copyMetadataTo(tableName,sequencerMetadata);
+            final SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
+            tableRegistry.copyMetadataTo(tableName, sequencerMetadata);
             return sequencerMetadata;
         }
 
-        TableRecordMetadata metadata = null;
         try {
             return metadataFactory.openTableReaderMetadata(tableName);
         } catch (CairoException e) {
