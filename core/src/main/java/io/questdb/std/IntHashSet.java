@@ -25,12 +25,16 @@
 package io.questdb.std;
 
 import java.util.Arrays;
+import java.util.NoSuchElementException;
+import java.util.PrimitiveIterator;
 
 
 public class IntHashSet extends AbstractIntHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final IntList list;
+
+    private IntIteratorImpl it;
 
     public IntHashSet() {
         this(MIN_INITIAL_CAPACITY);
@@ -50,6 +54,45 @@ public class IntHashSet extends AbstractIntHashSet {
         super(initialCapacity, loadFactor, noKeyValue);
         this.list = new IntList(free);
         clear();
+    }
+
+    private class IntIteratorImpl implements PrimitiveIterator.OfInt {
+        private int keysIndex;
+        private int yieldedCount;
+
+        public void reset() {
+            keysIndex = 0;
+            yieldedCount = 0;
+        }
+
+        @Override
+        public int nextInt() {
+            while (keysIndex < keys.length) {
+                final int entry = keys[keysIndex];
+                ++keysIndex;
+                if (entry != noEntryKeyValue) {
+                     ++yieldedCount;
+                     return entry;
+                }
+            }
+            throw new NoSuchElementException();
+        }
+
+        @Override
+        public boolean hasNext() {
+            return yieldedCount < size();
+        }
+    }
+
+    /** Returns a reset borrowed iterator. It can't be used to iterate the collection in parallel. */
+    public PrimitiveIterator.OfInt iterator() {
+        if (it == null) {
+            it = new IntIteratorImpl();
+        }
+        else {
+            it.reset();
+        }
+        return it;
     }
 
     /**

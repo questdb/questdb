@@ -29,46 +29,55 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TxReader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.WalPurgeNotificationTask;
+
 import java.io.Closeable;
+import java.util.PrimitiveIterator;
 
-public class WalPurgeJob extends AbstractQueueConsumerJob<WalPurgeNotificationTask> implements Closeable {
+// TODO [amunra]: Should this just be a sync job?
+public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
+    /** Table of columns grouping segment information. One row per walId. */
+    private static class WalInfoTable {
+        public IntList walIds = new IntList();
+        public IntList segmentIds = new IntList();
+        public LongList segmentTxns = new LongList();
+        public LongList txns = new LongList();
+
+        public void clear() {
+            walIds.clear();
+            segmentIds.clear();
+            segmentTxns.clear();
+            txns.clear();
+        }
+
+        public int size() {
+            return walIds.size();
+        }
+
+        public void add(int walId, int segmentId, long segmentTxn, long txn) {
+            walIds.add(walId);
+            segmentIds.add(segmentId);
+            segmentTxns.add(segmentTxn);
+            txns.add(txn);
+        }
+    }
+
+    // TODO [amunra]: Sprinkle some logging to track what got deleted and why.
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
 
     private CairoEngine engine;
     private Path path = new Path();
     private NativeLPSZ walName = new NativeLPSZ();
     private NativeLPSZ segmentName = new NativeLPSZ();
-
-    // Key: WalId (e.g. 1 for "wal1") to index in lists below.
-    private CharSequenceIntHashMap walInfo = new CharSequenceIntHashMap();
-
-    private IntList segmentIds = new IntList();
-
-    // TODO: Remove these?
-    private LongList tableTxns = new LongList();
-    private LongList segmentTxns = new LongList();
-
-
-    private final IntHashSet outstandingLastTxnWals = new IntHashSet();
-
-    private final IntList allWalIds = new IntList();
-
-    private final IntHashSet seenWalIds = new IntHashSet();  // TODO [amunra]: Merge logic with `outstandingLastTxnWals`.
-
+    private final IntHashSet discoveredWalIds = new IntHashSet();
+    private WalInfoTable walInfoTable = new WalInfoTable();
     private TxReader txReader;
 
-
-
     public WalPurgeJob(CairoEngine engine) {
-        super(
-                engine.getMessageBus().getWalPurgeNotificationQueue(),
-                engine.getMessageBus().getWalPurgeNotificationSubSequence());
         this.engine = engine;
         this.txReader = new TxReader(engine.getConfiguration().getFilesFacade());
     }
@@ -105,115 +114,141 @@ public class WalPurgeJob extends AbstractQueueConsumerJob<WalPurgeNotificationTa
         return true;
     }
 
-    private void setTablePath(Path path, CharSequence tableName) {
+    private Path setTablePath(CharSequence tableName) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).$();
+        return path;
     }
 
-    private void setWalPath(Path path, CharSequence tableName, int walId) {
+    private Path setWalPath(CharSequence tableName, int walId) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat("wal").put(walId).$();
+        return path;
     }
 
-    private void setSegmentPath(Path path, CharSequence tableName, int walId, int segmentId) {
+    private Path setSegmentPath(CharSequence tableName, int walId, int segmentId) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat("wal").put(walId).slash().put(segmentId).$();
+        return path;
     }
 
-    private void broadSweepWal(int tableId, CharSequence tableName, int walId, long lastTxn) {
-        setWalPath(path, tableName, walId);
-        FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {   // TODO [amunra]: Can I use the same `path` object here or is the memory borrowed by another `iterateDir`?
-            if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
-                // Read first long from transaction file or Transaction Reader.
-                // engine.getWalReader(allowAll, tableName, walName, segmentCount, -1);
-            }
-        });
-    }
-
-    private void deleteWalDirectory(CharSequence tableName, int walId) {
-        setWalPath(path, tableName, walId);
-        FilesFacadeImpl.INSTANCE.rmdir(path);  // TODO: Recursive delete?
-    }
-
-    private void deleteUnreachableWals(CharSequence tableName, IntHashSet seenWalIds) {
-        // We scan for WAL directories that we didn't already discover by looking through the sequencer cursor.
-        setTablePath(path, tableName);
-        FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
+    private void discoverWalDirectories(CharSequence tableName, IntHashSet discoveredWalIds) {
+        FilesFacadeImpl.INSTANCE.iterateDir(setTablePath(tableName), (pUtf8NameZ, type) -> {
             if ((type == Files.DT_DIR) && matchesWalNamePattern(walName.of(pUtf8NameZ))) {
                 // We just record the name for now in a set which we'll remove items to know when we're done.
                 int walId = 0;
                 try {
                     walId = Numbers.parseInt(walName, 3, walName.length());
-                } catch (NumericException e) {
+                } catch (NumericException _ne) {
                     return;  // Ignore non-wal directory
                 }
-                if (!seenWalIds.contains(walId)) {
-                    deleteWalDirectory(tableName, walId);
-                }
+                discoveredWalIds.add(walId);
             }
         });
     }
 
-    private void deleteUnreachableSegments(CharSequence tableName, int walId, int segmentId) {
-        setSegmentPath(path, tableName, walId, segmentId);
+    private void extractSegmentInfoForEachWal(CharSequence tableName, TableRegistry tableRegistry, IntHashSet fsWalIds, WalInfoTable walInfoTable) {
+        // TODO: How do I get the path to the TXN file?
+        txReader.ofRO(path, PartitionBy.NONE);  // TODO [amunra]: Does the partitioning param matter here?
+        final long lastAppliedTxn = txReader.unsafeReadVersion();
+
+        try (SequencerCursor sequencerCursor = tableRegistry.getCursor(tableName, lastAppliedTxn)) {
+            while (sequencerCursor.hasNext() && (fsWalIds.size() > 0)) {
+                final int walId = sequencerCursor.getWalId();
+                if (fsWalIds.contains(walId)) {
+                    walInfoTable.add(walId,
+                            sequencerCursor.getSegmentId(),
+
+                            // TODO [amunra]: Do we need these two fields?
+                            sequencerCursor.getSegmentTxn(),
+                            sequencerCursor.getTxn());
+                    fsWalIds.remove(walId);
+                }
+            }
+        }
+    }
+
+    private void silentRecursiveDelete(Path path) {
+        // TODO [amunra]: Is this a recursive delete? Are errors suppressed?
+        FilesFacadeImpl.INSTANCE.rmdir(path);
+    }
+
+    private void deleteWalDirectory(CharSequence tableName, int walId) {
+        silentRecursiveDelete(setWalPath(tableName, walId));
+    }
+
+    private void deleteOutstandingWalDirectories(CharSequence tableName, IntHashSet discoveredWalIds) {
+        for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
+            deleteWalDirectory(tableName, it.nextInt());
+        }
+    }
+
+    private boolean segmentIsReapable(CharSequence tableName, int walId, int segmentId, int walsLatestSegmentId) {
+        return segmentId < walsLatestSegmentId;
+    }
+
+    private void deleteClosedSegment(CharSequence tableName, int walId, int segmentId) {
+        silentRecursiveDelete(setSegmentPath(tableName, walId, segmentId));
+    }
+
+    private void deleteUnreachableSegments(CharSequence tableName, WalInfoTable walInfoTable) {
+        for (int i = 0; i < walInfoTable.size(); ++i) {
+            final int index = i;
+            final int walId = walInfoTable.walIds.get(index);
+            FilesFacadeImpl.INSTANCE.iterateDir(setWalPath(tableName, walId), (pUtf8NameZ, type) -> {
+                if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
+                    int segmentId = 0;
+                    try {
+                        segmentId = Numbers.parseInt(segmentName);
+                    }
+                    catch (NumericException _ne) {
+                        return; // Ignore non-segment directory.
+                    }
+                    final int walsLatestSegmentId = walInfoTable.segmentIds.get(index);
+                    if (segmentIsReapable(tableName, walId, segmentId, walsLatestSegmentId)) {
+                        deleteClosedSegment(tableName, walId, segmentId);
+                    }
+                }
+            });
+        }
+        // setSegmentPath(tableName, walId, segmentId);
     }
 
     /**
      * Perform a broad sweep that searches for all tables that have closed
      * WAL segments across the database and deletes any which are no longer needed.
      */
-    public void broadSweep() {
-        // Clean-up at startup.
+    private void broadSweep() {
         TableRegistry tableRegistry = engine.getTableRegistry();
         tableRegistry.forAllWalTables((tableId, tableName, lastTxn) -> {
-            segmentIds.clear();
-            segmentTxns.clear();
-            tableTxns.clear();
-            walInfo.clear();
-            allWalIds.clear();
-            seenWalIds.clear();
+            discoveredWalIds.clear();
+            walInfoTable.clear();
 
-            // TODO: How do I get the path to the TXN file?
-            txReader.ofRO(path, PartitionBy.NONE);  // TODO [amunra]: Does the partitioning param matter here?
-            final long lastAppliedTxn = txReader.unsafeReadVersion();
+            discoverWalDirectories(tableName, discoveredWalIds);
 
-            try (SequencerCursor sequencerCursor = tableRegistry.getCursor(tableName, lastAppliedTxn)) {
-                while (sequencerCursor.hasNext() && (outstandingLastTxnWals.size() > 0)) {
-                    final int walId = sequencerCursor.getWalId();
-                    final int segmentId = sequencerCursor.getSegmentId();
+            extractSegmentInfoForEachWal(tableName, tableRegistry, discoveredWalIds, walInfoTable);
 
-                    // We probably don't need these two.
-                    final long segmentTxn = sequencerCursor.getSegmentTxn();
-                    final long tableTxn = sequencerCursor.getTxn();
+            // Call to `extractSegmentInfoForEachWal` populated `walInfoTable`.
+            deleteUnreachableSegments(tableName, walInfoTable);
 
-                    if (!seenWalIds.contains(walId)) {
-                        final int index = segmentIds.size();
-                        segmentIds.add(segmentId);
-                        segmentTxns.add(segmentTxn);
-
-                        // TODO: Remove these?
-                        tableTxns.add(tableTxn);
-                        walInfo.put(walName, index);
-
-                        seenWalIds.add(walId);
-                    }
-                }
-            }
-
-            deleteUnreachableWals(tableName, seenWalIds);
-            deleteUnreachableSegments(tableName, walInfo);
+            // Calls to `extractSegmentInfoForEachWal` and `deleteUnreachableSegments` possibly leave outstanding
+            // `discoveredWalIds` that are still on the filesystem and don't have any active segments.
+            // The walNNN directories themselves can be removed.
+            // Note that this also handles cases where a wal directory was created shortly before a crash and thus
+            // never recorded and tracked by the sequencer for that table.
+            deleteOutstandingWalDirectories(tableName, discoveredWalIds);
         });
+    }
+
+    @Override
+    protected boolean runSerially() {
+        broadSweep();
+        return false;
     }
 
     @Override
     public void close() {
         this.txReader.close();
         path.close();
-    }
-
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        // TODO [amunra]: Do we even needs queues? Should this be a sync job instead?
-        return false;
     }
 }

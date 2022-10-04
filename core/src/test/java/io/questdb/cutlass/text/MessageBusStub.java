@@ -277,19 +277,4 @@ public class MessageBusStub implements MessageBus {
     public Sequence getWalTxnNotificationSubSequence() {
         return null;
     }
-
-    @Override
-    public RingQueue<WalPurgeNotificationTask> getWalPurgeNotificationQueue() {
-        return null;
-    }
-
-    @Override
-    public Sequence getWalPurgeNotificationPubSequence() {
-        return null;
-    }
-
-    @Override
-    public Sequence getWalPurgeNotificationSubSequence() {
-        return null;
-    }
 }
