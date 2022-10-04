@@ -511,7 +511,8 @@ public class WalWriter implements Closeable {
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts()
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_SEQUENTIAL
             );
 
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
@@ -521,7 +522,8 @@ public class WalWriter implements Closeable {
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_SEQUENTIAL
                 );
                 mem2.putLong(0L);
             }
