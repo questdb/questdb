@@ -74,7 +74,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final int rootPathLen;
 
     private final TextImportExecutionContext textImportExecutionContext;
-    private final TxReader tempTxReader;
+    private TxReader tempTxReader;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -125,7 +125,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
         this.rootPath = new Path().of(configuration.getRoot());
         this.rootPathLen = rootPath.length();
+    }
 
+    public void checkMissingWalTransactions() {
         try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
             tempTxReader = txReader;
             tableRegistry.forAllWalTables(this::checkNotifyOutstandingTxnInWal);
@@ -304,12 +306,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
         rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader.unsafeLoad(true)) {
-                if (txReader.getTxn() < txn) {
-                    // table name should be immutable when in the notification
-                    String tableNameStr = Chars.toString(tableName);
-                    notifyWalTxnCommitted(tableId, tableNameStr, txn);
-                }
+            if (txReader.unsafeReadTxn()  < txn) {
+                // table name should be immutable when in the notification message
+                String tableNameStr = Chars.toString(tableName);
+                notifyWalTxnCommitted(tableId, tableNameStr, txn);
             }
         }
     }

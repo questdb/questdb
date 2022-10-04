@@ -22,34 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 
-public interface ServerConfiguration {
-
-    CairoConfiguration getCairoConfiguration();
-
-    HttpServerConfiguration getHttpServerConfiguration();
-
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
-
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWalApplyPoolConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
-
-    MetricsConfiguration getMetricsConfiguration();
+public class DefaultWalApplyWorkerPoolConfiguration implements WorkerPoolConfiguration {
+    @Override
+    public int getWorkerCount() {
+        return 2;
+    }
 }

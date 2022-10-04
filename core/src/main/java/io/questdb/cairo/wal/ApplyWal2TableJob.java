@@ -79,7 +79,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 break;
             } catch (CairoException ex) {
-                LOG.critical().$("Failed to apply WAL data to table [table=").$(tableName)
+                LOG.critical().$("failed to apply WAL data to table [table=").$(tableName)
                         .$(", error=").$(ex.getMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();

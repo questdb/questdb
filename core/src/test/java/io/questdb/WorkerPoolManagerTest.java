@@ -47,7 +47,7 @@ public class WorkerPoolManagerTest {
     private static final HealthMetrics METRICS = Metrics.disabled().health();
 
     @Test
-    public void testConstructor() throws SqlException {
+    public void testConstructor() {
         final int workerCount = 2;
         final AtomicInteger counter = new AtomicInteger(0);
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount, sharedPool -> counter.incrementAndGet());
@@ -195,6 +195,11 @@ public class WorkerPoolManagerTest {
 
             @Override
             public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+                return null;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
                 return null;
             }
 

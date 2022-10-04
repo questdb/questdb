@@ -179,7 +179,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try {
                 fut.await();
             } catch (SqlException exception) {
-                TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
+                TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column");
             } finally {
                 fut.close();
             }
@@ -246,7 +246,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (SqlException exception) {
                         Assert.assertNotNull(exception);
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column [");
                     }
                 }
 

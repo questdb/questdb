@@ -101,9 +101,11 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new GroupByJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
 
-                    final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
-                    sharedPool.assign(applyWal2TableJob);
-                    sharedPool.freeOnExit(applyWal2TableJob);
+                    if (!config.getWalApplyPoolConfiguration().isEnabled()) {
+                        final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
+                        sharedPool.assign(applyWal2TableJob);
+                        sharedPool.freeOnExit(applyWal2TableJob);
+                    }
 
                     // text import
                     TextImportJob.assignToPool(messageBus, sharedPool);
@@ -131,6 +133,20 @@ public class ServerMain implements Closeable {
                 }
             }
         };
+
+        if (config.getWalApplyPoolConfiguration().isEnabled()) {
+            WorkerPool workerPool = workerPoolManager.getInstance(
+                    config.getWalApplyPoolConfiguration(),
+                    metrics.health(),
+                    WorkerPoolManager.Requester.WAL_APPLY
+            );
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
+            workerPool.assign(applyWal2TableJob);
+            workerPool.freeOnExit(applyWal2TableJob);
+        }
+
+        // Scan WAL tables to find out if all wall transactions are applied.
+        engine.checkMissingWalTransactions();
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));

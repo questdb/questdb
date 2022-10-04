@@ -361,7 +361,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 writer.removeColumn(columnName);
             } catch (CairoException e) {
                 LOG.error().$("cannot drop column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, e.getFlyweightMessage()).put('[').put(e.getErrno()).put(']');
+                throw SqlException.$(tableNamePosition, "cannot drop column [").put(e.getErrno()).put(']').put(e.getFlyweightMessage());
             }
         }
     }

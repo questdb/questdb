@@ -365,7 +365,12 @@ public enum PropertyKey {
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
-    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default");
+    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
+    WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
+    WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
+    WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
+    WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
+    WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;
