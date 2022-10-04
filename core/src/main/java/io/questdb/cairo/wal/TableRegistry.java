@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.AbstractPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.PoolClosedException;
@@ -52,7 +49,7 @@ import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
 
 public class TableRegistry extends AbstractPool {
     private static final Log LOG = LogFactory.getLog(TableRegistry.class);
-    private final ConcurrentHashMap<Entry> seqRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<SequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
 
@@ -165,7 +162,7 @@ public class TableRegistry extends AbstractPool {
         throwIfClosed();
         final String tableName = Chars.toString(tableStructure.getTableName());
         return seqRegistry.compute(tableName, (key, value) -> {
-            Entry sequencer = new Entry(this, this.engine, tableName);
+            SequencerEntry sequencer = new SequencerEntry(this, this.engine, tableName);
             sequencer.create(tableId, tableStructure);
             sequencer.open();
             if (value != null) {
@@ -179,14 +176,19 @@ public class TableRegistry extends AbstractPool {
         throwIfClosed();
         final String tableNameStr = Chars.toString(tableName);
 
-        Entry entry = seqRegistry.get(tableNameStr);
-        if (entry != null) {
+        SequencerEntry entry = seqRegistry.get(tableNameStr);
+        if (entry != null && !entry.isDistressed()) {
             return entry;
+        }
+
+        if (entry != null) {
+            // Remove distressed entry
+            seqRegistry.remove(tableNameStr, entry);
         }
 
         entry = seqRegistry.computeIfAbsent(tableNameStr, (key) -> {
             if (isWalTable(tableNameStr, getConfiguration().getRoot(), getConfiguration().getFilesFacade())) {
-                Entry sequencer = new Entry(this, this.engine, tableNameStr);
+                SequencerEntry sequencer = new SequencerEntry(this, this.engine, tableNameStr);
                 sequencer.reset();
                 sequencer.open();
                 return sequencer;
@@ -220,9 +222,9 @@ public class TableRegistry extends AbstractPool {
             return true;
         }
         boolean removed = false;
-        final Iterator<Entry> iterator = seqRegistry.values().iterator();
+        final Iterator<SequencerEntry> iterator = seqRegistry.values().iterator();
         while (iterator.hasNext()) {
-            final Entry sequencer = iterator.next();
+            final SequencerEntry sequencer = iterator.next();
             if (deadline >= sequencer.releaseTime) {
                 sequencer.pool = null;
                 sequencer. close();
@@ -250,7 +252,7 @@ public class TableRegistry extends AbstractPool {
         return removed;
     }
 
-    private boolean returnToPool(final Entry entry) {
+    private boolean returnToPool(final SequencerEntry entry) {
         if (isClosed()) {
             return false;
         }
@@ -265,11 +267,11 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    private static class Entry extends SequencerImpl {
+    private static class SequencerEntry extends SequencerImpl {
         private TableRegistry pool;
         private volatile long releaseTime = Long.MAX_VALUE;
 
-        Entry(TableRegistry pool, CairoEngine engine, String tableName) {
+        SequencerEntry(TableRegistry pool, CairoEngine engine, String tableName) {
             super(engine, tableName);
             this.pool = pool;
         }
@@ -281,10 +283,13 @@ public class TableRegistry extends AbstractPool {
         @Override
         public void close() {
             if (isOpen()) {
-                if (pool != null) {
+                if (!isDistressed() && pool != null) {
                     if (pool.returnToPool(this)) {
                         return;
                     }
+                }
+                if (pool != null) {
+                    pool.seqRegistry.remove(getTableName(), this);
                 }
                 super.close();
             }
@@ -311,6 +316,7 @@ public class TableRegistry extends AbstractPool {
                 Entry obj;
                 do {
                     obj = cache.poll();
+
                     if (obj == null) {
                         obj = new Entry(tableName, tableRegistry, configuration, this);
                     } else {

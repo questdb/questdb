@@ -171,20 +171,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
-    public boolean isMetadataChange() {
+    public boolean isStructureChange() {
         switch (command) {
-            case DROP_PARTITION:
-            case ATTACH_PARTITION:
-            case ADD_INDEX:
-            case DROP_INDEX:
-            case ADD_SYMBOL_CACHE:
-            case REMOVE_SYMBOL_CACHE:
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS:
-            case SET_PARAM_COMMIT_LAG:
-                return false;
-
-            default:
+            case ADD_COLUMN:
+            case RENAME_COLUMN:
+            case DROP_COLUMN:
                 return true;
+            default:
+                return false;
         }
     }
 
@@ -206,6 +200,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         clear();
         long readPtr = offset;
         long hi = buffer.size();
+        if (readPtr + 10 > hi) {
+            throw CairoException.critical(0).put("cannot read alter statement serialized, data is too short to read 10 bytes header [offset=").put(offset).put(", size=").put(hi);
+        }
         command = buffer.getShort(readPtr);
         readPtr += 2;
         tableNamePosition = buffer.getInt(readPtr);
@@ -364,7 +361,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 writer.removeColumn(columnName);
             } catch (CairoException e) {
                 LOG.error().$("cannot drop column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot drop column. Try again later [errno=").put(e.getErrno()).put(']');
+                throw SqlException.$(tableNamePosition, e.getFlyweightMessage()).put('[').put(e.getErrno()).put(']');
             }
         }
     }
@@ -427,7 +424,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 writer.renameColumn(columnName, newName);
             } catch (CairoException e) {
                 LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot rename column \"").put(columnName).put("\", errno=; ").put(e.getErrno()).put(", error=").put(e.getFlyweightMessage());
+                throw SqlException.$(tableNamePosition, "cannot rename column \"").put(columnName).put("\", errno=").put(e.getErrno()).put(", error=").put(e.getFlyweightMessage());
             }
         }
     }

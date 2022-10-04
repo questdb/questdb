@@ -730,7 +730,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     addColumn(walWriter, "c", ColumnType.SHORT);
                     fail("Should not be able to add duplicate column");
                 } catch (CairoException e) {
-                    assertEquals("[0] could not add column [error=duplicate column name: c, errno=0]", e.getMessage());
+                    assertEquals("[-1] could not add column [error=duplicate column name: c, errno=0]", e.getMessage());
                 }
 
                 row = walWriter.newRow();
@@ -2928,13 +2928,13 @@ public class WalWriterTest extends AbstractGriffinTest {
         walWriter.applyAlter(renameColumnC.build(), true);
     }
 
-    private static void prepareBinPayload(long pointer, int limit) {
+    static void prepareBinPayload(long pointer, int limit) {
         for (int offset = 0; offset < limit; offset++) {
             Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
         }
     }
 
-    private static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
+    static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
         assertNotNull(expected);
         assertNotNull(actual);
         assertEquals(expected.length(), actual.length());

@@ -116,6 +116,11 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         return columnNameIndexMap.size();
     }
 
+    @Override
+    public int getId() {
+        return tableId;
+    }
+
     public long getStructureVersion() {
         return structureVersion;
     }
@@ -148,6 +153,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
                     if (i == timestampIndex) {
                         timestampIndex = copyTo;
                     }
+                    columnNameIndexMap.put(columnMeta.getName(), copyTo);
                 }
                 copyTo++;
             }

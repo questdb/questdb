@@ -2983,8 +2983,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws TextException {
         byte[] bytes = text.getBytes(Files.UTF_8);
         int len = bytes.length;
-        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         try {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(buf + i, manipulator.translate(i, len, bytes[i]));
@@ -3003,8 +3003,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
             textLoader.wrapUp();
         } finally {
-            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buf, len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+            Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
     }
 
@@ -3267,8 +3267,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
         textLoader.setState(TextLoader.LOAD_JSON_METADATA);
 
         int len = json.length;
-        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         try {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(buf + i, json[i]);
@@ -3280,8 +3280,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
             textLoader.wrapUp();
         } finally {
-            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buf, len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+            Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
     }
 

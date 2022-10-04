@@ -207,7 +207,7 @@ public class NetTest {
         Net.freeSockAddr(sockAddr);
 
         long serverFd = Net.accept(acceptFd);
-        long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_DEFAULT);
+        long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
         Chars.utf8DecodeZ(serverBuf, sink);
         TestUtils.assertEquals(msg, sink);
@@ -215,7 +215,7 @@ public class NetTest {
         sink.clear();
         Chars.utf8DecodeZ(serverBuf, sink);
         TestUtils.assertEquals(msg, sink);
-        Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         Net.close(serverFd);
 
         Net.close(acceptFd);

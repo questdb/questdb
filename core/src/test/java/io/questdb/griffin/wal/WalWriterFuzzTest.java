@@ -95,6 +95,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalWriteFullRandom2() throws Exception {
+        Rnd rnd = new Rnd(221986507140250L, 1664814288942L);
+        int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2));
+        dataAppendPageSize = 1L << (minPage + rnd.nextInt(29 - minPage));
+        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+        fullRandomFuzz(rnd);
+    }
+
+    @Test
     public void testWalWriteFullRandom() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2));
@@ -301,6 +310,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 " timestamp_sequence('2022-02-24', 1000000L) ts, " +
                 " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                 " cast(x as int) c3," +
+                " rnd_bin() c4," +
+                " to_long128(6 * x, 3 * x) c5," +
                 " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') " +
                 " from long_sequence(" + rowCount + ")" +
                 ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"));

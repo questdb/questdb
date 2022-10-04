@@ -60,6 +60,11 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public boolean isWalApplication() {
+                return false;
+            }
+
+            @Override
             public void popTimestampRequiredFlag() {
             }
 

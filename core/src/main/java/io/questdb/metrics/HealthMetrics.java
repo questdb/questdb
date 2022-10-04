@@ -22,24 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.metrics;
 
-import io.questdb.metrics.Counter;
-import io.questdb.metrics.MetricsRegistry;
+public interface HealthMetrics {
 
-public class HealthCheckMetrics {
+    void incrementUnhandledErrors();
 
-    private final Counter unhandledErrorCounter;
-
-    public HealthCheckMetrics(MetricsRegistry metricsRegistry) {
-        this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
-    }
-
-    public void incrementUnhandledErrors() {
-        unhandledErrorCounter.inc();
-    }
-
-    public long unhandledErrorsCount() {
-        return unhandledErrorCounter.getValue();
-    }
+    long unhandledErrorsCount();
 }

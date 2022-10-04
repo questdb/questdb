@@ -63,7 +63,7 @@ public class ColumnPurgeOperator implements Closeable {
         txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
         txReader = new TxReader(ff);
         microClock = configuration.getMicrosecondClock();
-        longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
     }
 
     public ColumnPurgeOperator(CairoConfiguration configuration) {
@@ -82,7 +82,7 @@ public class ColumnPurgeOperator implements Closeable {
     @Override
     public void close() throws IOException {
         if (longBytes != 0L) {
-            Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
             longBytes = 0;
         }
         closePurgeLogCompleteFile();

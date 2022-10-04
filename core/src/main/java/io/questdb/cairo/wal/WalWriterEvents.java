@@ -164,10 +164,10 @@ class WalWriterEvents implements Closeable {
     }
 
     private void writeFunction(Function function) {
-        final short type = ColumnType.tagOf(function.getType());
-        eventMem.putShort(type);
+        final int type = function.getType();
+        eventMem.putInt(type);
 
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
                 eventMem.putBool(function.getBool(null));
                 break;

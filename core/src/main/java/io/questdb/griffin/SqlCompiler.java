@@ -248,13 +248,15 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         backupAgent.close();
-        codeGenerator.close();
         vacuumColumnVersions.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
         Misc.free(rebuildIndex);
-        Misc.freeIfCloseable(metadataFactory);
+        Misc.free(codeGenerator);
+        Misc.free(mem);
+        Misc.freeObjList(tableWriters);
+        Misc.free(metadataFactory);
     }
 
     @NotNull
@@ -433,10 +435,12 @@ public class SqlCompiler implements Closeable {
             tok = GenericLexer.unquote(expectToken(lexer, "table name"));
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
-            CharSequence name = GenericLexer.immutableOf(tok);
-            try (TableReader reader = engine.getReaderForStatement(executionContext, name, "alter table")) {
-                String tableName = reader.getTableName();
-                TableReaderMetadata tableMetadata = reader.getMetadata();
+            String tableName = Chars.toString(tok);
+            try (TableRecordMetadata tableMetadata = engine.getMetadata(
+                    executionContext.getCairoSecurityContext(),
+                    tableName,
+                    metadataFactory
+            )) {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
                 if (SqlKeywords.isAddKeyword(tok)) {
@@ -446,23 +450,9 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         return alterTableDropColumn(tableNamePosition, tableName, tableMetadata);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DROP, executionContext);
+                        return alterTableDropDetachOrAttachPartition(tableMetadata, tableName, PartitionAction.DROP, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
-                    }
-                } else if (SqlKeywords.isAttachKeyword(tok)) {
-                    tok = expectToken(lexer, "'partition'");
-                    if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
-                    }
-                } else if (SqlKeywords.isDetachKeyword(tok)) {
-                    tok = expectToken(lexer, "'partition'");
-                    if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DETACH, executionContext);
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
                 } else if (SqlKeywords.isRenameKeyword(tok)) {
                     tok = expectToken(lexer, "'column'");
@@ -470,6 +460,20 @@ public class SqlCompiler implements Closeable {
                         return alterTableRenameColumn(tableNamePosition, tableName, tableMetadata);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
+                    }
+                } else if (SqlKeywords.isAttachKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        return alterTableDropDetachOrAttachPartition(tableMetadata, tableName, PartitionAction.ATTACH, executionContext);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                    }
+                } else if (SqlKeywords.isDetachKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        return alterTableDropDetachOrAttachPartition(tableMetadata, tableName, PartitionAction.DETACH, executionContext);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
                 } else if (SqlKeywords.isAlterKeyword(tok)) {
                     tok = expectToken(lexer, "'column'");
@@ -509,9 +513,9 @@ public class SqlCompiler implements Closeable {
                             }
                             return alterTableColumnDropIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata);
                         } else if (SqlKeywords.isCacheKeyword(tok)) {
-                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, true);
+                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, tableMetadata, true);
                         } else if (SqlKeywords.isNoCacheKeyword(tok)) {
-                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, false);
+                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, tableMetadata, false);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                         }
@@ -538,8 +542,8 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
-                LOG.info().$("could not alter table [table=").$(name).$(", ex=").$((Throwable) e).$();
-                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(name).put("' could not be altered: ").put(e);
+                LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Throwable) e).$();
+                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' could not be altered: ").put(e);
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
             tok = expectToken(lexer, "'lock' or 'unlock'");
@@ -568,7 +572,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableAddColumn(int tableNamePosition, String tableName, TableReaderMetadata tableMetadata) throws SqlException {
+    private CompiledQuery alterTableAddColumn(int tableNamePosition, String tableName, TableRecordMetadata tableMetadata) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
         //ignoring `column`
@@ -747,7 +751,7 @@ public class SqlCompiler implements Closeable {
             String tableName,
             int columnNamePosition,
             CharSequence columnName,
-            TableReaderMetadata metadata,
+            TableRecordMetadata metadata,
             int indexValueBlockSize
     ) throws SqlException {
 
@@ -768,10 +772,9 @@ public class SqlCompiler implements Closeable {
             int tableNamePosition,
             String tableName,
             CharSequence columnName,
-            TableReader reader,
+            TableRecordMetadata metadata,
             boolean cache
     ) throws SqlException {
-        TableReaderMetadata metadata = reader.getMetadata();
         int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
             throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
@@ -794,7 +797,7 @@ public class SqlCompiler implements Closeable {
             String tableName,
             int columnNamePosition,
             CharSequence columnName,
-            TableReaderMetadata metadata
+            TableRecordMetadata metadata
     ) throws SqlException {
         if (metadata.getColumnIndexQuiet(columnName) == -1) {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
@@ -806,7 +809,7 @@ public class SqlCompiler implements Closeable {
         );
     }
 
-    private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
+    private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableRecordMetadata metadata) throws SqlException {
         AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
         int semicolonPos = -1;
         do {
@@ -840,70 +843,86 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableDropDetachOrAttachPartition(
-            TableReader reader,
+            TableRecordMetadata tableMetadata,
+            String tableName,
             int action,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
-        TableReaderMetadata readerMetadata = reader.getMetadata();
-        if (readerMetadata.getPartitionBy() == PartitionBy.NONE) {
-            throw SqlException.$(pos, "table is not partitioned");
+        TableReader reader = null;
+        if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication()) {
+            reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
         }
 
-        String tableName = reader.getTableName();
-        final CharSequence tok = expectToken(lexer, "'list' or 'where'");
-        if (SqlKeywords.isListKeyword(tok)) {
-            return alterTableDropDetachOrAttachPartitionByList(reader, pos, action);
-        } else if (SqlKeywords.isWhereKeyword(tok)) {
-            AlterOperationBuilder alterPartitionStatement;
-            switch (action) {
-                case PartitionAction.DROP:
-                    alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
-                    break;
-                case PartitionAction.DETACH:
-                    alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
-                    break;
-                default:
-                    throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
+        try {
+            if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
+                throw SqlException.$(pos, "table is not partitioned");
             }
-            ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
-            String designatedTimestampColumnName = null;
-            int tsIndex = readerMetadata.getTimestampIndex();
-            if (tsIndex >= 0) {
-                designatedTimestampColumnName = readerMetadata.getColumnName(tsIndex);
-            }
-            if (designatedTimestampColumnName != null) {
-                GenericRecordMetadata metadata = new GenericRecordMetadata();
-                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, 0, ColumnType.TIMESTAMP, null));
-                Function function = functionParser.parseFunction(expr, metadata, executionContext);
-                if (function != null && ColumnType.isBoolean(function.getType())) {
-                    function.init(null, executionContext);
-                    filterPartitions(function, reader, alterPartitionStatement);
-                    return compiledQuery.ofAlter(alterOperationBuilder.build());
+
+            final CharSequence tok = expectToken(lexer, "'list' or 'where'");
+            if (SqlKeywords.isListKeyword(tok)) {
+                return alterTableDropDetachOrAttachPartitionByList(tableMetadata, tableName, reader, pos, action);
+            } else if (SqlKeywords.isWhereKeyword(tok)) {
+                AlterOperationBuilder alterPartitionStatement;
+                switch (action) {
+                    case PartitionAction.DROP:
+                        alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getId());
+                        break;
+                    case PartitionAction.DETACH:
+                        alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getId());
+                        break;
+                    default:
+                        throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
+                }
+
+                ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
+                String designatedTimestampColumnName = null;
+                int tsIndex = tableMetadata.getTimestampIndex();
+                if (tsIndex >= 0) {
+                    designatedTimestampColumnName = tableMetadata.getColumnName(tsIndex);
+                }
+                if (designatedTimestampColumnName != null) {
+                    GenericRecordMetadata metadata = new GenericRecordMetadata();
+                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, 0, ColumnType.TIMESTAMP, null));
+                    Function function = functionParser.parseFunction(expr, metadata, executionContext);
+                    if (function != null && ColumnType.isBoolean(function.getType())) {
+                        function.init(null, executionContext);
+                        if (reader != null) {
+                            filterPartitions(function, reader, alterPartitionStatement);
+                        }
+                        return compiledQuery.ofAlter(alterOperationBuilder.build());
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+                    }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
                 }
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
+                throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
             }
-        } else {
-            throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
+        } finally {
+            Misc.free(reader);
         }
     }
 
-    private CompiledQuery alterTableDropDetachOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
-        String tableName = reader.getTableName();
+    private CompiledQuery alterTableDropDetachOrAttachPartitionByList(
+            TableRecordMetadata tableMetadata,
+            String tableName,
+            @Nullable TableReader reader,
+            int pos,
+            int action
+    ) throws SqlException {
         AlterOperationBuilder partitions;
         switch (action) {
             case PartitionAction.DROP:
-                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getId());
                 break;
             case PartitionAction.DETACH:
-                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
+                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getId());
                 break;
             default:
                 // attach
-                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
+                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, tableMetadata.getId());
         }
         assert action == PartitionAction.DROP || action == PartitionAction.ATTACH || action == PartitionAction.DETACH;
         int semicolonPos = -1;
@@ -920,17 +939,21 @@ public class SqlCompiler implements Closeable {
             }
             final CharSequence unquoted = GenericLexer.unquote(tok);
 
-            final long timestamp;
-            try {
-                timestamp = PartitionBy.parsePartitionDirName(unquoted, reader.getPartitionedBy());
-            } catch (CairoException e) {
-                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
-                        .put("[errno=").put(e.getErrno()).put(']');
+            // reader == null means it's compilation for WAL table
+            // before applyting to WAL writer
+            if (reader != null) {
+                final long timestamp;
+                try {
+                    timestamp = PartitionBy.parsePartitionDirName(unquoted, reader.getPartitionedBy());
+                } catch (CairoException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
+                            .put("[errno=").put(e.getErrno()).put(']');
+                }
+
+                partitions.ofPartition(timestamp);
             }
 
-            partitions.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
-
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
                 break;
             }
@@ -944,7 +967,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
+    private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableRecordMetadata metadata) throws SqlException {
         AlterOperationBuilder renameColumnStatement = alterOperationBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
         int hadSemicolonPos = -1;
 

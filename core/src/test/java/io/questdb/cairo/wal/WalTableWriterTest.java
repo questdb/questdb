@@ -32,9 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlToOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.std.Files;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.tools.TestUtils;
@@ -45,8 +43,7 @@ import org.junit.Test;
 import java.io.Closeable;
 import java.io.IOException;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 public class WalTableWriterTest extends AbstractGriffinTest {
 
@@ -428,6 +425,11 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
+            final int binarySize = 64;
+            final long pointer = Unsafe.getUnsafe().allocateMemory(binarySize);
+            final DirectBinarySequence binSeq = new DirectBinarySequence();
+            WalWriterTest.prepareBinPayload(pointer, binarySize);
+
             try (
                     SqlToOperation sqlToOperation = new SqlToOperation(engine);
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
@@ -447,16 +449,21 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 sqlExecutionContext.getBindVariableService().setBoolean(9, true);
                 sqlExecutionContext.getBindVariableService().setStr(10, "updated");
                 sqlExecutionContext.getBindVariableService().setStr(11, "labelUpdate");
+                sqlExecutionContext.getBindVariableService().setBin(12, binSeq.of(pointer, binarySize));
+                sqlExecutionContext.getBindVariableService().setGeoHash(13, rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
+                sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
+                sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
+                sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(30), ColumnType.getGeoHashTypeWithBits(30));
 
                 executeOperation("UPDATE " + tableName + " SET " +
                         "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
-                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12 " +
+                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12, BIN=$13, GEOBYTE=$14, GEOSHORT=$15, GEOINT=$16, GEOLONG=$17 " +
                         "WHERE INT > 5", CompiledQuery.UPDATE);
                 ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
 
                 executeOperation("UPDATE " + tableCopyName + " SET " +
                         "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
-                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12 " +
+                        "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12, BIN=$13, GEOBYTE=$14, GEOSHORT=$15, GEOINT=$16, GEOLONG=$17 " +
                         "WHERE INT > 5", CompiledQuery.UPDATE);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
@@ -506,6 +513,11 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
+            final int binarySize = 64;
+            final long pointer = Unsafe.getUnsafe().allocateMemory(binarySize);
+            final DirectBinarySequence binSeq = new DirectBinarySequence();
+            WalWriterTest.prepareBinPayload(pointer, binarySize);
+
             try (
                     SqlToOperation sqlToOperation = new SqlToOperation(engine);
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
@@ -525,18 +537,25 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 sqlExecutionContext.getBindVariableService().setBoolean("BOOLVAL", true);
                 sqlExecutionContext.getBindVariableService().setStr("STRVAL", "updated");
                 sqlExecutionContext.getBindVariableService().setStr("SYMVAL", "labelUpdate");
+                sqlExecutionContext.getBindVariableService().setBin("BINVAL", binSeq.of(pointer, binarySize));
+                sqlExecutionContext.getBindVariableService().setGeoHash("GEOBYTEVAL", rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
+                sqlExecutionContext.getBindVariableService().setGeoHash("GEOSHORTVAL", rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
+                sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
+                sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(30), ColumnType.getGeoHashTypeWithBits(30));
 
                 executeOperation("UPDATE " + tableName + " SET " +
                         "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
                         "FLOAT=:FLOATVAL, DOUBLE=:DOUBLEVAL, TIMESTAMP=:TIMESTAMPVAL, DATE=:DATEVAL, " +
-                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL " +
+                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL, BIN=:BINVAL, " +
+                        "GEOBYTE=:GEOBYTEVAL, GEOSHORT=:GEOSHORTVAL, GEOINT=:GEOINTVAL, GEOLONG=:GEOLONGVAL " +
                         "WHERE INT > 5", CompiledQuery.UPDATE);
                 ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
 
                 executeOperation("UPDATE " + tableCopyName + " SET " +
                         "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
                         "FLOAT=:FLOATVAL, DOUBLE=:DOUBLEVAL, TIMESTAMP=:TIMESTAMPVAL, DATE=:DATEVAL, " +
-                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL " +
+                        "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL, BIN=:BINVAL, " +
+                        "GEOBYTE=:GEOBYTEVAL, GEOSHORT=:GEOSHORTVAL, GEOINT=:GEOINTVAL, GEOLONG=:GEOLONGVAL " +
                         "WHERE INT > 5", CompiledQuery.UPDATE);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
@@ -761,6 +780,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("geoLong", ColumnType.getGeoHashTypeWithBits(30))
                 .col("stringc", ColumnType.STRING)
                 .col("label", ColumnType.SYMBOL)
+                .col("bin", ColumnType.BINARY)
                 .timestamp("ts");
     }
 }

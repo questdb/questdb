@@ -58,10 +58,13 @@ public class CopySegmentFileJob {
         int setPathRoot = newSegPath.length();
         dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
         long primaryFd = openRW(ff, newSegPath, LOG, options);
+        newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
+
         long secondaryFd;
         if (ColumnType.isVariableLength(columnType)) {
             iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
             secondaryFd = openRW(ff, newSegPath, LOG, options);
+            newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
         } else {
             secondaryFd = -1;
         }
@@ -96,21 +99,19 @@ public class CopySegmentFileJob {
             if (!success) {
                 return false;
             }
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
+
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, varStart);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, varCopyLen);
 
             long indexLen = (rowCount + 1) * Long.BYTES;
             long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MEMORY_TAG);
-            try {
-                Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);
-                newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
-                newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);
-                newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, indexLen);
-                return true;
-            } finally {
-                ff.munmap(dstIndexAddr, indexLen, MEMORY_TAG);
-            }
+            Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, indexLen);
+
+            // All in memory calls, no need to unmap in finally
+            ff.munmap(dstIndexAddr, indexLen, MEMORY_TAG);
+            return true;
         } finally {
             ff.munmap(srcIndexAddr, indexMapSize, MEMORY_TAG);
         }
@@ -138,11 +139,8 @@ public class CopySegmentFileJob {
 
         boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
         if (success) {
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);
-        } else {
-            ff.close(primaryFd);
         }
         return success;
     }

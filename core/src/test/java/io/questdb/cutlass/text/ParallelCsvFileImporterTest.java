@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -2703,7 +2702,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         // we need to create entire engine
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool((WorkerPoolAwareConfiguration) () -> workerCount);
+                WorkerPool pool = new WorkerPool(() -> workerCount);
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
@@ -2778,7 +2777,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
                 try {
                     if (pool != null) {
-                        pool.assignCleaner(Path.CLEANER);
                         TextImportJob.assignToPool(engine.getMessageBus(), pool);
                         pool.start(LOG);
                     }

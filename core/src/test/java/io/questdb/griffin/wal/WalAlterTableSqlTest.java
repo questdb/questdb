@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.wal;
 
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -81,7 +83,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void createWalAndDetachAttachPartition() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -99,6 +100,8 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     "alter table " + tableName + " detach partition list '" + partition + "'",
                     CompiledQuery.ALTER
             );
+
+            drainWalQueue();
 
             try (Path path = new Path(); Path other = new Path()) {
                 path.of(configuration.getRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
@@ -120,7 +123,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n");
         });
     }
-
 
     @Test
     public void createWalAndDropAddIndex() throws Exception {

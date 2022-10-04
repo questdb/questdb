@@ -148,8 +148,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
             Path tempPath = Path.PATH.get();
-            tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName());
-            int rootLen = tempPath.length();
 
             while (sequencerCursor.hasNext()) {
                 int walId = sequencerCursor.getWalId();
@@ -160,13 +158,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (nextTableTxn != writer.getTxn() + 1) {
                     throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
-                tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+
+                // Always set full path when using thread static path
+                tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName()).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                 if (walId != TxnCatalog.METADATA_WALID) {
                     writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
                 } else {
                     // This is metadata change
                     // to be taken from Sequencer directly
                     // This may look odd, but on metadata change record, segment ID means structure version.
+                    @SuppressWarnings("UnnecessaryLocalVariable")
                     final int newStructureVersion = segmentId;
                     if (writer.getStructureVersion() != newStructureVersion - 1) {
                         throw CairoException.critical(0)
@@ -177,7 +178,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     boolean hasNext;
                     if (reusableStructureChangeCursor == null || !(hasNext = reusableStructureChangeCursor.hasNext())) {
                         reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
-                        hasNext = reusableStructureChangeCursor.hasNext();
+                        hasNext = reusableStructureChangeCursor != null && reusableStructureChangeCursor.hasNext();
                     }
 
                     if (hasNext) {
@@ -185,9 +186,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             reusableStructureChangeCursor.next().apply(writer, true);
                         } catch (SqlException e) {
                             throw CairoException.critical(0)
-                                    .put("cannot apply structure change from WAL to table. ").put(e.getFlyweightMessage());
+                                    .put("cannot apply structure change from WAL to table [error=")
+                                    .put(e.getFlyweightMessage()).put(']');
                         }
                     } else {
+                        // Something messed up in sequencer.
+                        // There is a transaction in WAL but no structure change record.
+                        // TODO: make sequencer distressed and try to reconcile on sequencer opening
+                        //  or skip the transaction?
                         throw CairoException.critical(0)
                                 .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                 .put(newStructureVersion)

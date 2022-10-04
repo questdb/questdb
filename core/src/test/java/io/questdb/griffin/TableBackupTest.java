@@ -122,6 +122,11 @@ public class TableBackupTest {
             public DateFormat getBackupDirTimestampFormat() {
                 return new TimestampFormatCompiler().compile("ddMMMyyyy");
             }
+
+            @Override
+            public int getMetadataPoolCapacity() {
+                return 1;
+            }
         };
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);

@@ -24,16 +24,13 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.MetadataFactory;
-import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.wal.Sequencer;
 import io.questdb.cairo.wal.SequencerMetadata;
 import io.questdb.std.*;
 
-public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
+public class PooledMetadataFactory implements MetadataFactory {
     private final FilesFacade ff;
     private final CharSequence dbRoot;
     private final CairoConfiguration configuration;
@@ -59,17 +56,22 @@ public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
     }
 
     @Override
-    public TableRecordMetadata openSequencerMetadata(Sequencer sequencer) {
-        SequencerMetadata sequencerMetadata = sequencerMetadataPool.pop();
-        sequencer.copyMetadataTo(sequencerMetadata);
-        return sequencerMetadata;
-    }
-
-    @Override
     public TableRecordMetadata openTableReaderMetadata(CharSequence tableName) {
         TableReaderMetadata tableReaderMetadata = readerMetadataPool.pop();
         String tableNameStr = resolveString(tableNamePool, tableName);
-        tableReaderMetadata.readSafe(dbRoot, tableNameStr, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+        try {
+            tableReaderMetadata.readSafe(dbRoot, tableNameStr, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            return tableReaderMetadata;
+        } catch (CairoException e) {
+            Misc.free(tableReaderMetadata);
+            throw e;
+        }
+    }
+
+    @Override
+    public TableRecordMetadata openTableReaderMetadata(TableReader tableReader) {
+        TableReaderMetadata tableReaderMetadata = readerMetadataPool.pop();
+        tableReaderMetadata.copy(tableReader.getMetadata());
         return tableReaderMetadata;
     }
 

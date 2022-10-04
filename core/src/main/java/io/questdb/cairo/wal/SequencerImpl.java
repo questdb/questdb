@@ -27,6 +27,8 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
@@ -40,6 +42,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 
 public class SequencerImpl implements Sequencer {
 
+    private static final Log LOG = LogFactory.getLog(SequencerImpl.class);
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final CairoEngine engine;
     private final String tableName;
@@ -53,6 +56,7 @@ public class SequencerImpl implements Sequencer {
     private final FilesFacade ff;
     private final int mkDirMode;
     private volatile boolean open = false;
+    private boolean isDistressed;
 
     SequencerImpl(CairoEngine engine, String tableName) {
         this.engine = engine;
@@ -72,28 +76,12 @@ public class SequencerImpl implements Sequencer {
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             catalog = new TxnCatalog(ff);
         } catch (Throwable th) {
+            LOG.critical().$("could not create sequencer [name=").$(tableName)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
             doClose();
             throw th;
         }
-    }
-
-    public void open() {
-        schemaLock.writeLock().lock();
-        try {
-            walIdGenerator.open(path);
-            metadata.open(tableName, path, rootLen);
-            catalog.open(path);
-            open = true;
-        } catch (Throwable th) {
-            doClose();
-            throw th;
-        } finally {
-            schemaLock.writeLock().unlock();
-        }
-    }
-
-    public boolean isOpen() {
-        return this.open;
     }
 
     @Override
@@ -104,6 +92,27 @@ public class SequencerImpl implements Sequencer {
         } finally {
             schemaLock.readLock().unlock();
         }
+    }
+
+    @Override
+    public SequencerStructureChangeCursor getStructureChangeCursor(
+            @Nullable SequencerStructureChangeCursor reusableCursor,
+            long fromSchemaVersion
+    ) {
+        schemaLock.readLock().lock();
+        try {
+            checkDistressed();
+            if (metadata.getStructureVersion() == fromSchemaVersion) {
+                // Nothing to do.
+                if (reusableCursor != null) {
+                    return reusableCursor.empty();
+                }
+                return null;
+            }
+        } finally {
+            schemaLock.readLock().unlock();
+        }
+        return catalog.getStructureChangeCursor(reusableCursor, fromSchemaVersion, alterCommandWalFormatter);
     }
 
     @Override
@@ -122,18 +131,28 @@ public class SequencerImpl implements Sequencer {
         schemaLock.writeLock().lock();
         long txn;
         try {
+            checkDistressed();
             if (metadata.getStructureVersion() == expectedSchemaVersion) {
-                txn = catalog.addMetadataChangeEntry(expectedSchemaVersion + 1, alterCommandWalFormatter, operation);
-                try {
-                    applyToMetadata(operation);
-                    assert metadata.getStructureVersion() == expectedSchemaVersion + 1;
-                } catch (Throwable th) {
-                    // TODO: handle errors in updating the metadata by destroying the sequencer and safe reload from txn catalog
-                    throw th;
+                long offset = catalog.beginMetadataChangeEntry(expectedSchemaVersion + 1, alterCommandWalFormatter, operation);
+
+                applyToMetadata(operation);
+                if (metadata.getStructureVersion() != expectedSchemaVersion + 1) {
+                    throw CairoException.critical(0)
+                            .put("applying structure change to WAL table failed [table=").put(tableName)
+                            .put(", oldVersion: ").put(expectedSchemaVersion)
+                            .put(", newVersion: ").put(metadata.getStructureVersion())
+                            .put(']');
                 }
+                txn = catalog.endMetadataChangeEntry(expectedSchemaVersion + 1, offset);
             } else {
                 return NO_TXN;
             }
+        } catch (Throwable th) {
+            isDistressed = true;
+            LOG.critical().$("could not apply structure change to WAL table sequencer [table=").$(tableName)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
+            throw th;
         } finally {
             schemaLock.writeLock().unlock();
         }
@@ -142,31 +161,12 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public SequencerStructureChangeCursor getStructureChangeCursor(
-            @Nullable SequencerStructureChangeCursor reusableCursor,
-            long fromSchemaVersion
-    ) {
-        schemaLock.readLock().lock();
-        try {
-            if (metadata.getStructureVersion() == fromSchemaVersion) {
-                // Nothing to do.
-                if (reusableCursor != null) {
-                    return reusableCursor.empty();
-                }
-                return null;
-            }
-        } finally {
-            schemaLock.readLock().unlock();
-        }
-        return catalog.getStructureChangeCursor(reusableCursor, fromSchemaVersion, alterCommandWalFormatter);
-    }
-
-    @Override
     public long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn) {
         // Writing to Sequencer can happen from multiple threads, so we need to protect against concurrent writes.
         schemaLock.writeLock().lock();
         long txn;
         try {
+            checkDistressed();
             if (metadata.getStructureVersion() == expectedSchemaVersion) {
                 txn = nextTxn(walId, segmentId, segmentTxn);
             } else {
@@ -179,26 +179,15 @@ public class SequencerImpl implements Sequencer {
         return txn;
     }
 
-    public long lastTxn() {
-        schemaLock.readLock().lock();
-        try {
-            return catalog.lastTxn();
-        } finally {
-            schemaLock.readLock().unlock();
-        }
-    }
-
-    private void applyToMetadata(AlterOperation operation) {
-        try {
-            operation.apply(sequencerMetadataUpdater, true);
-        } catch (SqlException e) {
-            throw CairoException.critical(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
-        }
-    }
-
     @Override
     public SequencerCursor getCursor(long lastCommittedTxn) {
-        return catalog.getCursor(lastCommittedTxn);
+        schemaLock.writeLock().lock();
+        try {
+            checkDistressed();
+            return catalog.getCursor(lastCommittedTxn);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
     }
 
     @Override
@@ -211,12 +200,68 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    private void doClose() {
-        open = false;
-        Misc.free(metadata);
-        Misc.free(catalog);
-        Misc.free(walIdGenerator);
-        Misc.free(path);
+    public String getTableName() {
+        return tableName;
+    }
+
+    public boolean isDistressed() {
+        return isDistressed;
+    }
+
+    public boolean isOpen() {
+        return this.open;
+    }
+
+    public long lastTxn() {
+        schemaLock.readLock().lock();
+        try {
+            return catalog.lastTxn();
+        } finally {
+            schemaLock.readLock().unlock();
+        }
+    }
+
+    public void open() {
+        schemaLock.writeLock().lock();
+        try {
+            walIdGenerator.open(path);
+            metadata.open(tableName, path, rootLen);
+            catalog.open(path);
+            open = true;
+        } catch (Throwable th) {
+            LOG.critical().$("could not open sequencer [name=").$(tableName)
+                    .$(", path=").$(path)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
+            doClose();
+            throw th;
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
+    }
+
+    private void applyToMetadata(AlterOperation operation) {
+        try {
+            operation.apply(sequencerMetadataUpdater, true);
+        } catch (SqlException e) {
+            throw CairoException.critical(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
+        }
+    }
+
+    private void checkDistressed() {
+        if (isDistressed) {
+            throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableName).put(']');
+        }
+    }
+
+    void create(int tableId, TableStructure model) {
+        schemaLock.writeLock().lock();
+        try {
+            createSequencerDir(ff, mkDirMode);
+            metadata.create(model, tableName, path, rootLen, tableId);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
     }
 
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
@@ -228,17 +273,15 @@ public class SequencerImpl implements Sequencer {
         path.trimTo(rootLen);
     }
 
-    private long nextTxn(int walId, long segmentId, long segmentTxn) {
-        return catalog.addEntry(walId, segmentId, segmentTxn);
+    private void doClose() {
+        open = false;
+        Misc.free(metadata);
+        Misc.free(catalog);
+        Misc.free(walIdGenerator);
+        Misc.free(path);
     }
 
-    void create(int tableId, TableStructure model) {
-        schemaLock.writeLock().lock();
-        try {
-            createSequencerDir(ff, mkDirMode);
-            metadata.create(model, tableName, path, rootLen, tableId);
-        } finally {
-            schemaLock.writeLock().unlock();
-        }
+    private long nextTxn(int walId, long segmentId, long segmentTxn) {
+        return catalog.addEntry(walId, segmentId, segmentTxn);
     }
 }

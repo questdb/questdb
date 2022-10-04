@@ -117,14 +117,14 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void wrapUp(long pRosti) {
+    public boolean wrapUp(long pRosti) {
         double sum = 0;
         long count = 0;
         for (int i = 0; i < workerCount; i++) {
             sum += this.sum[i * SUM_PADDING];
             count += this.count[i * COUNT_PADDING];
         }
-        Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
+        return Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
 
     @Override

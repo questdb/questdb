@@ -55,6 +55,8 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isTimestampRequired();
 
+    boolean isWalApplication();
+
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);

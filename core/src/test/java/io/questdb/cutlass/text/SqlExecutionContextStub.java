@@ -67,6 +67,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isWalApplication() {
+        return false;
+    }
+
+    @Override
     public void popTimestampRequiredFlag() {
     }
 
