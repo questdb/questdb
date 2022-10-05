@@ -2011,7 +2011,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tab35", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove work dir");
+        testImportThrowsException(ff, "tab35", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove import work directory");
     }
 
     @Test
@@ -2077,7 +2077,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tab39", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create temporary import directory");
+        testImportThrowsException(ff, "tab39", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create temporary import work directory");
     }
 
     @Test
