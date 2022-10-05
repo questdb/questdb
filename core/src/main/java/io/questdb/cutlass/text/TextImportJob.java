@@ -39,7 +39,7 @@ import java.io.Closeable;
 
 public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> implements Closeable {
     private static final int INDEX_MERGE_LIST_CAPACITY = 64;
-    private TextLexer textLexer;
+    private TextLexerWrapper tlw;
     private CsvFileIndexer indexer;
     private DirectCharSink utf8Sink;
     private DirectLongList mergeIndexes;
@@ -50,7 +50,7 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
 
     public TextImportJob(MessageBus messageBus) {
         super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
-        this.textLexer = new TextLexer(messageBus.getConfiguration().getTextConfiguration());
+        this.tlw = new TextLexerWrapper(messageBus.getConfiguration().getTextConfiguration());
         this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
         this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_IMPORT);
         this.indexer = new CsvFileIndexer(messageBus.getConfiguration());
@@ -70,7 +70,7 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
 
     @Override
     public void close() {
-        this.textLexer = Misc.free(textLexer);
+        this.tlw = Misc.free(tlw);
         this.indexer = Misc.free(indexer);
         if (fileBufSize > 0) {
             Unsafe.free(fileBufAddr, fileBufSize, MemoryTag.NATIVE_IMPORT);
@@ -85,7 +85,7 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final TextImportTask task = queue.get(cursor);
-        final boolean result = task.run(textLexer, indexer, utf8Sink, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);
+        final boolean result = task.run(tlw, indexer, utf8Sink, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);
         subSeq.done(cursor);
         return result;
     }
