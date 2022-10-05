@@ -41,6 +41,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final StringSink tempSink = new StringSink();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjHashSet<CharSequence> uniqueColumnNames = new ObjHashSet<>();
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
     private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
@@ -63,6 +64,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     public void clear() {
         tempSink.clear();
         columnNames.clear();
+        uniqueColumnNames.clear();
         _blanks.clear();
         _histogram.clear();
         fieldCount = 0;
@@ -93,12 +95,26 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                     .$(']').$();
         }
 
-        // make up field names if there is no header
         for (int i = 0; i < fieldCount; i++) {
             if (!header || columnNames.getQuick(i).length() == 0) {
                 tempSink.clear();
                 tempSink.put('f').put(i);
-                columnNames.setQuick(i, tempSink.toString());
+                String colName = tempSink.toString();
+
+                for (int attempt = 0; attempt < 20; attempt++) {
+                    if (!uniqueColumnNames.contains(colName)) {
+                        break;
+                    }
+
+                    tempSink.put('_');
+                    colName = tempSink.toString();
+                }
+
+                columnNames.setQuick(i, colName);
+            }
+
+            if (!uniqueColumnNames.add(columnNames.getQuick(i))) {
+                throw TextException.$("duplicate column name found [no=").put(i).put(",name=").put(columnNames.get(i)).put(']');
             }
         }
 
