@@ -130,7 +130,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             compiler.compile(sql, sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'abcge'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'aBcGe'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -157,7 +157,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             compiler.compile(sql, sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'ABC%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'AbC%'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -184,7 +184,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             compiler.compile(sql, sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%GGG'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%GgG'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
@@ -209,7 +209,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     ")";
             compiler.compile(sql, sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%BCG%'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike '%BcG%'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
