@@ -661,11 +661,13 @@ public final class SqlParser {
         tok = tok(lexer, "table name");
         model.setLikeTableName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
         tok = tok(lexer, ")");
-        if(!Chars.equals(tok, ")"))
+        if (!Chars.equals(tok, ")")) {
             throw errUnexpected(lexer, tok);
+        }
         tok = optTok(lexer);
-        if(tok !=null && !Chars.equals(tok, ";"))
+        if (tok != null && !Chars.equals(tok, ";")) {
             throw errUnexpected(lexer, tok);
+        }
     }
 
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
