@@ -25,17 +25,14 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.MemoryM;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.io.IOException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static io.questdb.cairo.CairoConfiguration.O_DIRECT;
 
@@ -44,37 +41,62 @@ public class MemoryPMARImplTest {
     public static TemporaryFolder temp = new TemporaryFolder();
 
     @Test
-    public void testJumpChangesActivePage() throws IOException {
-        long pageSize = 8 * Files.PAGE_SIZE;
-        try (Path path = new Path()) {
-            path.of(temp.newFolder("root").getAbsolutePath()).concat("testJumpChangesActivePage");
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            ff.touch(path.$());
+    public void testJumpChangesActivePage() {
+        long pageSize = 2 * Files.PAGE_SIZE;
+        ConcurrentLinkedQueue<Throwable> allErrors = new ConcurrentLinkedQueue<>();
+        ObjList<Thread> threads = new ObjList<>();
 
-            try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path, pageSize, MemoryTag.NATIVE_DEFAULT, O_DIRECT)) {
+        for (int thread = 0; thread < 10; thread++) {
+            final int threadNum = thread;
 
-                long pos = 0;
-                int page = 0;
+            Thread th = new Thread(() -> {
 
-                mem.putStr("abcd");
-                mem.getChar(mem.getAppendOffset() - 2);
+                try (Path path = new Path()) {
+                    path.of(temp.newFolder("root" + threadNum).getAbsolutePath()).concat("testJumpChangesActivePage");
+                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    ff.touch(path.$());
 
-                while (mem.pageIndex(mem.getAppendOffset()) < page + 5) {
-                    if (mem.pageIndex(mem.getAppendOffset()) == page) {
-                        pos = mem.getAppendOffset();
+                    try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path, pageSize, MemoryTag.NATIVE_DEFAULT, O_DIRECT)) {
+                        long pos = 0;
+                        int page = 1;
+
+                        mem.jumpTo(page * pageSize);
+                        mem.putStr("abc");
+
+                        while (mem.pageIndex(mem.getAppendOffset()) < page + 1) {
+                            if (mem.pageIndex(mem.getAppendOffset()) == page) {
+                                pos = mem.getAppendOffset();
+                                mem.getChar(pos - 2);
+                            }
+                            mem.putStr("abc");
+                        }
+
+                        mem.jumpTo(pos);
+                        Assert.assertEquals(pos, mem.getAppendOffset());
+                        Assert.assertEquals(page, mem.pageIndex(mem.getAppendOffset()));
+
+                        long addr = ((MemoryM) mem).map(pos, 4);
+                        long pageAddress = mem.getPageAddress(page);
+
+                        Assert.assertEquals(pageAddress + pos - page * pageSize, addr);
                     }
-                    mem.putStr("abcd");
+                } catch (Throwable e) {
+                    allErrors.add(e);
                 }
+            });
+            th.start();
+            threads.add(th);
+        }
 
-                mem.jumpTo(pos);
-                Assert.assertEquals(pos, mem.getAppendOffset());
-
-                long addr = ((MemoryM) mem).map(pos, 4);
-                long pageAddress = mem.getPageAddress(page);
-                Assert.assertTrue((addr - pageAddress < pageSize) && addr > pageAddress);
-
-                mem.putStr("abcd");
+        for (int i = 0, n = threads.size(); i < n; i++) {
+            try {
+                threads.getQuick(i).join();
+            } catch (InterruptedException e) {
             }
+        }
+
+        if (!allErrors.isEmpty()) {
+            throw new RuntimeException(allErrors.poll());
         }
     }
 }
