@@ -72,25 +72,39 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return getLikeStrFunction(args,argPositions, Pattern.DOTALL);
+    }
+
+
+    /***
+     *
+     * @param args
+     * @param argPositions
+     * @param regexFlag int , flag from java.util.regex to implement various regex matching strategies e.g. CASE_INSENSITIVE,MULTILINE,etc
+     * @return BooleanFunction
+     * @throws SqlException
+     */
+    public  BooleanFunction getLikeStrFunction(ObjList<Function> args,IntList argPositions, int regexFlag) throws SqlException {
         final Function value = args.getQuick(0);
         final Function pattern = args.getQuick(1);
 
         if (pattern.isConstant()) {
             final CharSequence likeString = pattern.getStr(null);
-            if (likeString != null && likeString.length() > 0) {
-                String p = escapeSpecialChars(likeString, null);
-                assert p != null;
-                return new ConstLikeStrFunction(
-                        value,
-                        Pattern.compile(p, Pattern.DOTALL).matcher("")
-                );
+            if (likeString == null || likeString.length() ==0) {
+                return BooleanConstant.FALSE;
             }
-            return BooleanConstant.FALSE;
+
+            String p = escapeSpecialChars(likeString, null);
+            assert p != null;
+            return new ConstLikeStrFunction(
+                    value,
+                    Pattern.compile(p, regexFlag).matcher("")
+            );
         }
 
         if (pattern instanceof IndexedParameterLinkFunction) {
             // bind variable
-            return new BindLikeStrFunction(value, pattern);
+            return new BindLikeStrFunction(value, pattern, regexFlag);
         }
 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
@@ -128,9 +142,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         private Matcher matcher;
         private String lastPattern = null;
 
-        public BindLikeStrFunction(Function value, Function pattern) {
+        private final int regexFlag;
+
+        public BindLikeStrFunction(Function value, Function pattern, int regexFlag) {
             this.value = value;
             this.pattern = pattern;
+            this.regexFlag = regexFlag;
         }
 
         @Override
@@ -156,13 +173,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             if (patternValue != null && patternValue.length() > 0) {
                 final String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
-                    this.matcher = Pattern.compile(p, Pattern.DOTALL).matcher("");
+                    this.matcher = Pattern.compile(p, regexFlag).matcher("");
                     this.lastPattern = p;
                 }
             } else {
                 lastPattern = null;
                 matcher = null;
             }
+
         }
 
         @Override

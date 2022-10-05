@@ -24,9 +24,23 @@
 
 package io.questdb.griffin.engine.functions.regex;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+import java.util.regex.Pattern;
+
 public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
     @Override
     public String getSignature() {
         return "like(SS)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return getLikeStrFunction( args, argPositions, Pattern.DOTALL);
     }
 }
