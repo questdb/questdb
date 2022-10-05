@@ -342,7 +342,7 @@ public class TxnCatalog implements Closeable {
                     ff.close(fdTxnMetaIndex);
                 }
             }
-            throw CairoException.critical(0).put("expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');
+            throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');
         }
     }
 }

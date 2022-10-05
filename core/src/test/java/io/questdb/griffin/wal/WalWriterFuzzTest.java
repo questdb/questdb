@@ -121,7 +121,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWalWriteFullRandomParallel() throws Exception {
+    public void testWalWriteFullRandomMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(10));
         int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2));

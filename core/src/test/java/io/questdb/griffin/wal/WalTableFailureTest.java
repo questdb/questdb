@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.wal;
 
-import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -43,6 +40,7 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
@@ -51,6 +49,8 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.CoreMatchers.is;
 
@@ -228,12 +228,11 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 MatcherAssert.assertThat(walWriter3.getWalId(), is(3));
             }
 
-            AlterOperation alterOperation = null;
+            AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
+            AlterOperation alterOperation = alterBuilder.ofDropColumn("non_existing_column").build();
+
             try (TableWriterFrontend alterWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
                  TableWriterFrontend insertWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-                AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
-                AlterOperation serializeAlterOperation = alterBuilder.ofDropColumn("non_existing_column").build();
-                alterOperation = serializeAlterOperation;
 
                 // Serialize into WAL sequencer a drop column operation of non-existing column
                 // So that it will fail during application to other WAL writers
@@ -251,7 +250,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
                     @Override
                     public void serializeBody(MemoryA sink) {
-                        serializeAlterOperation.serializeBody(sink);
+                        alterOperation.serializeBody(sink);
                     }
                 };
                 alterWriter.applyAlter(dodgyAlter, true);
@@ -621,7 +620,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofRenameColumn(1, tableName, 0);
         alterBuilder.ofRenameColumn("x", "x2");
         AlterOperation alterOperation = alterBuilder.build();
-        failToApplyDoubleAlter(alterOperation, "cannot rename column, column does not exists");
+        failToApplyDoubleAlter(alterOperation);
     }
 
     @Test
@@ -759,7 +758,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY WAL");
     }
 
-    private void failToApplyDoubleAlter(AlterOperation alterOperation, String error) throws Exception {
+    private void failToApplyDoubleAlter(AlterOperation alterOperation) throws Exception {
         try {
             assertMemoryLeak(() -> {
                 String tableName = testName.getMethodName();
@@ -774,7 +773,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                         alterWriter2.applyAlter(alterOperation, true);
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), error);
+                        TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exists");
                     }
                 }
             });
@@ -885,11 +884,19 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             drainWalQueue();
 
             try (WalWriter ignore = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try {
-                    compile("insert into " + tableName + " values (3, 'ab', '2022-02-25', 'abcd')");
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "failed to link");
+                compile("insert into " + tableName + " values (3, 'ab', '2022-02-25', 'abcd')");
+                try (WalWriter insertedWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    try (Path path = new Path()) {
+                        String columnName = "sym";
+                        path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());
+                        int trimTo = path.length();
+
+                        Assert.assertFalse(ff.exists(TableUtils.charFileName(path.trimTo(trimTo), columnName, COLUMN_NAME_TXN_NONE).$()));
+                        Assert.assertFalse(ff.exists(TableUtils.offsetFileName(path.trimTo(trimTo), columnName, COLUMN_NAME_TXN_NONE).$()));
+                        Assert.assertFalse(ff.exists(BitmapIndexUtils.keyFileName(path.trimTo(trimTo), columnName, COLUMN_NAME_TXN_NONE).$()));
+                        Assert.assertFalse(ff.exists(BitmapIndexUtils.valueFileName(path.trimTo(trimTo), columnName, COLUMN_NAME_TXN_NONE).$()));
+                    }
+
                 }
             }
 
@@ -899,7 +906,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             // No SQL applied
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n" +
                     "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n");
+
         });
     }
 }

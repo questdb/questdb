@@ -315,7 +315,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     fail("Exception expected");
                 } catch(Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
-                    assertEquals("[0] expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=0]", e.getMessage());
+                    assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [fromStructureVersion=0]", e.getMessage());
                 }
             }
         });
