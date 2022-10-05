@@ -98,7 +98,7 @@ public class SqlCompiler implements Closeable {
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final TableStructureAdapterLikeTableMetadata tableStructureAdapterLikeTable = new TableStructureAdapterLikeTableMetadata();
+    private final LikeTableMetadataAdapter tableStructureAdapterLikeTable = new LikeTableMetadataAdapter();
     private final FunctionParser functionParser;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final TextLoader textLoader;
@@ -2428,7 +2428,7 @@ public class SqlCompiler implements Closeable {
         public static final int DETACH = 3;
     }
 
-    private static class TableStructureAdapterLikeTableMetadata implements TableStructure {
+    private static class LikeTableMetadataAdapter implements TableStructure {
         private CreateTableModel model;
         private TableReaderMetadata tableReaderMetadata;
 
@@ -2510,7 +2510,7 @@ public class SqlCompiler implements Closeable {
             return model.isSequential(columnIndex);
         }
 
-        TableStructureAdapterLikeTableMetadata of(CreateTableModel model, TableReaderMetadata tableReaderMetadata) {
+        LikeTableMetadataAdapter of(CreateTableModel model, TableReaderMetadata tableReaderMetadata) {
             this.model = model;
             this.tableReaderMetadata = tableReaderMetadata;
             return this;

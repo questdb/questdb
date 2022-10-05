@@ -198,7 +198,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableFromLikeTableSymbolCapacityNotSame() throws Exception {
+    public void testCreateTableLikeTableWithSymbolCapacityNotSame() throws Exception {
         assertCompile("create table x (" +
                 "a INT," +
                 "y SYMBOL capacity 100 cache,"+
