@@ -603,12 +603,21 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void createWorkDir() {
-        removeWorkDir();
+        // First, create the work root directory, if it doesn't exist.
+        Path workDirPath = tmpPath.of(inputWorkRoot).slash$();
+        if (!ff.exists(workDirPath)) {
+            int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
+            if (errno != 0) {
+                throw CairoException.critical(errno).put("could not create import work root directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
+            }
+        }
 
-        Path workDirPath = tmpPath.of(importRoot).slash$();
+        // Next, remove and recreate the per-table sub-directory.
+        removeWorkDir();
+        workDirPath = tmpPath.of(importRoot).slash$();
         int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
         if (errno != 0) {
-            throw CairoException.critical(errno).put("could not create temporary import directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
+            throw CairoException.critical(errno).put("could not create temporary import work directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
         }
 
         createdWorkDir = true;
@@ -1377,17 +1386,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void removeWorkDir() {
         Path workDirPath = tmpPath.of(importRoot).$();
-
         if (ff.exists(workDirPath)) {
             if (isOneOfMainDirectories(importRoot)) {
-                throw TextException.$("could not remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
+                throw TextException.$("could not remove import work directory because it points to one of main directories [path='").put(workDirPath).put("'] .");
             }
 
-            LOG.info().$("removing import directory [path='").$(workDirPath).$("']").$();
+            LOG.info().$("removing import work directory [path='").$(workDirPath).$("']").$();
 
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
-                throw TextException.$("could not remove work dir [path='").put(workDirPath).put("', errno=").put(errno).put(']');
+                throw TextException.$("could not remove import work directory [path='").put(workDirPath).put("', errno=").put(errno).put(']');
             }
         }
     }
