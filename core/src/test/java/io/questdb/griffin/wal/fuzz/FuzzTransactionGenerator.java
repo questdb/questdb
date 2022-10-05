@@ -48,9 +48,9 @@ public class FuzzTransactionGenerator {
             double nullSet,
             double rollback,
             double collAdd,
-            double dataAdd,
             double collRemove,
             double colRename,
+            double dataAdd,
             int transactionCount,
             int strLen,
             String[] symbols) {
@@ -64,7 +64,7 @@ public class FuzzTransactionGenerator {
         colRename = colRename / totalProbs;
 
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
-        transactionCount = Math.min(transactionCount, 20 * 1_000_000 / rowCount);
+        transactionCount = Math.min(transactionCount, 40 * 1_000_000 / rowCount);
 
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = getZeroToOneDouble(rnd);
