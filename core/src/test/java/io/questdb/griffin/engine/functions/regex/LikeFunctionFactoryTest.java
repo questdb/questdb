@@ -288,4 +288,32 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testBindLikeStrFunction() throws Exception {
+        String sql = "create table x as (\n" +
+                "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
+                "union\n" +
+                "select cast('SBDHDJ' as string) as name from long_sequence(1)\n" +
+                "union\n" +
+                "select cast('BDGDGGG' as string) as name from long_sequence(1)\n" +
+                "union\n" +
+                "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
+                ")";
+        assertMemoryLeak(() -> {
+            compiler.compile(sql, sqlExecutionContext);
+//
+            RecordCursorFactory factory = compiler.compile("select * from x where name like $1", sqlExecutionContext).getRecordCursorFactory();
+            sqlExecutionContext.getBindVariableService().setStr(0,"ABC%");
+
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), false, sink);
+                    Assert.assertEquals(sink.toString().replace("\n", ""), "ABCGE");
+                    sink.clear();
+
+                }
+
+        });
+    }
 }
