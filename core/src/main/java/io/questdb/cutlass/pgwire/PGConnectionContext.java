@@ -2575,9 +2575,14 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
+            SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+
             for (int retries = 0; recompileStale; retries++) {
                 currentFactory = typesAndSelect.getFactory();
                 try {
+                    if (!circuitBreaker.isTimerSet()) {
+                        circuitBreaker.resetTimer();
+                    }
                     currentCursor = currentFactory.getCursor(sqlExecutionContext);
                     recompileStale = false;
                     // cache random if it was replaced
@@ -2594,6 +2599,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 } catch (Throwable e) {
                     freeFactory();
                     throw e;
+                } finally {
+                    circuitBreaker.unsetTimer();
                 }
             }
         }

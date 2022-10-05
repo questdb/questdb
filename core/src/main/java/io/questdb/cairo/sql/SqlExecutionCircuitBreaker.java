@@ -31,6 +31,11 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
+        public void statefulThrowExceptionIfTrippedNoThrottle() {
+
+        }
+
+        @Override
         public boolean checkIfTripped() {
             return false;
         }
@@ -57,6 +62,15 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         public long getFd() {
             return -1;
         }
+
+        @Override
+        public void unsetTimer() {
+        }
+
+        @Override
+        public boolean isTimerSet() {
+            return true;
+        }
     };
 
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
@@ -67,6 +81,12 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      */
     void statefulThrowExceptionIfTripped();
 
+    /**
+     * Same as statefulThrowExceptionIfTripped() but doesn't throttle checks .
+     * It is meant to be used in more coarse-grained processing, e.g. before native operation on whole page frame.
+     */
+    void statefulThrowExceptionIfTrippedNoThrottle();
+
     boolean checkIfTripped(long millis, long fd);
 
     void resetTimer();
@@ -74,4 +94,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void setFd(long fd);
 
     long getFd();
+
+    void unsetTimer();
+
+    boolean isTimerSet();
 }

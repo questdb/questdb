@@ -29,6 +29,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -83,6 +84,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final MessageBus bus = executionContext.getMessageBus();
 
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
@@ -176,6 +178,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                 final long seq = pubSeq.next();
 
                 if (seq < 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     GeoHashNative.latestByAndFilterPrefix(
                             keyBaseAddress,
                             keysMemorySize,
@@ -220,6 +223,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             while (doneLatch.getCount() > -queuedCount) {
                 long seq = subSeq.next();
                 if (seq > -1) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     queue.get(seq).run();
                     subSeq.done(seq);
                 }
