@@ -603,7 +603,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void createWorkDir() {
-        // First, create the work root directory, if it doesn't exist.
+        // First, create the work root dir, if it doesn't exist.
         Path workDirPath = tmpPath.of(inputWorkRoot).slash$();
         if (!ff.exists(workDirPath)) {
             int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
@@ -612,7 +612,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         }
 
-        // Next, remove and recreate the per-table sub-directory.
+        // Next, remove and recreate the per-table sub-dir.
         removeWorkDir();
         workDirPath = tmpPath.of(importRoot).slash$();
         int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
