@@ -42,7 +42,7 @@ public class MemoryPMARImplTest {
 
     @Test
     public void testJumpChangesActivePage() {
-        long pageSize = 2 * Files.PAGE_SIZE;
+        long pageSize = Files.PAGE_SIZE;
         ConcurrentLinkedQueue<Throwable> allErrors = new ConcurrentLinkedQueue<>();
         ObjList<Thread> threads = new ObjList<>();
 
@@ -65,14 +65,17 @@ public class MemoryPMARImplTest {
                         int page = 0;
 
                         mem.jumpTo(page * pageSize);
-                        mem.putStr("abc");
+                        String value = "abcdef";
+
+                        Assert.assertEquals(16, Vm.getStorageLength(value));
+                        mem.putStr(value);
 
                         while (mem.pageIndex(mem.getAppendOffset()) < page + 1) {
                             if (mem.pageIndex(mem.getAppendOffset()) == page) {
                                 pos = mem.getAppendOffset();
                                 mem.getChar(pos - 2);
                             }
-                            mem.putStr("abc");
+                            mem.putStr(value);
                         }
 
                         mem.jumpTo(pos);
