@@ -589,20 +589,28 @@ public final class TableUtils {
         return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
     }
 
-    public static long lock(FilesFacade ff, Path path) {
+    public static long lock(FilesFacade ff, Path path, boolean log) {
         long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
-            LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+            if (log) {
+                LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+            }
             return -1L;
         }
 
         if (ff.lock(fd) != 0) {
-            LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
+            if (log) {
+                LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
+            }
             ff.close(fd);
             return -1L;
         }
 
         return fd;
+    }
+
+    public static long lock(FilesFacade ff, Path path) {
+        return lock(ff, path, true);
     }
 
     public static void lockName(Path path) {

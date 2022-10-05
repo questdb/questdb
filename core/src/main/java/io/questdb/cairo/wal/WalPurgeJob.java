@@ -24,9 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TxReader;
+import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -70,16 +68,23 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
 
     private CairoEngine engine;
+    private FilesFacade ff;
+    private TxReader txReader;
     private Path path = new Path();
     private NativeLPSZ walName = new NativeLPSZ();
-    private NativeLPSZ segmentName = new NativeLPSZ();
+    private NativeLPSZ segmentName = new NativeLPSZ();  // TODO [amunra]: Can we have a single "name" instead of "walName" and "segmentName"?
     private final IntHashSet discoveredWalIds = new IntHashSet();
+    private final IntHashSet walsInUse = new IntHashSet();
     private WalInfoTable walInfoTable = new WalInfoTable();
-    private TxReader txReader;
+
+    private boolean anySegmentsKept = false;
+
+    private int maxSegmentId = -1;
 
     public WalPurgeJob(CairoEngine engine) {
         this.engine = engine;
-        this.txReader = new TxReader(engine.getConfiguration().getFilesFacade());
+        this.ff = engine.getConfiguration().getFilesFacade();
+        this.txReader = new TxReader(ff);
     }
 
     /** Validate equivalent of "^wal\d+$" regex. */
@@ -126,14 +131,37 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return path;
     }
 
+    private Path setWalLockPath(CharSequence tableName, int walId) {
+        path.of(engine.getConfiguration().getRoot())
+                .concat(tableName).concat("wal").put(walId);
+        TableUtils.lockName(path);
+        return path;
+    }
+
     private Path setSegmentPath(CharSequence tableName, int walId, int segmentId) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat("wal").put(walId).slash().put(segmentId).$();
         return path;
     }
 
-    private void discoverWalDirectories(CharSequence tableName, IntHashSet discoveredWalIds) {
-        FilesFacadeImpl.INSTANCE.iterateDir(setTablePath(tableName), (pUtf8NameZ, type) -> {
+    private boolean couldObtainLock(Path path) {
+        long lockFd = TableUtils.lock(ff, path, false);
+        if (lockFd != -1L) {
+            ff.close(lockFd);
+            if (ff.exists(path) && !ff.remove(path)) {
+                // TODO [amunra]: Log error.
+            }
+            return true;  // Could lock/unlock.
+        }
+        return false;  // Could not obtain lock.
+    }
+
+    private boolean walIsInUse(CharSequence tableName, int walId) {
+        return !couldObtainLock(setWalLockPath(tableName, walId));
+    }
+
+    private void discoverWalDirectories(CharSequence tableName, IntHashSet discoveredWalIds, IntHashSet walsInUse) {
+        ff.iterateDir(setTablePath(tableName), (pUtf8NameZ, type) -> {
             if ((type == Files.DT_DIR) && matchesWalNamePattern(walName.of(pUtf8NameZ))) {
                 // We just record the name for now in a set which we'll remove items to know when we're done.
                 int walId = 0;
@@ -143,11 +171,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     return;  // Ignore non-wal directory
                 }
                 discoveredWalIds.add(walId);
+                if (walIsInUse(tableName, walId)) {
+                    walsInUse.add(walId);
+                }
             }
         });
     }
 
-    private void extractSegmentInfoForEachWal(CharSequence tableName, TableRegistry tableRegistry, IntHashSet fsWalIds, WalInfoTable walInfoTable) {
+    private void populateWalInfoTable(CharSequence tableName, TableRegistry tableRegistry, IntHashSet fsWalIds, WalInfoTable walInfoTable) {
         // TODO: How do I get the path to the TXN file?
         txReader.ofRO(path, PartitionBy.NONE);  // TODO [amunra]: Does the partitioning param matter here?
         final long lastAppliedTxn = txReader.unsafeReadVersion();
@@ -170,16 +201,59 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void silentRecursiveDelete(Path path) {
         // TODO [amunra]: Is this a recursive delete? Are errors suppressed?
-        FilesFacadeImpl.INSTANCE.rmdir(path);
+        ff.rmdir(path);
     }
 
     private void deleteWalDirectory(CharSequence tableName, int walId) {
         silentRecursiveDelete(setWalPath(tableName, walId));
     }
 
+    private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
+        silentRecursiveDelete(setSegmentPath(tableName, walId, segmentId));
+    }
+
+    private void deleteClosedSegments(CharSequence tableName, int walId) {
+
+        sdfahsdflkasjd lfjasd
+
+                NEED ANOTHER LOCK FILE HERE.
+                THE SEGMENT MAY BE ALL CAUGHT UP BUT STILL OPEN.
+
+
+        maxSegmentId = -1;
+        setWalPath(tableName, walId);
+        ff.iterateDir(path, (pUtf8NameZ, type) -> {
+            if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
+                int segmentId = 0;
+                try {
+                    segmentId = Numbers.parseInt(segmentName);
+                } catch (NumericException _ne) {
+                    return; // Ignore non-segment directory.
+                }
+                maxSegmentId = Math.max(maxSegmentId, segmentId);
+            }
+        });
+        ff.iterateDir(path, (pUtf8NameZ, type) -> {
+            if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
+                int segmentId = 0;
+                try {
+                    segmentId = Numbers.parseInt(segmentName);
+                } catch (NumericException _ne) {
+                    return; // Ignore non-segment directory.
+                }
+            }
+        });
+    }
+
     private void deleteOutstandingWalDirectories(CharSequence tableName, IntHashSet discoveredWalIds) {
         for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
-            deleteWalDirectory(tableName, it.nextInt());
+            final int walId = it.nextInt();
+            if (walsInUse.contains(walId)) {
+                deleteClosedSegments(tableName, walId);
+            }
+            else {
+                deleteWalDirectory(tableName, walId);
+            }
         }
     }
 
@@ -187,15 +261,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return segmentId < walsLatestSegmentId;
     }
 
-    private void deleteClosedSegment(CharSequence tableName, int walId, int segmentId) {
-        silentRecursiveDelete(setSegmentPath(tableName, walId, segmentId));
-    }
-
-    private void deleteUnreachableSegments(CharSequence tableName, WalInfoTable walInfoTable) {
+    private void deleteUnreachableSegments(CharSequence tableName, WalInfoTable walInfoTable, IntHashSet discoveredWalIds) {
         for (int i = 0; i < walInfoTable.size(); ++i) {
             final int index = i;
             final int walId = walInfoTable.walIds.get(index);
-            FilesFacadeImpl.INSTANCE.iterateDir(setWalPath(tableName, walId), (pUtf8NameZ, type) -> {
+            anySegmentsKept = false;
+            ff.iterateDir(setWalPath(tableName, walId), (pUtf8NameZ, type) -> {
                 if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
                     int segmentId = 0;
                     try {
@@ -206,12 +277,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                     final int walsLatestSegmentId = walInfoTable.segmentIds.get(index);
                     if (segmentIsReapable(tableName, walId, segmentId, walsLatestSegmentId)) {
-                        deleteClosedSegment(tableName, walId, segmentId);
+                        deleteSegmentDirectory(tableName, walId, segmentId);
+                    }
+                    else {
+                        anySegmentsKept = true;
                     }
                 }
             });
+
+            // If all known segments were deleted, then this whole wal directory is candidate for deletion.
+            // We add it for clean-up by `deleteOutstandingWalDirectories`.
+            if (!anySegmentsKept) {
+                discoveredWalIds.add(walId);
+            }
         }
-        // setSegmentPath(tableName, walId, segmentId);
     }
 
     /**
@@ -220,23 +299,25 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     private void broadSweep() {
         TableRegistry tableRegistry = engine.getTableRegistry();
-        tableRegistry.forAllWalTables((tableId, tableName, lastTxn) -> {
+        tableRegistry.forAllWalTables((_tableId, tableName, _lastTxn) -> {
             discoveredWalIds.clear();
+            walsInUse.clear();
             walInfoTable.clear();
 
-            discoverWalDirectories(tableName, discoveredWalIds);
+            discoverWalDirectories(tableName, discoveredWalIds, walsInUse);
+            populateWalInfoTable(tableName, tableRegistry, discoveredWalIds, walInfoTable);
+            deleteUnreachableSegments(tableName, walInfoTable, discoveredWalIds);
 
-            extractSegmentInfoForEachWal(tableName, tableRegistry, discoveredWalIds, walInfoTable);
-
-            // Call to `extractSegmentInfoForEachWal` populated `walInfoTable`.
-            deleteUnreachableSegments(tableName, walInfoTable);
-
-            // Calls to `extractSegmentInfoForEachWal` and `deleteUnreachableSegments` possibly leave outstanding
-            // `discoveredWalIds` that are still on the filesystem and don't have any active segments.
-            // The walNNN directories themselves can be removed.
+            // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
+            // and don't have any active segments. The walNNN directories themselves may be deleted if they don't have
+            // an associated open WalWriter.
             // Note that this also handles cases where a wal directory was created shortly before a crash and thus
             // never recorded and tracked by the sequencer for that table.
             deleteOutstandingWalDirectories(tableName, discoveredWalIds);
+
+            // TODO [amunra]: Case where there's an open wal, with an open segment but such segment is not yet
+            // registered with the sequencer. It's untracked but still used.
+            // We should still be able to reap older segments, just not the last one.
         });
     }
 
