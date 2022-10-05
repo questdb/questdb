@@ -19,7 +19,7 @@
 
 # QuestDB
 
-QuestDb è un database SQL ottimizzato e open-source per le applicazioni che riguardano i sevizi finanziari,
+QuestDB è un database SQL ottimizzato e open-source per le applicazioni che riguardano i sevizi finanziari,
 IoT, machine learning, DevOps e osservabilità.
 Include endpoint per il protocollo di collegamento PostgreSQL, l'importazione
 indipendente dello schema ad alta velocità tramite InfluxDB Line Protocol,
@@ -28,7 +28,7 @@ e una REST API per query, importazioni bulk e export.
 QuestDB implementa ANSI SQL con estensioni native per le funzionalità time-oriented.
 Queste estensioni permettono facilmente di collegare dati da molteplici sorgenti
 usando join relazionali e temporali.
-QuesDB raggiunge delle alte performance grazie ai modelli di archiviazione orientati a colonne,
+QuestDB raggiunge delle alte performance grazie ai modelli di archiviazione orientati a colonne,
 esecuzioni di vettori massivamente parallelizzati, istruzioni SIMD e altre tecniche
 per ottenere bassa latenza.
 Tutto il progetto è stato costruito da zero in Java e C++, senza avere dipendenze ed è
@@ -43,7 +43,7 @@ al 100% libero dalla garbage collection.
 ## Provare QuestDB
 
 Noi forniamo una [live demo](https://demo.questdb.io/) con all'interno l'ultima 
-versione QuestDb ed un semplice dataset :
+versione QuestDB ed un semplice dataset :
 
 - 10 anni di viaggi di taxy a NYC taxi con 1.6 miliardi di righe
 - dati di live trading da un exchange di cryptovalute
@@ -79,7 +79,7 @@ Puoi interagire con QuestDB usando le seguenti interfacce:
 - [REST API](https://questdb.io/docs/reference/api/rest/) sulla porta `9000`
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol sulla
   porta `8812`
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol per
+- [InfluxDB](https://questdb.io/docs/reference/api/ilp/overview/) line protocol per
 l'ingestione ad alto rendimento sulla porta `9009`
 
 ## Come è QuestDB in confronto agli altri TSDBs open source
