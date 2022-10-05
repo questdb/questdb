@@ -62,7 +62,7 @@ public class MemoryPMARImplTest {
 
                     try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path, pageSize, MemoryTag.NATIVE_DEFAULT, O_DIRECT)) {
                         long pos = 0;
-                        int page = 1;
+                        int page = 0;
 
                         mem.jumpTo(page * pageSize);
                         mem.putStr("abc");
