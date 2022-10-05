@@ -38,7 +38,7 @@ import io.questdb.std.str.LPSZ;
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
     protected int memoryTag = MemoryTag.MMAP_DEFAULT;
-    private int madviseOpts;
+    private int madviseOpts = -1;
 
     public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         of(ff, name, 0, size, memoryTag, 0);
@@ -81,6 +81,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         this.memoryTag = memoryTag;
+        this.madviseOpts = madviseOpts;
         openFile(ff, name);
         if (size < 0) {
             size = ff.length(fd);
@@ -97,9 +98,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         if (size > 0) {
             try {
                 this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
-                if (madviseOpts != 0) {
-                    ff.madvise(pageAddress, size, madviseOpts);
-                }
+                ff.madvise(pageAddress, size, madviseOpts);
             } catch (Throwable e) {
                 close();
                 throw e;
@@ -123,15 +122,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         try {
             if (size > 0) {
                 pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
-                if (madviseOpts != 0) {
-                    ff.madvise(pageAddress, newSize, madviseOpts);
-                }
+                ff.madvise(pageAddress, newSize, madviseOpts);
             } else {
                 assert pageAddress == 0;
                 pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
-                if (madviseOpts != 0) {
-                    ff.madvise(pageAddress, newSize, madviseOpts);
-                }
+                ff.madvise(pageAddress, newSize, madviseOpts);
             }
             size = newSize;
         } catch (Throwable e) {

@@ -40,10 +40,10 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
-    private int madviseOpts;
+    private int madviseOpts = -1;
 
     public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
-        of(ff, name, pageSize, 0, memoryTag, opts, 0);
+        of(ff, name, pageSize, 0, memoryTag, opts, -1);
     }
 
     public MemoryPMARImpl() {
@@ -78,7 +78,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, 0, memoryTag, opts, 0);
+        of(ff, name, extendSegmentSize, 0, memoryTag, opts, -1);
     }
 
     @Override
@@ -141,16 +141,14 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), 0, memoryTag, CairoConfiguration.O_NONE, 0);
+        of(ff, name, ff.getMapPageSize(), 0, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
     public long mapPage(int page) {
         // set page to "not mapped" in case mapping fails
         final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
         mappedPage = page;
-        if (madviseOpts != 0) {
-            ff.madvise(address, getExtendSegmentSize(), madviseOpts);
-        }
+        ff.madvise(address, getExtendSegmentSize(), madviseOpts);
         return address;
     }
 

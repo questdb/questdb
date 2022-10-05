@@ -43,10 +43,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize = -1;
     private long extendSegmentMsb;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
-    private int madviseOpts;
+    private int madviseOpts = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, size, memoryTag, opts, 0);
+        of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
@@ -269,10 +269,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                     previousSize,
                     newSize,
                     Files.MAP_RW,
-                    memoryTag);
-            if (madviseOpts != 0) {
-                ff.madvise(pageAddress, newSize, madviseOpts);
-            }
+                    memoryTag
+            );
+            ff.madvise(pageAddress, newSize, madviseOpts);
         } catch (Throwable e) {
             appendAddress = pageAddress + previousSize;
             close(false);
@@ -307,9 +306,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         try {
             this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
             this.lim = pageAddress + size;
-            if (madviseOpts != 0) {
-                ff.madvise(pageAddress, size, madviseOpts);
-            }
+            ff.madvise(pageAddress, size, madviseOpts);
         } catch (Throwable e) {
             close(false);
             throw e;

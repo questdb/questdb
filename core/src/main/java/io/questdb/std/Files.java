@@ -461,10 +461,10 @@ public final class Files {
             POSIX_MADV_RANDOM = getPosixMadvRandom();
             POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
         } else {
-            POSIX_FADV_SEQUENTIAL = 0;
-            POSIX_FADV_RANDOM = 0;
-            POSIX_MADV_SEQUENTIAL = 0;
-            POSIX_MADV_RANDOM = 0;
+            POSIX_FADV_SEQUENTIAL = -1;
+            POSIX_FADV_RANDOM = -1;
+            POSIX_MADV_SEQUENTIAL = -1;
+            POSIX_MADV_RANDOM = -1;
         }
     }
 }
