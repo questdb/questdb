@@ -82,7 +82,7 @@ public abstract class AbstractILikeStrFunctionFactory implements FunctionFactory
                 assert p != null;
                 return new ConstLikeStrFunction(
                         value,
-                        Pattern.compile(p, Pattern.DOTALL, Pattern.CASE_INSENSITIVE).matcher("")
+                        Pattern.compile(p, Pattern.DOTALL | Pattern.CASE_INSENSITIVE).matcher("")
                 );
             }
             return BooleanConstant.FALSE;
@@ -156,7 +156,7 @@ public abstract class AbstractILikeStrFunctionFactory implements FunctionFactory
             if (patternValue != null && patternValue.length() > 0) {
                 final String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
-                    this.matcher = Pattern.compile(p, Pattern.DOTALL, Pattern.CASE_INSENSITIVE).matcher("");
+                    this.matcher = Pattern.compile(p, Pattern.DOTALL | Pattern.CASE_INSENSITIVE).matcher("");
                     this.lastPattern = p;
                 }
             } else {
