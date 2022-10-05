@@ -52,9 +52,13 @@ public class MemoryPMARImplTest {
             Thread th = new Thread(() -> {
 
                 try (Path path = new Path()) {
-                    path.of(temp.newFolder("root" + threadNum).getAbsolutePath()).concat("testJumpChangesActivePage");
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
-                    ff.touch(path.$());
+                    path.of(temp.newFolder("root" + threadNum).getAbsolutePath());
+
+                    path.chop$().concat("testJumpChangesActivePage");
+                    if (!ff.touch(path.$())) {
+                        throw new RuntimeException("Cannot create file: " + path + " errno=" + ff.errno());
+                    }
 
                     try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path, pageSize, MemoryTag.NATIVE_DEFAULT, O_DIRECT)) {
                         long pos = 0;
