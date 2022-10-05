@@ -1902,7 +1902,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     data[i] = val;
                 }
 
-                result.add(new IndexChunk(chunk.getParentFile().getName() + "/" + chunk.getName(), data));
+                result.add(new IndexChunk(chunk.getParentFile().getName() + File.separator + chunk.getName(), data));
             }
         } finally {
             p.close();
@@ -1989,6 +1989,31 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportFileFailsWhenWorkDirectoryDoesNotExistAndCantBeCreated() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            final String tempDir = inputWorkRoot + File.separator;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.equals(path, tempDir)) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (Chars.equals(name, tempDir)) {
+                    return -1;
+                }
+                return super.rmdir(name);
+            }
+        };
+
+        testImportThrowsException(ff, "tab35", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create import work root directory");
+    }
+
+    @Test
     public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             final String tempDir = inputWorkRoot + File.separator + "tab35";
@@ -1998,7 +2023,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 if (Chars.equals(path, tempDir)) {
                     return true;
                 }
-
                 return super.exists(path);
             }
 
