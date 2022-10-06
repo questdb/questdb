@@ -76,11 +76,13 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     .$(", cursor=").$(cursor)
                     .I$();
 
-            collectCursor(true);
-            if (frameLimit > -1) {
-                frameSequence.await();
+            if (frameSequence != null) {
+                collectCursor(true);
+                if (frameLimit > -1) {
+                    frameSequence.await();
+                }
+                frameSequence.clear();
             }
-            frameSequence.clear();
             isOpen = false;
         }
     }
