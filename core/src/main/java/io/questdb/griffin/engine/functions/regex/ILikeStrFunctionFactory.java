@@ -24,100 +24,14 @@
 
 package io.questdb.griffin.engine.functions.regex;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 public class ILikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
-
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function value = args.getQuick(0);
-        final Function pattern = args.getQuick(1);
-
-        if (pattern.isConstant()) {
-            final CharSequence likeString = pattern.getStr(null);
-            if (likeString != null && likeString.length() > 0) {
-                String p = escapeSpecialChars(likeString, null);
-                assert p != null;
-                return new ConstLikeStrFunction(
-                        value,
-                        Pattern.compile(p, Pattern.DOTALL | Pattern.CASE_INSENSITIVE).matcher("")
-                );
-            }
-            return BooleanConstant.FALSE;
-        }
-
-        if (pattern instanceof IndexedParameterLinkFunction) {
-            // bind variable
-            return new BindLikeStrFunction(value, pattern);
-        }
-
-        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
-    }
-
-    static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
-        private final Function pattern;
-        private Matcher matcher;
-        private String lastPattern = null;
-
-        public BindLikeStrFunction(Function value, Function pattern) {
-            this.value = value;
-            this.pattern = pattern;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            if (matcher != null) {
-                CharSequence cs = getArg().getStr(rec);
-                return cs != null && matcher.reset(cs).matches();
-            }
-            return false;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            value.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
-            // this is bind variable, we can use it as constant
-            final CharSequence patternValue = pattern.getStr(null);
-            if (patternValue != null && patternValue.length() > 0) {
-                final String p = escapeSpecialChars(patternValue, lastPattern);
-                if (p != null) {
-                    this.matcher = Pattern.compile(p, Pattern.DOTALL | Pattern.CASE_INSENSITIVE).matcher("");
-                    this.lastPattern = p;
-                }
-            } else {
-                lastPattern = null;
-                matcher = null;
-            }
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-    }
-
     @Override
     public String getSignature() {
         return "ilike(SS)";
+    }
+
+    @Override
+    protected boolean isCaseInsensitive() {
+        return true;
     }
 }

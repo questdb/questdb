@@ -24,47 +24,14 @@
 
 package io.questdb.griffin.engine.functions.regex;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-import java.util.regex.Pattern;
-
 public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
-
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException
-    {
-        final Function value = args.getQuick(0);
-        final Function pattern = args.getQuick(1);
-
-        if (pattern.isConstant()) {
-            final CharSequence likeString = pattern.getStr(null);
-            if (likeString != null && likeString.length() > 0) {
-                String p = escapeSpecialChars(likeString, null);
-                assert p != null;
-                return new ConstLikeStrFunction(
-                        value,
-                        Pattern.compile(p, Pattern.DOTALL).matcher("")
-                );
-            }
-            return BooleanConstant.FALSE;
-        }
-
-        if (pattern instanceof IndexedParameterLinkFunction) {
-            // bind variable
-            return new BindLikeStrFunction(value, pattern);
-        }
-
-        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
-    }
-
     @Override
     public String getSignature() {
         return "like(SS)";
+    }
+
+    @Override
+    protected boolean isCaseInsensitive() {
+        return false;
     }
 }

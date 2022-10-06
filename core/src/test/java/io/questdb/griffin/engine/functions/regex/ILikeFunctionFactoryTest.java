@@ -38,7 +38,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testEmptyLikeString() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -63,7 +62,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -118,7 +116,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -136,7 +133,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), false, sink);
                     Assert.assertEquals(sink.toString().replace("\n", ""), "ABCGE");
                     sink.clear();
-
                 }
             }
         });
@@ -145,7 +141,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringPercentageAtEnd() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -172,7 +167,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringPercentageAtStart() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -197,7 +191,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringPercentageAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -222,7 +215,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringUnderscoreAndPercentage() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -247,7 +239,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringUnderscoreAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -271,10 +262,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNotLikeCharacterMatch() throws Exception {
-
         assertMemoryLeak(() -> {
-
-
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
 
             try (RecordCursorFactory factory = compiler.compile("select * from x where not name ilike 'H'", sqlExecutionContext).getRecordCursorFactory()) {
@@ -310,7 +298,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                 compiler.compile("select * from x where name ilike rnd_str('foo','bar')", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(32, e.getPosition());
+                Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
             }
         });
