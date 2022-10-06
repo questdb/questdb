@@ -19,14 +19,14 @@
 
 # QuestDB
 
-QuestDB è un database SQL ottimizzato e open-source per le applicazioni che riguardano i sevizi finanziari,
+QuestDB è un database open-source ad alte prestazioni per le applicazioni che riguardano i sevizi finanziari,
 IoT, machine learning, DevOps e osservabilità.
 Include endpoint per il protocollo di collegamento PostgreSQL, l'importazione
 indipendente dello schema ad alta velocità tramite InfluxDB Line Protocol,
 e una REST API per query, importazioni bulk e export.
 
 QuestDB implementa ANSI SQL con estensioni native per le funzionalità time-oriented.
-Queste estensioni permettono facilmente di collegare dati da molteplici sorgenti
+Queste estensioni permettono facilmente di correlare dati da molteplici fonti
 usando join relazionali e temporali.
 QuestDB raggiunge delle alte performance grazie ai modelli di archiviazione orientati a colonne,
 esecuzioni di vettori massivamente parallelizzati, istruzioni SIMD e altre tecniche
@@ -43,9 +43,9 @@ al 100% libero dalla garbage collection.
 ## Provare QuestDB
 
 Noi forniamo una [live demo](https://demo.questdb.io/) con all'interno l'ultima 
-versione QuestDB ed un semplice dataset :
+versione QuestDB ed un dataset di esempio:
 
-- 10 anni di viaggi di taxy a NYC taxi con 1.6 miliardi di righe
+- 10 anni di viaggi di taxi a NYC taxi con 1.6 miliardi di righe
 - dati di live trading da un exchange di cryptovalute
 - la geolocalizzazione di 250k navi nel tempo
 
@@ -63,11 +63,11 @@ Gli utenti macOS possono usare Homebrew:
 brew install questdb
 brew services start questdb
 
-questdb start // To start questdb
-questdb stop  // To stop questdb
+questdb start // Per avviare questdb
+questdb stop  // Per terminare questdb
 ```
 
-La [pagina di download QuestDB](https://questdb.io/get-questdb/) fornisce il download diretto dei file binari
+La [pagina di download di QuestDB](https://questdb.io/get-questdb/) fornisce il download diretto dei file binari
 e contiene i dettagli per altre installazioni e metodi di sviluppo.
 
 ### Connettersi a QuestDB
@@ -108,21 +108,22 @@ un'istanza `c5.metal` che utilizza 16 dei 96 thread disponibili
 ### 📚 Leggere la documentazione
 
 - [Documentazione QuestDB:](https://questdb.io/docs/introduction/) per capire come
-eseguire e configurare QuestDB
+eseguire e configurare QuestDB.
 - [Tutorial:](https://questdb.io/tutorial/) per imparare cosa è possibile fare
-passo dopo passo grazie a QuestDB
+passo dopo passo grazie a QuestDB.
 - [Product roadmap:](https://github.com/questdb/questdb/projects) per rimanere aggiornati
-sulle release future
+sulle release future.
 
-### ❓ Get support
+### ❓ Ottenere aiuto
 
 - [Community Slack:](https://slack.questdb.io) unisciti a discussioni tecniche,
 fai domande, incontra altri utenti!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) segnala bugs o problemi riguardanti QuestDB.
 - [GitHub discussions:](https://github.com/questdb/questdb/discussions) proponi nuove funzionalità o mostra cosa hai fatto!
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) cerca soluzioni a problemi comuni
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) cerca soluzioni a problemi comuni.
+- Se hai bisogno di aiuto puoi contattarci anche direttamente in italiano!
 
-### 🚢 Deploy QuestDB
+### 🚢 Deployment di QuestDB
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
@@ -136,11 +137,11 @@ Siamo sempre felici di vedere nuovi contributi al progetto che sia nel codice,
 nella documentazione, nella segnalazione di bug, richieste di funzionalità o feedback.
 Per iniziare a contribuire:
 
-- Dai un'occhiata alle issue GitHub 
+- Dai un'occhiata alle issue di GitHub 
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
 - Leggi
   [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- Per dettagli per buildare QuestDB
+- Per dettagli per creare build di QuestDB
   [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   di QuestDB e fai una pull request con le tue proposte di cambio.
@@ -302,4 +303,4 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 Questo progetto aderisce alle specifiche
 [all-contributors](https://github.com/all-contributors/all-contributors)
-Ogni contributo di ogni tipo è il benvenuto!
+Contributi di qualsiasi tipo sono sempre benvenuti!
