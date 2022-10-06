@@ -71,32 +71,9 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function value = args.getQuick(0);
-        final Function pattern = args.getQuick(1);
+    public abstract Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException;
 
-        if (pattern.isConstant()) {
-            final CharSequence likeString = pattern.getStr(null);
-            if (likeString != null && likeString.length() > 0) {
-                String p = escapeSpecialChars(likeString, null);
-                assert p != null;
-                return new ConstLikeStrFunction(
-                        value,
-                        Pattern.compile(p, Pattern.DOTALL).matcher("")
-                );
-            }
-            return BooleanConstant.FALSE;
-        }
-
-        if (pattern instanceof IndexedParameterLinkFunction) {
-            // bind variable
-            return new BindLikeStrFunction(value, pattern);
-        }
-
-        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
-    }
-
-    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function value;
         private final Matcher matcher;
 
@@ -122,7 +99,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function value;
         private final Function pattern;
         private Matcher matcher;
