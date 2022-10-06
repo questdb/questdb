@@ -108,6 +108,10 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
 
                         tempSink.put('_');
                     }
+
+                    if (columnNames.contains(tempSink)) {
+                        throw TextException.$("Failed to generate unique name for column [no=").put(i).put("]");
+                    }
                 }
 
                 columnNames.setQuick(i, tempSink.toString());
