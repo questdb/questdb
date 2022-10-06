@@ -600,6 +600,9 @@ io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFac
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
 
+# position()
+io.questdb.griffin.engine.functions.str.PositionFunctionFactory
+
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
 io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory
