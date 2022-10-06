@@ -197,7 +197,7 @@ public class TextImportTask {
             CairoConfiguration cfg,
             CharSequence importRoot,
             TableWriter writer,
-            CharSequence fileSystemName,
+            CharSequence systemTableName,
             CharSequence column,
             int columnIndex,
             int symbolColumnIndex,
@@ -209,7 +209,7 @@ public class TextImportTask {
                 cfg,
                 importRoot,
                 writer,
-                fileSystemName,
+                systemTableName,
                 column,
                 columnIndex,
                 symbolColumnIndex,
@@ -451,7 +451,7 @@ public class TextImportTask {
         private CairoConfiguration cfg;
         private CharSequence importRoot;
         private TableWriter writer;
-        private CharSequence fileSystemName;
+        private CharSequence systemTableName;
         private CharSequence column;
         private int columnIndex;
         private int symbolColumnIndex;
@@ -462,7 +462,7 @@ public class TextImportTask {
             this.cfg = null;
             this.importRoot = null;
             this.writer = null;
-            this.fileSystemName = null;
+            this.systemTableName = null;
             this.column = null;
             this.columnIndex = -1;
             this.symbolColumnIndex = -1;
@@ -473,7 +473,7 @@ public class TextImportTask {
         public void of(CairoConfiguration cfg,
                        CharSequence importRoot,
                        TableWriter writer,
-                       CharSequence fileSystemName,
+                       CharSequence systemTableName,
                        CharSequence column,
                        int columnIndex,
                        int symbolColumnIndex,
@@ -483,7 +483,7 @@ public class TextImportTask {
             this.cfg = cfg;
             this.importRoot = importRoot;
             this.writer = writer;
-            this.fileSystemName = fileSystemName;
+            this.systemTableName = systemTableName;
             this.column = column;
             this.columnIndex = columnIndex;
             this.symbolColumnIndex = symbolColumnIndex;
@@ -493,11 +493,11 @@ public class TextImportTask {
 
         public void run(Path path) {
             final FilesFacade ff = cfg.getFilesFacade();
-            path.of(importRoot).concat(fileSystemName);
+            path.of(importRoot).concat(systemTableName);
             int plen = path.length();
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
-                path.put("_").put(i);
+                path.put('_').put(i).put('_');
                 int tableLen = path.length();
                 try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
                     path.trimTo(tableLen);
@@ -570,8 +570,8 @@ public class TextImportTask {
         public void run(Path path) {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
 
-            CharSequence fileSystemName = cairoEngine.getFileSystemName(tableStructure.getTableName());
-            path.of(root).concat(fileSystemName).put("_").put(index);
+            CharSequence systemTableName = cairoEngine.getSystemTableName(tableStructure.getTableName());
+            path.of(root).concat(systemTableName).put('_').put(index).put('_');
             int plen = path.length();
             PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
@@ -647,15 +647,15 @@ public class TextImportTask {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             tableNameSink.clear();
 
-            CharSequence fileSystemName = cairoEngine.getFileSystemName(tableStructure.getTableName());
-            tableNameSink.put(fileSystemName).put('_').put(index);
+            CharSequence systemTableName = cairoEngine.getSystemTableName(tableStructure.getTableName());
+            tableNameSink.put(systemTableName).put('_').put(index);
 
-            CharSequence fileSystemName1 = cairoEngine.getFileSystemName(tableNameSink);
-            tableNameSink.put(fileSystemName).put('_').put(index);
+            CharSequence systemTableName1 = cairoEngine.getSystemTableName(tableNameSink);
+            tableNameSink.put(systemTableName).put('_').put(index);
             final int columnCount = metadata.getColumnCount();
             try (TableWriter w = new TableWriter(configuration,
                     tableNameSink,
-                    fileSystemName1,
+                    systemTableName1,
                     cairoEngine.getMessageBus(),
                     null,
                     true,
@@ -844,19 +844,19 @@ public class TextImportTask {
             this.utf8Sink = utf8Sink;
             tableNameSink.clear();
 
-            CharSequence fileSystemName = cairoEngine.getFileSystemName(targetTableStructure.getTableName());
-            tableNameSink.put(fileSystemName).put('_').put(index);
+            CharSequence systemTableName = cairoEngine.getSystemTableName(targetTableStructure.getTableName());
+            tableNameSink.put(systemTableName).put('_').put(index);
 
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
             createTable(cairoEngine, ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0, configuration);
 
-            CharSequence fileSystemName1 = cairoEngine.getFileSystemName(tableNameSink);
+            CharSequence systemTableName1 = cairoEngine.getSystemTableName(tableNameSink);
             try (
                     TableWriter writer = new TableWriter(
                             configuration,
                             tableNameSink,
-                            fileSystemName1,
+                            systemTableName1,
                             cairoEngine.getMessageBus(),
                             null,
                             true,

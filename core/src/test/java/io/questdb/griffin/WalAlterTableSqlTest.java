@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -34,6 +33,26 @@ import org.junit.Test;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 
 public class WalAlterTableSqlTest extends AbstractGriffinTest {
+
+    @Test
+    public void createWalDropTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 21600000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            executeOperation("drop table " + tableName, CompiledQuery.DROP);
+
+            drainWalQueue();
+            assertSql(
+                    "select commitLag from tables() where name = '" + tableName + "'",
+                    "commitLag\n117000000\n");
+        });
+    }
 
     @Test
     public void createWalSetParam() throws Exception {
@@ -102,9 +121,9 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
             );
 
             try (Path path = new Path(); Path other = new Path()) {
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(fileSystemName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                path.of(configuration.getRoot()).concat(systemTableName).concat(partition).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getRoot()).concat(systemTableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
             }
 

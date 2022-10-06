@@ -72,8 +72,8 @@ public class PooledMetadataFactory implements MetadataFactory, QuietClosable {
     public TableRecordMetadata openTableReaderMetadata(CharSequence tableName) {
         TableReaderMetadata tableReaderMetadata = readerMetadataPool.pop();
         String tableNameStr = resolveString(tableNamePool, tableName);
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        tableReaderMetadata.readSafe(dbRoot, tableNameStr, fileSystemName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        tableReaderMetadata.readSafe(dbRoot, tableNameStr, systemTableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
         return tableReaderMetadata;
     }
 

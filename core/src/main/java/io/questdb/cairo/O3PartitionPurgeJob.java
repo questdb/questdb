@@ -253,8 +253,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int partitionBy) {
 
         LOG.info().$("processing [table=").$(tableName).I$();
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        Path path = Path.getThreadLocal(root).concat(fileSystemName).slash$();
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        Path path = Path.getThreadLocal(root).concat(systemTableName).slash$();
 
         sink.clear();
         partitionList.clear();
@@ -283,7 +283,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         int lo = 0;
         int n = (int) partitionList.size();
 
-        path.of(root).concat(fileSystemName);
+        path.of(root).concat(systemTableName);
 
         int tableRootLen = path.length();
         try {

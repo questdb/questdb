@@ -227,9 +227,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return tableName;
     }
 
-    public void readSafe(CharSequence dbRoot, String tableName, CharSequence fileSystemName, MillisecondClock millisecondClock, long timeout) {
+    public void readSafe(CharSequence dbRoot, String tableName, CharSequence systemTableName, MillisecondClock millisecondClock, long timeout) {
         long deadline = millisecondClock.getTicks() + timeout;
-        this.path.of(dbRoot).concat(fileSystemName);
+        this.path.of(dbRoot).concat(systemTableName);
         int rootLen = this.path.length();
         this.path.concat(TableUtils.META_FILE_NAME).$();
         boolean existenceChecked = false;

@@ -125,8 +125,8 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                path.concat(fileSystemName);
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                path.concat(systemTableName);
                 int tableNameLen = path.length();
                 FilesFacade ff = configuration.getFilesFacade();
                 try (TableReader tableReader = new TableReader(configuration, "t")) {
@@ -288,10 +288,10 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                path.concat(fileSystemName);
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                path.concat(systemTableName);
                 int tableNameLen = path.length();
-                copyPath.concat(fileSystemName);
+                copyPath.concat(systemTableName);
                 int copyTableNameLen = copyPath.length();
 
                 // _meta
@@ -445,8 +445,8 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
-            CharSequence fileSystemName = engine.getFileSystemName(tableName);
-            Assert.assertTrue(ff.remove(path.of(root).concat(fileSystemName).concat(TableUtils.TXN_FILE_NAME).$()));
+            CharSequence systemTableName = engine.getSystemTableName(tableName);
+            Assert.assertTrue(ff.remove(path.of(root).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$()));
 
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);

@@ -38,6 +38,8 @@ public interface TableWriterFrontend extends Closeable {
 
     long applyUpdate(UpdateOperation operation)  throws SqlException;
 
+    void dropTable();
+
     @Override
     void close();
 

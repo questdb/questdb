@@ -329,7 +329,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlo
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e, jclass cl, jlong lpszName) {
     DWORD fileSystemFlags;
     char drive[MAX_PATH];
-    char fileSystemName[MAX_PATH];
+    char systemTableName[MAX_PATH];
     char volumeName[MAX_PATH];
     DWORD VolumeSerialNo;
     unsigned long MaxComponentLength, FileSystemFlags;
@@ -342,13 +342,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
                 &VolumeSerialNo,
                 &MaxComponentLength,
                 &fileSystemFlags,
-                fileSystemName,
+                systemTableName,
                 MAX_PATH
                 )) {
             if ((fileSystemFlags & FILE_SUPPORTS_TRANSACTIONS) != 0) {
                 // windows share (CIFS) reports filesystem as NTFS
                 // local disks support transactions, but CIFS does not
-                strcpy((char*) lpszName, fileSystemName);
+                strcpy((char*) lpszName, systemTableName);
                 return -1 * 0x2b;
             }
             // unsupported file system

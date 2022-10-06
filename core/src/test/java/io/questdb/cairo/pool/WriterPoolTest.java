@@ -157,7 +157,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                CharSequence z = engine.getFileSystemName("z");
+                CharSequence z = engine.getSystemTableName("z");
                 if (Chars.endsWith(name, z + ".lock") && count-- > 0) {
                     return -1;
                 }
@@ -595,11 +595,11 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(x, "testing"));
 
-            CharSequence fileSystemName = engine.getFileSystemName(x);
+            CharSequence systemTableName = engine.getSystemTableName(x);
             TableWriter writer = new TableWriter(
                     configuration,
                     x,
-                    fileSystemName,
+                    systemTableName,
                     messageBus,
                     null,
                     false,
@@ -896,8 +896,8 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                CharSequence fileSystemName = engine.getFileSystemName("z");
-                if (Chars.endsWith(name, Chars.toString(fileSystemName) + ".lock") && count-- > 0) {
+                CharSequence systemTableName = engine.getSystemTableName("z");
+                if (Chars.endsWith(name, Chars.toString(systemTableName) + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);

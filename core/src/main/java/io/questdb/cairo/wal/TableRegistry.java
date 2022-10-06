@@ -28,14 +28,13 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.AbstractPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -52,16 +51,129 @@ public class TableRegistry extends AbstractPool {
     private final ConcurrentHashMap<Entry> seqRegistry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
-    private final TableNameRegistry tableNameRegistry;
+    private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
+    private final ConcurrentHashMap<CharSequence> tableNameRegistry = new ConcurrentHashMap<>();
+
     public TableRegistry(CairoEngine engine, CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveWriterTTL()); //todo: separate config option
         this.engine = engine;
-        this.tableNameRegistry = new TableNameRegistry();
+        open();
         notifyListener(Thread.currentThread().getId(), "TableRegistry", PoolListener.EV_POOL_OPEN);
     }
 
-    public CharSequence getFileSystemName(final CharSequence tableName) {
-        return this.tableNameRegistry.getFileSystemName(tableName);
+    public CharSequence getSystemTableName(final CharSequence tableName) {
+        final CharSequence systemName = tableNameRegistry.get(tableName);
+        if (systemName != null) {
+            return systemName;
+        }
+        return tableName.toString() + '_';
+    }
+
+    public void open() {
+        tableNameRegistry.clear();
+        CairoConfiguration configuration = engine.getConfiguration();
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        CharSink sink = new StringSink();
+        try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat("tables.d").$()) {
+            tableNameMemory.wholeFile(ff, path, MemoryTag.MMAP_DEFAULT);
+
+            long entryCount = tableNameMemory.getLong(0);
+            long validCount = entryCount;
+            long compactOffset = Long.BYTES;
+            long currentOffset = compactOffset;
+
+            for (int i = 0; i < entryCount; i++) {
+                long tableId = tableNameMemory.getLong(currentOffset);
+                int tableNameLength = tableNameMemory.getStrLen(currentOffset + Long.BYTES);
+                int entrySize = Long.BYTES + Integer.BYTES + 2 * tableNameLength;
+
+                if (tableId < 0) {
+                    // skip removed record
+                    currentOffset += entrySize;
+                    validCount -= 1;
+                    continue;
+                }
+                CharSequence tableName = tableNameMemory.getStr(currentOffset + Long.BYTES);
+                String tableNameStr = Chars.toString(tableName);
+
+                CharSequence str = tableNameRegistry.get(tableNameStr);
+                if (str != null) {
+                    continue;
+                }
+
+                str = tableNameRegistry.computeIfAbsent(tableNameStr, (key) -> tableNameStr + "#" + tableId);
+                System.err.println("name " + str);
+
+                if (currentOffset != compactOffset) {
+                    tableNameMemory.putLong(compactOffset, tableId);
+                    tableNameMemory.putStr(compactOffset + Long.BYTES, tableName);
+                }
+
+                compactOffset += entrySize;
+                currentOffset += entrySize;
+            }
+
+            tableNameMemory.jumpTo(currentOffset);
+            tableNameMemory.putLong(0, validCount);
+        }
+    }
+
+    public void removeEntry(final CharSequence tableName) {
+        long entryCount = tableNameMemory.getLong(0);
+        long offset = Long.BYTES;
+        for (int i = 0; i < entryCount; i++) {
+            long tableId = tableNameMemory.getLong(offset);
+            int tableNameLength = tableNameMemory.getStrLen(offset + Long.BYTES);
+            int entrySize = Long.BYTES + Integer.BYTES + 2 * tableNameLength;
+            CharSequence currentTableName = tableNameMemory.getStr(offset + Long.BYTES);
+            if (Chars.equals(tableName, currentTableName)) {
+                tableNameMemory.putLong(offset, -tableId);
+            }
+            offset += entrySize;
+        }
+    }
+
+    public void appendEntry(final CharSequence tableName, int tableId) {
+        long entryCount = tableNameMemory.getLong(0);
+        tableNameMemory.putLong(tableId);
+        tableNameMemory.putStr(tableName);
+        tableNameMemory.putLong(0, entryCount + 1);
+    }
+
+    public CharSequence registerTableName(final CharSequence tableName, int tableId) {
+        CharSequence str = tableNameRegistry.get(tableName);
+        if (str != null) {
+            return str;
+        }
+
+        String tableNameStr = Chars.toString(tableName);
+        CharSink sink = new StringSink();
+        str = tableNameRegistry.computeIfAbsent(tableNameStr, (key) -> {
+            appendEntry(tableNameStr, tableId);
+            sink.put(tableId);
+            return tableNameStr + "#" + sink;
+//            return tableNameStr + "_";
+        });
+        System.err.println("name " + str);
+        return str;
+    }
+
+    public void deregisterTableName(final CharSequence tableName) {
+        removeEntry(tableName);
+        tableNameRegistry.remove(tableName);
+        //todo: fix open close !!!
+        //todo: fix thread safety !!!
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            sequencer.nextTxn(0, TxnCatalog.DROP_TABLE_WALID, 0, 0);
+        }
+        seqRegistry.remove(tableName);
+
+        final WalWriterPool pool = walRegistry.get(tableName);
+        if (pool != null) {
+            pool.releaseAll(Long.MAX_VALUE);
+            walRegistry.remove(tableName);
+        }
     }
 
     public long lastTxn(final CharSequence tableName) {
@@ -156,12 +268,12 @@ public class TableRegistry extends AbstractPool {
     // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
     private boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        return isWalTable(fileSystemName, path, ff);
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        return isWalTable(systemTableName, path, ff);
     }
 
-    private boolean isWalTable(final CharSequence fileSystemName, final Path root, final FilesFacade ff) {
-        root.concat(fileSystemName).concat(SEQ_DIR);
+    private boolean isWalTable(final CharSequence systemTableName, final Path root, final FilesFacade ff) {
+        root.concat(systemTableName).concat(SEQ_DIR);
         return ff.exists(root.$());
     }
 
@@ -215,6 +327,10 @@ public class TableRegistry extends AbstractPool {
     protected boolean releaseAll(long deadline) {
         boolean r0 = releaseWalWriters(deadline);
         boolean r1 = releaseEntries(deadline);
+        if (deadline == Long.MAX_VALUE && tableNameMemory.isOpen()) {
+            System.err.println("close");
+            tableNameMemory.close(true);
+        }
         return  r0 || r1;
     }
 
@@ -415,64 +531,4 @@ public class TableRegistry extends AbstractPool {
             }
         }
     }
-
-    public static class TableNameRegistry {
-        ConcurrentHashMap<CharSequence> namesMap = new ConcurrentHashMap<>();
-        public CharSequence getFileSystemName(final CharSequence tableName) {
-            final String tableNameStr = Chars.toString(tableName);
-//            namesMap.putIfAbsent(tableNameStr, tableNameStr);
-            return tableNameStr + '_';
-        }
-    }
-
-    //todo:
-    /*
-    public static class TableNameRegistry {
-        private static class TableNameEntry {
-            String tableName;
-            int tableId;
-            boolean isWal;
-            public TableNameEntry(final String tableName, int tableId, boolean isWal) {
-                this.tableName = tableName;
-                this.tableId = tableId;
-                this.isWal = isWal;
-            }
-        }
-
-        private final ConcurrentHashMap<TableNameEntry> tableNameEntries = new ConcurrentHashMap<>();
-        public boolean registerTableName(final String tableName, int tableId, boolean isWal) {
-            TableNameEntry entry = tableNameEntries.get(tableName);
-            if (entry != null) {
-                return false;
-            }
-
-            tableNameEntries.computeIfAbsent(tableName, (key) -> new TableNameEntry(tableName, tableId, isWal));
-            return true;
-        }
-
-       public boolean registerTableName(final @Nullable Path root, final String tableName, int tableId, boolean isWal) {
-            TableNameEntry entry = tableNameEntries.get(tableName);
-            if (entry != null) {
-                return false;
-            }
-
-            entry = tableNameEntries.computeIfAbsent(tableName, (key) -> new TableNameEntry(tableName, tableId, isWal));
-            if (root != null) {
-                TableUtils.adjustTableName(root, entry.tableName, entry.tableId, entry.isWal);
-            }
-            return true;
-        }
-
-        // path should be initialised with root
-        public boolean appendTableName(final Path root, final CharSequence tableName) {
-            TableNameEntry entry = tableNameEntries.get(tableName);
-            if (entry == null) {
-                return false;
-            }
-            TableUtils.adjustTableName(root, entry.tableName, entry.tableId, entry.isWal);
-            return true;
-        }
-
-    }
-     */
 }

@@ -348,8 +348,8 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
                     runPurgeJob(purgeJob);
                     // Delete failure
-                    CharSequence fileSystemName = engine.getFileSystemName("up_part");
-                    path.of(configuration.getRoot()).concat(fileSystemName).concat("1970-01-02").concat("str.i").$();
+                    CharSequence systemTableName = engine.getSystemTableName("up_part");
+                    path.of(configuration.getRoot()).concat(systemTableName).concat("1970-01-02").concat("str.i").$();
                     Assert.assertTrue(Chars.toString(path), FilesFacadeImpl.INSTANCE.exists(path));
 
                     // Should retry
@@ -806,23 +806,23 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     }
 
     private void assertFilesExist(Path path, String up_part, String partition, String colSuffix, boolean exist) {
-        CharSequence fileSystemName = engine.getFileSystemName(up_part);
-        path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).concat("x.d").put(colSuffix).$();
+        CharSequence systemTableName = engine.getSystemTableName(up_part);
+        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("x.d").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).concat("str.d").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("str.d").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).concat("str.i").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("str.i").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).concat("sym2.d").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("sym2.d").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).concat("sym2.k").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("sym2.k").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).concat("sym2.v").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("sym2.v").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
     }
 

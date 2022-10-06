@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
-    public static final String PRODUCT_FS = Chars.toString(engine.getFileSystemName(PRODUCT));
+    public static final String PRODUCT_FS = Chars.toString(engine.getSystemTableName(PRODUCT));
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
 
@@ -1764,10 +1764,10 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             String all = "all";
-            CharSequence fileSystemName = engine.getFileSystemName(all);
+            CharSequence systemTableName = engine.getSystemTableName(all);
             try (
                     MemoryCMARW mem = Vm.getCMARWInstance();
-                    Path path = new Path().of(root).concat(fileSystemName).concat(TableUtils.TODO_FILE_NAME).$()
+                    Path path = new Path().of(root).concat(systemTableName).concat(TableUtils.TODO_FILE_NAME).$()
             ) {
                 mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
@@ -2081,8 +2081,8 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (Path path = new Path()) {
                 String all = "all";
-                CharSequence fileSystemName = engine.getFileSystemName(all);
-                Assert.assertTrue(FF.remove(path.of(root).concat(fileSystemName).concat(TableUtils.TXN_FILE_NAME).$()));
+                CharSequence systemTableName = engine.getSystemTableName(all);
+                Assert.assertTrue(FF.remove(path.of(root).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$()));
                 try {
                     new TableWriter(configuration, all, metrics);
                     Assert.fail();
@@ -3909,8 +3909,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.renameColumn("supplier", "sup");
 
                 try (Path path = new Path()) {
-                    CharSequence fileSystemName = engine.getFileSystemName(model.getName());
-                    path.of(root).concat(fileSystemName);
+                    CharSequence systemTableName = engine.getSystemTableName(model.getName());
+                    path.of(root).concat(systemTableName);
                     final int plen = path.length();
                     if (columnTypeTag == ColumnType.SYMBOL) {
                         Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.v").$()));

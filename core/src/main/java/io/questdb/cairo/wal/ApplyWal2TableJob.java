@@ -154,7 +154,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
             Path tempPath = Path.PATH.get();
             CharSequence root = engine.getConfiguration().getRoot();
-            CharSequence tableName = engine.getFileSystemName(writer.getTableName());
+            CharSequence tableName = engine.getSystemTableName(writer.getTableName());
             tempPath.of(root).concat(tableName);
             int rootLen = tempPath.length();
 
@@ -168,9 +168,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
                 tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                if (walId != TxnCatalog.METADATA_WALID) {
-                    writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
-                } else {
+                if (walId == TxnCatalog.DROP_TABLE_WALID) {
+                    writer.truncate(); // release fs space now. delete this table later
+                } else if (walId == TxnCatalog.RENAME_TABLE_WALID) {
+                   //todo:
+                } else if (walId == TxnCatalog.METADATA_WALID) {
                     // This is metadata change
                     // to be taken from Sequencer directly
                     // This may look odd, but on metadata change record, segment ID means structure version.
@@ -200,6 +202,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .put(newStructureVersion)
                                 .put(']');
                     }
+                } else {
+                    writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
                 }
             }
         } finally {

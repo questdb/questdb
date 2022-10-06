@@ -336,7 +336,7 @@ public class TableUpdateDetails implements Closeable {
                 }
 
                 CharSequence root = engine.getConfiguration().getRoot();
-                CharSequence name = engine.getFileSystemName(tableNameUtf16);
+                CharSequence name = engine.getSystemTableName(tableNameUtf16);
                 path.of(root).concat(name);
 
                 SymbolCache symCache;

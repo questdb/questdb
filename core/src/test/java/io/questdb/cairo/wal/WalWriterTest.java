@@ -410,9 +410,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 2, 1);
                     fail("Segment 2 should not exist");
                 } catch (CairoException e) {
-                    CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                    CharSequence systemTableName = engine.getSystemTableName(tableName);
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                            File.separatorChar + fileSystemName +
+                            File.separatorChar + systemTableName +
                             File.separatorChar + walName +
                             File.separatorChar + "2" +
                             File.separatorChar + TableUtils.META_FILE_NAME + "]"));
@@ -1202,9 +1202,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 0);
                     fail("Segment 1 should not exist");
                 } catch (CairoException e) {
-                    CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                    CharSequence systemTableName = engine.getSystemTableName(tableName);
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                            File.separatorChar + fileSystemName +
+                            File.separatorChar + systemTableName +
                             File.separatorChar + walName +
                             File.separatorChar + "1" +
                             File.separatorChar + TableUtils.META_FILE_NAME + "]"));
@@ -2076,6 +2076,28 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testTableNameRegistry() {
+        try (TableRegistry tableRegistry = new TableRegistry(engine, engine.getConfiguration())) {
+            tableRegistry.open();
+            TestUtils.assertEquals("A#0", tableRegistry.registerTableName("A", 0));
+            tableRegistry.registerTableName("B", 1);
+            tableRegistry.registerTableName("C", 2);
+            tableRegistry.registerTableName("D", 3);
+            tableRegistry.deregisterTableName("D");
+            tableRegistry.deregisterTableName("B");
+        }
+
+        try (TableRegistry tableRegistry = new TableRegistry(engine, engine.getConfiguration())) {
+            tableRegistry.open();
+            TestUtils.assertEquals("A#0", tableRegistry.getSystemTableName("A"));
+            TestUtils.assertEquals("C#2", tableRegistry.getSystemTableName("C"));
+            tableRegistry.deregisterTableName("C");
+            Assert.assertNull(tableRegistry.getSystemTableName("D"));
+            Assert.assertNull(tableRegistry.getSystemTableName("C"));
+        }
+    }
+
     private static void addColumn(WalWriter walWriter, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter.getTableName()), 0);
         addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
@@ -2102,10 +2124,10 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
         return segment < 0
-                ? path.concat(fileSystemName).slash().concat(walName).slash().concat(fileName).$()
-                : path.concat(fileSystemName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
+                ? path.concat(systemTableName).slash().concat(walName).slash().concat(fileName).$()
+                : path.concat(systemTableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
     }
 
     private void assertColumnMetadata(TableModel expected, WalReader reader) {

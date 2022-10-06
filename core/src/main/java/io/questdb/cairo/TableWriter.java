@@ -107,7 +107,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private final int mkDirMode;
     private final int fileOperationRetryCount;
     private final String tableName;
-    private final String fileSystemName;
+    private final String systemTableName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -222,7 +222,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
-            CharSequence fileSystemName,
+            CharSequence systemTableName,
             MessageBus messageBus,
             MessageBus ownMessageBus,
             boolean lock,
@@ -246,7 +246,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
-        this.fileSystemName = Chars.toString(fileSystemName);
+        this.systemTableName = Chars.toString(systemTableName);
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.o3PartitionUpdateQueue = new RingQueue<>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCycle());
@@ -254,8 +254,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
 
-        this.path = new Path().of(root).concat(fileSystemName);
-        this.other = new Path().of(root).concat(fileSystemName);
+        this.path = new Path().of(root).concat(systemTableName);
+        this.other = new Path().of(root).concat(systemTableName);
 
         this.rootLen = path.length();
         try {
@@ -641,7 +641,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(fileSystemName);
+        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName);
 
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachPartitionSuffix()).slash$();
@@ -781,6 +781,11 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     @Override
+    public void dropTable() {
+//        engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
+    }
+
+    @Override
     public void close() {
         if (isOpen() && lifecycleManager.close()) {
             doClose(true);
@@ -844,7 +849,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION_DIR;
             }
 
-            detachedPath.of(configuration.getRoot()).concat(fileSystemName);
+            detachedPath.of(configuration.getRoot()).concat(systemTableName);
             int detachedRootLen = detachedPath.length();
             // detachedPath: detached partition folder
             if (!ff.exists(detachedPath.slash$())) {

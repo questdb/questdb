@@ -58,13 +58,13 @@ public class WalReader implements Closeable {
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence fileSystemName, CharSequence walName, long segmentId, long rowCount) {
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence systemTableName, CharSequence walName, long segmentId, long rowCount) {
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
         this.rowCount = rowCount;
 
         ff = configuration.getFilesFacade();
-        path = new Path().of(configuration.getRoot()).concat(fileSystemName).concat(walName);
+        path = new Path().of(configuration.getRoot()).concat(systemTableName).concat(walName);
         rootLen = path.length();
 
         try {

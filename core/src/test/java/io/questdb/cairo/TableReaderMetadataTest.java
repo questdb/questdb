@@ -170,8 +170,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        return new Path().of(root).concat(fileSystemName).concat(TableUtils.META_FILE_NAME).$();
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        return new Path().of(root).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
     }
 
     @Test

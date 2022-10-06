@@ -6905,8 +6905,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        CharSequence fileSystemName = engine.getFileSystemName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(fileSystemName).slash$();
+                        CharSequence systemTableName = engine.getSystemTableName(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -6945,8 +6945,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        CharSequence fileSystemName = engine.getFileSystemName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(fileSystemName).slash$();
+                        CharSequence systemTableName = engine.getSystemTableName(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -6960,8 +6960,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameReserved() throws Exception {
         try (Path path = new Path()) {
-            CharSequence fileSystemName = engine.getFileSystemName("tab");
-            configuration.getFilesFacade().touch(path.of(root).concat(fileSystemName).$());
+            CharSequence systemTableName = engine.getSystemTableName("tab");
+            configuration.getFilesFacade().touch(path.of(root).concat(systemTableName).$());
         }
 
         assertSyntaxError(

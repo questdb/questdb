@@ -246,7 +246,7 @@ public class WriterPool extends AbstractPool {
                 throw CairoException.critical(0).put("Writer ").put(name).put(" is not locked");
             }
 
-            CharSequence fileSystemName = engine.getFileSystemName(name);
+            CharSequence systemTableName = engine.getSystemTableName(name);
             if (newTable) {
                 // Note that the TableUtils.createTable method will create files, but on some OS's these files
                 // will not immediately become visible on all threads, only in this thread will they definitely
@@ -254,7 +254,7 @@ public class WriterPool extends AbstractPool {
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, name, fileSystemName, messageBus, null, false, e, root, metrics);
+                writer = new TableWriter(configuration, name, systemTableName, messageBus, null, false, e, root, metrics);
             }
 
             if (writer == null) {
@@ -263,7 +263,7 @@ public class WriterPool extends AbstractPool {
                 if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
                     path.trimTo(rootLen);
-                    path.concat(fileSystemName);
+                    path.concat(systemTableName);
                     TableUtils.lockName(path);
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
@@ -432,8 +432,8 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            CharSequence fileSystemName = engine.getFileSystemName(name);
-            e.writer = new TableWriter(configuration, name, fileSystemName, messageBus, null, true, e, root, metrics);
+            CharSequence systemTableName = engine.getSystemTableName(name);
+            e.writer = new TableWriter(configuration, name, systemTableName, messageBus, null, true, e, root, metrics);
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
@@ -523,7 +523,7 @@ public class WriterPool extends AbstractPool {
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, String lockReason) {
         assertLockReasonIsNone(lockReason);
         path.trimTo(rootLen);
-        path.concat(engine.getFileSystemName(tableName));
+        path.concat(engine.getSystemTableName(tableName));
         TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {

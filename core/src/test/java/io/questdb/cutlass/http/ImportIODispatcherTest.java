@@ -814,9 +814,9 @@ public class ImportIODispatcherTest {
 
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
                     CairoConfiguration configuration = engine.getConfiguration();
-                    CharSequence fileSystemName = engine.getFileSystemName("xyz");
+                    CharSequence systemTableName = engine.getSystemTableName("xyz");
                     try (
-                            Path path = new Path().concat(configuration.getRoot()).concat(fileSystemName);
+                            Path path = new Path().concat(configuration.getRoot()).concat(systemTableName);
                             TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
                     ) {
                         Assert.assertEquals(2, txnScoreboard.getMin());

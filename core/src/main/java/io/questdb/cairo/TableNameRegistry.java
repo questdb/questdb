@@ -29,7 +29,7 @@ import io.questdb.std.ConcurrentHashMap;
 
 public class TableNameRegistry {
     ConcurrentHashMap<CharSequence> namesMap = new ConcurrentHashMap<>();
-    public CharSequence getFileSystemName(final CharSequence tableName) {
+    public CharSequence getsystemTableName(final CharSequence tableName) {
         final String tableNameStr = Chars.toString(tableName);
         return namesMap.putIfAbsent(tableNameStr, tableNameStr);
     }

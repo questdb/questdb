@@ -231,7 +231,7 @@ public final class TableUtils {
             int tableId
     ) {
         LOG.debug().$("create table [name=").$(tableName).$(']').$();
-        path.of(root).concat(tableName); //.put('_');
+        path.of(root).concat(tableName);
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');

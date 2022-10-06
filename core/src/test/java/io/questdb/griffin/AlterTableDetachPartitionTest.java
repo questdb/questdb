@@ -92,9 +92,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03'",
                 "could not detach [statusCode=" + DETACH_ERR_ALREADY_DETACHED.name() + ", table=tab143, partition='2022-06-03']",
                 () -> {
-                    CharSequence fileSystemName = engine.getFileSystemName("tab143");
+                    CharSequence systemTableName = engine.getSystemTableName("tab143");
                     path.of(configuration.getRoot())
-                            .concat(fileSystemName)
+                            .concat(systemTableName)
                             .concat("2022-06-03")
                             .put(DETACHED_DIR_MARKER)
                             .slash$();
@@ -804,11 +804,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 engine.clear();
-                CharSequence fileSystemName = engine.getFileSystemName(brokenTableName);
-                CharSequence fileSystemName1 = engine.getFileSystemName(tableName);
+                CharSequence systemTableName = engine.getSystemTableName(brokenTableName);
+                CharSequence systemTableName1 = engine.getSystemTableName(tableName);
 
-                path.of(configuration.getRoot()).concat(fileSystemName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(fileSystemName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getRoot()).concat(systemTableName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
@@ -906,9 +906,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
 
                 // remove _meta.detached simply prevents metadata checking, all else is the same
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
                 path.of(configuration.getRoot())
-                        .concat(fileSystemName)
+                        .concat(systemTableName)
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
@@ -1198,11 +1198,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     writer.detachPartition(timestamp);
                 }
-                CharSequence fileSystemName = engine.getFileSystemName(brokenTableName);
-                CharSequence fileSystemName1 = engine.getFileSystemName(tableName);
+                CharSequence systemTableName = engine.getSystemTableName(brokenTableName);
+                CharSequence systemTableName1 = engine.getSystemTableName(tableName);
 
-                path.of(configuration.getRoot()).concat(fileSystemName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(fileSystemName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getRoot()).concat(systemTableName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
@@ -1276,11 +1276,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
 
-                CharSequence fileSystemName = engine.getFileSystemName(brokenTableName);
-                CharSequence fileSystemName1 = engine.getFileSystemName(tableName);
+                CharSequence systemTableName = engine.getSystemTableName(brokenTableName);
+                CharSequence systemTableName1 = engine.getSystemTableName(tableName);
 
-                path.of(configuration.getRoot()).concat(fileSystemName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(fileSystemName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getRoot()).concat(systemTableName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
@@ -1371,11 +1371,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
 
-                CharSequence fileSystemName = engine.getFileSystemName(brokenTableName);
-                CharSequence fileSystemName1 = engine.getFileSystemName(tableName);
+                CharSequence systemTableName = engine.getSystemTableName(brokenTableName);
+                CharSequence systemTableName1 = engine.getSystemTableName(tableName);
 
-                path.of(configuration.getRoot()).concat(fileSystemName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(fileSystemName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                path.of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getRoot()).concat(systemTableName1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
@@ -1383,7 +1383,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.attachPartition(timestamp);
                 }
 
-                Assert.assertFalse(Files.exists(other.of(configuration.getRoot()).concat(fileSystemName1).concat(timestampDay).concat("s.k").$()));
+                Assert.assertFalse(Files.exists(other.of(configuration.getRoot()).concat(systemTableName1).concat(timestampDay).concat("s.k").$()));
                 Assert.assertFalse(Files.exists(other.parent().concat("s.v").$()));
 
                 assertContent(expected, tableName);
@@ -1841,8 +1841,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
                 renameDetachedToAttachable(tableName, timestampDay);
 
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                Path src = Path.PATH.get().of(configuration.getRoot()).concat(fileSystemName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                Path src = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 FilesFacade ff = FilesFacadeImpl.INSTANCE;
                 dFile(src.chop$(), "ts", -1);
                 long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
@@ -1883,17 +1883,17 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 String timestampWrongDay = "2021-06-01";
 
                 // Partition does not exist in copied _dtxn
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                Path src = Path.PATH.get().of(configuration.getRoot()).concat(fileSystemName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
-                Path dst = Path.PATH2.get().of(configuration.getRoot()).concat(fileSystemName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                Path src = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
+                Path dst = Path.PATH2.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
 
                 FilesFacade ff = FilesFacadeImpl.INSTANCE;
                 Assert.assertEquals(0, ff.rename(src, dst));
                 assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
 
                 // Existing partition but wrong folder name
-                dst = Path.PATH2.get().of(configuration.getRoot()).concat(fileSystemName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
-                Path dst2 = Path.PATH.get().of(configuration.getRoot()).concat(fileSystemName).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash$();
+                dst = Path.PATH2.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
+                Path dst2 = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash$();
                 Assert.assertEquals(0, ff.rename(dst, dst2));
 
                 assertFailure(
@@ -2057,9 +2057,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 assertContent(expected, tableName);
 
                 // check no metadata files were left behind
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
                 path.of(configuration.getRoot())
-                        .concat(fileSystemName)
+                        .concat(systemTableName)
                         .concat("2022-06-01").concat(META_FILE_NAME)
                         .$();
                 Assert.assertFalse(Files.exists(path));
@@ -2115,15 +2115,15 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         sqlExecutionContext
                 );
                 engine.clear();
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                path.of(configuration.getRoot()).concat(fileSystemName)
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                path.of(configuration.getRoot()).concat(systemTableName)
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
                         .$();
                 Assert.assertTrue(Files.remove(path));
-                CharSequence fileSystemName1 = engine.getFileSystemName(brokenTableName);
-                other.of(configuration.getRoot()).concat(fileSystemName1)
+                CharSequence systemTableName1 = engine.getSystemTableName(brokenTableName);
+                other.of(configuration.getRoot()).concat(systemTableName1)
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
@@ -2199,9 +2199,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     private void dropCurrentVersionOfPartition(String tableName, String partitionName) throws SqlException {
         engine.clear();
         // hide the detached partition
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        path.of(configuration.getRoot()).concat(fileSystemName).concat(partitionName + ".detached").$();
-        other.of(configuration.getRoot()).concat(fileSystemName).concat(partitionName + ".detached.hide").$();
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        path.of(configuration.getRoot()).concat(systemTableName).concat(partitionName + ".detached").$();
+        other.of(configuration.getRoot()).concat(systemTableName).concat(partitionName + ".detached.hide").$();
 
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, other));
         // drop the latest version of the partition
@@ -2211,17 +2211,17 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     private void renameDetachedToAttachable(String tableName, long... partitions) {
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
         for (long partition : partitions) {
             PartitionBy.setSinkForPartition(
-                    path.of(configuration.getRoot()).concat(fileSystemName),
+                    path.of(configuration.getRoot()).concat(systemTableName),
                     PartitionBy.DAY,
                     partition,
                     false
             );
             path.put(DETACHED_DIR_MARKER).$();
             PartitionBy.setSinkForPartition(
-                    other.of(configuration.getRoot()).concat(fileSystemName),
+                    other.of(configuration.getRoot()).concat(systemTableName),
                     PartitionBy.DAY,
                     partition,
                     false
@@ -2232,10 +2232,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     private void renameDetachedToAttachable(String tableName, String... partitions) {
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
         for (String partition : partitions) {
-            path.of(configuration.getRoot()).concat(fileSystemName).concat(partition).put(DETACHED_DIR_MARKER).$();
-            other.of(configuration.getRoot()).concat(fileSystemName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+            path.of(configuration.getRoot()).concat(systemTableName).concat(partition).put(DETACHED_DIR_MARKER).$();
+            other.of(configuration.getRoot()).concat(systemTableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path, other) > -1);
         }
     }

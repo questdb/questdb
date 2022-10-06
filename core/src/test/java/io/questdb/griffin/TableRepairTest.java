@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
@@ -51,8 +50,8 @@ public class TableRepairTest extends AbstractGriffinTest {
 
                 // last and "active" partition is "1970-01-12"
                 try (Path path = new Path()) {
-                    CharSequence fileSystemName = engine.getFileSystemName("tst");
-                    path.of(configuration.getRoot()).concat(fileSystemName).concat("1970-01-12").$();
+                    CharSequence systemTableName = engine.getSystemTableName("tst");
+                    path.of(configuration.getRoot()).concat(systemTableName).concat("1970-01-12").$();
                     Assert.assertEquals(0, Files.rmdir(path));
                 }
 
@@ -91,8 +90,8 @@ public class TableRepairTest extends AbstractGriffinTest {
                 Assert.assertEquals(100000, reader.size());
 
                 try (Path path = new Path()) {
-                    CharSequence fileSystemName = engine.getFileSystemName("tst");
-                    path.of(configuration.getRoot()).concat(fileSystemName).concat("1970-01-09").$();
+                    CharSequence systemTableName = engine.getSystemTableName("tst");
+                    path.of(configuration.getRoot()).concat(systemTableName).concat("1970-01-09").$();
                     Assert.assertEquals(0, Files.rmdir(path));
                 }
 

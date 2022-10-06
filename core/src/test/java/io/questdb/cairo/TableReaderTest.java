@@ -2071,8 +2071,8 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private static Path getPath(String tableName) {
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        return new Path().of(engine.getConfiguration().getRoot()).concat(fileSystemName).concat(TableUtils.META_FILE_NAME).$();
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        return new Path().of(engine.getConfiguration().getRoot()).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
     }
 
     @Test

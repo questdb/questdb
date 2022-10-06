@@ -63,7 +63,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final String tableName;
-    private final CharSequence fileSystemName;
+    private final CharSequence systemTableName;
     private final MessageBus messageBus;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -90,17 +90,17 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public TableReader(CairoConfiguration configuration,
                        CharSequence tableName,
-                       CharSequence fileSystemName,
+                       CharSequence systemTableName,
                        @Nullable MessageBus messageBus
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
-        this.fileSystemName = fileSystemName;
+        this.systemTableName = systemTableName;
         this.messageBus = messageBus;
         this.path = new Path();
-        this.path.of(configuration.getRoot()).concat(fileSystemName);
+        this.path.of(configuration.getRoot()).concat(systemTableName);
         this.rootLen = path.length();
         path.trimTo(rootLen);
         try {
@@ -758,7 +758,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private TableReaderMetadata openMetaFile() {
         TableReaderMetadata metadata = new TableReaderMetadata(ff, tableName);
         try {
-            metadata.readSafe(configuration.getRoot(), tableName, fileSystemName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            metadata.readSafe(configuration.getRoot(), tableName, systemTableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             return metadata;
         } catch (Throwable th) {
             metadata.close();

@@ -61,8 +61,8 @@ public class SequencerImpl implements Sequencer {
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
-            CharSequence fileSystemName = engine.getFileSystemName(tableName);
-            path = new Path().of(configuration.getRoot()).concat(fileSystemName).concat(SEQ_DIR);
+            CharSequence systemTableName = engine.getSystemTableName(tableName);
+            path = new Path().of(configuration.getRoot()).concat(systemTableName).concat(SEQ_DIR);
             rootLen = path.length();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();

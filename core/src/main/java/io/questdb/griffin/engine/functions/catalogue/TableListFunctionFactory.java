@@ -236,7 +236,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean open(CharSequence tableName, CharSequence fileSystemName) {
+                public boolean open(CharSequence tableName, CharSequence systemTableName) {
 
                     if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, sysTablePrefix))) {
                         return false;
@@ -244,7 +244,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                     int pathLen = path.length();
                     try {
-                        path.chop$().concat(fileSystemName).concat(META_FILE_NAME).$();
+                        path.chop$().concat(systemTableName).concat(META_FILE_NAME).$();
                         metaReader.deferredInit(path.$(), "<noname>", ColumnType.VERSION);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch

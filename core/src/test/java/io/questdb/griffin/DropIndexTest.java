@@ -93,8 +93,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                         null,
                         -1,
                         null);
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        path = new Path().put(configuration.getRoot()).concat(fileSystemName);
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        path = new Path().put(configuration.getRoot()).concat(systemTableName);
         tablePathLen = path.length();
     }
 
@@ -281,8 +281,8 @@ public class DropIndexTest extends AbstractGriffinTest {
             new Thread(() -> {
 
                 final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                Path path2 = new Path().put(configuration.getRoot()).concat(fileSystemName);
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                Path path2 = new Path().put(configuration.getRoot()).concat(systemTableName);
                 try {
                     for (int i = 0; i < 5; i++) {
                         try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
@@ -384,8 +384,8 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // drop index thread
             new Thread(() -> {
-                CharSequence fileSystemName = engine.getFileSystemName(tableName);
-                Path path2 = new Path().put(configuration.getRoot()).concat(fileSystemName);
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                Path path2 = new Path().put(configuration.getRoot()).concat(systemTableName);
                 try {
                     CompiledQuery cc = compiler2.compile(dropIndexStatement(), sqlExecutionContext2);
                     startBarrier.await();
@@ -581,10 +581,10 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
                 (String) configuration.getRoot(),
-                Chars.toString(fileSystemName)
+                Chars.toString(systemTableName)
         );
         try (Stream<?> stream = Files.find(
                 tablePath,

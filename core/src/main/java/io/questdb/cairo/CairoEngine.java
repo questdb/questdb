@@ -186,8 +186,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return tableRegistry;
     }
 
-    public CharSequence getFileSystemName(final CharSequence tableName) {
-        return getTableRegistry().getFileSystemName(tableName);
+    public CharSequence getSystemTableName(final CharSequence tableName) {
+        return getTableRegistry().getSystemTableName(tableName);
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
@@ -202,7 +202,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         if (struct.isWalEnabled()) {
             tableRegistry.registerTable(tableId, struct);
         }
-        final CharSequence fileSystemName = getFileSystemName(struct.getTableName());
+        final CharSequence systemTableName = getSystemTableName(struct.getTableName());
         // only create the table after it has been registered
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
@@ -213,7 +213,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                mkDirMode,
                mem,
                path,
-               fileSystemName,
+               systemTableName,
                struct,
                ColumnType.VERSION,
                tableId
@@ -227,11 +227,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        CharSequence fileSystemName = getFileSystemName(tableName);
+        CharSequence systemTableName = getSystemTableName(tableName);
         return new TableWriter(
                 configuration,
                 tableName,
-                fileSystemName,
+                systemTableName,
                 messageBus,
                 null,
                 true,
@@ -310,7 +310,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
-        rootPath.trimTo(rootPathLen).concat(getFileSystemName(tableName)).concat(TableUtils.TXN_FILE_NAME).$();
+        rootPath.trimTo(rootPathLen).concat(getSystemTableName(tableName)).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
             if (txReader.unsafeLoad(true)) {
                 if (txReader.getTxn() < txn) {
@@ -406,8 +406,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         if (tableRegistry.hasSequencer(tableName)) {
             // This is WAL table because sequencer exists
-            CharSequence fileSystemName = this.getFileSystemName(tableName);
-            return new WalReader(configuration, tableName, fileSystemName, walName, segmentId, walRowCount);
+            CharSequence systemTableName = this.getSystemTableName(tableName);
+            return new WalReader(configuration, tableName, systemTableName, walName, segmentId, walRowCount);
         }
 
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
@@ -446,8 +446,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             int lo,
             int hi
     ) {
-        CharSequence fileSystemName = getFileSystemName(tableName.subSequence(lo, hi));
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), fileSystemName);
+        CharSequence systemTableName = getSystemTableName(tableName.subSequence(lo, hi));
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), systemTableName);
     }
 
     public int getStatus(
@@ -455,8 +455,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             Path path,
             CharSequence tableName
     ) {
-        CharSequence fileSystemName = getFileSystemName(tableName);
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), fileSystemName);
+        CharSequence systemTableName = getSystemTableName(tableName);
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), systemTableName);
     }
 
     public Sequence getTelemetryPubSequence() {
@@ -557,7 +557,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         CharSequence lockedReason = lock(securityContext, tableName, "removeTable");
         if (null == lockedReason) {
             try {
-                path.of(configuration.getRoot()).concat(getFileSystemName(tableName)).$();
+                path.of(configuration.getRoot()).concat(getSystemTableName(tableName)).$();
                 int errno;
                 if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
                     LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
@@ -641,14 +641,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
-        CharSequence fileSystemName = getFileSystemName(tableName);
-        CharSequence dstFileName = getFileSystemName(to);
-        if (TableUtils.exists(ff, path, root, fileSystemName) != TableUtils.TABLE_EXISTS) {
+        CharSequence systemTableName = getSystemTableName(tableName);
+        CharSequence dstFileName = getSystemTableName(to);
+        if (TableUtils.exists(ff, path, root, systemTableName) != TableUtils.TABLE_EXISTS) {
             LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
             throw CairoException.nonCritical().put("Rename failed. Table '").put(tableName).put("' does not exist");
         }
 
-        path.of(root).concat(fileSystemName).$();
+        path.of(root).concat(systemTableName).$();
         otherPath.of(root).concat(dstFileName).$();
 
         if (ff.exists(otherPath)) {

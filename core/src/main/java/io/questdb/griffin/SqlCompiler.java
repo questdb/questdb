@@ -1995,11 +1995,11 @@ public class SqlCompiler implements Closeable {
         TableWriter writer = null;
         final TableWriterFrontend writerFrontend;
         if (!isWalEnabled) {
-            CharSequence fileSystemName = engine.getFileSystemName(tableName);
+            CharSequence systemTableName = engine.getSystemTableName(tableName);
             writerFrontend = writer = new TableWriter(
                     configuration,
                     tableName,
-                    fileSystemName,
+                    systemTableName,
                     messageBus,
                     null,
                     false,
@@ -2192,7 +2192,15 @@ public class SqlCompiler implements Closeable {
             }
             throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
-        engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
+
+        TableWriterFrontend writer = engine.getTableWriterFrontEnd(
+                executionContext.getCairoSecurityContext(),
+                tableName,
+                "removeTable"
+        );
+
+        writer.dropTable();
+
         return compiledQuery.ofDrop();
     }
 
@@ -2606,8 +2614,8 @@ public class SqlCompiler implements Closeable {
         }
         tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
         CharSequence tableName = tok;
-        CharSequence fileSystemName = engine.getFileSystemName(tableName);
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(fileSystemName), configuration);
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(systemTableName), configuration);
 
         tok = SqlUtil.fetchNext(lexer);
         CharSequence columnName = null;
@@ -2654,8 +2662,8 @@ public class SqlCompiler implements Closeable {
 
     private boolean removeTableDirectory(CreateTableModel model) {
         int errno;
-        CharSequence fileSystemName = engine.getFileSystemName(model.getName().token);
-        if ((errno = engine.removeDirectory(path, fileSystemName)) == 0) {
+        CharSequence systemTableName = engine.getSystemTableName(model.getName().token);
+        if ((errno = engine.removeDirectory(path, systemTableName)) == 0) {
             return true;
         }
         LOG.error()
@@ -3291,7 +3299,7 @@ public class SqlCompiler implements Closeable {
             }
 
             int renameRootLen = dstPath.length();
-            CharSequence fileSystemName = engine.getFileSystemName(tableName);
+            CharSequence systemTableName = engine.getSystemTableName(tableName);
             try {
                 CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
                 try (TableReader reader = engine.getReader(securityContext, tableName)) {
@@ -3311,9 +3319,9 @@ public class SqlCompiler implements Closeable {
                         backupWriter.commit();
                     }
                 }
-                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(fileSystemName).$();
+                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(systemTableName).$();
                 try {
-                    dstPath.trimTo(renameRootLen).concat(fileSystemName).$();
+                    dstPath.trimTo(renameRootLen).concat(systemTableName).$();
                     TableUtils.renameOrFail(ff, srcPath, dstPath);
                     LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(dstPath).$(']').$();
                 } finally {
@@ -3326,7 +3334,7 @@ public class SqlCompiler implements Closeable {
                         .$(", errno=").$(ex.getErrno())
                         .$(']').$();
 
-                srcPath.of(cachedTmpBackupRoot).concat(fileSystemName).slash$();
+                srcPath.of(cachedTmpBackupRoot).concat(systemTableName).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
                     LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
@@ -3344,8 +3352,8 @@ public class SqlCompiler implements Closeable {
         }
 
         private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-            CharSequence fileSystemName = engine.getFileSystemName(tableName);
-            srcPath.of(backupRoot).concat(fileSystemName).slash$();
+            CharSequence systemTableName = engine.getSystemTableName(tableName);
+            srcPath.of(backupRoot).concat(systemTableName).slash$();
 
             if (ff.exists(srcPath)) {
                 throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
