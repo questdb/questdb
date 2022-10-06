@@ -98,7 +98,6 @@ public class SqlCompiler implements Closeable {
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final LikeTableMetadataAdapter tableStructureAdapterLikeTable = new LikeTableMetadataAdapter();
     private final FunctionParser functionParser;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final TextLoader textLoader;
@@ -1419,10 +1418,9 @@ public class SqlCompiler implements Closeable {
                 try {
                     if (createTableModel.getQueryModel() == null) {
                         if (createTableModel.getLikeTableName() != null) {
-                            engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableStructureFromLikeTableMetadata(executionContext, createTableModel));
-                        } else {
-                            engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                            copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                         }
+                        engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                         newTable = true;
                     } else {
                         writer = createTableFromCursor(createTableModel, executionContext);
@@ -1445,9 +1443,23 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private TableStructure createTableStructureFromLikeTableMetadata(SqlExecutionContext executionContext, CreateTableModel model) {
+    private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
         try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), model.getLikeTableName().token)) {
-            return tableStructureAdapterLikeTable.of(model, rdr.getMetadata());
+            model.setCommitLag(rdr.getCommitLag());
+            model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
+            TableReaderMetadata rdrMetadata = rdr.getMetadata();
+            for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
+                int symbolCapacity = rdr.getSymbolMapReader(i) != null ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
+                model.addColumn(rdrMetadata.getColumnName(i), rdrMetadata.getColumnType(i), symbolCapacity, rdrMetadata.getColumnHash(i));
+                model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
+            }
+            if (rdr.getPartitionedBy() != -1) {
+                model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.fromInteger(rdr.getPartitionedBy()), 0));
+            }
+            if (rdrMetadata.getTimestampIndex() != -1) {
+                model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
+            }
+            model.setWalEnabled(rdrMetadata.isWalEnabled());
         }
     }
 
@@ -2426,95 +2438,6 @@ public class SqlCompiler implements Closeable {
         public static final int DROP = 1;
         public static final int ATTACH = 2;
         public static final int DETACH = 3;
-    }
-
-    private static class LikeTableMetadataAdapter implements TableStructure {
-        private CreateTableModel model;
-        private TableReaderMetadata tableReaderMetadata;
-
-        @Override
-        public int getColumnCount() {
-            return tableReaderMetadata.getColumnCount();
-        }
-
-        @Override
-        public long getColumnHash(int columnIndex) {
-            return tableReaderMetadata.getColumnHash(columnIndex);
-        }
-
-        @Override
-        public CharSequence getColumnName(int columnIndex) {
-            return tableReaderMetadata.getColumnName(columnIndex);
-        }
-
-        @Override
-        public int getColumnType(int columnIndex) {
-            // TODO: how to handle cast columns?
-            return tableReaderMetadata.getColumnType(columnIndex);
-        }
-
-        @Override
-        public long getCommitLag() {
-            return tableReaderMetadata.getCommitLag();
-        }
-
-        @Override
-        public int getIndexBlockCapacity(int columnIndex) {
-            return tableReaderMetadata.getIndexValueBlockCapacity(columnIndex);
-        }
-
-        @Override
-        public int getMaxUncommittedRows() {
-            return tableReaderMetadata.getMaxUncommittedRows();
-        }
-
-        @Override
-        public int getPartitionBy() {
-            return tableReaderMetadata.getPartitionBy();
-        }
-
-        @Override
-        public boolean getSymbolCacheFlag(int columnIndex) {
-            // TODO: should we read it from TableReader.getSymbolMapReader(colIndex).isCached()?
-            return model.getSymbolCacheFlag(columnIndex);
-        }
-
-        @Override
-        public int getSymbolCapacity(int columnIndex) {
-            // TODO: should we read it from TableReader.getSymbolMapReader(colIndex).getSymbolCapacity()?
-            return model.getSymbolCapacity(columnIndex);
-        }
-
-        @Override
-        public CharSequence getTableName() {
-            return model.getTableName();
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return tableReaderMetadata.getTimestampIndex();
-        }
-
-        @Override
-        public boolean isWallEnabled() {
-            return tableReaderMetadata.isWalEnabled();
-        }
-
-        @Override
-        public boolean isIndexed(int columnIndex) {
-            return tableReaderMetadata.getColumnQuick(columnIndex).isIndexed();
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return model.isSequential(columnIndex);
-        }
-
-        LikeTableMetadataAdapter of(CreateTableModel model, TableReaderMetadata tableReaderMetadata) {
-            this.model = model;
-            this.tableReaderMetadata = tableReaderMetadata;
-            return this;
-        }
     }
 
     private static class TableStructureAdapter implements TableStructure {

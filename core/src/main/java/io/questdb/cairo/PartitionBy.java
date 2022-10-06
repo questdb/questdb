@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -64,6 +65,7 @@ public final class PartitionBy {
     private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
     private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
+    private final static IntObjHashMap<CharSequence> indexToNameMap = new IntObjHashMap<>();
     private static final DateFormat fmtDay;
     private static final DateFormat fmtMonth;
     private static final DateFormat fmtYear;
@@ -75,6 +77,10 @@ public final class PartitionBy {
 
     public static int fromString(CharSequence name) {
         return nameToIndexMap.get(name);
+    }
+
+    public static CharSequence fromInteger(int index) {
+        return indexToNameMap.get(index);
     }
 
     public static PartitionAddMethod getPartitionAddMethod(int partitionBy) {
@@ -290,6 +296,12 @@ public final class PartitionBy {
         nameToIndexMap.put("year", YEAR);
         nameToIndexMap.put("hour", HOUR);
         nameToIndexMap.put("none", NONE);
+
+        indexToNameMap.put(DAY, "day");
+        indexToNameMap.put(MONTH, "month");
+        indexToNameMap.put(YEAR, "year");
+        indexToNameMap.put(HOUR, "hour");
+        indexToNameMap.put(NONE, "none");
     }
 
     static {
