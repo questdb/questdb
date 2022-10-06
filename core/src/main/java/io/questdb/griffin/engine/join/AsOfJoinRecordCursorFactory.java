@@ -153,7 +153,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
@@ -229,8 +228,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 joinKeyMap.close();
                 isOpen = false;
+                super.close();
             }
-            super.close();
         }
     }
 }
