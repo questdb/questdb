@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-public class LowerFunctionFactory extends ToLowercaseFunctionFactory{
+/**
+ * Postgres-compatibility lower() alias for the to_lowercase() function.
+ */
+public class LowerFunctionFactory extends ToLowercaseFunctionFactory {
     @Override
     public String getSignature() {
         return "lower(S)";

@@ -59,6 +59,6 @@ public class LowerFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToLowercaseFunctionFactory();
+        return new LowerFunctionFactory();
     }
 }

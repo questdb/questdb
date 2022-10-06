@@ -58,6 +58,6 @@ public class UpperFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToUppercaseFunctionFactory();
+        return new UpperFunctionFactory();
     }
 }

@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.engine.functions.str;
 
+/**
+ * Postgres-compatibility upper() alias for the to_uppercase() function.
+ */
 public class UpperFunctionFactory extends ToUppercaseFunctionFactory {
     @Override
     public String getSignature() {
