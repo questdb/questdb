@@ -97,7 +97,13 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     @Override
     public void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
         // Override default implementation to defer ff.length() call to use fd instead of path
-        of(ff, name, ff.getPageSize(), -1, memoryTag, CairoConfiguration.O_NONE);
+        of(ff, name, ff.getPageSize(), -1, memoryTag, CairoConfiguration.O_NONE, -1);
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        // Override default implementation to defer ff.length() call to use fd instead of path
+        of(ff, name, ff.getMapPageSize(), -1, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size) {
