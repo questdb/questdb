@@ -2409,7 +2409,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab61", "test-header-missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
                 importer.process();
 
-                assertQuery("ts\tf2\tf2_\td\tf4\n" +
+                assertQuery("ts\tf3\tf3_\tf3__\tf4\n" +
                         "1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1\n" +
                         "1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2\n", "select * from tab61", "ts", true, false, true);
             }
