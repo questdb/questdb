@@ -164,7 +164,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableFromLikeTableWithNoIndex() throws Exception {
         assertCompile("create table y (s1 symbol)");
-        assertQuery("s1\n","select * from tab", "create table tab (like y)", null);
+        assertQuery("s1\n", "select * from tab", "create table tab (like y)", null);
     }
 
     @Test
@@ -175,17 +175,10 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableFromLikeTableWithMultipleIndexes() throws Exception {
+    public void testCreateTableFromLikeTableWithMultipleIndices() throws Exception {
         assertCompile("create table tab (s1 symbol, s2 symbol, s3 symbol), index(s1), index(s2), index(s3)");
-        assertQuery("s1\ts2\ts3\n", "select * from x", "create table x(like tab)",null);
+        assertQuery("s1\ts2\ts3\n", "select * from x", "create table x(like tab)", null);
         assertColumnsIndexed("x", "s1", "s2", "s3");
-    }
-
-    @Test
-    public void testCreateTableFromLikeTableCreatedAsSelectWithNoIndex() throws Exception {
-        assertCompile("create table old(s1 symbol)");
-        assertCompile("create table new as (select * from old)");
-        assertQuery("s1\n", "select * from x", "create table x(like new)",null);
     }
 
     @Test
@@ -193,35 +186,170 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertCompile("create table x (" +
                 "a INT," +
                 "t timestamp) timestamp(t) partition by MONTH");
-        assertQuery("a\tt\n", "select * from tab", "create table tab (like x)","t");
+        assertQuery("a\tt\n", "select * from tab", "create table tab (like x)", "t");
         assertPartitionIndex("tab", PartitionBy.MONTH, 1);
     }
 
     @Test
-    public void testCreateTableLikeTableWithSymbolCapacityNotSame() throws Exception {
+    public void testCreateTableLikeTableWithSymbolCapacity() throws Exception {
+        int symbolCapacity = 128;
+
         assertCompile("create table x (" +
                 "a INT," +
-                "y SYMBOL capacity 100 cache,"+
+                "y SYMBOL CAPACITY " + symbolCapacity + " NOCACHE," +
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
-        assertSymbolCapacityNotSame("tab",1,100);
+        SymbolParameters parameters = new SymbolParameters(symbolCapacity, false, false, null);
+        assertSymbolParameters("tab", 1, parameters);
     }
 
-    private void assertSymbolCapacityNotSame(String tableName, int colIndex, int symbolCapacity) throws Exception {
+    @Test
+    public void testCreateTableLikeTableWithCachedSymbol() throws Exception {
+        boolean isSymbolCached = true;
+        String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
+
+        assertCompile("create table x (" +
+                "a INT," +
+                "y SYMBOL " + symbolCacheParameterValue + "," +
+                "t timestamp) timestamp(t) partition by MONTH");
+        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
+        SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
+        assertSymbolParameters("tab", 1, parameters);
+    }
+
+    @Test
+    public void testCreateTableLikeTableWithIndexBlockCapacity() throws Exception {
+        int indexBlockCapacity = 128;
+        assertCompile("create table x (" +
+                "a INT," +
+                "y SYMBOL NOCACHE INDEX CAPACITY " + indexBlockCapacity + "," +
+                "t timestamp) timestamp(t) partition by MONTH");
+        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
+        SymbolParameters parameters = new SymbolParameters(null, false, true, indexBlockCapacity);
+        assertSymbolParameters("tab", 1, parameters);
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsLikeTable() throws Exception {
+        assertCompile("create table x (s1 symbol) ");
+        assertCompile("create table y (s2 symbol)");
+        assertQuery("s1\n", "select * from x", "create table if not exists x (like y)", null);
+    }
+
+    @Test
+    public void testCreateTableLikeTableWithWALEnabled() throws Exception {
+        boolean isWalEnabled = true;
+        String walParameterValue = isWalEnabled ? "WAL" : "NONE";
+
+        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
+        assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
+        assertWalEnabled("x", true);
+    }
+
+    @Test
+    public void testCreateTableLikeTableWithWALDisabled() throws Exception {
+        boolean isWalEnabled = false;
+        String walParameterValue = isWalEnabled ? "WAL" : "NONE";
+
+        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY " + walParameterValue);
+        assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
+        assertWalEnabled("x", false);
+    }
+
+    @Test
+    public void testCreateTableLikeTableWithMaxUncommittedRowsAndCommitLag() throws Exception {
+        int maxUncommittedRows = 20;
+        int commitLag = 200;
+        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", commitLag = " + commitLag + "us");
+        assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
+        assertWithClauseParameters("x", maxUncommittedRows, commitLag);
+    }
+
+    @Test
+    public void testCreateTableLikeTableAllColumnTypes() throws Exception {
+        String[][] columnTypes = new String[][]{
+                {"a", "INT"},
+                {"b", "BYTE"},
+                {"c", "SHORT"},
+                {"d", "LONG"},
+                {"e", "FLOAT"},
+                {"f", "DOUBLE"},
+                {"g", "DATE"},
+                {"h", "BINARY"},
+                {"t", "TIMESTAMP"},
+                {"x", "SYMBOL"},
+                {"z", "STRING"},
+                {"y", "BOOLEAN"}
+        };
+
+        assertCompile("create table x (" +
+                getColumnDefinitions(columnTypes) + ")"
+        );
+        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\n", "select * from tab", "create table tab (like x)", null);
+        assertColumnTypes("tab", columnTypes);
+    }
+
+    private void assertColumnTypes(String tableName, String[][] columnTypes) throws Exception {
         assertMemoryLeak(() -> {
-            try(TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertNotEquals(symbolCapacity, reader.getSymbolMapReader(colIndex).getSymbolCapacity());
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                for (int i = 0; i < columnTypes.length; i++) {
+                    String[] arr = columnTypes[i];
+                    Assert.assertEquals(arr[0], metadata.getColumnName(i));
+                    Assert.assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
+                }
+            }
+        });
+    }
+
+    private void assertWithClauseParameters(String tableName, int maxUncommittedRows, int commitLag) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(commitLag, reader.getMetadata().getCommitLag());
+                Assert.assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
+            }
+        });
+    }
+
+    private void assertWalEnabled(String tableName, boolean isWalEnabled) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(isWalEnabled, reader.getMetadata().isWalEnabled());
+            }
+        });
+    }
+
+    private void assertSymbolParameters(String tableName, int colIndex, SymbolParameters parameters) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                if (parameters.symbolCapacity != null) {
+                    Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(colIndex).getSymbolCapacity());
+                }
+                Assert.assertEquals(parameters.isCached, reader.getSymbolMapReader(colIndex).isCached());
+                Assert.assertEquals(parameters.isIndexed, reader.getMetadata().isColumnIndexed(colIndex));
+                if (parameters.indexBlockCapacity != null) {
+                    Assert.assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(colIndex));
+                }
             }
         });
     }
 
     private void assertPartitionIndex(String tableName, int partitionIndex, int timestampIndex) throws Exception {
         assertMemoryLeak(() -> {
-            try(TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 Assert.assertEquals(partitionIndex, reader.getPartitionedBy());
                 Assert.assertEquals(timestampIndex, reader.getMetadata().getTimestampIndex());
             }
         });
+    }
+
+    private String getColumnDefinitions(String[][] columnTypes) {
+        String result = "";
+        for (String[] arr : columnTypes) {
+            result += arr[0] + " " + arr[1] + ",";
+        }
+        result = result.substring(0, result.length() - 1);
+        return result;
     }
 
     private void assertColumnsIndexed(String tableName, String... columnNames) throws Exception {
@@ -246,6 +374,20 @@ public class CreateTableTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    static class SymbolParameters {
+        private Integer symbolCapacity;
+        private boolean isCached;
+        private boolean isIndexed;
+        private Integer indexBlockCapacity;
+
+        SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed, Integer indexBlockCapacity) {
+            this.symbolCapacity = symbolCapacity;
+            this.isCached = isCached;
+            this.isIndexed = isIndexed;
+            this.indexBlockCapacity = indexBlockCapacity;
+        }
     }
 }
 

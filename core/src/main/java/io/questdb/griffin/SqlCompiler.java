@@ -1451,6 +1451,9 @@ public class SqlCompiler implements Closeable {
             for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
                 int symbolCapacity = rdr.getSymbolMapReader(i) != null ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
                 model.addColumn(rdrMetadata.getColumnName(i), rdrMetadata.getColumnType(i), symbolCapacity, rdrMetadata.getColumnHash(i));
+                if (rdr.getSymbolMapReader(i) != null) {
+                    model.cached(rdr.getSymbolMapReader(i).isCached());
+                }
                 model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
             }
             if (rdr.getPartitionedBy() != -1) {
@@ -1461,6 +1464,7 @@ public class SqlCompiler implements Closeable {
             }
             model.setWalEnabled(rdrMetadata.isWalEnabled());
         }
+        model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws
