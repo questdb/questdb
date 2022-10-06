@@ -99,18 +99,16 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             if (!header || columnNames.getQuick(i).length() == 0) {
                 tempSink.clear();
                 tempSink.put('f').put(i);
-                String colName = tempSink.toString();
 
                 for (int attempt = 0; attempt < 20; attempt++) {
-                    if (!uniqueColumnNames.contains(colName)) {
+                    if (!uniqueColumnNames.contains(tempSink)) {
                         break;
                     }
 
                     tempSink.put('_');
-                    colName = tempSink.toString();
                 }
 
-                columnNames.setQuick(i, colName);
+                columnNames.setQuick(i, tempSink.toString());
             }
 
             if (!uniqueColumnNames.add(columnNames.getQuick(i))) {
