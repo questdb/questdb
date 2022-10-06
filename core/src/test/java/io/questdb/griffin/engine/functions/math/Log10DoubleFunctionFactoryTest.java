@@ -41,7 +41,13 @@ public class Log10DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call(-2.0).andAssert(Double.NaN, 0.000001);
     }
 
+    @Test
+    public void testSimple() throws SqlException {
+        call(1000).andAssert(3, 0.000001);
+    }
+
     @Override
-    protected FunctionFactory getFunctionFactory() { return new Log10DoubleFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new Log10DoubleFunctionFactory();
     }
 }
