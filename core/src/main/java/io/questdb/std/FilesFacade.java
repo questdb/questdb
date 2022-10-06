@@ -48,6 +48,8 @@ public interface FilesFacade {
 
     void fadvise(long fd, long offset, long len, int advise);
 
+    void madvise(long address, long len, int advise);
+
     long findClose(long findPtr);
 
     long findFirst(LPSZ path);

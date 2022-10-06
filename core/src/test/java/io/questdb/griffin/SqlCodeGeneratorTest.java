@@ -174,6 +174,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAnalyticFunctionWithFilter() throws Exception {
+        assertQuery("author\tsym\tcommits\trk\n" +
+                        "user2\tETH\t3\t1\n" +
+                        "user1\tETH\t3\t0\n",
+                "with active_devs as (" +
+                        "    select author, sym, count() as commits" +
+                        "    from dev_stats" +
+                        "    where author is not null and author != 'github-actions[bot]'" +
+                        "    order by commits desc" +
+                        "    limit 100" +
+                        "), active_ranked as (" +
+                        "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
+                        "    from active_devs" +
+                        ") select * from active_ranked where sym = 'ETH'",
+                "create table dev_stats as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('ETH','BTC') sym," +
+                        " rnd_symbol('user1','user2') author," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 

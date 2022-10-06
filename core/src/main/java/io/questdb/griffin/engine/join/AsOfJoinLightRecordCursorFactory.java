@@ -142,7 +142,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
