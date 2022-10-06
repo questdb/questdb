@@ -99,6 +99,8 @@ public class MapSymbolColumn extends SymbolFunction {
         }
         assert this.symbolTable != this;
         assert this.symbolTable != null;
+        // static symbol table must be non-null
+        assert !symbolTableStatic || getStaticSymbolTable() != null;
     }
 
     @Override

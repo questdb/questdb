@@ -73,7 +73,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
             symbolTable = symbolTableSource.getSymbolTable(columnIndex);
         }
         // static symbol table must be non-null
-        assert !symbolTableStatic || symbolTable != null;
+        assert !symbolTableStatic || getStaticSymbolTable() != null;
     }
     
     @Override

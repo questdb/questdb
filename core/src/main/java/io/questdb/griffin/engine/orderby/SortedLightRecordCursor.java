@@ -50,7 +50,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            chain.close();
+            Misc.free(chain);
             base = Misc.free(base);
             baseRecord = null;
         }
