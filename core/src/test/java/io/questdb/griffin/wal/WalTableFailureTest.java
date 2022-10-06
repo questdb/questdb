@@ -693,6 +693,31 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTableWriterUncommittedTransactionIsRolledBack() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            creatStandardWalTable(tableName);
+
+            drainWalQueue();
+            try (TableWriter writer = engine.getWriter(
+                    sqlExecutionContext.getCairoSecurityContext(),
+                    tableName,
+                    "wal killer")
+            ) {
+                writer.newRow(123);
+            }
+
+            compile("alter table " + tableName + " add column dddd2 long");
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-25', 'abcd', 123)");
+            drainWalQueue();
+
+            // No SQL applied
+            assertSql(tableName, "x\tsym\tts\tsym2\tabcd\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n");
+        });
+    }
+
+    @Test
     public void testTableWriterDirectDropColumnStopsWall() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

@@ -1383,6 +1383,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             SymbolMapDiffCursor mapDiffCursor
     ) {
         if (inTransaction()) {
+            // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
+            // Set the writer to distressed state and throw exception so that writer is re-created.
+            distressed = true;
             throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
 
@@ -5134,8 +5137,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(SymbolMapDiffCursor symbolMapDiffCursor, long rowLo, long rowHi, Path walPath) {
-        int sym = 0;
-
         ObjList<MemoryCR> o3ColumnOverrides = null;
 
         if (symbolMapDiffCursor != null) {

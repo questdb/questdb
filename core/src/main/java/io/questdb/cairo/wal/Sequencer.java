@@ -25,13 +25,12 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.griffin.engine.ops.AlterOperation;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public interface Sequencer extends Closeable {
-    String SEQ_DIR = "seq";
+    String SEQ_DIR = "txn_seq";
 
     long NO_TXN = Long.MIN_VALUE;
 

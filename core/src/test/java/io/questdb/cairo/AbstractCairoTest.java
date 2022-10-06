@@ -116,6 +116,7 @@ public abstract class AbstractCairoTest {
     protected static int defaultTableWriteMode = -1;
     protected static Boolean copyPartitionOnAttach = null;
     protected static String attachableDirSuffix = null;
+    protected static int isO3QuickSortEnabled = 0;
 
     private static TelemetryConfiguration telemetryConfiguration;
 
@@ -425,6 +426,11 @@ public abstract class AbstractCairoTest {
             public int getWalTxnNotificationQueueCapacity() {
                 return walTxnNotificationQueueCapacity > 0 ? walTxnNotificationQueueCapacity : 256;
             }
+
+            @Override
+            public boolean isO3QuickSortEnabled() {
+                return isO3QuickSortEnabled > 0 ? true : (isO3QuickSortEnabled < 0 ? false : super.isO3QuickSortEnabled());
+            }
         };
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics, 2);
@@ -503,6 +509,7 @@ public abstract class AbstractCairoTest {
         ff = null;
         memoryUsage = -1;
         dataAppendPageSize = -1;
+        isO3QuickSortEnabled = 0;
     }
 
     protected static void configureForBackups() throws IOException {

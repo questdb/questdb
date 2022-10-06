@@ -343,24 +343,28 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                         }
                         try {
                             while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
-                                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                                String taskTableName = task.getTableName();
-                                int taskTableId = task.getTableId();
-                                // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
-                                subSeq.done(cursor);
+                                if (cursor > -1L) {
+                                    WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                                    String taskTableName = task.getTableName();
+                                    int taskTableId = task.getTableId();
+                                    // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
+                                    subSeq.done(cursor);
 
-                                if (localCommittedTransactions.get(taskTableId) < task.getTxn()) {
-                                    long lastCommittedTxn = ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
-                                    if (lastCommittedTxn > -1) {
-                                        localCommittedTransactions.put(taskTableId, lastCommittedTxn);
+                                    LOG.info().$("stealing work from wal txn queue: ").$(taskTableName).$();
+
+                                    if (localCommittedTransactions.get(taskTableId) < task.getTxn()) {
+                                        long lastCommittedTxn = ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
+                                        if (lastCommittedTxn > -1) {
+                                            localCommittedTransactions.put(taskTableId, lastCommittedTxn);
+                                        }
                                     }
-                                }
 
-                                // If this is the same table we want to notify about
-                                // then we don't to notify about it anymore, whoever processes the WAL
-                                // for the table will apply the transaction we want to notify about too
-                                if (tableName.equals(taskTableName) && tableId == taskTableId) {
-                                    return;
+                                    // If this is the same table we want to notify about
+                                    // then we don't to notify about it anymore, whoever processes the WAL
+                                    // for the table will apply the transaction we want to notify about too
+                                    if (tableName.equals(taskTableName) && tableId == taskTableId) {
+                                        return;
+                                    }
                                 }
                             }
                         } catch (Throwable throwable) {
@@ -369,7 +373,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                                     .$(throwable).$();
                         }
                     } else {
-                        LOG.criticalW().$("error publishing WAL notifications, queue is full").$();
+                        LOG.criticalW().$("error publishing WAL notifications, queue is full, current=").$(pubSeq.current()).$();
                         // WAL is committed and can eventually be picked up and applied to the table.
                         // Error is critical but throwing exception will make client assume
                         // that commit failed but in fact the data is written.
