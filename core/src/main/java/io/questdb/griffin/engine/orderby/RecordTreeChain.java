@@ -386,9 +386,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         }
 
         private void of(RecordCursor base) {
-            if (!isOpen) {
-                isOpen = true;
-            }
+            isOpen = true;
             this.base = base;
             recordChain.setSymbolTableResolver(base);
             toTop();
