@@ -1,0 +1,1 @@
+--module-path C:\Users\soura\Desktop\Workspace\October" "22\questdb\core\target\classes;C:\Users\soura\.m2\repository\org\jetbrains\annotations\17.0.0\annotations-17.0.0.jar

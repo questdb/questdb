@@ -29,15 +29,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CeilingFloatFunctionFactory implements FunctionFactory {
+public class CeilingDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "ceiling(F)";
+        return "ceiling(D)";
     }
 
     @Override
@@ -45,7 +45,7 @@ public class CeilingFloatFunctionFactory implements FunctionFactory {
         return new CeilingFunction(args.getQuick(0));
     }
 
-    private static class CeilingFunction extends FloatFunction implements UnaryFunction {
+    private static class CeilingFunction extends DoubleFunction implements UnaryFunction {
         private final Function function;
 
         public CeilingFunction(Function function) {
@@ -58,9 +58,9 @@ public class CeilingFloatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public float getFloat(Record rec) {
-            float value = function.getFloat(rec);
-            return (float) Math.ceil(value);
+        public double getDouble(Record rec) {
+            double value = function.getDouble(rec);
+            return Math.ceil(value);
         }
     }
 }
