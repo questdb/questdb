@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -67,15 +68,15 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
-    public boolean isMapped(long offset, long len) {
-        return offset + len <= size();
-    }
-
-    @Override
     public void extend(long newSize) {
         if (newSize > size) {
             setSize0(newSize);
         }
+    }
+
+    @Override
+    public boolean isMapped(long offset, long len) {
+        return offset + len <= size();
     }
 
     @Override
@@ -91,6 +92,12 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             }
         }
         map(ff, name, size);
+    }
+
+    @Override
+    public void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        // Override default implementation to defer ff.length() call to use fd instead of path
+        of(ff, name, ff.getPageSize(), -1, memoryTag, CairoConfiguration.O_NONE);
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size) {
