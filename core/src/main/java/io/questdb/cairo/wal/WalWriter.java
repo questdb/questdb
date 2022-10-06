@@ -80,7 +80,8 @@ public class WalWriter implements TableWriterFrontend {
     private final RowImpl row = new RowImpl();
     private final TableWriterBackend walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final AlterOperationValidationBackend alterOperationValidationBackend = new AlterOperationValidationBackend();
-    private long lockFd = -1;
+    private long walLockFd = -1;
+    private long segmentLockFd = -1;
     private int columnCount;
     private long currentTxnStartRowNum = -1;
     private long rowCount = -1;
@@ -115,7 +116,7 @@ public class WalWriter implements TableWriterFrontend {
         this.open = true;
 
         try {
-            lock();
+            lockWal();
 
             metadata = new SequencerMetadata(ff);
             tableRegistry.copyMetadataTo(tableName, metadata);
@@ -323,7 +324,7 @@ public class WalWriter implements TableWriterFrontend {
         freeColumns(truncate);
 
         try {
-            releaseLock(!truncate);
+            releaseWalLock(!truncate);
         } finally {
             Misc.free(path);
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -782,10 +783,10 @@ public class WalWriter implements TableWriterFrontend {
         path.trimTo(rootLen);
         path.slash().put(segmentId);
         final int segmentPathLen = path.length();
+        rolloverSegmentLock();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
-        path.trimTo(segmentPathLen);
         return segmentPathLen;
     }
 
@@ -849,16 +850,34 @@ public class WalWriter implements TableWriterFrontend {
         return false;
     }
 
-    private void lock() {
+    private void lockWal() {
         try {
             lockName(path);
-            lockFd = TableUtils.lock(ff, path);
+            walLockFd = TableUtils.lock(ff, path);
         } finally {
             path.trimTo(rootLen);
         }
 
-        if (lockFd == -1L) {
+        if (walLockFd == -1L) {
             throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
+        }
+    }
+
+    private void rolloverSegmentLock() {
+        if (segmentLockFd != -1L) {
+            ff.close(segmentLockFd);
+            segmentLockFd = -1L;
+        }
+        final int segmentPathLen = path.length();
+        try {
+            lockName(path);
+            segmentLockFd = TableUtils.lock(ff, path);
+            if (segmentLockFd == -1L) {
+                path.trimTo(segmentPathLen);
+                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
+            }
+        } finally {
+            path.trimTo(segmentPathLen);
         }
     }
 
@@ -934,9 +953,9 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void releaseLock(boolean keepLockFile) {
-        if (lockFd != -1L) {
-            ff.close(lockFd);
+    private void releaseWalLock(boolean keepLockFile) {
+        if (walLockFd != -1L) {
+            ff.close(walLockFd);
             if (keepLockFile) {
                 return;
             }
