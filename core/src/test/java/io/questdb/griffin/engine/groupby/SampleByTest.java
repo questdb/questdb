@@ -9282,6 +9282,38 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
+        assertQuery("open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
+                "select * from (" +
+                        "  select" +
+                        "    first(price) AS open," +
+                        "    max(price) AS high," +
+                        "    min(price) AS low," +
+                        "    last(price) AS close," +
+                        "    sum(amount) AS volume," +
+                        "    created_at as timestamp" +
+                        "  from trades" +
+                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                        "  sample by 60m" +
+                        "  fill(null, null, null, null, 0) align to calendar" +
+                        ") order by timestamp desc limit 0, 1",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_str('btcusdt', 'ethusdt') market_id," +
+                        " rnd_double(0) * 100 price," +
+                        " rnd_double(0) * 100 amount," +
+                        " timestamp_sequence(172800000000, 3600000) created_at" +
+                        " from long_sequence(20)" +
+                        ") timestamp(created_at) partition by day",
+                null,
+                true,
+                false,
+                true);
+    }
+
+    @Test
     public void testWrongTypeInPeriodSyntax() throws Exception {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0*3 T",

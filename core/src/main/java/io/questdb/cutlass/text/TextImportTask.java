@@ -402,6 +402,7 @@ public class TextImportTask {
             long hi;
 
             long fd = TableUtils.openRO(ff, path, LOG);
+            ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);
             try {
 
                 do {
