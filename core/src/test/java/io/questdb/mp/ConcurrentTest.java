@@ -161,7 +161,7 @@ public class ConcurrentTest {
         pubTh.join();
         done.set(true);
         for (int i = 0; i < threads.size(); i++) {
-            var subTh = threads.get(i);
+            Thread subTh = threads.get(i);
             subTh.join();
         }
 
