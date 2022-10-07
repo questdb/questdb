@@ -319,7 +319,7 @@ public class LogFactory implements Closeable {
             while (keySetIterator.hasNext()) {
                 final String envVar = keySetIterator.next();
                 if (envVar.startsWith("QDB_LOG_")) {
-                    final String key = envVar.replaceFirst("QDB_LOG_", "").replace('.', '_').toUpperCase();
+                    final String key = envVar.replaceFirst("QDB_LOG_", "").replace('_', '.').toLowerCase();
                     final String val = env.get(envVar);
                     if (val != "") {
                         properties.setProperty(key, env.get(envVar));
