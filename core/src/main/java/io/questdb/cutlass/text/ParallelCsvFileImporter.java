@@ -606,18 +606,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         // First, create the work root dir, if it doesn't exist.
         Path workDirPath = tmpPath.of(inputWorkRoot).slash$();
         if (!ff.exists(workDirPath)) {
-            int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
-            if (errno != 0) {
-                throw CairoException.critical(errno).put("could not create import work root directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
+            int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+            if (result != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create import work root directory [path='").put(workDirPath).put("']");
             }
         }
 
         // Next, remove and recreate the per-table sub-dir.
         removeWorkDir();
         workDirPath = tmpPath.of(importRoot).slash$();
-        int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
-        if (errno != 0) {
-            throw CairoException.critical(errno).put("could not create temporary import work directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
+        int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+        if (result != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create temporary import work directory [path='").put(workDirPath).put("']");
         }
 
         createdWorkDir = true;
