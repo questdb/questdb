@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 
 /**
  * SortedLightRecordCursor implementing LIMIT clause .
@@ -67,8 +68,8 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     @Override
     public void close() {
         if (isOpen) {
-            chain.close();
-            base.close();
+            Misc.free(chain);
+            Misc.free(base);
             isOpen = false;
         }
     }
