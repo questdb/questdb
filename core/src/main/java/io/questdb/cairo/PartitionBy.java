@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -65,7 +64,6 @@ public final class PartitionBy {
     private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
     private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
-    private final static IntObjHashMap<CharSequence> indexToNameMap = new IntObjHashMap<>();
     private static final DateFormat fmtDay;
     private static final DateFormat fmtMonth;
     private static final DateFormat fmtYear;
