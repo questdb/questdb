@@ -399,36 +399,86 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateWalTableAsSelect2() throws Exception {
+    public void testWalPurgeOneSegment() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
 
+            assertWalExistance(true, tableName, 1);
+            assertSegmentExistance(true, tableName, 1, 0);
+
             drainWalQueue();
 
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+            assertWalExistance(true, tableName, 1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
 
             purgeWalSegments();
 
             assertSegmentExistance(true, tableName, 1, 0);
+            assertWalExistance(true, tableName, 1);
 
             engine.releaseInactive();
 
             purgeWalSegments();
 
             assertSegmentExistance(false, tableName, 1, 0);
+            assertWalExistance(false, tableName, 1);
         });
+    }
+
+    @Test
+    public void testWalPurgeTwoSegments() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            assertWalExistance(true, tableName, 1);
+            assertSegmentExistance(true, tableName, 1, 0);
+
+            drainWalQueue();
+
+            assertWalExistance(true, tableName, 1);
+            assertSegmentExistance(true, tableName, 1, 0);
+
+            executeInsert("insert into " + tableName + " values (6, '2022-02-24T00:00:05.000000Z')");
+            compile("alter table " + tableName + " add column sss string");
+
+            drainWalQueue();
+
+            assertSql(tableName, "x\tts\tsss\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\t\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\t\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\t\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\t\n" +
+                    "6\t2022-02-24T00:00:05.000000Z\t\n");
+
+            assertWalExistance(true, tableName, 1);
+            assertSegmentExistance(true, tableName, 1, 0);
+            assertSegmentExistance(true, tableName, 1, 1);
+        });
+    }
+
+    private void assertWalExistance(boolean expectExists, String tableName, int walId) {
+        CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableName).concat("wal").put(walId).$();
+            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+        }
     }
 
     private void assertSegmentExistance(boolean expectExists, String tableName, int walId, int segmentId) {

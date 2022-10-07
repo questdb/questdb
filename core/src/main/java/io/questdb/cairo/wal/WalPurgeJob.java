@@ -35,6 +35,8 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 import java.util.PrimitiveIterator;
 
+// TODO [amunra]: Only run this on a periodic schedule.
+
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     /** Table of columns grouping segment information. One row per walId. */
