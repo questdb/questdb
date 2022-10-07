@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -578,7 +581,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(152);
+        counter.set(152 + 12);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -892,13 +895,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(174);
+        counter.set(174 + 12);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(174);
+        counter.set(174 + 12);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -916,25 +919,25 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(174 + 45);
+        counter.set(174 + 45 + 12);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(165 + 45);
+        counter.set(165 + 45 + 12);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(165 + 45);
+        counter.set(165 + 45 + 12);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(165 + 45);
+        counter.set(165 + 45 + 12);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -996,13 +999,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(193 + 45);
+        counter.set(193 + 45 + 18);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(176 + 45);
+        counter.set(176 + 45 + 18);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -1077,7 +1080,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testSetAppendPositionFails() throws Exception {
-        counter.set(169);
+        counter.set(169 + 12);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 

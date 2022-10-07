@@ -4207,7 +4207,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts()
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_RANDOM
             );
             if (mem2 != null) {
                 mem2.of(
@@ -4216,7 +4217,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
                 );
             }
         } finally {

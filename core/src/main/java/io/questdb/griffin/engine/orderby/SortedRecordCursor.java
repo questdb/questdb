@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
@@ -41,8 +42,8 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            chainCursor.close();
-            chain.close();
+            Misc.free(chainCursor);
+            Misc.free(chain);
             isOpen = false;
         }
     }
