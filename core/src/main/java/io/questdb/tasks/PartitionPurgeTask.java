@@ -24,29 +24,11 @@
 
 package io.questdb.tasks;
 
-import io.questdb.std.LongList;
-import io.questdb.std.Mutable;
-
-public class PartitionPurgeTask implements Mutable {
-    private final LongList activePartitionRemoveCandidates = new LongList();
+public class PartitionPurgeTask {
     private String tableName;
     private long timestamp;
     private int partitionBy;
     private long partitionNameTxn;
-
-    @Override
-    public void clear() {
-        activePartitionRemoveCandidates.clear();
-    }
-
-    public void copyFrom(PartitionPurgeTask inTask) {
-        tableName = inTask.tableName;
-        timestamp = inTask.timestamp;
-        partitionBy = inTask.partitionBy;
-        partitionNameTxn = inTask.partitionNameTxn;
-        activePartitionRemoveCandidates.clear();
-        activePartitionRemoveCandidates.add(inTask.activePartitionRemoveCandidates);
-    }
 
     public String getTableName() {
         return tableName;
@@ -64,11 +46,14 @@ public class PartitionPurgeTask implements Mutable {
         return partitionNameTxn;
     }
 
+    public void copyFrom(PartitionPurgeTask inTask) {
+        of(inTask.tableName, inTask.timestamp, inTask.partitionBy, inTask.partitionNameTxn);
+    }
+
     public void of(String tableName, long timestamp, int partitionBy, long partitionNameTxn) {
         this.tableName = tableName;
         this.timestamp = timestamp;
         this.partitionBy = partitionBy;
         this.partitionNameTxn = partitionNameTxn;
-        this.activePartitionRemoveCandidates.clear();
     }
 }

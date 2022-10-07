@@ -45,6 +45,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -94,6 +95,7 @@ public class TableWriter implements Closeable {
     private final int partitionBy;
     private final LongList columnTops;
     private final FilesFacade ff;
+    private final MicrosecondClock clock;
     private final DateFormat partitionDirFmt;
     private final MemoryMAR ddlMem;
     private final int mkDirMode;
@@ -233,6 +235,7 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
         this.parallelIndexerEnabled = configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
+        this.clock = configuration.getMicrosecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
@@ -1482,6 +1485,7 @@ public class TableWriter implements Closeable {
             final long newTransientRowCount;
             final long openTimestamp;
             final long newMaxTimestamp;
+            final long newMinTimestamp;
             if (index > 0) {
                 final int prevIndex = index - 1;
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
@@ -1489,18 +1493,20 @@ public class TableWriter implements Closeable {
                 setPathForPartition(path.trimTo(rootLen), partitionBy, openTimestamp, false);
                 TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
                 readPartitionMinMax(ff, openTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                newMinTimestamp = Math.max(attachMinTimestamp, openTimestamp);
                 newMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(openTimestamp));
             } else {
                 // we are dropping the only partition
+                openTimestamp = clock.getTicks();
                 newMaxTimestamp = Long.MIN_VALUE;
-                openTimestamp = System.currentTimeMillis();
+                newMinTimestamp = Long.MAX_VALUE;
                 newTransientRowCount = 0;
             }
 
             final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
             columnVersionWriter.removePartition(timestamp);
             columnVersionWriter.commit();
-            txWriter.removeActivePartition(index, newMaxTimestamp, newTransientRowCount, columnVersionWriter.getVersion());
+            txWriter.removeActivePartition(index, newMinTimestamp, newMaxTimestamp, newTransientRowCount, columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
             closeActivePartition(true);
             openFirstPartition(openTimestamp);
@@ -5834,11 +5840,7 @@ public class TableWriter implements Closeable {
                     pubSeq.done(cursor);
                     break;
                 } else if (cursor == -1L) {
-                    // Queue overflow
-                    LOG.error()
-                            .$("cannot schedule active partition purge, purge queue is full.")
-                            .$("Please run 'VACUUM TABLE \"").$(tableName).$('"')
-                            .$();
+                    // queue overflow. the partition will be cleaned up eventually (unused partition)
                     break;
                 }
                 Os.pause();

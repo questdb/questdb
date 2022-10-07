@@ -105,7 +105,6 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
                 final long txn = task.getPartitionNameTxn();
                 path.trimTo(rootLen).concat(task.getTableName());
                 final int rootTableNameLen = path.length();
-                System.out.printf("DUE TASK[%d]: %s%n", txn, path);
 
                 useful = true;
                 if (txn > -1) {
@@ -121,7 +120,6 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
                     } catch (CairoException ignore) {
                         useful = false;
                     }
-                    System.out.printf("SCORE MIN: %d, VAL: %d -> %b%n", txnScoreboard.getMin(), txn - 1, txnScoreboard.getMin() > txn - 1);
                 }
 
                 if (useful) {
@@ -132,19 +130,16 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
                             false
                     );
                     txnPartitionConditionally(path, txn);
-                    System.out.printf("DELETING: %s%n", path);
                     if (ff.exists(path.slash$())) {
                         long errno = ff.rmdir(path);
                         if (errno == 0 || errno == -1) {
                             taskObjPool.push(task);
-                            System.out.printf("DELETED!%n");
+                            LOG.infoW().$("dropped formerly active partition [").$(path).I$();
                         } else {
                             task.updateNextRunTimestamp(now);
                             retryQueue.add(task);
                             useful = false;
                         }
-                    } else {
-                        taskObjPool.push(task);
                     }
                 }
             } else {
@@ -177,8 +172,8 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
-    private static class PartitionPurgeRetryTask extends PartitionPurgeTask {
-        private static final long START_RETRY_DELAY = 10_000L;
+    private static class PartitionPurgeRetryTask extends PartitionPurgeTask implements Mutable {
+        private static final long START_RETRY_DELAY = 5_000L;
 
         private long retryDelay = START_RETRY_DELAY;
         private long nextRunTimestamp;
@@ -197,6 +192,11 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
         void updateNextRunTimestamp(long now) {
             retryDelay = Math.min(60_000_000L, retryDelay * 2L);
             nextRunTimestamp = now + retryDelay;
+        }
+
+        @Override
+        public void clear() {
+            // noop
         }
     }
 }

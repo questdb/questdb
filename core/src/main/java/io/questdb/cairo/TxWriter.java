@@ -268,6 +268,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void removeActivePartition(
             int index,
+            long newMinTimestamp,
             long newMaxTimestamp,
             long newTransientRowCount,
             long newColumnVersion
@@ -279,6 +280,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             minTimestamp = Long.MAX_VALUE;
             fixedRowCount = 0;
         }
+        minTimestamp = newMinTimestamp;
         maxTimestamp = newMaxTimestamp;
         transientRowCount = newTransientRowCount;
         final int lim = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
