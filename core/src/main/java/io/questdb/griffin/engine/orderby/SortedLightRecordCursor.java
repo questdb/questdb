@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
@@ -49,11 +49,11 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            chain.close();
             isOpen = false;
+            Misc.free(chain);
+            base = Misc.free(base);
+            baseRecord = null;
         }
-        base = Misc.free(base);
-        baseRecord = null;
     }
 
     @Override

@@ -36,6 +36,10 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.*;
+
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -229,7 +233,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     },
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
-                    36
+                    36,
+                    true
             );
         });
     }
@@ -332,7 +337,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     },
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36L,
-                    36L
+                    36L,
+                    true
             );
         });
     }
@@ -432,7 +438,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     },
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     36,
-                    35
+                    35,
+                    true
             );
         });
     }
@@ -542,8 +549,45 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     expected,
                     "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"INT\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
                     5,
-                    4
+                    4,
+                    true
             );
+        });
+    }
+
+    @Test
+    public void testDuplicateValueInFileWithForcedHeader() throws Exception {
+        assertDuplicateColumnError(true);
+    }
+
+    @Test
+    public void testDuplicateValueInFileWithoutForcedHeader() throws Exception {
+        assertDuplicateColumnError(false);
+    }
+
+    private void assertDuplicateColumnError(boolean forceHeader) throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "ts,100i,i0,100i\r\n" +
+                    "1972-09-29T00:00:00.000000Z,100.0,i1,1\r\n" +
+                    "1972-09-30T00:00:00.000000Z,25.47,j1,2\r\n";
+
+            configureLoaderDefaults(textLoader, (byte) ',');
+            textLoader.setForceHeaders(forceHeader);
+
+            try {
+                playText(
+                        textLoader,
+                        csv,
+                        200,
+                        "",
+                        "",
+                        -1,
+                        -1
+                );
+                Assert.fail("TextException should be thrown!");
+            } catch (TextException e) {
+                assertThat(e.getMessage(), containsString("duplicate column name found"));
+            }
         });
     }
 
@@ -918,7 +962,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         expected,
                         "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                         12,
-                        11
+                        11,
+                        true
                 );
             }
         });
@@ -1085,7 +1130,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             expected,
                             expectedMetadata,
                             3,
-                            3
+                            3,
+                            true
                     );
                 });
     }
@@ -1115,7 +1161,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 null,
                                 null,
                                 -1,
-                                -1
+                                -1,
+                                true
                         );
                         Assert.fail("cannot insert null timestamp in designated column");
                     } catch (TextException expected) {
@@ -1149,7 +1196,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 "ts\n",
                                 "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":0}",
                                 1,
-                                0
+                                0,
+                                true
                         );
                         Assert.fail("cannot insert null timestamp in designated column");
                     } catch (TextException expected) {
@@ -1238,7 +1286,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 expected,
                                 "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"s\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                                 23,
-                                23
+                                23,
+                                true
                         );
                     });
         }
@@ -1308,7 +1357,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 expected,
                                 "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                                 5,
-                                5
+                                5,
+                                true
                         );
                     });
         }
@@ -1368,7 +1418,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 expected,
                                 "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
                                 5,
-                                5
+                                5,
+                                true
                         );
 
                         try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
@@ -1439,7 +1490,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             expected,
                             "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                             12,
-                            12
+                            12,
+                            true
                     );
                 }
             }
@@ -1485,7 +1537,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             configureLoaderDefaults(textLoader, (byte) ',');
             textLoader.setForceHeaders(false);
-            textLoader.setSkipRowsWithExtraValues(false);
             playText(
                     textLoader,
                     csv,
@@ -1493,7 +1544,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     expected,
                     "{\"columnCount\":20,\"columns\":[{\"index\":0,\"name\":\"VendorID\",\"type\":\"INT\"},{\"index\":1,\"name\":\"lpep_pickup_datetime\",\"type\":\"DATE\"},{\"index\":2,\"name\":\"Lpep_dropoff_datetime\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\"},{\"index\":4,\"name\":\"RateCodeID\",\"type\":\"INT\"},{\"index\":5,\"name\":\"Pickup_longitude\",\"type\":\"INT\"},{\"index\":6,\"name\":\"Pickup_latitude\",\"type\":\"INT\"},{\"index\":7,\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\"},{\"index\":8,\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\"},{\"index\":9,\"name\":\"Passenger_count\",\"type\":\"INT\"},{\"index\":10,\"name\":\"Trip_distance\",\"type\":\"DOUBLE\"},{\"index\":11,\"name\":\"Fare_amount\",\"type\":\"DOUBLE\"},{\"index\":12,\"name\":\"Extra\",\"type\":\"DOUBLE\"},{\"index\":13,\"name\":\"MTA_tax\",\"type\":\"DOUBLE\"},{\"index\":14,\"name\":\"Tip_amount\",\"type\":\"DOUBLE\"},{\"index\":15,\"name\":\"Tolls_amount\",\"type\":\"INT\"},{\"index\":16,\"name\":\"Ehail_fee\",\"type\":\"STRING\"},{\"index\":17,\"name\":\"Total_amount\",\"type\":\"DOUBLE\"},{\"index\":18,\"name\":\"Payment_type\",\"type\":\"INT\"},{\"index\":19,\"name\":\"Trip_type\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                     14,
-                    14
+                    14,
+                    false
             );
         });
     }
@@ -2052,7 +2104,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 expected,
                                 "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"Int_Col\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
                                 5,
-                                4
+                                4,
+                                true
                         );
                     });
         }
@@ -2953,8 +3006,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             ByteManipulator manipulator,
             CharSequence expectedMetadata,
             long expectedParsedLineCount,
-            long expectedWrittenLineCount
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues
     ) throws Exception {
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         boolean forceHeader = textLoader.isForceHeaders();
         byte delimiter = textLoader.getColumnDelimiter();
         playText0(textLoader, text, firstBufSize, manipulator);
@@ -2970,6 +3025,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             writer.truncate();
         }
 
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
         textLoader.setForceHeaders(forceHeader);
         if (delimiter > 0) {
             textLoader.configureColumnDelimiter(delimiter);
@@ -3073,7 +3129,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 expected,
                                 expectedMeta,
                                 5,
-                                5
+                                5,
+                                true
                         );
                     });
         }
@@ -3144,7 +3201,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                     "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
                                     "\"timestampIndex\":0}",
                             1,
-                            1
+                            1,
+                            true
                     );
                     Assert.assertEquals("test", textLoader.getTableName());
                     Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
@@ -3245,7 +3303,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                         "{\"index\":1,\"name\":\"int\",\"type\":\"INT\"}]," +
                                         "\"timestampIndex\":0}",
                                 6,
-                                6
+                                6,
+                                true
                         );
                         Assert.assertEquals("test", textLoader.getTableName());
                         Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
@@ -3292,6 +3351,28 @@ public class TextLoaderTest extends AbstractGriffinTest {
             String expected,
             CharSequence expectedMetadata,
             long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues
+    ) throws Exception {
+        playText(engine,
+                textLoader,
+                text,
+                firstBufSize,
+                expected,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount,
+                skipLinesWithExtraValues
+        );
+    }
+
+    private void playText(
+            TextLoader textLoader,
+            String text,
+            final int firstBufSize,
+            String expected,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
             long expectedWrittenLineCount
     ) throws Exception {
         playText(engine,
@@ -3301,7 +3382,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 expected,
                 expectedMetadata,
                 expectedParsedLineCount,
-                expectedWrittenLineCount
+                expectedWrittenLineCount,
+                true
         );
     }
 
@@ -3313,7 +3395,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             String expected,
             CharSequence expectedMetadata,
             long expectedParsedLineCount,
-            long expectedWrittenLineCount
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues
     ) throws Exception {
         playText(
                 engine,
@@ -3324,7 +3407,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 ENTITY_MANIPULATOR,
                 expectedMetadata,
                 expectedParsedLineCount,
-                expectedWrittenLineCount
+                expectedWrittenLineCount,
+                skipLinesWithExtraValues
         );
     }
 

@@ -186,10 +186,12 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 Misc.free(baseCursor);
-                rowIndexes.clear();
-                if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
-                    // This call will shrink down the underlying array
-                    rowIndexes.setCapacity(rowIndexesCapacityThreshold);
+                if (rowIndexes != null) {
+                    rowIndexes.clear();
+                    if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
+                        // This call will shrink down the underlying array
+                        rowIndexes.setCapacity(rowIndexesCapacityThreshold);
+                    }
                 }
                 latestByMap.close();
             }

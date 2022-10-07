@@ -216,6 +216,9 @@ using Group = GroupSse2Impl;
 
 //-----------------------------------------
 
+//internal function
+void *rosti_malloc(size_t size);
+
 rosti_t *alloc_rosti(const int32_t *column_types, int32_t column_count, uint64_t map_capacity);
 
 static bool initialize_slots(rosti_t **map);
@@ -292,7 +295,7 @@ inline void reset_ctrl(rosti_t *map) {
 bool initialize_slots(rosti_t **ppMap) {
     rosti_t *map = *ppMap;
     const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
-    auto *mem = reinterpret_cast<unsigned char *>(malloc(
+    auto *mem = reinterpret_cast<unsigned char *>(rosti_malloc(
             map->slot_size_ +
             ctrl_capacity +
             map->slot_size_ * (map->capacity_ + 1)));

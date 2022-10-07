@@ -2866,15 +2866,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
 
                     if (factory.supportPageFrameCursor()) {
-                        return new DistinctKeyRecordCursorFactory(
-                                engine.getConfiguration(),
-                                factory,
-                                distinctColumnMetadata,
-                                arrayColumnTypes,
-                                tempVaf,
-                                executionContext.getSharedWorkerCount(),
-                                tempSymbolSkewIndexes
-                        );
+                        try {
+                            return new DistinctKeyRecordCursorFactory(
+                                    engine.getConfiguration(),
+                                    factory,
+                                    distinctColumnMetadata,
+                                    arrayColumnTypes,
+                                    tempVaf,
+                                    executionContext.getSharedWorkerCount(),
+                                    tempSymbolSkewIndexes
+                            );
+                        } catch (Throwable t) {
+                            Misc.free(factory);
+                            throw t;
+                        }
                     } else {
                         // Shouldn't really happen, we cannot recompile below, QueryModel is changed during compilation
                         Misc.free(factory);
