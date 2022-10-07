@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -47,14 +47,14 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
         Function strFunc1 = args.get(0);
         Function strFunc2 = args.get(1);
 
-        return new StartsWithBooleanFunction(strFunc1, strFunc2);
+        return new StartsWithStrFunction(strFunc1, strFunc2);
     }
 
-    private static class StartsWithBooleanFunction extends BooleanFunction implements BinaryFunction {
+    private static class StartsWithStrFunction extends BooleanFunction implements BinaryFunction {
         private final Function strFunc1;
         private final Function strFunc2;
 
-        public StartsWithBooleanFunction(Function strFunc1, Function strFunc2) {
+        public StartsWithStrFunction(Function strFunc1, Function strFunc2) {
             this.strFunc1 = strFunc1;
             this.strFunc2 = strFunc2;
         }
@@ -63,12 +63,13 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             CharSequence str1 = strFunc1.getStr(rec);
             CharSequence str2 = strFunc2.getStr(rec);
-            String BLANK = "";
-            if (str1 == null || str2 == null || BLANK.equals(str1) || BLANK.equals(str2)) {
+            if (str1 == null || str2 == null)
                 return false;
-            }
 
-            return str1.toString().startsWith(str2.toString());
+            if (Chars.equals(str2, ""))
+                return true;
+
+            return Chars.startsWith(str1, str2);
         }
 
         @Override

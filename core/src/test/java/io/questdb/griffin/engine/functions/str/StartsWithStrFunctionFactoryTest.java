@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -36,25 +38,36 @@ public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testStartsWith() throws Exception {
-        assertQuery("k\tstr\tstartswith\n"+
-                        "JWCPSWHYRXPEHNRXGZSXUXIB\tJWCPS\ttrue\n" +
-                        "GPGWFFYUDE\tGPGWF\ttrue\n",
-                "select k, substring(k,0,6) str, starts_with(k, substring(k,0,6)) startswith from x",
-                "create table x as (select rnd_str(10,25,1) k from long_sequence(2))",
-                null,true,true, true);
+        assertQuery("col\ntrue\n", "select starts_with('ABCDEFGH', 'ABC') col");
+        assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH', 'XYZ') col");
+    }
+
+    @Test
+    public void testStartsWithNonASCII() throws Exception {
+        assertQuery("col\ntrue\n", "select starts_with('hőmérséklet','hőmé') col");
+    }
+
+    @Test
+    public void testStartsWithSpecialCharacters() throws Exception {
+        assertQuery("col\ntrue\n", "select starts_with('~!@#$%^&*()_-:<>?,./', '~!@#') col");
     }
 
     @Test
     public void testNullOrEmptyString() throws Exception {
         call(null, null).andAssert(false);
-        call("test",null).andAssert(false);
+        call("test", null).andAssert(false);
         call(null, "test").andAssert(false);
         call("", "test").andAssert(false);
-        call("test", "").andAssert(false);
+        call("test", "").andAssert(true);
+        call("", "").andAssert(true);
     }
 
     @Test
-    public void testForEmptyString() throws Exception {
-        call("","").andAssert(true);
+    public void testForNonStringType() throws Exception {
+        try {
+            assertQuery("col\n\false\n", "select starts_with(1, 2) col");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected args: (STRING,STRING)");
+        }
     }
 }
