@@ -97,6 +97,7 @@ public class TextLoader implements Closeable, Mutable {
             lexer = null;
         }
         textMetadataParser.clear();
+        textMetadataDetector.clear();
         jsonLexer.clear();
         forceHeaders = false;
         columnDelimiter = -1;
