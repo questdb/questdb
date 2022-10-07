@@ -2371,6 +2371,57 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportFileWithHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-header-dupvalues.csv", true, "duplicate column name found [no=4,name=e]");
+    }
+
+    @Test
+    public void testImportFileWithHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-header-dupvalues.csv", false, "duplicate column name found [no=4,name=e]");
+    }
+
+    @Test
+    public void testImportFileWithoutHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-noheader-dupvalues.csv", true, "duplicate column name found [no=3,name=_100i]");
+    }
+
+    @Test
+    public void testImportFileWithoutHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-noheader-dupvalues.csv", false, "duplicate column name found [no=3,name=_100i]");
+    }
+
+    private void assertColumnNameException(String fileName, boolean forceHeader, String message) throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab60", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, forceHeader);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                assertThat(e.getMessage(), containsString(message));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTable() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab61", "test-header-missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process();
+
+                assertQuery("ts\tf3\tf3_\tf3__\tf4\n" +
+                        "1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1\n" +
+                        "1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2\n", "select * from tab61", "ts", true, false, true);
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTableFailesOnUniqueColumnNameGeneration() throws Exception {
+        assertColumnNameException("test-header-missing-long.csv", true, "Failed to generate unique name for column [no=22]");
+    }
+
+    @Test
     public void testImportAllTypesIntoNewTable() throws Exception {
         executeWithPool(4, 8, this::importAllIntoNew);
     }
