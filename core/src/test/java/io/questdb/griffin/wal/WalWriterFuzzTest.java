@@ -26,6 +26,7 @@ package io.questdb.griffin.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -35,11 +36,14 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -59,6 +63,7 @@ import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 // where A, B are seeds in the failed run log.
 public class WalWriterFuzzTest extends AbstractGriffinTest {
 
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
     private int initialRowCount;
     private int fuzzRowCount;
     private boolean isO3;
@@ -152,6 +157,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100);
         runFuzz(TestUtils.generateRandom(LOG));
+    }
+
+    @Test
+    @Ignore
+    public void testWriteO3DataOnlyBigFixToDo() throws Exception {
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0);
+        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100);
+        runFuzz(new Rnd(1428167418200L, 1665136212648L));
     }
 
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
@@ -529,14 +542,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
         try {
             int i = 0;
+            CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
                 while (done.get() == 0 && errors.size() == 0) {
                     Unsafe.getUnsafe().loadFence();
-                    while (job.run(0)) ;
+                    while (job.run(0) || checkJob.run(0)) ;
                     Os.sleep(1);
                     i++;
                 }
-                while (job.run(0)) ;
+                while (job.run(0) || checkJob.run(0)) ;
                 i++;
             }
             LOG.info().$("finished apply thread after iterations: ").$(i).$();
@@ -584,25 +598,32 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 );
             }
 
-            long startMicro = System.nanoTime() / 1000;
-            applyNonWal(transactions, tableNameNoWal);
-            long endNonWalMicro = System.nanoTime() / 1000;
-            long nonWalTotal = endNonWalMicro - startMicro;
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            sharedWorkerPool.start(LOG);
 
-            applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd));
-            long endWalMicro = System.nanoTime() / 1000;
-            long walTotal = endWalMicro - endNonWalMicro;
+            try {
+                long startMicro = System.nanoTime() / 1000;
+                applyNonWal(transactions, tableNameNoWal);
+                long endNonWalMicro = System.nanoTime() / 1000;
+                long nonWalTotal = endNonWalMicro - startMicro;
 
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd));
+                long endWalMicro = System.nanoTime() / 1000;
+                long walTotal = endWalMicro - endNonWalMicro;
 
-            startMicro = System.nanoTime() / 1000;
-            applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd));
-            endWalMicro = System.nanoTime() / 1000;
-            long totalWalParallel = endWalMicro - startMicro;
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
 
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                startMicro = System.nanoTime() / 1000;
+                applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd));
+                endWalMicro = System.nanoTime() / 1000;
+                long totalWalParallel = endWalMicro - startMicro;
 
-            LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+
+                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+            } finally {
+                sharedWorkerPool.halt();
+            }
         });
     }
 

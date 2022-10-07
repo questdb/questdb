@@ -29,7 +29,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
-import io.questdb.cairo.SqlToOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
@@ -43,8 +42,8 @@ import org.junit.Test;
 import java.io.Closeable;
 import java.io.IOException;
 
-import static org.junit.Assert.*;
 import static io.questdb.cairo.wal.WalWriterTest.*;
+import static org.junit.Assert.*;
 
 public class WalTableWriterTest extends AbstractGriffinTest {
 
@@ -366,7 +365,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 addRowsToWal(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
 
                 drainWalQueue(true);
-                engine.checkMissingWalTransactions();
+                new CheckWalTransactionsJob(engine).runSerially();
                 drainWalQueue(false);
 
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
