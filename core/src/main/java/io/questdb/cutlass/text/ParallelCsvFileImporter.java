@@ -603,12 +603,21 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void createWorkDir() {
-        removeWorkDir();
+        // First, create the work root dir, if it doesn't exist.
+        Path workDirPath = tmpPath.of(inputWorkRoot).slash$();
+        if (!ff.exists(workDirPath)) {
+            int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+            if (result != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create import work root directory [path='").put(workDirPath).put("']");
+            }
+        }
 
-        Path workDirPath = tmpPath.of(importRoot).slash$();
-        int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
-        if (errno != 0) {
-            throw CairoException.critical(errno).put("could not create temporary import directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
+        // Next, remove and recreate the per-table sub-dir.
+        removeWorkDir();
+        workDirPath = tmpPath.of(importRoot).slash$();
+        int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+        if (result != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create temporary import work directory [path='").put(workDirPath).put("']");
         }
 
         createdWorkDir = true;
@@ -812,14 +821,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         int len = configuration.getSqlCopyBufferSize();
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_IMPORT);
 
-        try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
+        try (TextLexerWrapper tlw = new TextLexerWrapper(configuration.getTextConfiguration())) {
             long n = ff.read(fd, buf, len, 0);
             if (n > 0) {
                 if (columnDelimiter < 0) {
                     columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
                 }
 
-                lexer.of(columnDelimiter);
+                AbstractTextLexer lexer = tlw.getLexer(columnDelimiter);
                 lexer.setSkipLinesWithExtraValues(false);
 
                 final ObjList<CharSequence> names = new ObjList<>();
@@ -1377,17 +1386,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void removeWorkDir() {
         Path workDirPath = tmpPath.of(importRoot).$();
-
         if (ff.exists(workDirPath)) {
             if (isOneOfMainDirectories(importRoot)) {
-                throw TextException.$("could not remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
+                throw TextException.$("could not remove import work directory because it points to one of main directories [path='").put(workDirPath).put("'] .");
             }
 
-            LOG.info().$("removing import directory [path='").$(workDirPath).$("']").$();
+            LOG.info().$("removing import work directory [path='").$(workDirPath).$("']").$();
 
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
-                throw TextException.$("could not remove work dir [path='").put(workDirPath).put("', errno=").put(errno).put(']');
+                throw TextException.$("could not remove import work directory [path='").put(workDirPath).put("', errno=").put(errno).put(']');
             }
         }
     }

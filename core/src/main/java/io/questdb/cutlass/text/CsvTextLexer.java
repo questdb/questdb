@@ -22,16 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
+package io.questdb.cutlass.text;
 
-public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "like(SS)";
+public class CsvTextLexer extends AbstractTextLexer {
+    public CsvTextLexer(TextConfiguration textConfiguration) {
+        super(textConfiguration);
     }
 
-    @Override
-    protected boolean isCaseInsensitive() {
-        return false;
+    protected void doSwitch(long lo, long ptr, byte c) throws LineLimitException {
+        switch (c) {
+            case ',':
+                onColumnDelimiter(lo);
+                break;
+            case '"':
+                onQuote();
+                break;
+            case '\n':
+            case '\r':
+                onLineEnd(ptr);
+                break;
+            default:
+                checkEol(lo);
+                break;
+        }
     }
 }
+
