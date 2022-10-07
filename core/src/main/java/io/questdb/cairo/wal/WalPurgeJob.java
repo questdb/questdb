@@ -194,12 +194,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             while (sequencerCursor.hasNext() && (discoveredWalIds.size() > 0)) {
                 final int walId = sequencerCursor.getWalId();
                 if (discoveredWalIds.contains(walId)) {
-                    walInfoDataFrame.add(walId,
-                            sequencerCursor.getSegmentId(),
-
-                            // TODO [amunra]: Do we need these two fields?
-                            sequencerCursor.getSegmentTxn(),
-                            sequencerCursor.getTxn());
+                    walInfoDataFrame.add(walId, sequencerCursor.getSegmentId());
                     discoveredWalIds.remove(walId);
                 }
             }
