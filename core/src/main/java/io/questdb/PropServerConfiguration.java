@@ -63,6 +63,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
+    public static final String TMP_DIRECTORY = "tmp";
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
@@ -207,6 +208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbDirectory;
     private final String confRoot;
     private final String snapshotRoot;
+    private final String tmpRoot;
     private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
@@ -435,10 +437,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
+            this.tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
+            this.tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, ".attachable");
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
@@ -807,8 +811,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
-            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.cairoSqlCopyRoot);
-            if (cairoSqlCopyWorkRoot != null) {
+            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.tmpRoot);
+            if (cairoSqlCopyRoot != null) {
                 this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
             } else {
                 this.cairoSqlCopyWorkRoot = null;
