@@ -84,6 +84,18 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         pos = 0;
     }
 
+    public boolean contains(T value) {
+        for (int i = 0, n = pos; i < n; i++) {
+            T o = getQuick(i);
+            if ((value == null && o == null) ||
+                    (value != null && value.equals(o))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     @SuppressWarnings("unchecked")
     public void ensureCapacity(int capacity) {
         int l = buffer.length;
