@@ -39,6 +39,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.nio.file.Paths;
 import java.util.Comparator;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -49,11 +51,11 @@ public class LogFactory implements Closeable {
     public static final String CONFIG_SYSTEM_PROPERTY = "out";
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
 
-    //name of default logging configuration file (in jar and in $root/conf/ dir )
+    // name of default logging configuration file (in jar and in $root/conf/ dir )
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
 
-    //placeholder that can be used in log.conf to point to $root/log/ dir
+    // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
@@ -72,7 +74,8 @@ public class LogFactory implements Closeable {
         overwriteWithSyncLogging = false;
     }
 
-    public static synchronized void configureFromSystemProperties(@NotNull LogFactory logFactory, @Nullable String rootDir) {
+    public static synchronized void configureFromSystemProperties(@NotNull LogFactory logFactory,
+            @Nullable String rootDir) {
         configureFromSystemProperties(logFactory, rootDir, true);
     }
 
@@ -108,7 +111,6 @@ public class LogFactory implements Closeable {
             INSTANCE = null;
         }
     }
-
 
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
@@ -210,8 +212,7 @@ public class LogFactory implements Closeable {
                     null,
                     null,
                     null,
-                    null
-            );
+                    null);
         }
         final Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.INFO));
         final Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.DEBUG));
@@ -231,8 +232,7 @@ public class LogFactory implements Closeable {
                     cri == null ? null : cri.ring,
                     cri == null ? null : cri.lSeq,
                     adv == null ? null : adv.ring,
-                    adv == null ? null : adv.lSeq
-            );
+                    adv == null ? null : adv.lSeq);
         }
 
         return new SyncLogger(
@@ -247,8 +247,7 @@ public class LogFactory implements Closeable {
                 cri == null ? null : cri.ring,
                 cri == null ? null : cri.lSeq,
                 adv == null ? null : adv.ring,
-                adv == null ? null : adv.lSeq
-        );
+                adv == null ? null : adv.lSeq);
     }
 
     public void startThread() {
@@ -285,7 +284,8 @@ public class LogFactory implements Closeable {
                                 // Keep running the job until it returns false to log all the buffered messages
                             }
                         } catch (Exception th) {
-                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                            // Exception means we cannot log anymore. Perhaps network is down or disk is
+                            // full.
                             // Switch to the next job.
                         }
                     }
@@ -312,6 +312,27 @@ public class LogFactory implements Closeable {
         this.recordLength = recordLength;
     }
 
+    private static Properties propertiesFromEnv() {
+        Properties properties = new Properties();
+        if (envEnabled) {
+            Map<String, String> env = System.getenv();
+            Iterator<String> keySetIterator = env.keySet().iterator();
+            while (keySetIterator.hasNext()) {
+                final String envVar = keySetIterator.next();
+                if (envVar.startsWith("QDB_LOG_")) {
+                    final String key = envVar.replaceFirst("QDB_LOG_", "").replace('.', '_').toUpperCase();
+                    final String val = env.get(envVar);
+                    if (val != "") {
+                        properties.setProperty(key, env.get(envVar));
+                        System.err.printf("Reading log setting '%s=%s' from environment%n", key, val);
+                    }
+
+                }
+            }
+        }
+        return properties;
+    }
+
     @TestOnly
     static void configureFromSystemProperties(LogFactory logFactory) {
         configureFromSystemProperties(logFactory, null, false);
@@ -320,8 +341,7 @@ public class LogFactory implements Closeable {
     static synchronized void configureFromSystemProperties(
             @NotNull LogFactory logFactory,
             @Nullable String rootDir,
-            boolean replacePrevInstance
-    ) {
+            boolean replacePrevInstance) {
         String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
         if (conf == null) {
             conf = DEFAULT_CONFIG;
@@ -342,7 +362,7 @@ public class LogFactory implements Closeable {
             if (f.isFile() && f.canRead()) {
                 System.err.printf("Reading log configuration from %s%n", logPath);
                 try (FileInputStream fis = new FileInputStream(logPath)) {
-                    Properties properties = new Properties();
+                    Properties properties = propertiesFromEnv();
                     properties.load(fis);
                     logFactory.configureFromProperties(properties, logDir);
                     initialized = true;
@@ -353,10 +373,11 @@ public class LogFactory implements Closeable {
         }
 
         if (!initialized) {
-            //in this order of initialization specifying -Dout might end up using internal jar resources ...
+            // in this order of initialization specifying -Dout might end up using internal
+            // jar resources ...
             try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
                 if (is != null) {
-                    Properties properties = new Properties();
+                    Properties properties = propertiesFromEnv();
                     properties.load(is);
                     logFactory.configureFromProperties(properties, logDir);
                     System.err.println("Log configuration loaded from default internal file.");
@@ -422,7 +443,7 @@ public class LogFactory implements Closeable {
     }
 
     private void configureFromProperties(Properties properties, String logDir) {
-        String writers = getProperty(properties, "writers");
+        String writers = properties.getProperty("writers");
 
         if (writers == null) {
             configured = true;
@@ -431,7 +452,7 @@ public class LogFactory implements Closeable {
 
         String s;
 
-        s = getProperty(properties, "queueDepth");
+        s = properties.getProperty("queueDepth");
         if (s != null && s.length() > 0) {
             try {
                 setQueueDepth(Numbers.parseInt(s));
@@ -440,7 +461,7 @@ public class LogFactory implements Closeable {
             }
         }
 
-        s = getProperty(properties, "recordLength");
+        s = properties.getProperty("recordLength");
         if (s != null && s.length() > 0) {
             try {
                 setRecordLength(Numbers.parseInt(s));
@@ -459,25 +480,12 @@ public class LogFactory implements Closeable {
         bind();
     }
 
-    private static String getProperty(final Properties properties, String key) {
-        if (envEnabled) {
-            final String envVar = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
-            final String envValue = System.getenv(envVar);
-            if (envValue == null) {
-                return properties.getProperty(key);
-            }
-            System.err.printf("Reading log setting '%s=%s' from environment%n", envVar, envValue);
-            return envValue;
-        }
-        return properties.getProperty(key);
-    }
-
     @SuppressWarnings("rawtypes")
     private static LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
         final String writer = "w." + writerName + '.';
-        final String clazz = getProperty(properties, writer + "class");
-        final String levelStr = getProperty(properties, writer + "level");
-        final String scope = getProperty(properties, writer + "scope");
+        final String clazz = properties.getProperty(writer + "class");
+        final String levelStr = properties.getProperty(writer + "level");
+        final String scope = properties.getProperty(writer + "scope");
 
         if (clazz == null) {
             return null;
@@ -544,7 +552,7 @@ public class LogFactory implements Closeable {
                             Field f = cl.getDeclaredField(p);
                             if (f.getType() == String.class) {
 
-                                String value = getProperty(properties, n);
+                                String value = properties.getProperty(n);
                                 if (logDir != null && value.contains(LOG_DIR_VAR)) {
                                     value = value.replace(LOG_DIR_VAR, logDir);
                                 }
@@ -671,7 +679,8 @@ public class LogFactory implements Closeable {
 
         /**
          * Aggregates channels into set of queues. Consumer interest is represented by
-         * level, where consumer sets bits corresponding to channel indexes is it interested in.
+         * level, where consumer sets bits corresponding to channel indexes is it
+         * interested in.
          * <p>
          * Consumer 1 requires channels D & E. So its interest looks like {1,0,1}
          * Consumer 2 requires channel I, so its interest is {0,1,0}
@@ -692,12 +701,16 @@ public class LogFactory implements Closeable {
          * <p>
          * channels = {1,1,1}
          * <p>
-         * which means that both consumers will be sharing same queue and they will have to
+         * which means that both consumers will be sharing same queue and they will have
+         * to
          * filter applicable messages as they get them.
          * <p>
-         * Algorithm iterates over set of bits in "level" twice. First pass is to establish
-         * minimum number of channel[] element out of those entries where bit in level is set.
-         * Additionally, this pass will set channel[] elements to current consumer index where
+         * Algorithm iterates over set of bits in "level" twice. First pass is to
+         * establish
+         * minimum number of channel[] element out of those entries where bit in level
+         * is set.
+         * Additionally, this pass will set channel[] elements to current consumer index
+         * where
          * channel[] element is zero.
          * <p>
          * Second pass sets channel[] element to min value found on first pass.
@@ -765,8 +778,7 @@ public class LogFactory implements Closeable {
                     LogRecordSink::new,
                     Numbers.ceilPow2(recordLength),
                     queueDepth,
-                    MemoryTag.NATIVE_LOGGER
-            );
+                    MemoryTag.NATIVE_LOGGER);
             this.lSeq = new MPSequence(queueDepth);
         }
 
