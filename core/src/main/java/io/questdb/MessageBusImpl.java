@@ -159,7 +159,7 @@ public class MessageBusImpl implements MessageBus {
         this.partitionPurgeQueue = new RingQueue<>(PartitionPurgeTask::new, configuration.getPartitionPurgeQueueCapacity());
         this.partitionPurgeSubSeq = new SCSequence();
         this.partitionPurgePubSeq = new MPSequence(partitionPurgeQueue.getCycle());
-        this.columnPurgePubSeq.then(partitionPurgeSubSeq).then(partitionPurgePubSeq);
+        this.partitionPurgePubSeq.then(partitionPurgeSubSeq).then(partitionPurgePubSeq);
 
         this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
 

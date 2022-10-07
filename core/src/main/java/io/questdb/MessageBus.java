@@ -36,6 +36,7 @@ import java.io.Closeable;
 public interface MessageBus extends Closeable {
 
     RingQueue<ColumnPurgeTask> getColumnPurgeQueue();
+
     Sequence getColumnPurgeSubSeq();
 
     Sequence getColumnPurgePubSeq();

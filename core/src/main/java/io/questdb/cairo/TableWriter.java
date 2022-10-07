@@ -1493,8 +1493,8 @@ public class TableWriter implements Closeable {
             } else {
                 // we are dropping the only partition
                 newMaxTimestamp = Long.MIN_VALUE;
+                openTimestamp = System.currentTimeMillis();
                 newTransientRowCount = 0;
-                openTimestamp = Long.MIN_VALUE;
             }
 
             final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
@@ -1504,28 +1504,7 @@ public class TableWriter implements Closeable {
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
             closeActivePartition(true);
             openFirstPartition(openTimestamp);
-
-            if (!scheduleAsync) {
-                safeDeletePartitionDir(timestamp, partitionNameTxn);
-            } else {
-                Sequence pubSeq = messageBus.getPartitionPurgePubSeq();
-                while (true) {
-                    long cursor = pubSeq.next();
-                    if (cursor > -1L) {
-                        PartitionPurgeTask task = messageBus.getPartitionPurgeQueue().get(cursor);
-                        task.of(tableName, timestamp, partitionBy, partitionNameTxn);
-                        pubSeq.done(cursor);
-                        break;
-                    } else if (cursor == -1L) {
-                        // Queue overflow
-                        LOG.error().$("cannot schedule active partition purge, purge queue is full. Please run 'VACUUM TABLE \"").$(tableName)
-                                .$("[txn=").$(txn)
-                                .I$();
-                        break;
-                    }
-                    Os.pause();
-                }
-            }
+            safeDeletePartitionDir(timestamp, partitionNameTxn, scheduleAsync);
         } else {
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
@@ -5840,6 +5819,31 @@ public class TableWriter implements Closeable {
         o3PartitionRemoveCandidates.clear();
         o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
         o3ProcessPartitionRemoveCandidates();
+    }
+
+    private void safeDeletePartitionDir(long timestamp, long partitionNameTxn, boolean scheduleAsync) {
+        if (!scheduleAsync) {
+            safeDeletePartitionDir(timestamp, partitionNameTxn);
+        } else {
+            Sequence pubSeq = messageBus.getPartitionPurgePubSeq();
+            while (true) {
+                long cursor = pubSeq.next();
+                if (cursor > -1L) {
+                    PartitionPurgeTask task = messageBus.getPartitionPurgeQueue().get(cursor);
+                    task.of(tableName, timestamp, partitionBy, partitionNameTxn);
+                    pubSeq.done(cursor);
+                    break;
+                } else if (cursor == -1L) {
+                    // Queue overflow
+                    LOG.error()
+                            .$("cannot schedule active partition purge, purge queue is full.")
+                            .$("Please run 'VACUUM TABLE \"").$(tableName).$('"')
+                            .$();
+                    break;
+                }
+                Os.pause();
+            }
+        }
     }
 
     private void setAppendPosition(final long position, boolean doubleAllocate) {

@@ -50,7 +50,7 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
     private final FilesFacade ff;
     private final RingQueue<PartitionPurgeTask> inQueue;
     private final Sequence inSubSequence;
-    private final WeakMutableObjectPool<PartitionPurgeRetryTask> taskPool;
+    private final WeakMutableObjectPool<PartitionPurgeRetryTask> taskObjPool;
     private final PriorityQueue<PartitionPurgeRetryTask> retryQueue;
     private TxnScoreboard txnScoreboard;
     private final int txnScoreboardEntryCount;
@@ -63,13 +63,13 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
         CairoConfiguration config = engine.getConfiguration();
         MessageBus messageBus = engine.getMessageBus();
         clock = config.getMicrosecondClock();
+        inQueue = messageBus.getPartitionPurgeQueue();
+        inSubSequence = messageBus.getPartitionPurgeSubSeq();
         ff = config.getFilesFacade();
         txnScoreboardEntryCount = config.getTxnScoreboardEntryCount();
         int capacity = config.getPartitionPurgeQueueCapacity();
+        taskObjPool = new WeakMutableObjectPool<>(PartitionPurgeRetryTask::new, capacity);
         retryQueue = new PriorityQueue<>(capacity, Comparator.comparingLong(task -> task.nextRunTimestamp));
-        inQueue = messageBus.getPartitionPurgeQueue();
-        inSubSequence = messageBus.getColumnPurgeSubSeq();
-        taskPool = new WeakMutableObjectPool<>(PartitionPurgeRetryTask::new, capacity);
         path = new Path();
         path.of(config.getRoot());
         rootLen = path.length();
@@ -77,7 +77,7 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(taskPool);
+        Misc.free(taskObjPool);
         Misc.free(txnScoreboard);
         Misc.free(path);
     }
@@ -94,6 +94,66 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
         return cleanupUseful || useful;
     }
 
+    private boolean purgePartition() {
+        boolean useful = false;
+        final long now = clock.getTicks() + 1L;
+        while (retryQueue.size() > 0) {
+            PartitionPurgeRetryTask task = retryQueue.peek();
+            if (task.isDue(now)) {
+                retryQueue.poll();
+
+                final long txn = task.getPartitionNameTxn();
+                path.trimTo(rootLen).concat(task.getTableName());
+                final int rootTableNameLen = path.length();
+                System.out.printf("DUE TASK[%d]: %s%n", txn, path);
+
+                useful = true;
+                if (txn > -1) {
+                    if (txnScoreboard == null) {
+                        txnScoreboard = new TxnScoreboard(ff, txnScoreboardEntryCount);
+                    }
+                    txnScoreboard.ofRW(path);
+                    try {
+                        if (txnScoreboard.acquireTxn(txn)) {
+                            txnScoreboard.releaseTxn(txn);
+                        }
+                        useful = txnScoreboard.getMin() > txn - 1;
+                    } catch (CairoException ignore) {
+                        useful = false;
+                    }
+                    System.out.printf("SCORE MIN: %d, VAL: %d -> %b%n", txnScoreboard.getMin(), txn - 1, txnScoreboard.getMin() > txn - 1);
+                }
+
+                if (useful) {
+                    setPathForPartition(
+                            path.trimTo(rootTableNameLen),
+                            task.getPartitionBy(),
+                            task.getTimestamp(),
+                            false
+                    );
+                    txnPartitionConditionally(path, txn);
+                    System.out.printf("DELETING: %s%n", path);
+                    if (ff.exists(path.slash$())) {
+                        long errno = ff.rmdir(path);
+                        if (errno == 0 || errno == -1) {
+                            taskObjPool.push(task);
+                            System.out.printf("DELETED!%n");
+                        } else {
+                            task.updateNextRunTimestamp(now);
+                            retryQueue.add(task);
+                            useful = false;
+                        }
+                    } else {
+                        taskObjPool.push(task);
+                    }
+                }
+            } else {
+                return useful;
+            }
+        }
+        return useful;
+    }
+
     private boolean processInQueue() {
         boolean useful = false;
         long ticks = clock.getTicks(); // micro
@@ -108,7 +168,7 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             // copy task to high priority queue
-            PartitionPurgeRetryTask task = taskPool.pop().copyFrom(inQueue.get(cursor), ticks);
+            PartitionPurgeRetryTask task = taskObjPool.pop().copyFrom(inQueue.get(cursor), ticks);
             inSubSequence.done(cursor);
             retryQueue.add(task);
             useful = true;
@@ -117,61 +177,7 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
-    private boolean purgePartition() {
-        boolean useful = false;
-        final long now = clock.getTicks() + 1L;
-        while (retryQueue.size() > 0) {
-            PartitionPurgeRetryTask task = retryQueue.peek();
-            if (task.isDue(now)) {
-                retryQueue.poll();
-                useful = true;
-
-                final long txn = task.getPartitionNameTxn();
-                path.trimTo(rootLen).concat(task.getTableName());
-                final int rootTableNameLen = path.length();
-                if (txnScoreboard == null) {
-                    txnScoreboard = new TxnScoreboard(ff, txnScoreboardEntryCount);
-                }
-                txnScoreboard.ofRW(path);
-                try {
-                    if (txnScoreboard.acquireTxn(txn)) {
-                        txnScoreboard.releaseTxn(txn);
-                    }
-                    if (txnScoreboard.getMin() > txn - 1) {
-                        try {
-                            setPathForPartition(
-                                    path.trimTo(rootTableNameLen),
-                                    task.getPartitionBy(),
-                                    task.getTimestamp(),
-                                    false
-                            );
-                            txnPartitionConditionally(path, txn);
-                            long errno = ff.rmdir(path.$());
-                            if (errno == 0 || errno == -1) {
-                                taskPool.push(task);
-                            } else {
-                                task.updateNextRunTimestamp(now);
-                                retryQueue.add(task);
-                            }
-                        } finally {
-                            path.trimTo(rootLen);
-                        }
-                    }
-
-                } catch (CairoException ignore) {
-                    // Scoreboard can be over allocated
-                    // retry
-                } finally {
-                    path.trimTo(rootLen);
-                }
-            } else {
-                return useful;
-            }
-        }
-        return useful;
-    }
-
-    static class PartitionPurgeRetryTask extends PartitionPurgeTask {
+    private static class PartitionPurgeRetryTask extends PartitionPurgeTask {
         private static final long START_RETRY_DELAY = 10_000L;
 
         private long retryDelay = START_RETRY_DELAY;

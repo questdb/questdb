@@ -4316,17 +4316,17 @@ public class TableReaderTest extends AbstractCairoTest {
 
 
                     DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-                    Assert.assertFalse(
+                    Assert.assertTrue(
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
 
-                    Assert.assertEquals(500, writer.size());
+                    Assert.assertEquals(400, writer.size());
 
                     reader.reload();
 
                     totalCount = 0;
 
-                    Assert.assertEquals(N * N_PARTITIONS, reader.size());
+                    Assert.assertEquals(N * (N_PARTITIONS - 1), reader.size());
 
                     cursor = reader.getCursor();
                     record = cursor.getRecord();
@@ -4334,7 +4334,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         record.getLong(0);
                         totalCount++;
                     }
-                    Assert.assertEquals(N * N_PARTITIONS, totalCount);
+                    Assert.assertEquals(N * (N_PARTITIONS - 1), totalCount);
                 }
             }
 
