@@ -53,7 +53,7 @@ public class LogFactory implements Closeable {
 
     // name of default logging configuration file (in jar and in $root/conf/ dir )
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
-    private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
+    private static final String DEFAULT_LOG_LEVEL = "INFO";
 
     // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
@@ -312,8 +312,7 @@ public class LogFactory implements Closeable {
         this.recordLength = recordLength;
     }
 
-    private static Properties propertiesFromEnv() {
-        Properties properties = new Properties();
+    private static void updatePropertiesFromEnv(Properties properties) {
         if (envEnabled) {
             Map<String, String> env = System.getenv();
             Iterator<String> keySetIterator = env.keySet().iterator();
@@ -330,7 +329,6 @@ public class LogFactory implements Closeable {
                 }
             }
         }
-        return properties;
     }
 
     @TestOnly
@@ -362,8 +360,9 @@ public class LogFactory implements Closeable {
             if (f.isFile() && f.canRead()) {
                 System.err.printf("Reading log configuration from %s%n", logPath);
                 try (FileInputStream fis = new FileInputStream(logPath)) {
-                    Properties properties = propertiesFromEnv();
+                    Properties properties = new Properties();
                     properties.load(fis);
+                    updatePropertiesFromEnv(properties);
                     logFactory.configureFromProperties(properties, logDir);
                     initialized = true;
                 } catch (IOException e) {
@@ -377,8 +376,9 @@ public class LogFactory implements Closeable {
             // jar resources ...
             try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
                 if (is != null) {
-                    Properties properties = propertiesFromEnv();
+                    Properties properties = new Properties();
                     properties.load(is);
+                    updatePropertiesFromEnv(properties);
                     logFactory.configureFromProperties(properties, logDir);
                     System.err.println("Log configuration loaded from default internal file.");
                 } else {
@@ -387,11 +387,12 @@ public class LogFactory implements Closeable {
                         try (FileInputStream fis = new FileInputStream(f)) {
                             Properties properties = new Properties();
                             properties.load(fis);
+                            updatePropertiesFromEnv(properties);
                             logFactory.configureFromProperties(properties, logDir);
                             System.err.printf("Log configuration loaded from: %s%n", conf);
                         }
                     } else {
-                        logFactory.configureDefaultWriter();
+                        logFactory.configureDefaultWriter(logDir);
                         System.err.println("Log configuration loaded loaded using factory defaults.");
                     }
                 }
@@ -399,7 +400,7 @@ public class LogFactory implements Closeable {
                 if (!DEFAULT_CONFIG.equals(conf)) {
                     throw new LogError("Cannot read " + conf, e);
                 } else {
-                    logFactory.configureDefaultWriter();
+                    logFactory.configureDefaultWriter(logDir);
                 }
             }
         }
@@ -414,13 +415,18 @@ public class LogFactory implements Closeable {
         logFactory.startThread();
     }
 
-    private void configureDefaultWriter() {
-        int level = DEFAULT_LOG_LEVEL;
+    private void configureDefaultWriter(String logDir) {
+        String level = DEFAULT_LOG_LEVEL;
         if (isForcedDebug()) {
-            level = level | LogLevel.DEBUG;
+            level = "DEBUG";
         }
-        add(new LogWriterConfig(level, LogConsoleWriter::new));
-        bind();
+        Properties properties = new Properties();
+        properties.setProperty("writers", "stdout");
+        properties.setProperty("w.stdout.level", level);
+
+        updatePropertiesFromEnv(properties);
+        configureFromProperties(properties, logDir);
+
     }
 
     private ScopeConfiguration find(CharSequence key) {
