@@ -35,10 +35,10 @@
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
-        <web.console.version>0.0.3</web.console.version>
+        <web.console.version>0.0.7</web.console.version>
     </properties>
 
-    <version>6.5.3-SNAPSHOT</version>
+    <version>6.5.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -205,29 +205,6 @@
                     </properties>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.2.0</version>
-                <executions>
-                    <execution>
-                        <id>attach-javadocs</id>
-                        <goals>
-                            <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                <configuration>
-                    <additionalJOptions>
-                        <additionalJOption>${compilerArg0}</additionalJOption>
-                        <additionalJOption>${compilerArg1}</additionalJOption>
-                        <additionalJOption>${compilerArg2}</additionalJOption>
-                    </additionalJOptions>
-                    <sourceFileExcludes>
-                        <sourceFileExclude>${excludePattern1}</sourceFileExclude>
-                    </sourceFileExcludes>
-                </configuration>
-            </plugin>
         </plugins>
     </build>
 
@@ -236,6 +213,29 @@
             <id>maven-central-release</id>
             <build>
                 <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <additionalJOptions>
+                                <additionalJOption>${compilerArg0}</additionalJOption>
+                                <additionalJOption>${compilerArg1}</additionalJOption>
+                                <additionalJOption>${compilerArg2}</additionalJOption>
+                            </additionalJOptions>
+                            <sourceFileExcludes>
+                                <sourceFileExclude>${excludePattern1}</sourceFileExclude>
+                            </sourceFileExcludes>
+                        </configuration>
+                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-source-plugin</artifactId>
@@ -306,7 +306,7 @@
                                 <configuration>
                                     <url>https://registry.npmjs.org/@questdb/web-console/-/web-console-${web.console.version}.tgz</url>
                                     <outputFileName>web-console.tgz</outputFileName>
-                                    <outputDirectory>${project.build.outputDirectory}/site/</outputDirectory>
+                                    <outputDirectory>${project.build.directory}/site/</outputDirectory>
                                     <unpack>true</unpack>
                                 </configuration>
                             </execution>

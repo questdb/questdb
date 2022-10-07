@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
@@ -65,7 +65,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
         if (executionContext.getCloneSymbolTables()) {
             if (symbolTable != null) {
                 assert ownSymbolTable;
-                symbolTable = Misc.free(symbolTable);
+                symbolTable = Misc.freeIfCloseable(symbolTable);
             }
             symbolTable = symbolTableSource.newSymbolTable(columnIndex);
             ownSymbolTable = true;
@@ -73,12 +73,18 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
             symbolTable = symbolTableSource.getSymbolTable(columnIndex);
         }
         // static symbol table must be non-null
-        assert !symbolTableStatic || symbolTable != null;
+        assert !symbolTableStatic || getStaticSymbolTable() != null;
     }
     
     @Override
     public @Nullable StaticSymbolTable getStaticSymbolTable() {
-        return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
+        if (symbolTable instanceof StaticSymbolTable) {
+            return (StaticSymbolTable) symbolTable;
+        }
+        if (symbolTable instanceof SymbolFunction) {
+            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
+        }
+        return null;
     }
 
     @Override
@@ -109,7 +115,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public void close() {
         if (ownSymbolTable) {
-            symbolTable = Misc.free(symbolTable);
+            symbolTable = Misc.freeIfCloseable(symbolTable);
         }
     }
 

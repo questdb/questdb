@@ -46,7 +46,7 @@ final class Mig605 {
 
         // Metadata file should already be backed up
         try (final MemoryMARW rwMem = migrationContext.getRwMemory()) {
-            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
+            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
 
             // column count
             final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);

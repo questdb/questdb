@@ -45,6 +45,8 @@ public interface ServerConfiguration {
 
     LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
 
+    WorkerPoolConfiguration getWalApplyPoolConfiguration();
+
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
     PGWireConfiguration getPGWireConfiguration();

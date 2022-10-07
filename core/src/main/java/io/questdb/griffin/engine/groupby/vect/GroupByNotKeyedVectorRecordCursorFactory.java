@@ -42,7 +42,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
@@ -138,7 +137,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 } else {
                     final VectorAggregateEntry entry = entryPool.next();
                     // null pRosti means that we do not need keyed aggregation
-                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, colSizeShr, doneLatch, null);
+                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, colSizeShr, doneLatch, null, null);
                     activeEntries.add(entry);
                     queue.get(seq).entry = entry;
                     pubSeq.done(seq);

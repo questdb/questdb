@@ -139,11 +139,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnPurgeRetryLimitDays() {
-        return 7;
-    }
-
-    @Override
     public double getColumnPurgeRetryDelayMultiplier() {
         return 2.0;
     }
@@ -276,6 +271,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return 4096;
     }
 
     @Override
@@ -425,6 +425,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
     }
 

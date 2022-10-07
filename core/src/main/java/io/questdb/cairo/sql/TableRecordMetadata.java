@@ -24,16 +24,17 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.QuietClosable;
+import io.questdb.std.QuietCloseable;
 
-public interface TableRecordMetadata extends RecordMetadata, QuietClosable {
+public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
+    int getId();
     long getStructureVersion();
 
     int getTableId();
 
     String getTableName();
 
-    boolean isWalEnabled();
-
     void toReaderIndexes();
+
+    boolean isWalEnabled();
 }

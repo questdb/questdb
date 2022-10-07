@@ -140,7 +140,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
         this.timestampIndex = timestampIndex;
         this.yDataSize = groupByFunctionCount * 16;
-        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_DEFAULT);
+        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
 
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
@@ -162,8 +162,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             cursor.isOpen = true;
-            cursor.recordKeyMap.reallocate();
-            cursor.dataMap.reallocate();
+            cursor.recordKeyMap.reopen();
+            cursor.dataMap.reopen();
         }
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
@@ -189,6 +189,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // no data, nothing to do
             if (cursor.recordKeyMap.size() == 0) {
                 baseCursor.close();
+                cursor.close();
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }
 
@@ -376,6 +377,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
+            cursor.close();
             throw e;
         }
     }
@@ -442,7 +444,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     private void freeYData() {
         if (yData != 0) {
-            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
             yData = 0;
         }
     }

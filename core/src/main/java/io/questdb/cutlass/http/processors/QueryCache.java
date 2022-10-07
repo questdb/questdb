@@ -54,7 +54,7 @@ public final class QueryCache implements Closeable {
         );
     }
 
-    public static QueryCache getInstance() {
+    public static QueryCache getThreadLocalInstance() {
         return TL_QUERY_CACHE.get();
     }
 
@@ -77,17 +77,15 @@ public final class QueryCache implements Closeable {
         }
     }
 
-    public void remove(CharSequence sql) {
-        cache.put(sql, null);
-        log("remove", sql);
-    }
-
     public void clear() {
         cache.clear();
         LOG.info().$("cleared").$();
     }
 
     private void log(CharSequence action, CharSequence sql) {
-        LOG.info().$(action).$(" [thread=").$(Thread.currentThread().getName()).$(", sql=").utf8(sql).$(']').$();
+        LOG.info().$(action)
+                .$(" [thread=").$(Thread.currentThread().getName())
+                .$(", sql=").utf8(sql)
+                .I$();
     }
 }

@@ -30,6 +30,8 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
@@ -37,6 +39,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private final Map map;
     private final RecordSink keyMapSink;
     private final RecordCursor mapCursor;
+    private boolean isOpen;
 
     public SampleByFillNoneRecordCursor(
             Map map,
@@ -64,6 +67,16 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         this.keyMapSink = keyMapSink;
         this.record.of(map.getRecord());
         this.mapCursor = map.getCursor();
+        this.isOpen = true;
+    }
+
+    @Override
+    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        super.of(base, executionContext);
+        if (!isOpen) {
+            this.map.reopen();
+            this.isOpen = true;
+        }
     }
 
     @Override
@@ -136,5 +149,14 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     private boolean mapHasNext() {
         return mapCursor.hasNext();
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
+        }
     }
 }

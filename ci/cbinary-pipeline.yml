@@ -163,28 +163,5 @@ stages:
 
           - task: PublishBuildArtifacts@1
             inputs:
-              pathToPublish: ./core/src/main/resources/io/questdb/bin/armlinux
-              publishLocation: armlinux
-            condition: eq(variables['Agent.OS'], 'Linux')
-            displayName: "Publish armlinux c++ artifacts"
-
-          - task: PublishBuildArtifacts@1
-            inputs:
-              pathToPublish: ./core/src/main/resources/io/questdb/bin/linux
-              publishLocation: linux
-            condition: eq(variables['Agent.OS'], 'Linux')
-            displayName: "Publish linux c++ artifacts"
-
-          - task: PublishBuildArtifacts@1
-            inputs:
-              pathToPublish: ./core/src/main/resources/io/questdb/bin/windows
-              publishLocation: windows
-            condition: eq(variables['Agent.OS'], 'Linux')
-            displayName: "Publish windows c++ artifacts"
-
-          - task: PublishBuildArtifacts@1
-            inputs:
-              pathToPublish: ./core/src/main/resources/io/questdb/bin/osx
-              publishLocation: osx
-            condition: eq(variables['Agent.OS'], 'Darwin')
-            displayName: "Publish mac c++ artifacts"
+              pathToPublish: ./core/src/main/resources/io/questdb/bin
+            displayName: "Publish c++ artifacts"

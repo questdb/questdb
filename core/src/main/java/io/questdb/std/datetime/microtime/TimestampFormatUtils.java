@@ -429,4 +429,7 @@ public class TimestampFormatUtils {
         GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS2_UTC_PATTERN);
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
     }
+
+    public static void init() {
+    }
 }

@@ -242,7 +242,7 @@ public class TextImportTask {
     }
 
     public boolean run(
-            TextLexer lexer,
+            TextLexerWrapper lf,
             CsvFileIndexer indexer,
             DirectCharSink utf8Sink,
             DirectLongList unmergedIndexes,
@@ -264,7 +264,7 @@ public class TextImportTask {
             } else if (phase == PHASE_INDEXING) {
                 phaseIndexing.run(indexer, fileBufAddr, fileBufSize);
             } else if (phase == PHASE_PARTITION_IMPORT) {
-                phasePartitionImport.run(lexer, fileBufAddr, fileBufSize, utf8Sink, unmergedIndexes, p1, p2);
+                phasePartitionImport.run(lf, fileBufAddr, fileBufSize, utf8Sink, unmergedIndexes, p1, p2);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
                 phaseSymbolTableMerge.run(p1);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
@@ -402,6 +402,7 @@ public class TextImportTask {
             long hi;
 
             long fd = TableUtils.openRO(ff, path, LOG);
+            ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);
             try {
 
                 do {
@@ -707,6 +708,14 @@ public class TextImportTask {
             this.atomicity = -1;
         }
 
+        public long getErrorCount() {
+            return errorCount;
+        }
+
+        public long getLineCount() {
+            return lineCount;
+        }
+
         public LongList getPartitionKeysAndSizes() {
             return partitionKeysAndSizes;
         }
@@ -769,14 +778,6 @@ public class TextImportTask {
                 indexer.clear();
             }
         }
-
-        public long getLineCount() {
-            return lineCount;
-        }
-
-        public long getErrorCount() {
-            return errorCount;
-        }
     }
 
     public class PhasePartitionImport {
@@ -802,7 +803,7 @@ public class TextImportTask {
         private TimestampAdapter timestampAdapter;
         private long offset;
         private DirectCharSink utf8Sink;
-        private final TextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
+        private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
             this.cairoEngine = null;
@@ -827,12 +828,24 @@ public class TextImportTask {
             this.utf8Sink = null;
         }
 
+        public long getErrors() {
+            return errors;
+        }
+
         public LongList getImportedRows() {
             return importedRows;
         }
 
+        public long getRowsHandled() {
+            return rowsHandled;
+        }
+
+        public long getRowsImported() {
+            return rowsImported;
+        }
+
         public void run(
-                TextLexer lexer,
+                TextLexerWrapper lf,
                 long fileBufAddr,
                 long fileBufSize,
                 DirectCharSink utf8Sink,
@@ -865,8 +878,8 @@ public class TextImportTask {
                             cairoEngine.getMetrics())
             ) {
                 tableWriterRef = writer;
+                AbstractTextLexer lexer = lf.getLexer(columnDelimiter);
                 lexer.setTableName(tableNameSink);
-                lexer.of(columnDelimiter);
                 lexer.setSkipLinesWithExtraValues(false);
 
                 long prevErrors;
@@ -915,7 +928,7 @@ public class TextImportTask {
         private void consumeIOURing(
                 FilesFacade ff,
                 long sqeMin,
-                TextLexer lexer,
+                AbstractTextLexer lexer,
                 long fileBufAddr,
                 LongList offsets,
                 IOURing ring,
@@ -974,7 +987,7 @@ public class TextImportTask {
         private void importPartitionData(
                 final IOURingFacade rf,
                 final boolean ioURingEnabled,
-                final TextLexer lexer,
+                final AbstractTextLexer lexer,
                 long address,
                 long size,
                 long fileBufAddr,
@@ -1008,7 +1021,7 @@ public class TextImportTask {
 
         private void importPartitionDataURing(
                 final IOURingFacade rf,
-                TextLexer lexer,
+                AbstractTextLexer lexer,
                 long address,
                 long size,
                 long fileBufAddr,
@@ -1123,7 +1136,7 @@ public class TextImportTask {
         }
 
         private void importPartitionDataVanilla(
-                TextLexer lexer,
+                AbstractTextLexer lexer,
                 long address,
                 long size,
                 long fileBufAddr,
@@ -1224,7 +1237,7 @@ public class TextImportTask {
                 final IOURingFacade rf,
                 boolean ioURingEnabled,
                 Path partitionPath,
-                final TextLexer lexer,
+                final AbstractTextLexer lexer,
                 long fileBufAddr,
                 long fileBufSize,
                 DirectCharSink utf8Sink,
@@ -1324,7 +1337,7 @@ public class TextImportTask {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
                 type.write(w, fieldIndex, dbcs, utf8Sink);
-            } catch (NumericException | Utf8Exception | ConversionException ignore) {
+            } catch (NumericException | Utf8Exception | ImplicitCastException ignore) {
                 errors++;
                 logError(offset, fieldIndex, dbcs);
                 switch (atomicity) {
@@ -1403,7 +1416,7 @@ public class TextImportTask {
             return mergedIndexSize;
         }
 
-        private void parseLinesAndWrite(TextLexer lexer, long fileBufAddr, LongList offsets, int j) {
+        private void parseLinesAndWrite(AbstractTextLexer lexer, long fileBufAddr, LongList offsets, int j) {
             final long lo = fileBufAddr + offsets.getQuick(j * 2);
             final long hi = lo + offsets.getQuick(j * 2 + 1);
             lexer.parseExactLines(lo, hi);
@@ -1416,18 +1429,6 @@ public class TextImportTask {
                 ff.munmap(addr, size, MemoryTag.MMAP_IMPORT);
             }
             mergeIndexes.clear();
-        }
-
-        public long getErrors() {
-            return errors;
-        }
-
-        public long getRowsHandled() {
-            return rowsHandled;
-        }
-
-        public long getRowsImported() {
-            return rowsImported;
         }
     }
 

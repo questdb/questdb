@@ -395,10 +395,9 @@ public class DropIndexTest extends AbstractGriffinTest {
                 } catch (Throwable e) {
                     concurrentDropIndexFailure.set(e);
                 } finally {
-                    Misc.free(path2);
                     engine.releaseAllWriters();
-                    endLatch.countDown();
                     Path.clearThreadLocals();
+                    endLatch.countDown();
                 }
             }).start();
 
@@ -411,13 +410,15 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Throwable fail = concurrentDropIndexFailure.get();
                 Assert.assertNotNull(fail);
                 if (fail instanceof EntryUnavailableException) {
-                    TestUtils.assertContains(fail.getMessage(), "table busy [reason=Alter table execute]");
+                    // reason can be Alter table execute or Engine cleanup (unknown)
+                    TestUtils.assertContains(fail.getMessage(), "table busy [reason=");
                 }
                 else if (fail instanceof SqlException) {
                     TestUtils.assertContains(fail.getMessage(), "Column is not indexed");
                 }
             } catch (EntryUnavailableException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=Alter table execute]");
+                // reason can be Alter table execute or Engine cleanup (unknown)
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=");
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();

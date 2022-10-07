@@ -42,7 +42,7 @@ public final class CharAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         if (text != null && text.length() == 1) {
             return Character.isLetter(text.charAt(0));
         }

@@ -75,9 +75,7 @@ public class TxReader implements Closeable, Mutable {
     @Override
     public void clear() {
         clearData();
-        if (roTxMemBase != null) {
-            roTxMemBase.close();
-        }
+        Misc.free(roTxMemBase);
     }
 
     @Override
@@ -275,10 +273,6 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean unsafeLoadAll() {
-        return unsafeLoad(false);
-    }
-
-    public boolean unsafeLoad(boolean headerOnly) {
         if (unsafeLoadBaseOffset()) {
             this.txn = version;
             if (txn != getLong(TX_OFFSET_TXN_64)) {
@@ -297,10 +291,8 @@ public class TxReader implements Closeable, Mutable {
             this.columnVersion = unsafeReadColumnVersion();
             this.truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             this.symbolColumnCount = this.symbolsSize / 8;
-            if (!headerOnly) {
-                unsafeLoadSymbolCounts(symbolColumnCount);
-                unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-            }
+            unsafeLoadSymbolCounts(symbolColumnCount);
+            unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeReadVersion()) {
                 return true;
@@ -347,6 +339,10 @@ public class TxReader implements Closeable, Mutable {
 
     public int unsafeReadSymbolTransientCount(int symbolIndex) {
         return getInt(getSymbolWriterTransientIndexOffset(symbolIndex));
+    }
+
+    public long unsafeReadTxn() {
+        return unsafeReadVersion();
     }
 
     public long unsafeReadVersion() {
@@ -428,12 +424,12 @@ public class TxReader implements Closeable, Mutable {
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion || prevColumnVersion != columnVersion) {
                     attachedPartitions.clear();
-                    unsafeLoadPartitions0(txAttachedPartitionsSize, 0);
+                    unsafeLoadPartitions0(0, txAttachedPartitionsSize);
                 } else {
                     if (attachedPartitionsSize < txAttachedPartitionsSize) {
                         unsafeLoadPartitions0(
-                                txAttachedPartitionsSize,
-                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0)
+                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0),
+                                txAttachedPartitionsSize
                         );
                     }
                 }
@@ -441,6 +437,7 @@ public class TxReader implements Closeable, Mutable {
                         txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET,
                         transientRowCount
                 );
+                attachedPartitions.setPos(txAttachedPartitionsSize);
             } else {
                 attachedPartitionsSize = 0;
                 attachedPartitions.clear();
@@ -452,12 +449,12 @@ public class TxReader implements Closeable, Mutable {
         }
     }
 
-    private void unsafeLoadPartitions0(int txAttachedPartitionsSize, int max) {
-        attachedPartitions.setPos(txAttachedPartitionsSize);
-        for (int i = max; i < txAttachedPartitionsSize; i++) {
+    private void unsafeLoadPartitions0(int lo, int hi) {
+        attachedPartitions.setPos(hi);
+        for (int i = lo; i < hi; i++) {
             attachedPartitions.setQuick(i, getLong(TableUtils.getPartitionTableIndexOffset(symbolColumnCount, i)));
         }
-        attachedPartitionsSize = txAttachedPartitionsSize;
+        attachedPartitionsSize = hi;
     }
 
     private void unsafeLoadSymbolCounts(int symbolMapCount) {

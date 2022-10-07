@@ -58,6 +58,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // the OG rows remaining, used to reset the counter when re-running cursor from top();
     private long ogRowsRemaining;
     private boolean allFramesActive;
+    private boolean isOpen;
 
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
@@ -67,18 +68,23 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        LOG.debug()
-                .$("closing [shard=").$(frameSequence.getShard())
-                .$(", frameIndex=").$(frameIndex)
-                .$(", frameCount=").$(frameLimit)
-                .$(", cursor=").$(cursor)
-                .I$();
+        if (isOpen) {
+            LOG.debug()
+                    .$("closing [shard=").$(frameSequence.getShard())
+                    .$(", frameIndex=").$(frameIndex)
+                    .$(", frameCount=").$(frameLimit)
+                    .$(", cursor=").$(cursor)
+                    .I$();
 
-        collectCursor(true);
-        if (frameLimit > -1) {
-            frameSequence.await();
+            if (frameSequence != null) {
+                collectCursor(true);
+                if (frameLimit > -1) {
+                    frameSequence.await();
+                }
+                frameSequence.clear();
+            }
+            isOpen = false;
         }
-        frameSequence.clear();
     }
 
     public void freeRecords() {
@@ -219,6 +225,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
+        this.isOpen = true;
         this.frameSequence = frameSequence;
         this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;

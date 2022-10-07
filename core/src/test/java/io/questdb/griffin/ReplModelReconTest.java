@@ -1477,7 +1477,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 }
 
                 @Override
-                public boolean isMetadataChange() {
+                public boolean isStructureChange() {
                     return false;
                 }
 

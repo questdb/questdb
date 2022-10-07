@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -34,28 +33,25 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
+
 public class LineTcpReceiver implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
+
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final MutableIOContextFactory<LineTcpConnectionContext> contextFactory;
     private LineTcpMeasurementScheduler scheduler;
-    private final ObjList<WorkerPool> dedicatedPools;
     private final Metrics metrics;
 
     public LineTcpReceiver(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,
-            WorkerPool writerWorkerPool,
-            ObjList<WorkerPool> dedicatedPools
+            WorkerPool writerWorkerPool
     ) {
         this.scheduler = null;
         this.metrics = engine.getMetrics();
@@ -77,59 +73,19 @@ public class LineTcpReceiver implements Closeable {
                 configuration.getDispatcherConfiguration(),
                 contextFactory
         );
-        this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
         this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            ioWorkerPool.assign(i, contextFactory);
+            ioWorkerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
         }
-    }
-
-    @Nullable
-    public static LineTcpReceiver create(
-            LineTcpReceiverConfiguration lineConfiguration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            Metrics metrics
-    ) {
-        if (!lineConfiguration.isEnabled()) {
-            return null;
-        }
-
-        ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool, metrics);
-        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
-                lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool, metrics);
-        if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.assignCleaner(Path.CLEANER);
-            dedicatedPools.add(ioWorkerPool);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.assignCleaner(Path.CLEANER);
-            dedicatedPools.add(writerWorkerPool);
-        }
-        LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
-        if (ioWorkerPool != sharedWorkerPool) {
-            ioWorkerPool.start(log);
-        }
-        if (writerWorkerPool != sharedWorkerPool) {
-            writerWorkerPool.start(log);
-        }
-        return lineTcpReceiver;
     }
 
     @Override
     public void close() {
-        for (int n = 0, sz = dedicatedPools.size(); n < sz; n++) {
-            dedicatedPools.get(n).halt();
-        }
         Misc.free(scheduler);
-        Misc.free(contextFactory);
         Misc.free(dispatcher);
     }
 

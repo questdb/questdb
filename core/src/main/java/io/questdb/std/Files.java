@@ -44,6 +44,8 @@ public final class Files {
     public static final char SEPARATOR;
     public static final int POSIX_FADV_SEQUENTIAL;
     public static final int POSIX_FADV_RANDOM;
+    public static final int POSIX_MADV_SEQUENTIAL;
+    public static final int POSIX_MADV_RANDOM;
     public static final int FILES_RENAME_OK = 0;
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
@@ -111,7 +113,7 @@ public final class Files {
         return copy(from.address(), to.address());
     }
 
-    public static native int copyData(long srcFd, long destFd, long offsetSrc, long length);
+    public static native long copyData(long srcFd, long destFd, long offsetSrc, long length);
 
     /**
      * close(fd) should be used instead of this method in most cases
@@ -134,7 +136,15 @@ public final class Files {
         }
     }
 
+    public static void madvise(long address, long len, int advise) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+            madvise0(address, len, advise);
+        }
+    }
+
     public static native void fadvise0(long fd, long offset, long len, int advise);
+
+    public static native void madvise0(long address, long len, int advise);
 
     public native static void findClose(long findPtr);
 
@@ -247,11 +257,7 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        return mmap(fd, len, offset, flags, 0, memoryTag);
-    }
-
-    public static long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag) {
-        long address = mmap0(fd, len, offset, flags, baseAddress);
+        long address = mmap0(fd, len, offset, flags, 0);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
@@ -392,6 +398,10 @@ public final class Files {
 
     private native static int getPosixFadvSequential();
 
+    private native static int getPosixMadvRandom();
+
+    private native static int getPosixMadvSequential();
+
     private static native int getFileSystemStatus(long lpszName);
 
     private native static int close0(long fd);
@@ -450,9 +460,13 @@ public final class Files {
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             POSIX_FADV_RANDOM = getPosixFadvRandom();
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
+            POSIX_MADV_RANDOM = getPosixMadvRandom();
+            POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
         } else {
-            POSIX_FADV_SEQUENTIAL = 0;
-            POSIX_FADV_RANDOM = 0;
+            POSIX_FADV_SEQUENTIAL = -1;
+            POSIX_FADV_RANDOM = -1;
+            POSIX_MADV_SEQUENTIAL = -1;
+            POSIX_MADV_RANDOM = -1;
         }
     }
 }

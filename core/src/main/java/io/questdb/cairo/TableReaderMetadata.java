@@ -159,6 +159,36 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         Misc.free(metaMem);
     }
 
+    public void copy(TableReaderMetadata metadata) {
+        tableName = metadata.tableName;
+        partitionBy = metadata.partitionBy;
+        tableId = metadata.tableId;
+        maxUncommittedRows = metadata.maxUncommittedRows;
+        commitLag = metadata.commitLag;
+        structureVersion = metadata.structureVersion;
+        walEnabled = metadata.walEnabled;
+        path.of(metadata.path);
+        timestampIndex = metadata.timestampIndex;
+        columnCount = metadata.columnCount;
+        columnMetadata.setPos(columnCount);
+        columnNameIndexMap.clear();
+
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata columnMetadata = metadata.columnMetadata.getQuick(i);
+            this.columnMetadata.setQuick(i, new TableColumnMetadata(
+                    columnMetadata.getName(),
+                    columnMetadata.getHash(),
+                    columnMetadata.getType(),
+                    columnMetadata.isIndexed(),
+                    columnMetadata.getIndexValueBlockCapacity(),
+                    columnMetadata.isSymbolTableStatic(),
+                    columnMetadata.getMetadata(),
+                    columnMetadata.getWriterIndex()
+            ));
+            columnNameIndexMap.put(columnMetadata.getName(), i);
+        }
+    }
+
     public void deferredInit(Path path, String tableName, int expectedVersion) {
         this.path.of(path).$();
         deferredInit(tableName, expectedVersion);
@@ -169,7 +199,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             transitionMeta = Vm.getMRInstance();
         }
 
-        transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+        transitionMeta.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
         if (transitionMeta.size() >= TableUtils.META_OFFSET_STRUCTURE_VERSION + 8
                 && txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
             // No match
@@ -254,7 +284,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     private void deferredInit(String tableName, int expectedVersion) {
         try {
             this.tableName = tableName;
-            this.metaMem.smallFile(ff, this.path, MemoryTag.MMAP_DEFAULT);
+            this.metaMem.smallFile(ff, this.path, MemoryTag.NATIVE_TABLE_READER);
             this.columnNameIndexMap.clear();
             TableUtils.validateMeta(metaMem, this.columnNameIndexMap, expectedVersion);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);

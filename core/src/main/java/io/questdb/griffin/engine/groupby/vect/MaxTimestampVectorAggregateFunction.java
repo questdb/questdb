@@ -103,8 +103,8 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
     }
 
     @Override

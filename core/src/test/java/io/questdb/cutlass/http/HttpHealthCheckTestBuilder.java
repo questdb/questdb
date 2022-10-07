@@ -27,15 +27,14 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.BrokenBarrierException;
@@ -77,14 +76,14 @@ public class HttpHealthCheckTestBuilder {
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer ignored = HttpServer.createMin(httpConfiguration, workerPool, LOG, engine, null, null, metrics)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics, 2);
+                    HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)
             ) {
                 workerPool.start(LOG);
 
                 if (injectUnhandledError && metrics.isEnabled()) {
                     for (int i = 0; i < 40; i++) {
-                        if (metrics.healthCheck().unhandledErrorsCount() > 0) {
+                        if (metrics.health().unhandledErrorsCount() > 0) {
                             break;
                         }
                         Os.sleep(50);

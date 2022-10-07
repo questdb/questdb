@@ -34,6 +34,7 @@ open module io.questdb {
     requires static java.management;
 
     uses io.questdb.griffin.FunctionFactory;
+    exports io.questdb.std.fastdouble;
 
     exports io.questdb;
     exports io.questdb.cairo;
@@ -420,7 +421,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastCharToDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToDateFunctionFactory,
-            io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToLong256FunctionFactory,
 //                  cast str to ...,

@@ -119,7 +119,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
-            state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
+            state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getCairoSecurityContext(),
@@ -183,8 +183,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
-        } catch (SqlException e) {
-            syntaxError(context.getChunkedResponseSocket(), e, state);
+        } catch (SqlException | ImplicitCastException e) {
+            syntaxError(context.getChunkedResponseSocket(), state, e);
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponseSocket(), e, state);
@@ -372,7 +372,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
-        metrics.healthCheck().incrementUnhandledErrors();
+        metrics.health().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);
     }
 
@@ -571,14 +571,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void syntaxError(
             HttpChunkedResponseSocket socket,
-            SqlException sqlException,
-            TextQueryProcessorState state
+            TextQueryProcessorState state,
+            FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state)
                 .$("syntax-error [q=`").utf8(state.query)
-                .$("`, at=").$(sqlException.getPosition())
-                .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
+                .$("`, at=").$(container.getPosition())
+                .$(", message=`").$(container.getFlyweightMessage()).$('`')
                 .$(']').$();
-        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), state);
+        sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
     }
 }

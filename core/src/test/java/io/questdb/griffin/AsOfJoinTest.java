@@ -442,7 +442,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     //select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
-
     @Test
     public void testLtJoinNoTimestamp() throws Exception {
         final String expected = "tag\thi\tlo\n" +

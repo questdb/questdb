@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
@@ -42,7 +43,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -97,7 +97,8 @@ public class LineTcpO3Test extends AbstractCairoTest {
         configuration = serverConf.getCairoConfiguration();
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
-        engine = new CairoEngine(configuration, metrics);
+        metrics = Metrics.enabled();
+        engine = new CairoEngine(configuration, metrics, 2);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
     }
@@ -161,9 +162,9 @@ public class LineTcpO3Test extends AbstractCairoTest {
             Assert.assertTrue(clientFd >= 0);
 
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
-            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
+            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics.health());
             try (
-                    LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics);
+                    LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
@@ -174,7 +175,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     }
                 });
 
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
                 TestUtils.assertConnect(clientFd, ilpSockAddr);
                 readGzResource(ilpResourceName);
@@ -182,6 +182,8 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 
                 haltLatch.await();
+                // stop pool twice and this is ok
+                sharedWorkerPool.halt();
 
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
                 readGzResource("selectAll1");

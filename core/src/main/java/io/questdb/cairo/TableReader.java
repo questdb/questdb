@@ -189,7 +189,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
             // same goes for symbol map reader - replace object with maker instance
-            Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
+            Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
         }
     }
 
@@ -683,7 +683,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeSymbolMapReaders() {
         for (int i = 0, n = symbolMapReaders.size(); i < n; i++) {
-            Misc.free(symbolMapReaders.getQuick(i));
+            Misc.freeIfCloseable(symbolMapReaders.getQuick(i));
         }
         symbolMapReaders.clear();
     }
@@ -1281,7 +1281,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             if (action == -1) {
                 // deleted
-                Misc.free(symbolMapReaders.getAndSetQuick(i, null));
+                Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(i, null));
             }
 
             // don't copy entries to themselves, unless symbol map was deleted

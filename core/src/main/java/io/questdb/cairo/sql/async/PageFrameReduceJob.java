@@ -36,6 +36,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.Nullable;
 
@@ -156,6 +157,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                 // queue is empty, we should yield or help
                 break;
             }
+            Os.pause();
         } while (true);
         return true;
     }
@@ -200,7 +202,7 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     @Override
     public void close() {
-        circuitBreaker = Misc.free(circuitBreaker);
+        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
         record = Misc.free(record);
     }
 

@@ -339,8 +339,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 @Override
                 protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
                     byte[] rawSignature = new byte[64];
-                    byte[] signature = Base64.getEncoder().encode(rawSignature);
-                    return signature;
+                    return Base64.getEncoder().encode(rawSignature);
                 }
             };
             sender.authenticate(AUTH_KEY_ID1, null);
@@ -1053,7 +1052,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         sender.authenticate(authKeyId, authPrivateKey);
                     }
                     return sender;
-
                 });
     }
 
@@ -1089,15 +1087,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            try (LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
+            try (LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool)) {
                 long startEpochMs = System.currentTimeMillis();
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
 
                 try {
                     final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
                     for (int n = 0; n < senders.length; n++) {
-                        senders[n] = senderSupplier.get();;
+                        senders[n] = senderSupplier.get();
                         StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
                         sb.append("location\ttemp\ttimestamp\n");
                         expectedSbs[n] = sb;

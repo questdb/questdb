@@ -96,6 +96,8 @@ public final class Vect {
 
     public static native void indexReshuffle64Bit(long pSrc, long pDest, long pIndex, long count);
 
+    public static native void indexReshuffle128Bit(long pSrc, long pDest, long pIndex, long count);
+
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
@@ -132,6 +134,8 @@ public final class Vect {
     private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle128Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle256Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 

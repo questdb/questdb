@@ -32,6 +32,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
@@ -119,7 +120,7 @@ class LineTcpWriterJob implements Job, Closeable {
                             .$("commit failed [table=").$(assignedTables.getQuick(n).getTableNameUtf16())
                             .$(",ex=").$(ex)
                             .I$();
-                    metrics.healthCheck().incrementUnhandledErrors();
+                    metrics.health().incrementUnhandledErrors();
                 }
             }
             // if no tables, just use the default commit interval
@@ -135,6 +136,7 @@ class LineTcpWriterJob implements Job, Closeable {
                 if (cursor == -1) {
                     return busy;
                 }
+                Os.pause();
             }
             busy = true;
             final LineTcpMeasurementEvent event = queue.get(cursor);
@@ -167,7 +169,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                 .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
                                 .$(",ex=").$(ex)
                                 .I$();
-                        metrics.healthCheck().incrementUnhandledErrors();
+                        metrics.health().incrementUnhandledErrors();
                         closeWriter = true;
                         event.createWriterReleaseEvent(tab, false);
                         // This is a critical error, so we treat it as an unhandled one.

@@ -54,6 +54,7 @@ public class SequencerMetadataUpdater implements SequencerMetadataWriterBackend 
         metadata.removeColumn(columnName);
     }
 
+    @Override
     public void renameColumn(CharSequence columnName, CharSequence newName) {
         metadata.renameColumn(columnName, newName);
     }

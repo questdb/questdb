@@ -58,7 +58,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
             keyValueFunc = Rosti::keyedIntSumInt;
         }
 
-        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
         this.workerCount = workerCount;
     }
 
@@ -116,8 +116,8 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override
@@ -129,7 +129,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     @Override
     public void close() {
         if (counts != 0) {
-            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
             counts = 0;
         }
         super.close();

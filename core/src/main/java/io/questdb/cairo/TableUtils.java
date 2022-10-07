@@ -33,6 +33,7 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -873,6 +874,7 @@ public final class TableUtils {
             } else if (cursor == -1) {
                 return false;
             }
+            Os.pause();
         }
     }
 
@@ -921,7 +923,8 @@ public final class TableUtils {
                 break;
             case ColumnType.LONG128:
                 // Long128 is null when all 2 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
+                assert Long128Constant.NULL_HI == Long128Constant.NULL_LO;
+                Vect.setMemoryLong(addr, Long128Constant.NULL_HI, count * 2);
                 break;
             default:
                 break;

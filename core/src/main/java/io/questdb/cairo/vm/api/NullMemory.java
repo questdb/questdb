@@ -46,15 +46,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-    }
-
-    @Override
     public void zero() {
     }
 
     @Override
-    public void close(boolean truncate) {
+    public void close(boolean truncate, byte truncateMode) {
     }
 
     @Override
@@ -63,11 +59,10 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
-
     }
 
     @Override
-    public void switchTo(long fd, long offset) {
+    public void switchTo(long fd, long offset, byte truncateMode) {
     }
 
     @Override
@@ -277,7 +272,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         throw new UnsupportedOperationException();
     }
 

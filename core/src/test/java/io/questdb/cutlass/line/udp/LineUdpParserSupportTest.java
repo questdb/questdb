@@ -168,7 +168,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         testColumnType(
                 ColumnType.FLOAT,
                 "column\tlocation\ttimestamp\n" +
-                        "Infinity\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
                         "5.0000\t\t1970-01-01T00:00:05.000000Z\n",
                 (sender) -> {
@@ -276,7 +276,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             Consumer<AbstractLineSender> senderConsumer
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration, metrics, 2)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {

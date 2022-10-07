@@ -36,7 +36,27 @@ public class RostiAllocFacadeImpl implements RostiAllocFacade {
     }
 
     @Override
+    public void clear(long pRosti) {
+        Rosti.clear(pRosti);
+    }
+
+    @Override
     public void free(long pRosti) {
         Rosti.free(pRosti);
+    }
+
+    @Override
+    public boolean reset(long pRosti, int toSize) {
+        return Rosti.reset(pRosti, toSize);
+    }
+
+    @Override
+    public void updateMemoryUsage(long pRosti, long oldSize) {
+        Rosti.updateMemoryUsage(pRosti, oldSize);
+    }
+
+    @Override
+    public long getSize(long pRosti) {
+        return Rosti.getSize(pRosti);
     }
 }

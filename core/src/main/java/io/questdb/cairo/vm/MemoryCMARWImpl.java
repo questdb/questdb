@@ -43,9 +43,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize = -1;
     private long extendSegmentMsb;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private int madviseOpts = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, size, memoryTag, opts);
+        of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
@@ -66,8 +67,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     @Override
@@ -122,11 +124,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void close(boolean truncate) {
+    public void close(boolean truncate, byte truncateMode) {
         if (pageAddress != 0) {
             long appendOffset = getAppendOffset();
-            // what can we truncate to ?
-            long truncateSize = Files.ceilPageSize(appendOffset);
+            long truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
             long sz = Math.min(size, truncateSize);
             if (appendOffset < sz) {
                 Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
@@ -134,7 +135,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             ff.munmap(pageAddress, size, memoryTag);
             this.pageAddress = 0;
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize);
+                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize, truncateMode);
             } finally {
                 fd = -1;
             }
@@ -164,8 +165,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(long fd, long offset) {
-        close();
+    public void switchTo(long fd, long offset, byte truncateMode) {
+        close(true, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);
     }
@@ -215,9 +216,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = extendSegmentSize;
+        this.madviseOpts = madviseOpts;
         openFile(ff, name, opts);
         map(ff, name, size, memoryTag);
     }
@@ -273,7 +275,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                     previousSize,
                     newSize,
                     Files.MAP_RW,
-                    memoryTag);
+                    memoryTag
+            );
+            ff.madvise(pageAddress, newSize, madviseOpts);
         } catch (Throwable e) {
             appendAddress = pageAddress + previousSize;
             close(false);
@@ -308,6 +312,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         try {
             this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
             this.lim = pageAddress + size;
+            ff.madvise(pageAddress, size, madviseOpts);
         } catch (Throwable e) {
             close(false);
             throw e;

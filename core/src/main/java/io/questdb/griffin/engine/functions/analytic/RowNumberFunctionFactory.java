@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.functions.analytic;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -44,8 +41,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-
-import java.io.Closeable;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
@@ -94,7 +89,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Closeable {
+    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -109,7 +104,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             Misc.free(map);
-            Misc.free(partitionByRecord.getFunctions());
+            Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
         @Override
@@ -148,8 +143,13 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void reopen() {
+            map.reopen();
+        }
+
+        @Override
         public void reset() {
-            map.clear();
+            map.close();
         }
 
         @Override

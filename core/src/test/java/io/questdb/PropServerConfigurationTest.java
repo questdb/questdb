@@ -214,6 +214,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getPageFrameReduceShardCount());
@@ -285,10 +286,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
-        Assert.assertEquals(30_000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
+        Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
         Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
-        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
+        Assert.assertEquals(500, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
@@ -316,7 +317,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
-        Assert.assertEquals(31, configuration.getCairoConfiguration().getColumnPurgeRetryLimitDays());
         Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnPurgeRetryDelayMultiplier(), 0.00001);
         Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
@@ -772,6 +772,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelFilterEnabled());
+            Assert.assertFalse(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getPageFrameReduceShardCount());
@@ -842,7 +843,6 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
             Assert.assertEquals(512, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
-            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnPurgeRetryLimitDays());
             Assert.assertEquals(5.0, configuration.getCairoConfiguration().getColumnPurgeRetryDelayMultiplier(), 0.00001);
             Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
             Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());

@@ -27,12 +27,11 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlToOperation;
+import io.questdb.cairo.SqlToOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.IntLongHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.Nullable;
@@ -45,7 +44,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final ThreadLocal<SequencerStructureChangeCursor> reusableStructureChangeCursor = new ThreadLocal<>();
-    public static final Closeable CLEANER = ApplyWal2TableJob::clearThreadLocals;
     private final CairoEngine engine;
     private final SqlToOperation sqlToOperation;
     private final IntLongHashMap localCommittedTransactions = new IntLongHashMap();
@@ -56,10 +54,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         this.sqlToOperation = new SqlToOperation(engine);
     }
 
-    public static void clearThreadLocals() {
-        Misc.free(reusableStructureChangeCursor);
-    }
-
     public static long processWalTxnNotification(
             CharSequence tableName,
             int tableId,
@@ -67,8 +61,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             SqlToOperation sqlToOperation
     ) {
         SequencerStructureChangeCursor cursor = reusableStructureChangeCursor.get();
-        long lastTxn = -1;
-        long lastCommittedTxn;
+        long lastTxn;
+        long lastCommittedTxn = -1;
         do {
             // This is work steeling, security context is checked on writing to the WAL
             // and can be ignored here
@@ -85,7 +79,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 break;
             } catch (CairoException ex) {
-                LOG.critical().$("Failed to apply WAL data to table [table=").$(tableName)
+                LOG.critical().$("failed to apply WAL data to table [table=").$(tableName)
                         .$(", error=").$(ex.getMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
@@ -96,7 +90,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         } while (lastCommittedTxn < lastTxn);
 
         reusableStructureChangeCursor.set(cursor);
-        return lastTxn;
+        return lastCommittedTxn;
     }
 
     @Override
@@ -144,7 +138,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private static SequencerStructureChangeCursor applyOutstandingWalTransactions(
-            TableWriter writer, CairoEngine engine,
+            TableWriter writer,
+            CairoEngine engine,
             SqlToOperation sqlToOperation,
             @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
     ) {
@@ -153,10 +148,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
             Path tempPath = Path.PATH.get();
-            CharSequence root = engine.getConfiguration().getRoot();
-            CharSequence tableName = engine.getSystemTableName(writer.getTableName());
-            tempPath.of(root).concat(tableName);
-            int rootLen = tempPath.length();
 
             while (sequencerCursor.hasNext()) {
                 int walId = sequencerCursor.getWalId();
@@ -167,51 +158,62 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (nextTableTxn != writer.getTxn() + 1) {
                     throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
-                tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                if (walId == TxnCatalog.DROP_TABLE_WALID) {
-                    if (engine.lockReaders(writer.getTableName())) {
-                        try {
-                            writer.truncate(); // release fs space now. delete this table later
-                        } finally {
-                            engine.unlockReaders(writer.getTableName());
-                        }
-                    }
-                } else if (walId == TxnCatalog.RENAME_TABLE_WALID) {
-                   //todo:
-                } else if (walId == TxnCatalog.METADATA_WALID) {
-                    // This is metadata change
-                    // to be taken from Sequencer directly
-                    // This may look odd, but on metadata change record, segment ID means structure version.
-                    final int newStructureVersion = segmentId;
-                    if (writer.getStructureVersion() != newStructureVersion - 1) {
-                        throw CairoException.critical(0)
-                                .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
-                                .put(", tableStructureVersion=").put(writer.getStructureVersion())
-                                .put(']');
-                    }
-                    boolean hasNext;
-                    if (reusableStructureChangeCursor == null || !(hasNext = reusableStructureChangeCursor.hasNext())) {
-                        reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
-                        hasNext = reusableStructureChangeCursor.hasNext();
-                    }
 
-                    if (hasNext) {
-                        try {
-                            reusableStructureChangeCursor.next().apply(writer, true);
-                        } catch (SqlException e) {
+                // Always set full path when using thread static path
+                CharSequence tableName = engine.getSystemTableName(writer.getTableName());
+                tempPath.of(engine.getConfiguration().getRoot()).concat(tableName).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                switch (walId) {
+                    case TxnCatalog.METADATA_WALID:
+                        // This is metadata change
+                        // to be taken from Sequencer directly
+                        // This may look odd, but on metadata change record, segment ID means structure version.
+                        @SuppressWarnings("UnnecessaryLocalVariable")
+                        final int newStructureVersion = segmentId;
+                        if (writer.getStructureVersion() != newStructureVersion - 1) {
                             throw CairoException.critical(0)
-                                    .put("cannot apply structure change from WAL to table. ").put(e.getFlyweightMessage());
+                                    .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
+                                    .put(", tableStructureVersion=").put(writer.getStructureVersion())
+                                    .put(']');
                         }
-                    } else {
-                        throw CairoException.critical(0)
-                                .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
-                                .put(newStructureVersion)
-                                .put(']');
-                    }
-                } else {
-                    writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
+                        boolean hasNext;
+                        if (reusableStructureChangeCursor == null || !(hasNext = reusableStructureChangeCursor.hasNext())) {
+                            reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
+                            hasNext = reusableStructureChangeCursor != null && reusableStructureChangeCursor.hasNext();
+                        }
+
+                        if (hasNext) {
+                            try {
+                                reusableStructureChangeCursor.next().apply(writer, true);
+                            } catch (SqlException e) {
+                                throw CairoException.critical(0)
+                                        .put("cannot apply structure change from WAL to table [error=")
+                                        .put(e.getFlyweightMessage()).put(']');
+                            }
+                        } else {
+                            // Something messed up in sequencer.
+                            // There is a transaction in WAL but no structure change record.
+                            // TODO: make sequencer distressed and try to reconcile on sequencer opening
+                            //  or skip the transaction?
+                            throw CairoException.critical(0)
+                                    .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
+                                    .put(newStructureVersion)
+                                    .put(']');
+                        }
+                        break;
+                    case TxnCatalog.DROP_TABLE_WALID:
+                        if (engine.lockReaders(writer.getTableName())) {
+                            try {
+                                writer.truncate(); // release fs space now. delete this table later
+                            } finally {
+                                engine.unlockReaders(writer.getTableName());
+                            }
+                        }
+                        break;
+                    case TxnCatalog.RENAME_TABLE_WALID:
+                        break;
+                    default:
+                        writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
                 }
-            }
         } finally {
             if (reusableStructureChangeCursor != null) {
                 reusableStructureChangeCursor.reset();

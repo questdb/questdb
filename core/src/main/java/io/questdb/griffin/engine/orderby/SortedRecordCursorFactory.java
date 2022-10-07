@@ -33,21 +33,21 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final RecordTreeChain chain;
     private final SortedRecordCursor cursor;
 
     public SortedRecordCursorFactory(
-            CairoConfiguration configuration,
-            RecordMetadata metadata,
-            RecordCursorFactory base,
-            RecordSink recordSink,
-            RecordComparator comparator
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull RecordCursorFactory base,
+            @NotNull RecordSink recordSink,
+            @NotNull RecordComparator comparator
     ) {
         super(metadata);
-        this.chain = new RecordTreeChain(
+        RecordTreeChain chain = new RecordTreeChain(
                 metadata,
                 recordSink,
                 comparator,
@@ -63,7 +63,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
-        chain.close();
+        cursor.close();
     }
 
     @Override

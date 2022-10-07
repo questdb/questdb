@@ -174,6 +174,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAnalyticFunctionWithFilter() throws Exception {
+        assertQuery("author\tsym\tcommits\trk\n" +
+                        "user2\tETH\t3\t1\n" +
+                        "user1\tETH\t3\t0\n",
+                "with active_devs as (" +
+                        "    select author, sym, count() as commits" +
+                        "    from dev_stats" +
+                        "    where author is not null and author != 'github-actions[bot]'" +
+                        "    order by commits desc" +
+                        "    limit 100" +
+                        "), active_ranked as (" +
+                        "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
+                        "    from active_devs" +
+                        ") select * from active_ranked where sym = 'ETH'",
+                "create table dev_stats as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('ETH','BTC') sym," +
+                        " rnd_symbol('user1','user2') author," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -287,6 +317,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
@@ -311,6 +343,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong("y", 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t:y\n" +
                                     "1\t10\n" +
@@ -336,6 +370,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
@@ -361,6 +397,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = $1", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\n" +
                                     "10\n",
@@ -368,7 +406,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             true,
                             true,
                             false
-
                     );
                 }
             }
@@ -381,6 +418,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
             try {
                 compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
@@ -1946,6 +1984,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 false,
                 false,
                 true);
+    }
+
+    @Test
+    public void testImplicitCastStrToDouble() throws Exception {
+        assertQuery("column\tprice\n" +
+                        "80.43224099968394\t0.8043224099968393\n" +
+                        "28.45577791213847\t0.2845577791213847\n" +
+                        "93.4460485739401\t0.9344604857394011\n" +
+                        "79.05675319675964\t0.7905675319675964\n" +
+                        "88.99286912289664\t0.8899286912289663\n" +
+                        "11.427984775756228\t0.11427984775756228\n" +
+                        "42.17768841969397\t0.4217768841969397\n" +
+                        "72.61136209823621\t0.7261136209823622\n" +
+                        "66.93837147631712\t0.6693837147631712\n" +
+                        "87.56771741121929\t0.8756771741121929\n",
+                "select '100'*price, price from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -5213,6 +5280,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("x limit -9223372036854775807-1, -1", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("x\n" +
                                 "1\n" +
@@ -5229,7 +5297,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         true,
                         true,
                         true
-
                 );
             }
         });

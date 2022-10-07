@@ -36,8 +36,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlToOperation;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -73,17 +72,17 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableRegistry tableRegistry;
     private final Path rootPath;
     private final int rootPathLen;
-
     private final TextImportExecutionContext textImportExecutionContext;
-    private final TxReader tempTxReader;
+    private TxReader tempTxReader;
+    private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled());
+        this(configuration, Metrics.disabled(), 5);
     }
 
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
+    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalIoThreads) {
         this.configuration = configuration;
         this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
@@ -126,7 +125,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
         this.rootPath = new Path().of(configuration.getRoot());
         this.rootPathLen = rootPath.length();
+        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalIoThreads);
+    }
 
+    public void checkMissingWalTransactions() {
         try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
             tempTxReader = txReader;
             tableRegistry.forAllWalTables(this::checkNotifyOutstandingTxnInWal);
@@ -148,7 +150,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(rootPath);
-        tableRegistry.close();
+        Misc.free(tableRegistry);
+        Misc.free(telemetryQueue);
     }
 
     public void createTable(
@@ -181,6 +184,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    ClosableInstance<SqlCompiler> getAdhocSqlCompiler() {
+        return sqlCompilerPool.get();
+    }
 
     public TableRegistry getTableRegistry() {
         return tableRegistry;
@@ -252,15 +258,21 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName, MetadataFactory metadataFactory) {
         securityContext.checkWritePermission();
-        String tableNameStr = Chars.toString(tableName);
+        final String tableNameStr = Chars.toString(tableName);
         if (tableRegistry.hasSequencer(tableNameStr)) {
             // This is WAL table because sequencer exists
-            SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
-            tableRegistry.copyMetadataTo(tableName,sequencerMetadata);
+            final SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
+            tableRegistry.copyMetadataTo(tableName, sequencerMetadata);
             return sequencerMetadata;
         }
 
-        return metadataFactory.openTableReaderMetadata(tableName);
+        try {
+            return metadataFactory.openTableReaderMetadata(tableName);
+        } catch (CairoException e) {
+            try (TableReader reader = tryGetReaderRepairWithWriter(securityContext, tableName, e)) {
+                return metadataFactory.openTableReaderMetadata(reader);
+            }
+        }
     }
 
     public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {
@@ -316,55 +328,79 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
         rootPath.trimTo(rootPathLen).concat(getSystemTableName(tableName)).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader.unsafeLoad(true)) {
-                if (txReader.getTxn() < txn) {
-                    // table name should be immutable when in the notification
-                    String tableNameStr = Chars.toString(tableName);
-                    notifyWalTxnCommitted(tableId, tableNameStr, txn);
-                }
+            if (txReader.unsafeReadTxn()  < txn) {
+                // table name should be immutable when in the notification message
+                String tableNameStr = Chars.toString(tableName);
+                notifyWalTxnCommitted(tableId, tableNameStr, txn);
             }
         }
     }
 
     public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
         Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
-        int steelingAttempts = 10;
-        while (true) {
-            long cursor = pubSeq.next();
-            if (cursor > -1L) {
-                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                task.of(tableName, tableId, txn);
-                pubSeq.done(cursor);
-                return;
-            } else if (cursor == -1L) {
-                // Oh, no queue overflow!
-                // Steel the work!
-                if (steelingAttempts-- > 0) {
-                    Sequence subSeq = messageBus.getWalTxnNotificationSubSequence();
-                    try (SqlToOperation sqlToOperation = new SqlToOperation(this)) {
-                        while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
-                            if (cursor > -1L) {
-                                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                                String taskTableName = task.getTableName();
-                                int taskTableId = task.getTableId();
-                                // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
-                                subSeq.done(cursor);
+        int steelingAttempts = 100;
+        SqlToOperation sqlToOperation = null;
+        IntLongHashMap localCommittedTransactions = new IntLongHashMap();
 
-                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
-                            }
-                        }
-                    } catch (Throwable throwable) {
-                        LOG.criticalW()
-                                .$("error in steeling and processing WAL notifications. Attempts left: ").$(steelingAttempts)
-                                .$(throwable).$();
-                    }
-                } else {
-                    LOG.criticalW().$("error publishing WAL notifications, queue is full").$();
-                    // WAL is committed and can eventually be picked up and applied to the table.
-                    // Error is critical but throwing exception will make client assume
-                    // that commit failed but in fact the data is written.
+        try {
+            while (true) {
+                long cursor = pubSeq.next();
+                if (cursor > -1L) {
+                    WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                    task.of(tableName, tableId, txn);
+                    pubSeq.done(cursor);
                     return;
+                } else if (cursor == -1L) {
+                    // Oh, no queue overflow!
+                    // Steel the work!
+                    if (steelingAttempts-- > 0) {
+                        Sequence subSeq = messageBus.getWalTxnNotificationSubSequence();
+                        if (sqlToOperation == null) {
+                            sqlToOperation = new SqlToOperation(this);
+                        }
+                        try {
+                            while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
+                                if (cursor > -1L) {
+                                    WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                                    String taskTableName = task.getTableName();
+                                    int taskTableId = task.getTableId();
+                                    // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
+                                    subSeq.done(cursor);
+
+                                    LOG.info().$("stealing work from wal txn queue: ").$(taskTableName).$();
+
+                                    if (localCommittedTransactions.get(taskTableId) < task.getTxn()) {
+                                        long lastCommittedTxn = ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
+                                        if (lastCommittedTxn > -1) {
+                                            localCommittedTransactions.put(taskTableId, lastCommittedTxn);
+                                        }
+                                    }
+
+                                    // If this is the same table we want to notify about
+                                    // then we don't to notify about it anymore, whoever processes the WAL
+                                    // for the table will apply the transaction we want to notify about too
+                                    if (tableName.equals(taskTableName) && tableId == taskTableId) {
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (Throwable throwable) {
+                            LOG.criticalW()
+                                    .$("error in steeling and processing WAL notifications. Attempts left: ").$(steelingAttempts)
+                                    .$(throwable).$();
+                        }
+                    } else {
+                        LOG.criticalW().$("error publishing WAL notifications, queue is full, current=").$(pubSeq.current()).$();
+                        // WAL is committed and can eventually be picked up and applied to the table.
+                        // Error is critical but throwing exception will make client assume
+                        // that commit failed but in fact the data is written.
+                        return;
+                    }
                 }
+            }
+        } finally {
+            if (sqlToOperation != null) {
+                Misc.free(sqlToOperation);
             }
         }
     }
@@ -417,29 +453,31 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
     }
 
-    public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
+    public TableReader getReaderWithRepair(CairoSecurityContext securityContext, CharSequence tableName) {
         checkTableName(tableName);
         try {
-            return getReader(executionContext.getCairoSecurityContext(), tableName);
+            return getReader(securityContext, tableName);
         } catch (CairoException ex) {
             // Cannot open reader on existing table is pretty bad.
-            LOG.critical().$("error opening reader for ").$(statement)
-                    .$(" statement [table=").$(tableName)
+            LOG.critical().$("error opening reader [table=").$(tableName)
                     .$(",errno=").$(ex.getErrno())
                     .$(",error=").$(ex.getMessage()).I$();
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
             // but writer can be. Opening writer fixes the table mess.
-            try (TableWriter ignored = getWriter(executionContext.getCairoSecurityContext(), tableName, statement + " statement")) {
-                return getReader(executionContext.getCairoSecurityContext(), tableName);
-            } catch (EntryUnavailableException wrOpEx) {
-                // This is fine, writer is busy. Throw back origin error.
-                throw ex;
-            } catch (Throwable th) {
-                LOG.error().$("error preliminary opening writer for ").$(statement)
-                        .$(" statement [table=").$(tableName)
-                        .$(",error=").$(ex.getMessage()).I$();
-                throw ex;
-            }
+            return tryGetReaderRepairWithWriter(securityContext, tableName, ex);
+        }
+    }
+
+    private TableReader tryGetReaderRepairWithWriter(CairoSecurityContext securityContext, CharSequence tableName, RuntimeException originException) {
+        try (TableWriter ignored = getWriter(securityContext, tableName, "repair")) {
+            return getReader(securityContext, tableName);
+        } catch (EntryUnavailableException wrOpEx) {
+            // This is fine, writer is busy. Throw back origin error.
+            throw originException;
+        } catch (Throwable th) {
+            LOG.error().$("error preliminary opening writer for [table=").$(tableName)
+                    .$(",error=").$(th.getMessage()).I$();
+            throw originException;
         }
     }
 
@@ -514,7 +552,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         if (lockedReason == OWNERSHIP_REASON_NONE) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
-                LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).$(']').$();
+                LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
                 return null;
             }
             writerPool.unlock(tableName);
@@ -549,6 +587,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         useful |= readerPool.releaseInactive();
         useful |= tableRegistry.releaseInactive();
         return useful;
+    }
+
+    @TestOnly
+    public void clearPools() {
+        sqlCompilerPool.releaseInactive();
     }
 
     public void remove(
@@ -656,13 +699,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         otherPath.of(root).concat(dstFileName).$();
 
         if (ff.exists(otherPath)) {
-            LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).$("']").$();
+            LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).I$();
             throw CairoException.nonCritical().put("Rename target exists");
         }
 
         if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
             int error = ff.errno();
-            LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
+            LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).I$();
             throw CairoException.critical(error).put("Rename failed");
         }
     }

@@ -36,17 +36,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 public class TxnCatalog implements Closeable {
-    private static final int MEMORY_TAG = MemoryTag.MMAP_SEQUENCER;
-    private final FilesFacade ff;
-    private final MemoryCMARW txnMem = Vm.getCMARWInstance();
-    private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
-    private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
     public final static int HEADER_RESERVED = 8 * Long.BYTES;
     public final static int RECORD_RESERVED = 11 * Integer.BYTES;
     public static final long MAX_TXN_OFFSET = Integer.BYTES;
@@ -57,14 +51,19 @@ public class TxnCatalog implements Closeable {
     public static final int METADATA_WALID = -1;
     public static final int DROP_TABLE_WALID = -2;
     public static final int RENAME_TABLE_WALID = -3;
-    private long maxTxn;
+    private static final int MEMORY_TAG = MemoryTag.MMAP_SEQUENCER;
+    private final FilesFacade ff;
+    private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
     private final Path rootPath = new Path();
+    private long maxTxn;
 
     TxnCatalog(FilesFacade ff) {
         this.ff = ff;
     }
 
-    public long addMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance) {
+    public long beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance) {
         assert newStructureVersion == txnMetaMemIndex.getAppendOffset() / Long.BYTES;
 
         txnMem.putInt(METADATA_WALID);
@@ -74,17 +73,11 @@ public class TxnCatalog implements Closeable {
         txnMetaMem.putInt(0);
         long varMemBegin = txnMetaMem.getAppendOffset();
         serializer.toSink(instance, txnMetaMem);
-        int len = (int)(txnMetaMem.getAppendOffset() - varMemBegin);
+        int len = (int) (txnMetaMem.getAppendOffset() - varMemBegin);
         txnMetaMem.putInt(varMemBegin - Integer.BYTES, len);
         txnMetaMemIndex.putLong(varMemBegin + len);
 
-        Unsafe.getUnsafe().storeFence();
-        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);
-        txnMem.putLong(MAX_STRUCTURE_VERSION_OFFSET, newStructureVersion);
-        txnMem.putLong(TXN_META_SIZE_OFFSET, varMemBegin + len);
-
-        // Transactions are 1 based here
-        return maxTxn;
+        return varMemBegin + len;
     }
 
     @Override
@@ -93,6 +86,16 @@ public class TxnCatalog implements Closeable {
         Misc.free(txnMetaMem);
         Misc.free(txnMetaMemIndex);
         Misc.free(rootPath);
+    }
+
+    public long endMetadataChangeEntry(long newStructureVersion, long offset) {
+        Unsafe.getUnsafe().storeFence();
+        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);
+        txnMem.putLong(MAX_STRUCTURE_VERSION_OFFSET, newStructureVersion);
+        txnMem.putLong(TXN_META_SIZE_OFFSET, offset);
+
+        // Transactions are 1 based here
+        return maxTxn;
     }
 
     @NotNull
@@ -111,6 +114,20 @@ public class TxnCatalog implements Closeable {
         return cursor;
     }
 
+    private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+        int rootLen = path.length();
+        path.concat(fileName).$();
+        try {
+            long fd = ff.openRO(path);
+            if (fd > -1) {
+                return fd;
+            }
+            throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     long addEntry(int walId, long segmentId, long segmentTxn) {
         txnMem.putInt(walId);
         txnMem.putLong(segmentId);
@@ -123,10 +140,6 @@ public class TxnCatalog implements Closeable {
         return maxTxn;
     }
 
-    long lastTxn() {
-        return maxTxn;
-    }
-
     SequencerCursor getCursor(long txnLo) {
         final Path path = Path.PATH.get().of(rootPath);
         final int rootLen = path.length();
@@ -136,6 +149,10 @@ public class TxnCatalog implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    long lastTxn() {
+        return maxTxn;
     }
 
     void open(Path path) {
@@ -167,20 +184,6 @@ public class TxnCatalog implements Closeable {
         }
     }
 
-    private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-        int rootLen = path.length();
-        path.concat(fileName).$();
-        try {
-            long fd = ff.openRO(path);
-            if (fd > -1) {
-                return fd;
-            }
-            throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private static class SequencerCursorImpl implements SequencerCursor {
         private static final long WAL_ID_OFFSET = 0;
         private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
@@ -206,7 +209,7 @@ public class TxnCatalog implements Closeable {
         @Override
         public void close() {
             if (fd > -1) {
-               ff.close(fd);
+                ff.close(fd);
             }
             ff.munmap(address, getMappedLen(), MEMORY_TAG);
         }
@@ -271,11 +274,6 @@ public class TxnCatalog implements Closeable {
         private FilesFacade ff;
 
         @Override
-        public void close() throws IOException {
-            reset();
-        }
-
-        @Override
         public SequencerStructureChangeCursor empty() {
             txnMetaOffset = txnMetaOffsetHi = 0;
             return this;
@@ -296,6 +294,15 @@ public class TxnCatalog implements Closeable {
             serializer.fromSink(alterOperation, txnMetaMem, txnMetaOffset);
             txnMetaOffset += recordSize;
             return alterOperation;
+        }
+
+        public void reset() {
+            if (txnMetaAddress > 0) {
+                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MEMORY_TAG);
+                txnMetaAddress = 0;
+            }
+            txnMetaOffset = 0;
+            txnMetaOffsetHi = 0;
         }
 
         public void of(
@@ -337,16 +344,7 @@ public class TxnCatalog implements Closeable {
                     ff.close(fdTxnMetaIndex);
                 }
             }
-            throw CairoException.critical(0).put("expected to read table structure changes but there are no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');
-        }
-
-        public void reset() {
-            if (txnMetaAddress > 0) {
-                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MEMORY_TAG);
-                txnMetaAddress = 0;
-            }
-            txnMetaOffset = 0;
-            txnMetaOffsetHi = 0;
+            throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [fromStructureVersion=").put(fromStructureVersion).put(']');
         }
     }
 }

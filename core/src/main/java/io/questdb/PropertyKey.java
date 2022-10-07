@@ -64,7 +64,6 @@ public enum PropertyKey {
     CAIRO_FAST_MAP_LOAD_FACTOR("cairo.fast.map.load.factor"),
     CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY("cairo.sql.join.context.pool.capacity"),
     CAIRO_LEXER_POOL_CAPACITY("cairo.lexer.pool.capacity"),
-    CAIRO_WRITER_APPEND_PAGE_SIZE("cairo.writer.append.page.size"),
     CAIRO_SQL_MAP_KEY_CAPACITY("cairo.sql.map.key.capacity"),
     CAIRO_SQL_SMALL_MAP_KEY_CAPACITY("cairo.sql.small.map.key.capacity"),
     CAIRO_SQL_MAP_PAGE_SIZE("cairo.sql.map.page.size"),
@@ -89,6 +88,7 @@ public enum PropertyKey {
     CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY("cairo.page.frame.rowid.list.capacity"),
     CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY("cairo.page.frame.column.list.capacity"),
     CAIRO_SQL_PARALLEL_FILTER_ENABLED("cairo.sql.parallel.filter.enabled"),
+    CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED("cairo.sql.parallel.filter.pretouch.enabled"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
@@ -124,7 +124,6 @@ public enum PropertyKey {
     CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD("cairo.sql.jit.page.address.cache.threshold"),
     CAIRO_SQL_JIT_DEBUG_ENABLED("cairo.sql.jit.debug.enabled"),
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),
-
     CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
     CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),
     CAIRO_SQL_COPY_BUFFER_SIZE("cairo.sql.copy.buffer.size"),
@@ -361,13 +360,18 @@ public enum PropertyKey {
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT("cairo.sql.column.purge.retry.delay.limit"),
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY("cairo.sql.column.purge.retry.delay"),
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER("cairo.sql.column.purge.retry.delay.multiplier"),
-    CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS("cairo.sql.column.purge.retry.limit.days"),
     CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix"),
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
-    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default");
+    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
+    WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
+    WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
+    WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
+    WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
+    WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
+    CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

@@ -55,45 +55,56 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return -1;
 }
 
-int set_file_pos(HANDLE fd, jlong offset) {
+
+jboolean set_file_pos(HANDLE fd, jlong offset) {
     if (offset < 0) {
         return 1;
     }
-    long highPos = (long) (offset >> 32);
-    int r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    LONG highPos = (LONG) (offset >> 32);
+    DWORD r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
     if (r == INVALID_SET_FILE_POINTER) {
         SaveLastError();
+        return FALSE;
     }
-    return r;
+    return TRUE;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
         (JNIEnv *e, jclass cls, jlong fdFrom, jlong fdTo, jlong fromOffset, jlong length) {
 
-    char buf[4096];
+    char buf[16*4096];
     DWORD read_sz;
-    DWORD rd_off = fromOffset;
-    DWORD wrt_off = 0;
+    LONG64 rd_off = fromOffset;
+    LONG64 wrt_off = 0;
+    LONG64 hi;
 
-    if (length < 0) {
-        length = SIZE_MAX;
+    if ( length < 0 ){
+        hi = _I64_MAX;
+    } else {
+        hi = fromOffset + length;
     }
-    DWORD hi = fromOffset + length;
-    set_file_pos((HANDLE) fdFrom, fromOffset);
 
-    while (ReadFile((HANDLE) fdFrom, &buf, sizeof buf, &read_sz, NULL)) {
+    if (!set_file_pos((HANDLE) fdFrom, fromOffset)){
+        return -1;
+    }
+
+    while (ReadFile((HANDLE) fdFrom, &buf, sizeof buf, &read_sz, NULL) &&
+           read_sz > 0) {
         char *out_ptr = buf;
         if (rd_off + read_sz > hi) {
             read_sz = hi - rd_off;
         }
 
-        DWORD wrtn;
+        DWORD write_sz;
         do {
-            WriteFile((HANDLE) fdTo, &buf, read_sz, &wrtn, NULL);
-            if (wrtn >= 0) {
-                read_sz -= wrtn;
-                out_ptr += wrtn;
-                wrt_off += wrtn;
+            if (!WriteFile((HANDLE) fdTo, &buf, read_sz, &write_sz, NULL)){
+                SaveLastError();
+                return rd_off - fromOffset;
+            }
+            if (write_sz >= 0) {
+                read_sz -= write_sz;
+                out_ptr += write_sz;
+                wrt_off += write_sz;
             } else if (errno != EINTR) {
                 break;
             }
@@ -105,13 +116,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
             return -1;
         }
 
-        rd_off += wrtn;
+        rd_off += write_sz;
         if (rd_off >= hi) {
             /* Success! */
             break;
         }
     }
 
+    SaveLastError();
     return rd_off - fromOffset;
 }
 
@@ -147,11 +159,15 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
          jlong len,
          jlong offset) {
     DWORD count;
+    if (len < 0 || offset < 0) {
+        // To align with other platforms
+        return -1;
+    }
     if (set_file_pos((HANDLE) fd, offset) && WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
@@ -160,13 +176,19 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
          jlong address,
          jlong len,
          jlong offset) {
+
+    if (len < 0 || offset < 0) {
+        // To align with other platforms
+        return -1;
+    }
+
     DWORD count;
     if (set_file_pos((HANDLE) fd, offset) &&
         ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
@@ -358,7 +380,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
     }
 
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {
@@ -433,7 +455,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
     }
 
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
@@ -672,7 +694,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
     }
 
     SaveLastError();
-    return 1;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW

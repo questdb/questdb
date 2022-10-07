@@ -97,6 +97,8 @@ DECLARE_DISPATCHER_TYPE(flatten_index, index_t *index, int64_t count);
 DECLARE_DISPATCHER_TYPE(merge_shuffle_int64, const int64_t *src1, const int64_t *src2, int64_t *dest,
                         const index_t *index, const int64_t count);
 
+DECLARE_DISPATCHER_TYPE(re_shuffle_128bit, const __int128 *src, __int128 *dest, const index_t *index, const int64_t count);
+
 DECLARE_DISPATCHER_TYPE(re_shuffle_256bit, const long_256bit *src, long_256bit *dest, const index_t *index, const int64_t count);
 
 DECLARE_DISPATCHER_TYPE(re_shuffle_int64, const int64_t *src, int64_t *dest, const index_t *index, const int64_t count);

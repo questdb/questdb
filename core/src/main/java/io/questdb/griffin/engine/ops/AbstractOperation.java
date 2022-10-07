@@ -26,12 +26,12 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.QuietClosable;
+import io.questdb.std.QuietCloseable;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class AbstractOperation implements AsyncWriterCommand, QuietClosable {
+public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
 
     private int cmdType;
@@ -42,7 +42,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     String tableName;
     int tableNamePosition;
-    @Nullable String sqlStatement;
+    @Nullable CharSequence sqlStatement;
     @Nullable SqlExecutionContext sqlExecutionContext;
 
     void init(
@@ -117,11 +117,15 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.sqlExecutionContext = sqlExecutionContext;
     }
 
-    public @Nullable String getSqlStatement() {
+    public @Nullable SqlExecutionContext getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
+
+    public @Nullable CharSequence getSqlStatement() {
         return sqlStatement;
     }
 
-    public void withSqlStatement(String sqlStatement) {
+    public void withSqlStatement(CharSequence sqlStatement) {
         this.sqlStatement = sqlStatement;
     }
 

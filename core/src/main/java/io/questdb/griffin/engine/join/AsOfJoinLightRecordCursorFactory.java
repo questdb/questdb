@@ -142,7 +142,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
@@ -207,7 +206,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!isOpen) {
                 isOpen = true;
-                joinKeyMap.reallocate();
+                joinKeyMap.reopen();
             }
             slaveTimestamp = Long.MIN_VALUE;
             lastSlaveRowID = Long.MIN_VALUE;

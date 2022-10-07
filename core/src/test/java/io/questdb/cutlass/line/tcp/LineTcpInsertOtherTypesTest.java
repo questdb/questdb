@@ -669,10 +669,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "1.7976931348623157E308\t1970-01-01T00:00:02.000000Z\n" +
                         "0.425667788123\t1970-01-01T00:00:03.000000Z\n" +
                         "3.141592653589793\t1970-01-01T00:00:04.000000Z\n" +
-                        "1.7976931348623157E308\t1970-01-01T00:00:05.000000Z\n" +
-                        "1.7976931348623153E308\t1970-01-01T00:00:06.000000Z\n" +
-                        "Infinity\t1970-01-01T00:00:07.000000Z\n" +
-                        "-Infinity\t1970-01-01T00:00:08.000000Z\n" +
+                        "1.7976931348623155E308\t1970-01-01T00:00:05.000000Z\n" +
+                        "1.7976931348623151E308\t1970-01-01T00:00:06.000000Z\n" +
                         "1.35E-12\t1970-01-01T00:00:09.000000Z\n" +
                         "1.35E-12\t1970-01-01T00:00:10.000000Z\n" +
                         "1.35E12\t1970-01-01T00:00:11.000000Z\n" +
@@ -692,8 +690,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "3.14159265358979323846", // valid
                         "1.7976931348623156E308", // valid
                         "1.7976931348623152E308", // valid
-                        "1.7976931348623152E312", // valid Infinity
-                        "-1.7976931348623152E312", // valid -Infinity
+                        "1.7976931348623152E312", // invalid - overflow
+                        "-1.7976931348623152E312", // invalid - overflow
                         "1.35E-12", // valid
                         "1.35e-12", // valid
                         "1.35e12", // valid
@@ -715,7 +713,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     @Test
     public void testInsertDoubleTableDoesNotExist() throws Exception {
         assertTypeNoTable("value\ttimestamp\n" +
-                        "1.7976931348623157E308\t1970-01-01T00:00:01.000000Z\n" +
+                        "1.7976931348623155E308\t1970-01-01T00:00:01.000000Z\n" +
                         "0.425667788123\t1970-01-01T00:00:02.000000Z\n" +
                         "3.141592653589793\t1970-01-01T00:00:04.000000Z\n" +
                         "1.35E-12\t1970-01-01T00:00:05.000000Z\n" +
@@ -724,9 +722,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "1.35E12\t1970-01-01T00:00:09.000000Z\n" +
                         "-3.5\t1970-01-01T00:00:10.000000Z\n" +
                         "3.141592653589793\t1970-01-01T00:00:11.000000Z\n" +
-                        "1.7976931348623153E308\t1970-01-01T00:00:12.000000Z\n" +
-                        "Infinity\t1970-01-01T00:00:13.000000Z\n" +
-                        "-Infinity\t1970-01-01T00:00:14.000000Z\n" +
+                        "1.7976931348623151E308\t1970-01-01T00:00:12.000000Z\n" +
                         "-3.01E-43\t1970-01-01T00:00:15.000000Z\n" +
                         "123.0\t1970-01-01T00:00:16.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
@@ -747,8 +743,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-0.0035e3", // valid
                         "3.14159265358979323846", // valid
                         "1.7976931348623152E308", // valid
-                        "1.7976931348623152E312", // valid Infinity
-                        "-1.7976931348623152E312", // valid -Infinity
+                        "1.7976931348623152E312", // invalid - overflow
+                        "-1.7976931348623152E312", // invalid - overflow
                         "-3.01e-43", // valid
                         "123", // valid
                         "-123", // valid
@@ -763,7 +759,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInsertFloatTableExists() throws Exception {
-        assertType(ColumnType.FLOAT,
+        assertType(
+                ColumnType.FLOAT,
                 "value\ttimestamp\n" +
                         "0.4257\t1970-01-01T00:00:01.000000Z\n" +
                         "3.1416\t1970-01-01T00:00:02.000000Z\n" +
@@ -806,7 +803,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "true", // valid, true casts down to 1.0
                         "false", // valid, true casts down to 0.0
                 },
-                false);
+                false
+        );
     }
 
     @Test

@@ -87,7 +87,16 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void fadvise(long fd, long offset, long len, int advise) {
-        Files.fadvise(fd, offset, len, advise);
+        if (advise > -1) {
+            Files.fadvise(fd, offset, len, advise);
+        }
+    }
+
+    @Override
+    public void madvise(long address, long len, int advise) {
+        if (advise > -1) {
+            Files.madvise(address, len, advise);
+        }
     }
 
     @Override
@@ -220,11 +229,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         return Files.mmap(fd, len, offset, flags, memoryTag);
-    }
-
-    @Override
-    public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
-        return Files.mmap(fd, len, flags, mode, memoryTag);
     }
 
     @Override

@@ -24,7 +24,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.std.Os;
 import org.junit.Test;
 
 /**
@@ -260,7 +259,6 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByDescWithStringFilter() throws Exception {
         testOrderByWithFilter("string", ORDER_DESC);
-        Os.sleep(1000);
     }
 
     @Test
@@ -479,19 +477,19 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 //should create 3+ partitions with randomly ordered x values
                 ("insert into test " +
                         "select #FUNC#,\n" +
-                        "    timestamp_sequence(to_timestamp('2022-01-01'), 100000000000)\n" +
+                        "    timestamp_sequence('2022-01-01'::timestamp, 100000000000)\n" +
                         "from long_sequence(100)\n" +
                         "union all \n" +
-                        "select cast(1 as #TYPE#), rnd_timestamp('2022-01-01', '2022-01-03' + 33*100000000000 , 0)\n" +
+                        "select cast(1 as #TYPE#), rnd_timestamp('2022-01-01'::timestamp, '2022-01-03'::timestamp + 33*100000000000 , 0)\n" +
                         "union all  " +
-                        "select cast(2 as #TYPE#), rnd_timestamp('2022-01-01' + 34*100000000000, '2022-01-03' + 66*100000000000 , 0)\n" +
+                        "select cast(2 as #TYPE#), rnd_timestamp('2022-01-01'::timestamp + 34*100000000000, '2022-01-03'::timestamp + 66*100000000000 , 0)\n" +
                         "union all " +
-                        "select cast(3 as #TYPE#), rnd_timestamp('2022-01-01' + 67*100000000000, '2022-01-03' + 100*100000000000 , 0)\n")
+                        "select cast(3 as #TYPE#), rnd_timestamp('2022-01-01'::timestamp + 67*100000000000, '2022-01-03'::timestamp + 100*100000000000 , 0)\n")
                         .replace("#FUNC#", function)
                         .replace("#TYPE#", type));
         //add new column and create more partitions to trigger jit col tops case
         assertMemoryLeak(() -> compile("alter table test add column y double;"));
-        runQueries(("insert into test select #FUNC#, timestamp_sequence(to_timestamp('2022-01-01')+100*100000000000, 100000000000), rnd_double() " +
+        runQueries(("insert into test select #FUNC#, timestamp_sequence('2022-01-01'::timestamp + 100*100000000000, 100000000000), rnd_double() " +
                 "from long_sequence(100) ")
                 .replace("#FUNC#", function)
                 .replace("#TYPE#", type));

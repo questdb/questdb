@@ -171,10 +171,11 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
     void renameColumn(CharSequence name, CharSequence newName) {
         final int columnIndex = columnNameIndexMap.removeEntry(name);
-        columnNameIndexMap.put(newName, columnIndex);
+        String newNameStr = Chars.toString(newName);
+        columnNameIndexMap.put(newNameStr, columnIndex);
 
         TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
-        oldColumnMetadata.setName(Chars.toString(newName));
+        oldColumnMetadata.setName(newNameStr);
     }
 
     void setTimestampIndex(int index) {

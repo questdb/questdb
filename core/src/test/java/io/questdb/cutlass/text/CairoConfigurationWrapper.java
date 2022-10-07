@@ -133,11 +133,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnPurgeRetryLimitDays() {
-        return conf.getColumnPurgeRetryLimitDays();
-    }
-
-    @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return conf.getColumnPurgeTaskPoolCapacity();
     }
@@ -230,6 +225,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return conf.getWalEnabledDefault();
+    }
+
+    @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return conf.getWalTxnNotificationQueueCapacity();
     }
 
     @Override
@@ -800,6 +800,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterEnabled() {
         return conf.isSqlParallelFilterEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelFilterPreTouchEnabled() {
+        return conf.isSqlParallelFilterPreTouchEnabled();
     }
 
     @Override

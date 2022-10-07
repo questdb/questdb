@@ -831,14 +831,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         int len = configuration.getSqlCopyBufferSize();
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_IMPORT);
 
-        try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
+        try (TextLexerWrapper tlw = new TextLexerWrapper(configuration.getTextConfiguration())) {
             long n = ff.read(fd, buf, len, 0);
             if (n > 0) {
                 if (columnDelimiter < 0) {
                     columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
                 }
 
-                lexer.of(columnDelimiter);
+                AbstractTextLexer lexer = tlw.getLexer(columnDelimiter);
                 lexer.setSkipLinesWithExtraValues(false);
 
                 final ObjList<CharSequence> names = new ObjList<>();

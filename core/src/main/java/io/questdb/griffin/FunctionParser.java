@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -381,7 +382,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         try {
             LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
-        } catch (SqlException e) {
+        } catch (SqlException | ImplicitCastException e) {
             Misc.freeObjList(args);
             throw e;
         } catch (Throwable e) {
@@ -400,7 +401,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private long convertToTimestamp(CharSequence str, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialDate(str);
+            return IntervalUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
@@ -744,7 +745,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     AbstractUnaryTimestampFunction castFn;
                     if (argTypeTag == ColumnType.STRING) {
-                        castFn = new CastStrToTimestampFunctionFactory.Func(position, arg);
+                        castFn = new CastStrToTimestampFunctionFactory.Func(arg);
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
                     }
@@ -762,7 +763,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.TIMESTAMP) {
-                    return new CastStrToTimestampFunctionFactory.Func(position, function);
+                    return new CastStrToTimestampFunctionFactory.Func(function);
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);

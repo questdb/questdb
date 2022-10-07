@@ -25,7 +25,6 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -33,7 +32,6 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -48,13 +46,17 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
+import static org.hamcrest.Matchers.*;
+
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.sql.Timestamp;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -67,7 +69,6 @@ public final class TestUtils {
     private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
-    private static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     private TestUtils() {
     }
@@ -94,17 +95,17 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
-        long rc = connectAddrInfo(fd, sockAddrInfo);
-        if (rc != 0) {
-            Assert.fail("could not connect, errno=" + Os.errno());
-        }
-    }
-
     public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
         long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
+        }
+    }
+
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+        long rc = connectAddrInfo(fd, sockAddrInfo);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
@@ -132,8 +133,9 @@ public final class TestUtils {
             rowIndex++;
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
+                int columnType = 0;
                 try {
-                    int columnType = metadataExpected.getColumnType(i);
+                    columnType = metadataExpected.getColumnType(i);
                     int tagType = ColumnType.tagOf(columnType);
                     switch (tagType) {
                         case ColumnType.DATE:
@@ -192,13 +194,17 @@ public final class TestUtils {
                         case ColumnType.LONG256:
                             assertEquals(r.getLong256A(i), l.getLong256A(i));
                             break;
+                        case ColumnType.LONG128:
+                            Assert.assertEquals(r.getLong128Hi(i), l.getLong128Hi(i));
+                            Assert.assertEquals(r.getLong128Lo(i), l.getLong128Lo(i));
+                            break;
                         default:
                             // Unknown record type.
                             assert false;
                             break;
                     }
                 } catch (AssertionError e) {
-                    throw new AssertionError(String.format("Row %d column %s %s", rowIndex, columnName, e.getMessage()));
+                    throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
                 }
             }
         }
@@ -460,6 +466,7 @@ public final class TestUtils {
 
         Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
+        String fileDebugInfo = Files.getOpenFdDebugInfo();
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
         int addrInfoCount = Net.getAllocatedAddrInfoCount();
@@ -471,7 +478,7 @@ public final class TestUtils {
         runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
-            Assert.assertEquals("file descriptors " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+            Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
 
         // Checks that the same tag used for allocation and freeing native memory
@@ -667,8 +674,14 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
 
         StringBuilder sql = new StringBuilder();
         StringBuilder indexes = new StringBuilder();
@@ -740,23 +753,147 @@ public final class TestUtils {
         return sql.toString();
     }
 
-    public static void insertFromSelectIntoTable(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException, SqlException {
-        compiler.compile(
-                insertFromSelectPopulateTableStmt(
-                        tableModel,
-                        totalRows,
-                        startDate,
-                        partitionCount
-                ),
-                sqlExecutionContext
-        );
+    public static void createTestPath(CharSequence root) {
+        try (Path path = new Path().of(root).$()) {
+            if (Files.exists(path)) {
+                return;
+            }
+            Files.mkdirs(path.of(root).slash$(), 509);
+        }
+    }
+
+    public static Timestamp createTimestamp(long epochMicros) {
+        // constructor requires epoch millis
+        Timestamp ts = new Timestamp(epochMicros / 1000);
+        ts.setNanos((int) ((epochMicros % 1_000_000) * 1000));
+        return ts;
+    }
+
+    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
+        }
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration,
+            Metrics metrics,
+            Log log
+    ) throws Exception {
+        final int workerCount = pool != null ? pool.getWorkerCount() : 1;
+        try (
+                final CairoEngine engine = new CairoEngine(configuration, metrics, 2);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+        ) {
+            try {
+                if (pool != null) {
+                    setupWorkerPool(pool, engine);
+                    pool.start(log);
+                }
+
+                runnable.run(engine, compiler, sqlExecutionContext);
+            } finally {
+                if (pool != null) {
+                    pool.halt();
+                }
+            }
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+        }
+    }
+
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration,
+            Log log
+    ) throws Exception {
+        execute(pool, runner, configuration, Metrics.disabled(), log);
+    }
+
+    @NotNull
+    public static Rnd generateRandom() {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        return new Rnd(s0, s1);
+    }
+
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+        return new Rnd(s0, s1);
+    }
+
+    public static String getCsvRoot() {
+        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
+        try {
+            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
+            return new File(rootSource.toURI()).getParent();
+        } catch (URISyntaxException e) {
+            throw new AssertionError("missing test-import.csv", e);
+        }
+    }
+
+    public static int getJavaVersion() {
+        String version = System.getProperty("java.version");
+        if (version.startsWith("1.")) {
+            version = version.substring(2, 3);
+        } else {
+            int dot = version.indexOf(".");
+            if (dot != -1) {
+                version = version.substring(0, dot);
+            }
+        }
+        return Integer.parseInt(version);
+    }
+
+    @NotNull
+    public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
+        return new NetworkFacadeImpl() {
+            final AtomicInteger totalSent = new AtomicInteger();
+
+            @Override
+            public int send(long fd, long buffer, int bufferLen) {
+                if (startDelayDelayAfter == 0) {
+                    return super.send(fd, buffer, bufferLen);
+                }
+
+                int sentNow = totalSent.get();
+                if (bufferLen > 0) {
+                    if (sentNow >= startDelayDelayAfter) {
+                        totalSent.set(0);
+                        return 0;
+                    }
+
+                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    totalSent.addAndGet(result);
+                    return result;
+                }
+                return 0;
+            }
+        };
+    }
+
+    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
+        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
+        Assert.assertNotNull(compiledQuery.getInsertOperation());
+        final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
     }
 
     public static String insertFromSelectPopulateTableStmt(
@@ -765,7 +902,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
 
         StringBuilder insertFromSelect = new StringBuilder();
@@ -822,118 +959,6 @@ public final class TestUtils {
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
         insertFromSelect.append(")" + Misc.EOL);
         return insertFromSelect.toString();
-    }
-
-    public static void createTestPath(CharSequence root) {
-        try (Path path = new Path().of(root).$()) {
-            if (Files.exists(path)) {
-                return;
-            }
-            Files.mkdirs(path.of(root).slash$(), 509);
-        }
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool,
-            CustomisableRunnable runnable,
-            CairoConfiguration configuration,
-            Metrics metrics
-    ) throws Exception {
-        final int workerCount = pool != null ? pool.getWorkerCount() : 1;
-        try (
-                final CairoEngine engine = new CairoEngine(configuration, metrics);
-                final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
-        ) {
-            try {
-                if (pool != null) {
-                    pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine, null, null);
-                    pool.start(LOG);
-                }
-
-                runnable.run(engine, compiler, sqlExecutionContext);
-            } finally {
-                if (pool != null) {
-                    pool.halt();
-                }
-            }
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-        }
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool,
-            CustomisableRunnable runner,
-            CairoConfiguration configuration
-    ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled());
-    }
-
-    @NotNull
-    public static Rnd generateRandom() {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        return new Rnd(s0, s1);
-    }
-
-    @NotNull
-    public static Rnd generateRandom(Log log) {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
-        return new Rnd(s0, s1);
-    }
-
-    public static int getJavaVersion() {
-        String version = System.getProperty("java.version");
-        if (version.startsWith("1.")) {
-            version = version.substring(2, 3);
-        } else {
-            int dot = version.indexOf(".");
-            if (dot != -1) {
-                version = version.substring(0, dot);
-            }
-        }
-        return Integer.parseInt(version);
-    }
-
-    @NotNull
-    public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
-        return new NetworkFacadeImpl() {
-            final AtomicInteger totalSent = new AtomicInteger();
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (startDelayDelayAfter == 0) {
-                    return super.send(fd, buffer, bufferLen);
-                }
-
-                int sentNow = totalSent.get();
-                if (bufferLen > 0) {
-                    if (sentNow >= startDelayDelayAfter) {
-                        totalSent.set(0);
-                        return 0;
-                    }
-
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
-                    totalSent.addAndGet(result);
-                    return result;
-                }
-                return 0;
-            }
-        };
-    }
-
-    public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
-        CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
-        Assert.assertNotNull(compiledQuery.getInsertOperation());
-        final InsertOperation insertOperation = compiledQuery.getInsertOperation();
-        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
@@ -1070,7 +1095,36 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+    }
+
+    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
+        WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return new int[1];
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+        };
+        WorkerPool pool = new WorkerPool(config, Metrics.disabled().health());
+        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
+        try {
+            pool.assign(processingJob);
+            pool.freeOnExit(processingJob);
+            pool.start(null);
+            task.run();
+        } finally {
+            pool.halt();
+        }
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -1144,47 +1198,5 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
-    }
-
-    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            while (processingJob.run(0)) {
-                Os.pause();
-            }
-        }
-    }
-
-    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
-        WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
-        WorkerPool pool = new WorkerPool(config);
-        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
-        try {
-            pool.assign(processingJob);
-            pool.freeOnHalt(processingJob);
-            pool.start(null);
-            task.run();
-        } finally {
-            pool.halt();
-        }
-    }
-
-    public static String getCsvRoot() {
-        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
-        try {
-            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
-            return new File(rootSource.toURI()).getParent();
-        } catch (URISyntaxException e) {
-            throw new AssertionError("missing test-import.csv", e);
-        }
     }
 }

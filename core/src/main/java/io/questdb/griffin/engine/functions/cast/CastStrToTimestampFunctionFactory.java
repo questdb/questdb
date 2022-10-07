@@ -44,11 +44,11 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
     public static class Func extends AbstractUnaryTimestampFunction {
-        public Func(int position, Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 
@@ -56,7 +56,7 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final CharSequence value = arg.getStr(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialDate(value);
+                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }

@@ -56,7 +56,7 @@ public class CastSymbolToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final CharSequence value = arg.getSymbol(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialDate(value);
+                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }

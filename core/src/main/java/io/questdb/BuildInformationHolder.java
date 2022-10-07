@@ -47,7 +47,6 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
         this(UNKNOWN, UNKNOWN, UNKNOWN);
     }
 
-    @TestOnly
     public BuildInformationHolder(CharSequence questDbVersion, CharSequence commitHash, CharSequence jdkVersion) {
         this.questDbVersion = questDbVersion;
         this.commitHash = commitHash;

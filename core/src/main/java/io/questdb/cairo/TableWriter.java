@@ -36,13 +36,11 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
-import io.questdb.griffin.SqlToOperation;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -68,9 +66,9 @@ import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterFrontend, TableWriterBackend, Closeable {
@@ -1267,7 +1265,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     public boolean processWalBlock(
-            Path walPath,
+            @Transient Path walPath,
             int timestampIndex,
             boolean ordered,
             long rowLo,
@@ -1318,13 +1316,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             } finally {
                 finishO3Append(0L);
                 o3Columns = o3MemColumns;
-                for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                    MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                    if (mappedColumnMem != null) {
-                        Misc.free(mappedColumnMem);
-                        walColumnMemoryPool.push(mappedColumnMem);
-                    }
-                }
+                closeWalColumns();
             }
 
             return finishO3Commit(partitionTimestampHiLimit);
@@ -1333,7 +1325,17 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    public void processWalCommit(Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
+    private void closeWalColumns() {
+        for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
+            MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+            if (mappedColumnMem != null) {
+                Misc.free(mappedColumnMem);
+                walColumnMemoryPool.push(mappedColumnMem);
+            }
+        }
+    }
+
+    public void processWalCommit(@Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
         final WalEventCursor walEventCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
         final byte walTxnType = walEventCursor.getType();
         switch (walTxnType) {
@@ -1353,6 +1355,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                 processWalSql(sqlInfo, sqlToOperation);
                 break;
+            case TRUNCATE:
+                truncate();
+                break;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
         }
@@ -1361,6 +1366,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private void processWalSql(WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
+        sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
         try {
             switch(cmdType) {
                 case CMD_ALTER_TABLE:
@@ -1379,7 +1385,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     public void processWalData(
-            Path walPath,
+            @Transient Path walPath,
             boolean inOrder,
             long rowLo,
             long rowHi,
@@ -1388,11 +1394,16 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             SymbolMapDiffCursor mapDiffCursor
     ) {
         if (inTransaction()) {
+            // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
+            // Set the writer to distressed state and throw exception so that writer is re-created.
+            distressed = true;
             throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
 
         txWriter.beginPartitionSizeUpdate();
-        LOG.debug().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi).I$();
+        LOG.debug().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi)
+                .$(", tsMin=").$ts(o3TimestampMin).$(" , txMax=").$ts(o3TimestampMax)
+                .I$();
         if (rowAction == ROW_ACTION_OPEN_PARTITION && txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
             // table truncated, open partition file.
             openFirstPartition(o3TimestampMin);
@@ -1429,6 +1440,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             } else if (seq == -1) {
                 throw CairoException.nonCritical().put("could not publish, command queue is full [table=").put(tableName).put(']');
             }
+            Os.pause();
         }
     }
 
@@ -1875,7 +1887,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
      * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
-    public final void truncate() {
+    @Override
+    public final long truncate() {
         rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
@@ -1884,7 +1897,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         if (size() == 0) {
-            return;
+            return -1;
         }
 
         // this is a crude block to test things for now
@@ -1931,6 +1944,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
 
         LOG.info().$("truncated [name=").$(tableName).I$();
+        return txWriter.getTxn();
     }
 
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
@@ -2531,6 +2545,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
             openFirstPartition(this.txWriter.getMaxTimestamp());
             if (partitioned) {
+                partitionTimestampHi = partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) - 1;
                 rowAction = ROW_ACTION_OPEN_PARTITION;
                 timestampSetter = appendTimestampSetter;
             } else {
@@ -2790,13 +2805,13 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
-    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
+    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
         final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
         symbolMap.setPos(symbolMapDiff.getSize());
 
-        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
+        // This is defensive. It validates that all the symbols used in WAL are set in SymbolMapDiff
         symbolMap.setAll(symbolMapDiff.getSize(), -1);
-        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
+        final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
         boolean identical = true;
 
         SymbolMapDiffEntry entry;
@@ -2820,7 +2835,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         Misc.free(other);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
-        Misc.free(attachMetadata);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
         Misc.free(columnVersionWriter);
@@ -2829,7 +2843,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         Misc.free(commandQueue);
         Misc.free(walEventReader);
         updateOperator = Misc.free(updateOperator);
-        dropIndexOperator = Misc.free(dropIndexOperator);
+        dropIndexOperator = null;
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -2956,7 +2970,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private void freeSymbolMapWriters() {
         if (denseSymbolMapWriters != null) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                Misc.free(denseSymbolMapWriters.getQuick(i));
+                Misc.freeIfCloseable(denseSymbolMapWriters.getQuick(i));
             }
             denseSymbolMapWriters.clear();
         }
@@ -3132,72 +3146,77 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         }
     }
 
-    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
+    private void mmapWalColumn(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
         int walPathLen = walPath.length();
         final int columnCount = metadata.getColumnCount();
 
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int type = metadata.getColumnType(columnIndex);
-            o3RowCount = rowHi - rowLo;
-            if (type > 0) {
-                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
-                if (columnIndex == timestampIndex) {
-                    sizeBitsPow2 += 1;
-                }
+        try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int type = metadata.getColumnType(columnIndex);
+                o3RowCount = rowHi - rowLo;
+                if (type > 0) {
+                    int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
+                    if (columnIndex == timestampIndex) {
+                        sizeBitsPow2 += 1;
+                    }
 
-                if (!ColumnType.isVariableLength(type)) {
-                    MemoryCMOR primary = walColumnMemoryPool.pop();
+                    if (!ColumnType.isVariableLength(type)) {
+                        MemoryCMOR primary = walColumnMemoryPool.pop();
 
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    primary.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            rowHi << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
+                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        primary.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                rowLo << sizeBitsPow2,
+                                rowHi << sizeBitsPow2,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
 
-                    walMappedColumns.add(primary);
-                    walMappedColumns.add(null);
+                        walMappedColumns.add(primary);
+                        walMappedColumns.add(null);
+                    } else {
+                        sizeBitsPow2 = 3;
+                        MemoryCMOR fixed = walColumnMemoryPool.pop();
+                        MemoryCMOR var = walColumnMemoryPool.pop();
+
+                        iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        fixed.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                rowLo << sizeBitsPow2,
+                                (rowHi + 1) << sizeBitsPow2,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
+
+                        long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
+                        long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
+                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        var.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                varOffset,
+                                varOffset + varLen,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
+
+                        walMappedColumns.add(var);
+                        walMappedColumns.add(fixed);
+                    }
                 } else {
-                    sizeBitsPow2 = 3;
-                    MemoryCMOR fixed = walColumnMemoryPool.pop();
-                    MemoryCMOR var = walColumnMemoryPool.pop();
-
-                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    fixed.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            (rowHi + 1) << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
-                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    var.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            varOffset,
-                            varOffset + varLen,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    walMappedColumns.add(var);
-                    walMappedColumns.add(fixed);
+                    walMappedColumns.add(null);
+                    walMappedColumns.add(null);
                 }
-            } else {
-                walMappedColumns.add(null);
-                walMappedColumns.add(null);
             }
+        } catch(Throwable th) {
+            closeWalColumns();
+            throw th;
         }
     }
 
@@ -3243,7 +3262,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             // to determine that 'ooTimestampLo' goes into current partition
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-            LOG.info().$("sorting o3 [table=").$(tableName).I$();
+            LOG.debug().$("sorting o3 [table=").$(tableName).I$();
             final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
             // ensure there is enough size
@@ -3305,10 +3324,11 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                         srcOooMax = 0;
                     }
                 }
-                LOG.debug().$("o3 commit lag [table=").$(tableName)
-                        .$(", lag=").$(lag)
+                LOG.info().$("o3 commit lag [table=").$(tableName)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
-                        .$(", o3max=").$ts(o3TimestampMax)
+                        .$(", o3TimestampMin=").$ts(o3TimestampMin)
+                        .$(", o3TimestampMax=").$ts(o3TimestampMax)
+                        .$(", lagUs=").$(lag)
                         .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
                         .$(", o3LagRowCount=").$(o3LagRowCount)
                         .$(", srcOooMax=").$(srcOooMax)
@@ -3335,7 +3355,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
             // reshuffle all columns according to timestamp index
             o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
-            LOG.info().$("sorted [table=").utf8(tableName).I$();
+            LOG.info()
+                    .$("sorted [table=").utf8(tableName)
+                    .$(", o3RowCount=").$(o3LagRowCount)
+                    .I$();
 
             processO3Block(o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin, o3TimestampMax, true, 0L);
         } finally {
@@ -3983,11 +4006,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 // Var size column
                 if (o3RowCount > 0) {
                     size = o3IndexMem.getLong(o3RowCount * 8);
-                    o3IndexMem.jumpTo((o3RowCount + 1) * 8);
                 } else {
                     size = 0;
-                    o3IndexMem.jumpTo(0);
                 }
+                o3IndexMem.jumpTo((o3RowCount + 1) * 8);
             }
 
             o3DataMem.jumpTo(size);
@@ -4130,6 +4152,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             case 3:
                 Vect.indexReshuffle64Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
                 break;
+            case 4:
+                Vect.indexReshuffle128Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
             case 5:
                 Vect.indexReshuffle256Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
                 break;
@@ -4193,7 +4218,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts()
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_RANDOM
             );
             if (mem2 != null) {
                 mem2.of(
@@ -4202,7 +4228,8 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
                 );
             }
         } finally {
@@ -4528,13 +4555,13 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     private void processO3Block(
-            long o3LagRowCount,
+            final long o3LagRowCount,
             int timestampIndex,
             long sortedTimestampsAddr,
-            long srcOooMax,
+            final long srcOooMax,
             long o3TimestampMin,
             long o3TimestampMax,
-            boolean flattenTimestamp1,
+            boolean flattenTimestamp,
             long rowLo
     ) {
         o3ErrorCount.set(0);
@@ -4552,7 +4579,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         boolean success = true;
         int latchCount = 0;
         long srcOoo = rowLo;
-        boolean flattenTimestamp = flattenTimestamp1;
         int pCount = 0;
         try {
             // We do not know upfront which partition is going to be last because this is
@@ -4620,21 +4646,27 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                     // Final partition size after current insertions.
                     final long partitionSize = srcDataMax + srcOooBatchRowSize;
 
-                    LOG.debug().
+                    pCount++;
+
+                    LOG.info().
                             $("o3 partition task [table=").$(tableName)
                             .$(", srcOooLo=").$(srcOooLo)
                             .$(", srcOooHi=").$(srcOooHi)
                             .$(", srcOooMax=").$(srcOooMax)
+                            .$(", o3RowCount=").$(o3RowCount)
+                            .$(", o3LagRowCount=").$(o3LagRowCount)
+                            .$(", srcDataMax=").$(srcDataMax)
                             .$(", o3TimestampMin=").$ts(o3TimestampMin)
                             .$(", o3Timestamp=").$ts(o3Timestamp)
                             .$(", o3TimestampMax=").$ts(o3TimestampMax)
                             .$(", partitionTimestamp=").$ts(partitionTimestamp)
                             .$(", partitionIndex=").$(partitionIndex)
-                            .$(", srcDataMax=").$(srcDataMax)
+                            .$(", partitionSize=").$(partitionSize)
                             .$(", maxTimestamp=").$ts(maxTimestamp)
                             .$(", last=").$(last)
-                            .$(", partitionSize=").$(partitionSize)
                             .$(", append=").$(append)
+                            .$(", pCount=").$(pCount)
+                            .$(", flattenTimestamp=").$(flattenTimestamp)
                             .$(", memUsed=").$(Unsafe.getMemUsed())
                             .I$();
 
@@ -4650,7 +4682,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                         prevTransientRowCount = partitionSize;
                     }
 
-                    pCount++;
                     o3PartitionUpdRemaining.incrementAndGet();
                     final O3Basket o3Basket = o3BasketPool.next();
                     o3Basket.ensureCapacity(columnCount, indexCount);
@@ -4847,6 +4878,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         long pubCursor;
         do {
             pubCursor = messageBus.getTableWriterEventPubSeq().next();
+            if (pubCursor == -2) {
+                Os.pause();
+            }
         } while (pubCursor < -1);
 
         if (pubCursor > -1) {
@@ -4891,6 +4925,9 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         long pubCursor;
         do {
             pubCursor = messageBus.getTableWriterEventPubSeq().next();
+            if (pubCursor == -2) {
+                Os.pause();
+            }
         } while (pubCursor < -1);
 
         if (pubCursor > -1) {
@@ -5113,8 +5150,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(SymbolMapDiffCursor symbolMapDiffCursor, long rowLo, long rowHi, Path walPath) {
-        int sym = 0;
-
         ObjList<MemoryCR> o3ColumnOverrides = null;
 
         if (symbolMapDiffCursor != null) {
@@ -5124,8 +5159,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType == -ColumnType.SYMBOL) {
                     // Scroll the cursor, don't apply, symbol is deleted
-                    while (symbolMapDiff.nextEntry() != null) {
-                    }
+                    while (symbolMapDiff.nextEntry() != null);
                     continue;
                 }
 
@@ -5135,7 +5169,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                             .put(", walPath=").put(walPath)
                             .put(']');
                 }
-                boolean identical = createWalSymbolMapping(symbolMapDiff, sym++, symbolRewriteMap);
+                boolean identical = createWalSymbolMapping(symbolMapDiff, columnIndex, symbolRewriteMap);
 
                 if (!identical) {
                     MemoryCR o3SymbolColumn = o3Columns.getQuick(getPrimaryColumnIndex(columnIndex));
@@ -5165,6 +5199,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                         long offset = rowId << 2;
 
                         int symKey = o3SymbolColumn.getInt(offset);
+                        assert (symKey >= 0 || symKey == SymbolTable.VALUE_IS_NULL);
                         if (symKey >= cleanSymbolCount) {
                             int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
                             if (newKey < 0) {
@@ -5411,7 +5446,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 w.setSymbolIndexInTxWriter(symColIndex);
                 symColIndex++;
             }
-            Misc.free(writer);
+            Misc.freeIfCloseable(writer);
         }
     }
 
@@ -6046,13 +6081,13 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             if (cursor == -2) {
                 // CAS issue, retry
                 do {
+                    Os.pause();
                     cursor = indexPubSequence.next();
                     if (cursor == -1) {
                         indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
                         serialIndexCount++;
                         continue OUT;
                     }
-
                 } while (cursor < 0);
             }
 
@@ -6302,17 +6337,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
         default void putTimestamp(int columnIndex, long value) {
             putLong(columnIndex, value);
-        }
-
-        default void putTimestamp(int columnIndex, CharSequence value) {
-            // try UTC timestamp first (micro)
-            long l;
-            try {
-                l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
-            }
-            putTimestamp(columnIndex, l);
         }
     }
 

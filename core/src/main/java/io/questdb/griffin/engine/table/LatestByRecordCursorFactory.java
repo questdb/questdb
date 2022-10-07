@@ -82,7 +82,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             cursor.isOpen = true;
-            cursor.latestByMap.reallocate();
+            cursor.latestByMap.reopen();
         }
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -186,10 +186,12 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 Misc.free(baseCursor);
-                rowIndexes.clear();
-                if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
-                    // This call will shrink down the underlying array
-                    rowIndexes.setCapacity(rowIndexesCapacityThreshold);
+                if (rowIndexes != null) {
+                    rowIndexes.clear();
+                    if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
+                        // This call will shrink down the underlying array
+                        rowIndexes.setCapacity(rowIndexesCapacityThreshold);
+                    }
                 }
                 latestByMap.close();
             }

@@ -87,8 +87,6 @@ public interface CairoConfiguration {
 
     double getColumnPurgeRetryDelayMultiplier();
 
-    int getColumnPurgeRetryLimitDays();
-
     int getColumnPurgeTaskPoolCapacity();
 
     /**
@@ -380,6 +378,8 @@ public interface CairoConfiguration {
 
     boolean getWalEnabledDefault();
 
+    int getWalTxnNotificationQueueCapacity();
+
     int getWithClauseModelPoolCapacity();
 
     long getWorkStealTimeoutNanos();
@@ -412,4 +412,6 @@ public interface CairoConfiguration {
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlParallelFilterEnabled();
+
+    boolean isSqlParallelFilterPreTouchEnabled();
 }

@@ -28,4 +28,5 @@ public class WalTxnType {
     public static final byte NONE = -1;
     public static final byte DATA = 0;
     public static final byte SQL = 1;
+    public static final byte TRUNCATE = 2;
 }

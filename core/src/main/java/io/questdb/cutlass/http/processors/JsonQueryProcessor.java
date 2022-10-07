@@ -26,10 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -123,6 +120,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_PREPARE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_COMPLETE, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
         // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
@@ -165,7 +163,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 return;
             }
 
-            final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
+            final RecordCursorFactory factory = QueryCache.getThreadLocalInstance().poll(state.getQuery());
             if (factory != null) {
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_JSON);
@@ -182,8 +180,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 // new query
                 compileQuery(state);
             }
-        } catch (SqlException e) {
-            sqlError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
+        } catch (SqlException | ImplicitCastException e) {
+            sqlError(context.getChunkedResponseSocket(), state, e, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] Resource busy, will retry").$();
@@ -195,7 +193,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
-            state.error().$("Uh-oh. Error!").$(e).$();
+            state.critical().$("Uh-oh. Error!").$(e).$();
             throw ServerDisconnectException.INSTANCE;
         }
     }
@@ -365,15 +363,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void sqlError(
             HttpChunkedResponseSocket socket,
-            SqlException sqlException,
             JsonQueryProcessorState state,
+            FlyweightMessageContainer container,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.logSqlError(sqlException);
+        state.logSqlError(container);
         sendException(
                 socket,
-                sqlException.getPosition(),
-                sqlException.getFlyweightMessage(),
+                container.getPosition(),
+                container.getFlyweightMessage(),
                 state.getQuery(),
                 keepAliveHeader
         );
@@ -580,7 +578,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } else {
             state.critical().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
             // This is a critical error, so we treat it as an unhandled one.
-            metrics.healthCheck().incrementUnhandledErrors();
+            metrics.health().incrementUnhandledErrors();
         }
         sendException(socket, 0, message, state.getQuery(), configuration.getKeepAliveHeader());
     }

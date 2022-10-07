@@ -78,6 +78,7 @@ final class Mig614 {
                 path,
                 ff.getPageSize(),
                 fileLen,
-                MemoryTag.NATIVE_DEFAULT);
+                MemoryTag.NATIVE_MIG_MMAP
+        );
     }
 }

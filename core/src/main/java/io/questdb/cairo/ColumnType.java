@@ -102,7 +102,7 @@ public final class ColumnType {
             /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
             /* 9  FLOAT     */, {FLOAT, DOUBLE}
             /* 10 DOUBLE    */, {DOUBLE}
-            /* 11 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
+            /* 11 STRING    */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
             /* 12 SYMBOL    */, {SYMBOL, STRING}
             /* 13 LONG256   */, {LONG256}
             /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
@@ -133,19 +133,18 @@ public final class ColumnType {
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
-        final int toTag = tagOf(toType);
-        final int fromTag = tagOf(fromType);
-        return (toTag == fromTag && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0))
-                || isBuiltInWideningCast(toType, fromType)
-                || isStringCast(fromType, toType)
-                || isGeoHashWideningCast(fromType, toType)
-                || isImplicitParsingCast(fromTag, toTag, toType)
-                || isNarrowingCast(fromType, toType)
-                ;
+        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
     }
 
-    public static boolean isToSameOrWider(int to, int from) {
-        return to == from || isBuiltInWideningCast(to, from) || isStringCast(from, to);
+    public static boolean isToSameOrWider(int fromType, int toType) {
+        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) &&
+                (
+                        getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0
+                ))
+                || isBuiltInWideningCast(fromType, toType)
+                || isStringCast(fromType, toType)
+                || isGeoHashWideningCast(fromType, toType)
+                || isImplicitParsingCast(fromType, toType);
     }
 
     public static boolean isBinary(int columnType) {
@@ -156,7 +155,7 @@ public final class ColumnType {
         return columnType == ColumnType.BOOLEAN;
     }
 
-    public static boolean isBuiltInWideningCast(int toType, int fromType) {
+    public static boolean isBuiltInWideningCast(int fromType, int toType) {
         // This method returns true when a cast is not needed from type to type
         // because of the way typed functions are implemented.
         // For example IntFunction has getDouble() method implemented and does not need
@@ -279,18 +278,6 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    public static long truncateGeoHashBits(long value, int fromBits, int toBits) {
-        return value >> (fromBits - toBits);
-    }
-
-    // This method used by row copier assembler
-    public static long truncateGeoHashTypes(long value, int fromType, int toType) {
-        final int fromBits = getGeoHashBits(fromType);
-        final int toBits = getGeoHashBits(toType);
-        assert fromBits >= toBits;
-        return truncateGeoHashBits(value, fromBits, toBits);
-    }
-
     public static int variableColumnLengthBytes(int columnType) {
         if (columnType == ColumnType.STRING) {
             return Integer.BYTES;
@@ -330,14 +317,15 @@ public final class ColumnType {
                 || (fromTag == GEOSHORT && toTag == GEOBYTE);
     }
 
-    private static boolean isImplicitParsingCast(int fromTag, int toTag, int toType) {
-        return (fromTag == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6)
-                || (fromTag == STRING && toTag == GEOBYTE)
-                || (fromTag == STRING && toTag == GEOSHORT)
-                || (fromTag == STRING && toTag == GEOINT)
-                || (fromTag == STRING && toTag == GEOLONG)
-                || (fromTag == STRING && toTag == TIMESTAMP)
-                || (fromTag == SYMBOL && toTag == TIMESTAMP)
+    private static boolean isImplicitParsingCast(int fromType, int toType) {
+        final int toTag = tagOf(toType);
+        return (fromType == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6)
+                || (fromType == STRING && toTag == GEOBYTE)
+                || (fromType == STRING && toTag == GEOSHORT)
+                || (fromType == STRING && toTag == GEOINT)
+                || (fromType == STRING && toTag == GEOLONG)
+                || (fromType == STRING && toTag == TIMESTAMP)
+                || (fromType == SYMBOL && toTag == TIMESTAMP)
                 ;
     }
 
@@ -346,7 +334,18 @@ public final class ColumnType {
                 || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
                 || (fromType == LONG && toType >= BYTE && toType <= INT)
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
-                || (fromType == SHORT && toType == BYTE);
+                || (fromType == SHORT && toType == BYTE)
+                || (fromType == CHAR && toType == BYTE)
+                || (fromType == STRING && toType == BYTE)
+                || (fromType == STRING && toType == SHORT)
+                || (fromType == STRING && toType == INT)
+                || (fromType == STRING && toType == LONG)
+                || (fromType == STRING && toType == DATE)
+                || (fromType == STRING && toType == TIMESTAMP)
+                || (fromType == STRING && toType == FLOAT)
+                || (fromType == STRING && toType == DOUBLE)
+                || (fromType == STRING && toType == CHAR)
+                ;
     }
 
     static {
