@@ -119,7 +119,7 @@ io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory
 
 # 'log'
-io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory
 
 # 'sqrt'
 io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory
