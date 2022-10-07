@@ -29,4 +29,9 @@ public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
     public String getSignature() {
         return "like(SS)";
     }
+
+    @Override
+    protected boolean isCaseInsensitive() {
+        return false;
+    }
 }
