@@ -1444,23 +1444,24 @@ public class SqlCompiler implements Closeable {
     }
 
     private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
-        CharSequence likeTableName = model.getLikeTableName().token;
-        tableExistsOrFail(model.getLikeTableName().position, likeTableName, executionContext);
-        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableName)) {
+        ExpressionNode likeTableName = model.getLikeTableName();
+        CharSequence likeTableNameToken = likeTableName.token;
+        tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
+        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
             model.setCommitLag(rdr.getCommitLag());
             model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
             TableReaderMetadata rdrMetadata = rdr.getMetadata();
             for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
-                int symbolCapacity = rdr.getSymbolMapReader(i) != null ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
-                model.addColumn(rdrMetadata.getColumnName(i), rdrMetadata.getColumnType(i), symbolCapacity, rdrMetadata.getColumnHash(i));
-                if (rdr.getSymbolMapReader(i) != null) {
+                int columnType = rdrMetadata.getColumnType(i);
+                boolean isSymbol = ColumnType.isSymbol(columnType);
+                int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
+                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
+                if (isSymbol) {
                     model.cached(rdr.getSymbolMapReader(i).isCached());
                 }
                 model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
             }
-            if (rdr.getPartitionedBy() != -1) {
-                model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.fromInteger(rdr.getPartitionedBy()), 0));
-            }
+            model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
             if (rdrMetadata.getTimestampIndex() != -1) {
                 model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
             }

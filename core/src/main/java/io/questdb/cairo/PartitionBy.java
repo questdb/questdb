@@ -79,10 +79,6 @@ public final class PartitionBy {
         return nameToIndexMap.get(name);
     }
 
-    public static CharSequence fromInteger(int index) {
-        return indexToNameMap.get(index);
-    }
-
     public static PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
@@ -296,12 +292,6 @@ public final class PartitionBy {
         nameToIndexMap.put("year", YEAR);
         nameToIndexMap.put("hour", HOUR);
         nameToIndexMap.put("none", NONE);
-
-        indexToNameMap.put(DAY, "day");
-        indexToNameMap.put(MONTH, "month");
-        indexToNameMap.put(YEAR, "year");
-        indexToNameMap.put(HOUR, "hour");
-        indexToNameMap.put(NONE, "none");
     }
 
     static {

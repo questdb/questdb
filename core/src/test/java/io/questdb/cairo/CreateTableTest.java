@@ -231,10 +231,16 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableIfNotExistsLikeTable() throws Exception {
-        assertCompile("create table x (s1 symbol) ");
+    public void testCreateTableIfNotExistsExistingLikeAndDestinationTable() throws Exception {
+        assertCompile("create table x (s1 symbol)");
         assertCompile("create table y (s2 symbol)");
         assertQuery("s1\n", "select * from x", "create table if not exists x (like y)", null);
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsExistingLikeTable() throws Exception {
+        assertCompile("create table y (s2 symbol)");
+        assertQuery("s2\n", "select * from x", "create table if not exists x (like y)", null);
     }
 
     @Test
@@ -250,7 +256,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableLikeTableWithWALEnabled() throws Exception {
         boolean isWalEnabled = true;
-        String walParameterValue = isWalEnabled ? "WAL" : "NONE";
+        String walParameterValue = isWalEnabled ? "WAL" : "BYPASS WAL";
 
         assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
         assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
