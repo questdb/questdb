@@ -22,37 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cutlass.text;
 
-import io.questdb.griffin.engine.ops.AlterOperation;
-import org.jetbrains.annotations.Nullable;
+public class GenericTextLexer extends AbstractTextLexer {
+    private byte delimiter;
 
-import java.io.Closeable;
+    public GenericTextLexer(TextConfiguration textConfiguration) {
+        super(textConfiguration);
+    }
 
-public interface Sequencer extends Closeable {
-    String SEQ_DIR = "txn_seq";
+    public void of(byte delimiter) {
+        this.delimiter = delimiter;
+    }
 
-    long NO_TXN = Long.MIN_VALUE;
-
-    void copyMetadataTo(SequencerMetadata metadata);
-
-    SequencerStructureChangeCursor getStructureChangeCursor(
-            @Nullable SequencerStructureChangeCursor reusableCursor,
-            long fromSchemaVersion
-    );
-
-    int getTableId();
-
-    int getNextWalId();
-
-    long nextStructureTxn(long structureVersion, AlterOperation operation);
-
-    // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
-
-    // return txn cursor to apply transaction from given point
-    SequencerCursor getCursor(long lastCommittedTxn);
-
-    @Override
-    void close();
+    protected void doSwitch(long lo, long ptr, byte c) throws LineLimitException {
+        if (c == delimiter) {
+            onColumnDelimiter(lo);
+        } else if (c == '"') {
+            onQuote();
+        } else if (c == '\n' || c == '\r') {
+            onLineEnd(ptr);
+        } else {
+            checkEol(lo);
+        }
+    }
 }
+

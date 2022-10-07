@@ -274,7 +274,7 @@ public class TxReader implements Closeable, Mutable {
         return this;
     }
 
-    public boolean unsafeLoad(boolean headerOnly) {
+    public boolean unsafeLoadAll() {
         if (unsafeLoadBaseOffset()) {
             this.txn = version;
             if (txn != getLong(TX_OFFSET_TXN_64)) {
@@ -293,10 +293,8 @@ public class TxReader implements Closeable, Mutable {
             this.columnVersion = unsafeReadColumnVersion();
             this.truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             this.symbolColumnCount = this.symbolsSize / 8;
-            if (!headerOnly) {
-                unsafeLoadSymbolCounts(symbolColumnCount);
-                unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-            }
+            unsafeLoadSymbolCounts(symbolColumnCount);
+            unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeReadVersion()) {
                 return true;
@@ -305,10 +303,6 @@ public class TxReader implements Closeable, Mutable {
 
         clearData();
         return false;
-    }
-
-    public boolean unsafeLoadAll() {
-        return unsafeLoad(false);
     }
 
     public boolean unsafeLoadBaseOffset() {
@@ -347,6 +341,10 @@ public class TxReader implements Closeable, Mutable {
 
     public int unsafeReadSymbolTransientCount(int symbolIndex) {
         return getInt(getSymbolWriterTransientIndexOffset(symbolIndex));
+    }
+
+    public long unsafeReadTxn() {
+        return unsafeReadVersion();
     }
 
     public long unsafeReadVersion() {

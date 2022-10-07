@@ -76,7 +76,7 @@ public class WalDataCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long rowId) {
-        ((WalDataRecord) record).jumpTo(Rows.toLocalRowID(rowId));
+        throw new UnsupportedOperationException();
     }
 
     @Override

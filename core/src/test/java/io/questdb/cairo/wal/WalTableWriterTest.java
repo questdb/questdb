@@ -29,7 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlToOperation;
+import io.questdb.cairo.SqlToOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
@@ -44,6 +44,7 @@ import java.io.Closeable;
 import java.io.IOException;
 
 import static org.junit.Assert.*;
+import static io.questdb.cairo.wal.WalWriterTest.*;
 
 public class WalTableWriterTest extends AbstractGriffinTest {
 
@@ -365,7 +366,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 addRowsToWal(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
 
                 drainWalQueue(true);
-                engine.getTableRegistry().forAllWalTables(engine::checkNotifyOutstandingTxnInWal);
+                engine.checkMissingWalTransactions();
                 drainWalQueue(false);
 
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -453,7 +454,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash(13, rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
                 sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
                 sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(30), ColumnType.getGeoHashTypeWithBits(30));
+                sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
 
                 executeOperation("UPDATE " + tableName + " SET " +
                         "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
@@ -492,9 +493,9 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 executeOperation("UPDATE " + tableCopyName + " SET INT=12345678", CompiledQuery.UPDATE);
                 try {
                     executeOperation("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT", CompiledQuery.UPDATE);
-                    fail("Expected UnsupportedOperationException was not thrown");
-                } catch (UnsupportedOperationException e) {
-                    assertEquals("UPDATE statements with join are not supported yet for WAL tables", e.getMessage());
+                    fail("Expected exception is not thrown");
+                } catch (Exception e) {
+                    assertTrue(e.getMessage().endsWith("UPDATE statements with join are not supported yet for WAL tables"));
                 }
             }
         });
@@ -541,7 +542,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOBYTEVAL", rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOSHORTVAL", rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(30), ColumnType.getGeoHashTypeWithBits(30));
+                sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
 
                 executeOperation("UPDATE " + tableName + " SET " +
                         "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
@@ -616,6 +617,88 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
                 executeOperation("UPDATE " + tableCopyName + " SET INT=12345678 WHERE INT > 5", CompiledQuery.UPDATE);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateViaWal_CopyIntoNewColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            final int tableId;
+            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                tableId = tableWriter.getMetadata().getId();
+            }
+
+            try (
+                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+                TableWriter.Row row = walWriter.newRow();
+                row.putInt(0, 10);
+                row.append();
+                row = walWriter.newRow();
+                row.putInt(0, 11);
+                row.append();
+                row = walWriter.newRow();
+                row.putInt(0, 12);
+                row.append();
+                walWriter.commit();
+
+                addColumn(walWriter, "c", ColumnType.INT);
+
+                executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
+                executeOperation("UPDATE " + tableName + " SET c = a", CompiledQuery.UPDATE);
+                ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
+            }
+
+            assertSql(tableName, "a\tb\tts\tc\n" +
+                    "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
+                    "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
+                    "12\t12\t1970-01-01T00:00:00.000000Z\t12\n");
+        });
+    }
+
+    @Test
+    public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                TableWriter.Row row = walWriter.newRow();
+                row.putInt(0, 10);
+                row.append();
+                row = walWriter.newRow();
+                row.putInt(0, 11);
+                row.append();
+                row = walWriter.newRow();
+                row.putInt(0, 12);
+                row.append();
+                walWriter.commit();
+
+                removeColumn(walWriter, "b");
+
+                executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
+                fail("Expected exception is missing");
+            } catch (Exception e) {
+                assertTrue(e.getMessage().endsWith("Invalid column: b"));
             }
         });
     }
@@ -777,7 +860,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("geoByte", ColumnType.getGeoHashTypeWithBits(5))
                 .col("geoInt", ColumnType.getGeoHashTypeWithBits(20))
                 .col("geoShort", ColumnType.getGeoHashTypeWithBits(10))
-                .col("geoLong", ColumnType.getGeoHashTypeWithBits(30))
+                .col("geoLong", ColumnType.getGeoHashTypeWithBits(35))
                 .col("stringc", ColumnType.STRING)
                 .col("label", ColumnType.SYMBOL)
                 .col("bin", ColumnType.BINARY)

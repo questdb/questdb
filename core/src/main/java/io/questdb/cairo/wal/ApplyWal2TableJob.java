@@ -27,7 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlToOperation;
+import io.questdb.cairo.SqlToOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -79,7 +79,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 break;
             } catch (CairoException ex) {
-                LOG.critical().$("Failed to apply WAL data to table [table=").$(tableName)
+                LOG.critical().$("failed to apply WAL data to table [table=").$(tableName)
                         .$(", error=").$(ex.getMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();

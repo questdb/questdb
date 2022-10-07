@@ -51,13 +51,12 @@ import static io.questdb.cairo.wal.Sequencer.NO_TXN;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class WalWriter implements TableWriterFrontend {
+    public static final int NEW_COL_RECORD_SIZE = 6;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final Runnable NOOP = () -> {
     };
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
-    public static final int NEW_COL_RECORD_SIZE = 6;
-
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final IntList initialSymbolCounts = new IntList();
@@ -187,12 +186,11 @@ public class WalWriter implements TableWriterFrontend {
     // Returns table transaction number
     @Override
     public long applyUpdate(UpdateOperation operation) {
-        if (operation.getFactory().recordCursorSupportsRandomAccess() && operation.getFactory().supportsUpdateRowId(tableName)) {
-            // no join in UPDATE statement
-            return applyNonStructuralOperation(operation);
-        }
+        // it is guaranteed that there is no join in UPDATE statement
+        // because SqlCompiler rejects the UPDATE if it contains join
+        return applyNonStructuralOperation(operation);
 
-        // here we have 2 options instead of throwing exception
+        // when join is allowed in UPDATE we have 2 options
         // 1. we could write the updated partitions into WAL.
         //   since we cannot really rely on row ids we should probably create
         //   a PARTITION_REWRITE event and use it here to replace the updated
@@ -205,8 +203,6 @@ public class WalWriter implements TableWriterFrontend {
         //   put it into the SQL event as a requirement for running the SQL.
         //   when the WAL event is processed we would need to query the exact
         //   versions of each table involved in the join when running the SQL.
-        operation.close();
-        throw new UnsupportedOperationException("UPDATE statements with join are not supported yet for WAL tables");
     }
 
     @Override
@@ -331,7 +327,7 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    public long getSegment() {
+    public long getSegmentId() {
         return segmentId;
     }
 
@@ -592,6 +588,24 @@ public class WalWriter implements TableWriterFrontend {
                 .put(", wal=").put(walId).put(']');
     }
 
+    private void cleanupSymbolMapFiles(Path path, int rootLen, CharSequence columnName) {
+        path.trimTo(rootLen);
+        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.remove(path.$());
+
+        path.trimTo(rootLen);
+        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.remove(path.$());
+
+        path.trimTo(rootLen);
+        TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.remove(path.$());
+
+        path.trimTo(rootLen);
+        TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.remove(path.$());
+    }
+
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
         // Each record is about primary and secondary file. File descriptor is set every half a record.
         int halfRecord = NEW_COL_RECORD_SIZE / 2;
@@ -626,11 +640,15 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
+    private void configureEmptySymbol(int columnWriterIndex) {
+        symbolMapReaders.extendAndSet(columnWriterIndex, EmptySymbolMapReader.INSTANCE);
+        initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
+        symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+    }
+
     private void configureSymbolMapWriter(int columnWriterIndex, CharSequence columnName, int symbolCount, long columnNameTxn) {
         if (symbolCount == 0) {
-            symbolMapReaders.extendAndSet(columnWriterIndex, EmptySymbolMapReader.INSTANCE);
-            initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
-            symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+            configureEmptySymbol(columnWriterIndex);
             return;
         }
 
@@ -644,11 +662,13 @@ public class WalWriter implements TableWriterFrontend {
         TableUtils.offsetFileName(tempPath, columnName, columnNameTxn);
         TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.critical(ff.errno()).put("failed to link offset file [from=")
-                    .put(tempPath)
-                    .put(", to=")
-                    .put(path)
-                    .put(']');
+            // This is fine, Table Writer can rename or drop the column.
+            LOG.info().$("failed to link offset file [from=").$(tempPath)
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
+            configureEmptySymbol(columnWriterIndex);
+            return;
         }
 
         tempPath.trimTo(tempPathTripLen);
@@ -656,11 +676,14 @@ public class WalWriter implements TableWriterFrontend {
         TableUtils.charFileName(tempPath, columnName, columnNameTxn);
         TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.critical(ff.errno()).put("failed to link char file [from=")
-                    .put(tempPath)
-                    .put(", to=")
-                    .put(path)
-                    .put(']');
+            // This is fine, Table Writer can rename or drop the column.
+            LOG.info().$("failed to link char file [from=").$(tempPath)
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
+            cleanupSymbolMapFiles(path, rootLen, columnName);
+            configureEmptySymbol(columnWriterIndex);
+            return;
         }
 
         tempPath.trimTo(tempPathTripLen);
@@ -668,11 +691,14 @@ public class WalWriter implements TableWriterFrontend {
         BitmapIndexUtils.keyFileName(tempPath, columnName, columnNameTxn);
         BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.critical(ff.errno()).put("failed to link key file [from=")
-                    .put(tempPath)
-                    .put(", to=")
-                    .put(path)
-                    .put(']');
+            // This is fine, Table Writer can rename or drop the column.
+            LOG.info().$("failed to link key file [from=").$(tempPath)
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
+            cleanupSymbolMapFiles(path, rootLen, columnName);
+            configureEmptySymbol(columnWriterIndex);
+            return;
         }
 
         tempPath.trimTo(tempPathTripLen);
@@ -680,11 +706,14 @@ public class WalWriter implements TableWriterFrontend {
         BitmapIndexUtils.valueFileName(tempPath, columnName, columnNameTxn);
         BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
-            throw CairoException.critical(ff.errno()).put("failed to link value file [from=")
-                    .put(tempPath)
-                    .put(", to=")
-                    .put(path)
-                    .put(']');
+            // This is fine, Table Writer can rename or drop the column.
+            LOG.info().$("failed to link value file [from=").$(tempPath)
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
+            cleanupSymbolMapFiles(path, rootLen, columnName);
+            configureEmptySymbol(columnWriterIndex);
+            return;
         }
 
         path.trimTo(rootLen);
@@ -972,6 +1001,7 @@ public class WalWriter implements TableWriterFrontend {
     private void removeSymbolMapReader(int index) {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         initialSymbolCounts.setQuick(index, -1);
+        cleanupSymbolMapFiles(path, rootLen, metadata.getColumnName(index));
     }
 
     private void renameColumFiles(int columnType, CharSequence columnName, CharSequence newName) {

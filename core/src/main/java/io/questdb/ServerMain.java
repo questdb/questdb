@@ -75,7 +75,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
+        engine = freeOnExit(new CairoEngine(cairoConfig, metrics, getTotalWorkerCount(config)));
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -102,9 +102,11 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new GroupByJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
 
-                    final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
-                    sharedPool.assign(applyWal2TableJob);
-                    sharedPool.freeOnExit(applyWal2TableJob);
+                    if (!config.getWalApplyPoolConfiguration().isEnabled()) {
+                        final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
+                        sharedPool.assign(applyWal2TableJob);
+                        sharedPool.freeOnExit(applyWal2TableJob);
+                    }
 
                     final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
                     sharedPool.assign(walPurgeJob);
@@ -136,6 +138,20 @@ public class ServerMain implements Closeable {
                 }
             }
         };
+
+        if (config.getWalApplyPoolConfiguration().isEnabled()) {
+            WorkerPool workerPool = workerPoolManager.getInstance(
+                    config.getWalApplyPoolConfiguration(),
+                    metrics.health(),
+                    WorkerPoolManager.Requester.WAL_APPLY
+            );
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
+            workerPool.assign(applyWal2TableJob);
+            workerPool.freeOnExit(applyWal2TableJob);
+        }
+
+        // Scan WAL tables to find out if all wall transactions are applied.
+        engine.checkMissingWalTransactions();
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
@@ -185,6 +201,13 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
+    }
+
+    private static int getTotalWorkerCount(PropServerConfiguration config) {
+        return Math.min(1, config.getWorkerPoolConfiguration().getWorkerCount()
+                + config.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount()
+                + config.getHttpServerConfiguration().getWorkerCount()
+                + config.getPGWireConfiguration().getWorkerCount());
     }
 
     public static void main(String[] args) throws Exception {

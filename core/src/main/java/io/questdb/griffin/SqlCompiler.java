@@ -1108,8 +1108,19 @@ public class SqlCompiler implements Closeable {
                     return lightlyValidateInsertModel(insertModel);
                 }
             case ExecutionModel.UPDATE:
-                optimiser.optimiseUpdate((QueryModel) model, executionContext);
-                return model;
+                final QueryModel queryModel = (QueryModel) model;
+                try (TableRecordMetadata metadata = engine.getMetadata(
+                        executionContext.getCairoSecurityContext(),
+                        queryModel.getTableName().token,
+                        metadataFactory
+                )) {
+                    if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
+                        optimiser.optimiseUpdate(queryModel, executionContext, metadata);
+                    } else {
+                        optimiser.validateUpdateColumns(queryModel, metadata);
+                    }
+                    return model;
+                }
             default:
                 return model;
         }
@@ -1178,7 +1189,7 @@ public class SqlCompiler implements Closeable {
         lexer.unparseLast();
         codeGenerator.clear();
 
-        ExecutionModel executionModel = compileExecutionModel(executionContext);
+        final ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
                 LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
@@ -1193,8 +1204,14 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.ofRenameTable();
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
-                final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext);
-                return compiledQuery.ofUpdate(updateOperation);
+                try (TableRecordMetadata metadata = engine.getMetadata(
+                        executionContext.getCairoSecurityContext(),
+                        updateQueryModel.getTableName().token,
+                        metadataFactory
+                )) {
+                    final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
+                    return compiledQuery.ofUpdate(updateOperation);
+                }
             default:
                 final InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {
@@ -1489,11 +1506,12 @@ public class SqlCompiler implements Closeable {
                     path,
                     tableStructureAdapter.of(model, metadata, typeCast)
             );
-            boolean wallEnabled = model.isWalEnabled();
+
+            final boolean walEnabled = model.isWalEnabled();
             // TODO: if it's WAL enabled, table unlock can happen here, before the data is written
 
             try {
-                return copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, wallEnabled, cursor, metadata);
+                return copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, walEnabled, cursor, metadata);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
                 if (removeTableDirectory(model)) {
@@ -1626,25 +1644,39 @@ public class SqlCompiler implements Closeable {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
-    UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
-        // Update QueryModel structure is
-        // QueryModel with SET column expressions
-        // |-- QueryModel of select-virtual or select-choose of data selected for update
+    UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
+        final String updateTableName = updateQueryModel.getUpdateTableName();
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-        final RecordCursorFactory recordCursorFactory = prepareForUpdate(
-                updateQueryModel.getUpdateTableName(),
-                selectQueryModel,
-                updateQueryModel,
-                executionContext
-        );
+        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
+            // Update QueryModel structure is
+            // QueryModel with SET column expressions
+            // |-- QueryModel of select-virtual or select-choose of data selected for update
+            final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                    updateTableName,
+                    selectQueryModel,
+                    updateQueryModel,
+                    executionContext
+            );
 
-        return new UpdateOperation(
-                updateQueryModel.getUpdateTableName(),
-                selectQueryModel.getTableId(),
-                selectQueryModel.getTableVersion(),
-                lexer.getPosition(),
-                recordCursorFactory
-        );
+            return new UpdateOperation(
+                    updateTableName,
+                    selectQueryModel.getTableId(),
+                    selectQueryModel.getTableVersion(),
+                    lexer.getPosition(),
+                    recordCursorFactory
+            );
+        } else {
+            if (selectQueryModel.containsJoin()) {
+                throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
+            }
+
+            return new UpdateOperation(
+                    updateTableName,
+                    metadata.getTableId(),
+                    metadata.getStructureVersion(),
+                    lexer.getPosition()
+            );
+        }
     }
 
     private int getNextValidTokenPosition() {

@@ -22,24 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-
+import io.questdb.std.ClosableInstance;
 import java.io.Closeable;
 
 public class SqlToOperation implements Closeable {
-    private final SqlCompiler compiler;
     private final BindVariableService bindVariableService;
     private final SqlExecutionContext sqlExecutionContext;
+    private final CairoEngine engine;
 
     public SqlToOperation(CairoEngine engine) {
-        compiler = new SqlCompiler(engine);
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
@@ -50,20 +49,25 @@ public class SqlToOperation implements Closeable {
                         null
                 )
                 .withWalApplication();
+        this.engine = engine;
     }
 
     public AlterOperation toAlterOperation(CharSequence alterStatement) throws SqlException {
-        final CompiledQuery compiledQuery = compiler.compile(alterStatement, sqlExecutionContext);
-        final AlterOperation alterOperation = compiledQuery.getAlterOperation();
-        alterOperation.withContext(sqlExecutionContext);
-        return alterOperation;
+        try (ClosableInstance<SqlCompiler> sqlCompiler = engine.getAdhocSqlCompiler()){
+            final CompiledQuery compiledQuery = sqlCompiler.instance().compile(alterStatement, sqlExecutionContext);
+            final AlterOperation alterOperation = compiledQuery.getAlterOperation();
+            alterOperation.withContext(sqlExecutionContext);
+            return alterOperation;
+        }
     }
 
     public UpdateOperation toUpdateOperation(CharSequence updateStatement) throws SqlException {
-        final CompiledQuery compiledQuery = compiler.compile(updateStatement, sqlExecutionContext);
-        final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
-        updateOperation.withContext(sqlExecutionContext);
-        return updateOperation;
+        try (ClosableInstance<SqlCompiler> sqlCompiler = engine.getAdhocSqlCompiler()) {
+            final CompiledQuery compiledQuery = sqlCompiler.instance().compile(updateStatement, sqlExecutionContext);
+            final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
+            updateOperation.withContext(sqlExecutionContext);
+            return updateOperation;
+        }
     }
 
     public BindVariableService getBindVariableService() {
@@ -72,7 +76,6 @@ public class SqlToOperation implements Closeable {
 
     @Override
     public void close() {
-        compiler.close();
         sqlExecutionContext.close();
     }
 }

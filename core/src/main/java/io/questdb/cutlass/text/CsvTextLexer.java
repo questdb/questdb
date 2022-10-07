@@ -22,37 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cutlass.text;
 
-import io.questdb.griffin.engine.ops.AlterOperation;
-import org.jetbrains.annotations.Nullable;
+public class CsvTextLexer extends AbstractTextLexer {
+    public CsvTextLexer(TextConfiguration textConfiguration) {
+        super(textConfiguration);
+    }
 
-import java.io.Closeable;
-
-public interface Sequencer extends Closeable {
-    String SEQ_DIR = "txn_seq";
-
-    long NO_TXN = Long.MIN_VALUE;
-
-    void copyMetadataTo(SequencerMetadata metadata);
-
-    SequencerStructureChangeCursor getStructureChangeCursor(
-            @Nullable SequencerStructureChangeCursor reusableCursor,
-            long fromSchemaVersion
-    );
-
-    int getTableId();
-
-    int getNextWalId();
-
-    long nextStructureTxn(long structureVersion, AlterOperation operation);
-
-    // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
-
-    // return txn cursor to apply transaction from given point
-    SequencerCursor getCursor(long lastCommittedTxn);
-
-    @Override
-    void close();
+    protected void doSwitch(long lo, long ptr, byte c) throws LineLimitException {
+        switch (c) {
+            case ',':
+                onColumnDelimiter(lo);
+                break;
+            case '"':
+                onQuote();
+                break;
+            case '\n':
+            case '\r':
+                onLineEnd(ptr);
+                break;
+            default:
+                checkEol(lo);
+                break;
+        }
+    }
 }
+

@@ -141,7 +141,7 @@ class WalWriterEvents implements Closeable {
     }
 
     private void writeIndexedVariables(BindVariableService bindVariableService) {
-        final int count = bindVariableService.getIndexedVariableCount();
+        final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
         eventMem.putInt(count);
 
         for (int i = 0; i < count; i++) {
@@ -150,16 +150,18 @@ class WalWriterEvents implements Closeable {
     }
 
     private void writeNamedVariables(BindVariableService bindVariableService) {
-        final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
-        final int count = namedVariables.size();
+        final int count = bindVariableService != null ? bindVariableService.getNamedVariables().size() : 0;
         eventMem.putInt(count);
 
-        for (int i = 0; i < count; i++) {
-            final CharSequence name = namedVariables.get(i);
-            eventMem.putStr(name);
-            sink.clear();
-            sink.put(':').put(name);
-            writeFunction(bindVariableService.getFunction(sink));
+        if (count > 0) {
+            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
+            for (int i = 0; i < count; i++) {
+                final CharSequence name = namedVariables.get(i);
+                eventMem.putStr(name);
+                sink.clear();
+                sink.put(':').put(name);
+                writeFunction(bindVariableService.getFunction(sink));
+            }
         }
     }
 

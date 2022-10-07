@@ -121,7 +121,7 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 TelemetryJob telemetryJob = null;

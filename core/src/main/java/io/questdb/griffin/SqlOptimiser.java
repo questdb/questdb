@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -2420,7 +2421,7 @@ class SqlOptimiser {
         }
     }
 
-    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext, TableRecordMetadata metadata) throws SqlException {
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
         selectQueryModel.setIsUpdate(true);
         QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
@@ -2428,7 +2429,7 @@ class SqlOptimiser {
         updateQueryModel.setNestedModel(optimisedNested);
 
         // And then generate plan for UPDATE top level QueryModel
-        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
+        validateUpdateColumns(updateQueryModel, metadata);
     }
 
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
@@ -3603,20 +3604,11 @@ class SqlOptimiser {
         return index;
     }
 
-    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext, int tableId, long tableVersion) throws SqlException {
-        try (
-                TableReader r = engine.getReader(
-                        executionContext.getCairoSecurityContext(),
-                        updateQueryModel.getTableName().token,
-                        tableId,
-                        tableVersion
-                )
-        ) {
-            TableReaderMetadata metadata = r.getMetadata();
-            int timestampIndex = metadata.getTimestampIndex();
-
+    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata) throws SqlException {
+        try {
             tempList.clear(metadata.getColumnCount());
             tempList.setPos(metadata.getColumnCount());
+            int timestampIndex = metadata.getTimestampIndex();
             int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
             for (int i = 0; i < updateSetColumnCount; i++) {
 
@@ -3652,8 +3644,9 @@ class SqlOptimiser {
                     }
                 }
             }
+
             // Save update table name as a String to not re-create string later on from CharSequence
-            updateQueryModel.setUpdateTableName(r.getTableName());
+            updateQueryModel.setUpdateTableName(metadata.getTableName());
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

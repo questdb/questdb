@@ -133,6 +133,7 @@ public class TableRegistry extends AbstractPool {
     }
 
     public void registerTable(int tableId, final TableStructure tableStructure) {
+        //noinspection EmptyTryBlock
         try (SequencerImpl ignore = createSequencer(tableId, tableStructure)) {
         }
     }

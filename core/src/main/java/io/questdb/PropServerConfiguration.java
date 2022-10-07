@@ -272,6 +272,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ioURingEnabled;
     private final int cairoMaxCrashFiles;
     private final boolean walEnabledDefault;
+    private final int walTxnNotificationQueueCapacity;
     private final String cairoAttachPartitionSuffix;
     private final boolean cairoAttachPartitionCopy;
     private int lineUdpDefaultPartitionBy;
@@ -411,6 +412,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
+    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
+    private final int[] walApplyWorkerAffinity;
+    private final int walApplyWorkerCount;
+    private final boolean walApplyWorkerHaltOnError;
+    private final long walApplyWorkerYieldThreshold;
+    private final long walApplyWorkerSleepThreshold;
 
     public PropServerConfiguration(
             String root,
@@ -428,6 +435,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
+        this.walTxnNotificationQueueCapacity = getInt(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
@@ -679,6 +687,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
             }
+
+            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0);
+            this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
+            this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
+            this.walApplyWorkerSleepThreshold  = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10000);
+            this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 10);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREAT_AS_SELECT_RETRY_COUNT, 5);
@@ -1049,6 +1063,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
         return lineTcpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+        return walApplyPoolConfiguration;
     }
 
     @Override
@@ -2563,6 +2582,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getWalTxnNotificationQueueCapacity() {
+            return walTxnNotificationQueueCapacity;
+        }
+
+        @Override
         public int getWithClauseModelPoolCapacity() {
             return sqlWithClauseModelPoolCapacity;
         }
@@ -3467,6 +3491,43 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return metricsEnabled;
+        }
+    }
+
+    private class PropWalApplyPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public int[] getWorkerAffinity() {
+            return walApplyWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return walApplyWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return walApplyWorkerHaltOnError;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "wal-apply";
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return walApplyWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return walApplyWorkerSleepThreshold;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return walApplyWorkerCount > 0;
         }
     }
 

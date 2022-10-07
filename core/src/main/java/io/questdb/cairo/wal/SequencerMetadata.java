@@ -32,10 +32,9 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.*;
-
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends BaseRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
@@ -187,7 +186,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     }
 
     public void removeColumn(CharSequence columnName) {
-        int columnIndex = columnNameIndexMap.get(columnName);
+        final int columnIndex = columnNameIndexMap.get(columnName);
         if (columnIndex < 0) {
             throw CairoException.critical(0).put("Column not found: ").put(columnName);
         }
@@ -200,11 +199,11 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
-        int columnIndex = columnNameIndexMap.get(columnName);
+        final int columnIndex = columnNameIndexMap.get(columnName);
         if (columnIndex < 0) {
             throw CairoException.critical(0).put("Column not found: ").put(columnName);
         }
-        String newNameStr = newName.toString();
+        final String newNameStr = newName.toString();
         columnMetadata.getQuick(columnIndex).setName(newNameStr);
 
         columnNameIndexMap.removeEntry(columnName);

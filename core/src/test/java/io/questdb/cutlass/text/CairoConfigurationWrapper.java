@@ -228,6 +228,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return conf.getWalTxnNotificationQueueCapacity();
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return conf.getDoubleToStrCastScale();
     }

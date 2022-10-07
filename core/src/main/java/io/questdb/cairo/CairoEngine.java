@@ -36,7 +36,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlToOperation;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -72,17 +72,17 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableRegistry tableRegistry;
     private final Path rootPath;
     private final int rootPathLen;
-
     private final TextImportExecutionContext textImportExecutionContext;
-    private final TxReader tempTxReader;
+    private TxReader tempTxReader;
+    private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled());
+        this(configuration, Metrics.disabled(), 5);
     }
 
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
+    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalIoThreads) {
         this.configuration = configuration;
         this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
@@ -125,7 +125,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
         this.rootPath = new Path().of(configuration.getRoot());
         this.rootPathLen = rootPath.length();
+        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalIoThreads);
+    }
 
+    public void checkMissingWalTransactions() {
         try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
             tempTxReader = txReader;
             tableRegistry.forAllWalTables(this::checkNotifyOutstandingTxnInWal);
@@ -181,10 +184,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    ClosableInstance<SqlCompiler> getAdhocSqlCompiler() {
+        return sqlCompilerPool.get();
+    }
 
     public TableRegistry getTableRegistry() {
         return tableRegistry;
     }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
@@ -234,15 +241,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName, MetadataFactory metadataFactory) {
         securityContext.checkWritePermission();
-        String tableNameStr = Chars.toString(tableName);
+        final String tableNameStr = Chars.toString(tableName);
         if (tableRegistry.hasSequencer(tableNameStr)) {
             // This is WAL table because sequencer exists
-            SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
-            tableRegistry.copyMetadataTo(tableName,sequencerMetadata);
+            final SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
+            tableRegistry.copyMetadataTo(tableName, sequencerMetadata);
             return sequencerMetadata;
         }
 
-        TableRecordMetadata metadata = null;
         try {
             return metadataFactory.openTableReaderMetadata(tableName);
         } catch (CairoException e) {
@@ -305,12 +311,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
         rootPath.trimTo(rootPathLen).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader.unsafeLoad(true)) {
-                if (txReader.getTxn() < txn) {
-                    // table name should be immutable when in the notification
-                    String tableNameStr = Chars.toString(tableName);
-                    notifyWalTxnCommitted(tableId, tableNameStr, txn);
-                }
+            if (txReader.unsafeReadTxn()  < txn) {
+                // table name should be immutable when in the notification message
+                String tableNameStr = Chars.toString(tableName);
+                notifyWalTxnCommitted(tableId, tableNameStr, txn);
             }
         }
     }
@@ -339,24 +343,28 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                         }
                         try {
                             while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
-                                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                                String taskTableName = task.getTableName();
-                                int taskTableId = task.getTableId();
-                                // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
-                                subSeq.done(cursor);
+                                if (cursor > -1L) {
+                                    WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                                    String taskTableName = task.getTableName();
+                                    int taskTableId = task.getTableId();
+                                    // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
+                                    subSeq.done(cursor);
 
-                                if (localCommittedTransactions.get(taskTableId) < task.getTxn()) {
-                                    long lastCommittedTxn = ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
-                                    if (lastCommittedTxn > -1) {
-                                        localCommittedTransactions.put(taskTableId, lastCommittedTxn);
+                                    LOG.info().$("stealing work from wal txn queue: ").$(taskTableName).$();
+
+                                    if (localCommittedTransactions.get(taskTableId) < task.getTxn()) {
+                                        long lastCommittedTxn = ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
+                                        if (lastCommittedTxn > -1) {
+                                            localCommittedTransactions.put(taskTableId, lastCommittedTxn);
+                                        }
                                     }
-                                }
 
-                                // If this is the same table we want to notify about
-                                // then we don't to notify about it anymore, whoever processes the WAL
-                                // for the table will apply the transaction we want to notify about too
-                                if (tableName.equals(taskTableName) && tableId == taskTableId) {
-                                    return;
+                                    // If this is the same table we want to notify about
+                                    // then we don't to notify about it anymore, whoever processes the WAL
+                                    // for the table will apply the transaction we want to notify about too
+                                    if (tableName.equals(taskTableName) && tableId == taskTableId) {
+                                        return;
+                                    }
                                 }
                             }
                         } catch (Throwable throwable) {
@@ -365,7 +373,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                                     .$(throwable).$();
                         }
                     } else {
-                        LOG.criticalW().$("error publishing WAL notifications, queue is full").$();
+                        LOG.criticalW().$("error publishing WAL notifications, queue is full, current=").$(pubSeq.current()).$();
                         // WAL is committed and can eventually be picked up and applied to the table.
                         // Error is critical but throwing exception will make client assume
                         // that commit failed but in fact the data is written.
@@ -559,6 +567,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         useful |= readerPool.releaseInactive();
         useful |= tableRegistry.releaseInactive();
         return useful;
+    }
+
+    @TestOnly
+    public void clearPools() {
+        sqlCompilerPool.releaseInactive();
     }
 
     public void remove(

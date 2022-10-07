@@ -45,7 +45,8 @@ public abstract class WorkerPoolManager {
         PG_WIRE_SERVER("pg-wire"),
         LINE_TCP_IO("line-tcp-io"),
         LINE_TCP_WRITER("line-tcp-writer"),
-        OTHER("other");
+        OTHER("other"),
+        WAL_APPLY("wal-apply");
 
         private final String requester;
 
