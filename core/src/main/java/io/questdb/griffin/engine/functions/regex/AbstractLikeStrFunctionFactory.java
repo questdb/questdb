@@ -46,6 +46,45 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory {
+
+    protected abstract boolean isCaseInsensitive();
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function value = args.getQuick(0);
+        final Function pattern = args.getQuick(1);
+
+        if (pattern.isConstant()) {
+            final CharSequence likeString = pattern.getStr(null);
+            if (likeString != null && likeString.length() > 0) {
+                String p = escapeSpecialChars(likeString, null);
+                assert p != null;
+                int flags = Pattern.DOTALL;
+                if (isCaseInsensitive()) {
+                    flags |= Pattern.CASE_INSENSITIVE;
+                }
+                return new ConstLikeStrFunction(
+                        value,
+                        Pattern.compile(p, flags).matcher("")
+                );
+            }
+            return BooleanConstant.FALSE;
+        }
+
+        if (pattern instanceof IndexedParameterLinkFunction) {
+            // bind variable
+            return new BindLikeStrFunction(value, pattern, isCaseInsensitive());
+        }
+
+        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
+    }
+
     public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) {
         int len = pattern.length();
 
@@ -61,39 +100,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 sink.put(c);
             } else
                 sink.put(c);
-
         }
 
         if (Chars.equalsNc(sink, prev)) {
             return null;
         }
         return Chars.toString(sink);
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function value = args.getQuick(0);
-        final Function pattern = args.getQuick(1);
-
-        if (pattern.isConstant()) {
-            final CharSequence likeString = pattern.getStr(null);
-            if (likeString != null && likeString.length() > 0) {
-                String p = escapeSpecialChars(likeString, null);
-                assert p != null;
-                return new ConstLikeStrFunction(
-                        value,
-                        Pattern.compile(p, Pattern.DOTALL).matcher("")
-                );
-            }
-            return BooleanConstant.FALSE;
-        }
-
-        if (pattern instanceof IndexedParameterLinkFunction) {
-            // bind variable
-            return new BindLikeStrFunction(value, pattern);
-        }
-
-        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
     }
 
     private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
@@ -125,12 +137,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function value;
         private final Function pattern;
+        private final boolean caseInsensitive;
         private Matcher matcher;
         private String lastPattern = null;
 
-        public BindLikeStrFunction(Function value, Function pattern) {
+        public BindLikeStrFunction(Function value, Function pattern, boolean caseInsensitive) {
             this.value = value;
             this.pattern = pattern;
+            this.caseInsensitive = caseInsensitive;
         }
 
         @Override
@@ -156,7 +170,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             if (patternValue != null && patternValue.length() > 0) {
                 final String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
-                    this.matcher = Pattern.compile(p, Pattern.DOTALL).matcher("");
+                    int flags = Pattern.DOTALL;
+                    if (caseInsensitive) {
+                        flags |= Pattern.CASE_INSENSITIVE;
+                    }
+                    this.matcher = Pattern.compile(p, flags).matcher("");
                     this.lastPattern = p;
                 }
             } else {
