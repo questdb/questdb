@@ -73,19 +73,24 @@ public interface MemoryM extends Closeable {
      *                          should use this parameter as the increment size
      * @param size              size of the initial mapped memory when smaller than the actual file
      * @param memoryTag         memory tag for diagnostics
-     *
+     * @param opts              open file flags
+     * @param madviseOpts       madvise flags - madvise call is made when a non-negative value is provided
      */
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts);
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts);
+
+    default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
+    }
 
     default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        of(ff, name, extendSegmentSize, size, memoryTag, CairoConfiguration.O_NONE);
+        of(ff, name, extendSegmentSize, size, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
     default void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE);
+        of(ff, name, ff.getPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
     default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE);
+        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE, -1);
     }
 }

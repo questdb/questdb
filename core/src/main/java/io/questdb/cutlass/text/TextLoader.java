@@ -35,13 +35,15 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class TextLoader implements Closeable, Mutable {
 
