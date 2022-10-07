@@ -187,7 +187,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public CharSequence getSystemTableName(final CharSequence tableName) {
-        return getTableRegistry().getSystemTableName(tableName);
+        return getTableRegistry().getSystemTableNameOrDefault(tableName);
+    }
+
+    public boolean isWalTable(final CharSequence tableName) {
+        return getTableRegistry().getSystemTableName(tableName) != null;
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call

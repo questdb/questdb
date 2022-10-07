@@ -2084,17 +2084,17 @@ public class WalWriterTest extends AbstractGriffinTest {
             tableRegistry.registerTableName("B", 1);
             tableRegistry.registerTableName("C", 2);
             tableRegistry.registerTableName("D", 3);
-            tableRegistry.deregisterTableName("D");
+            tableRegistry.deregisterTableName("DD");
             tableRegistry.deregisterTableName("B");
         }
 
         try (TableRegistry tableRegistry = new TableRegistry(engine, engine.getConfiguration())) {
             tableRegistry.open();
-            TestUtils.assertEquals("A#0", tableRegistry.getSystemTableName("A"));
-            TestUtils.assertEquals("C#2", tableRegistry.getSystemTableName("C"));
+            TestUtils.assertEquals("A#0", tableRegistry.getSystemTableNameOrDefault("A"));
+            TestUtils.assertEquals("C#2", tableRegistry.getSystemTableNameOrDefault("C"));
             tableRegistry.deregisterTableName("C");
-            Assert.assertNull(tableRegistry.getSystemTableName("D"));
-            Assert.assertNull(tableRegistry.getSystemTableName("C"));
+            Assert.assertNull(tableRegistry.getSystemTableNameOrDefault("D"));
+            Assert.assertNull(tableRegistry.getSystemTableNameOrDefault("C"));
         }
     }
 

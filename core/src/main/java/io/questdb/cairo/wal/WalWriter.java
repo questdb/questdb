@@ -102,7 +102,7 @@ public class WalWriter implements TableWriterFrontend {
         this.mkDirMode = this.configuration.getMkDirMode();
         this.ff = this.configuration.getFilesFacade();
         this.tableName = tableName;
-        this.systemTableName = Chars.toString(tableRegistry.getSystemTableName(tableName));
+        this.systemTableName = Chars.toString(tableRegistry.getSystemTableNameOrDefault(tableName));
         final int walId = tableRegistry.getNextWalId(tableName);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;

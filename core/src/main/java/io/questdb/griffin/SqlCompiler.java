@@ -2193,13 +2193,17 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
 
-        TableWriterFrontend writer = engine.getTableWriterFrontEnd(
-                executionContext.getCairoSecurityContext(),
-                tableName,
-                "removeTable"
-        );
+        if (engine.isWalTable(tableName)) {
+            TableWriterFrontend writer = engine.getTableWriterFrontEnd(
+                    executionContext.getCairoSecurityContext(),
+                    tableName,
+                    "removeTable"
+            );
 
-        writer.dropTable();
+            writer.dropTable();
+        } else {
+            engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
+        }
 
         return compiledQuery.ofDrop();
     }

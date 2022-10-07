@@ -169,7 +169,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 tempPath.trimTo(rootLen).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                 if (walId == TxnCatalog.DROP_TABLE_WALID) {
-                    writer.truncate(); // release fs space now. delete this table later
+                    if (engine.lockReaders(writer.getTableName())) {
+                        try {
+                            writer.truncate(); // release fs space now. delete this table later
+                        } finally {
+                            engine.unlockReaders(writer.getTableName());
+                        }
+                    }
                 } else if (walId == TxnCatalog.RENAME_TABLE_WALID) {
                    //todo:
                 } else if (walId == TxnCatalog.METADATA_WALID) {
