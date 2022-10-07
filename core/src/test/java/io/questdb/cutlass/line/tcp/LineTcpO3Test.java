@@ -182,6 +182,8 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 
                 haltLatch.await();
+                // stop pool twice and this is ok
+                sharedWorkerPool.halt();
 
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
                 readGzResource("selectAll1");

@@ -51,8 +51,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 
 public class WalTableFailureTest extends AbstractGriffinTest {
     @Test
@@ -680,31 +680,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     "wal killer")
             ) {
                 writer.addColumn("abcd", ColumnType.INT);
-            }
-
-            compile("alter table " + tableName + " add column dddd2 long");
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-25', 'abcd', 123)");
-            drainWalQueue();
-
-            // No SQL applied
-            assertSql(tableName, "x\tsym\tts\tsym2\tabcd\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n");
-        });
-    }
-
-    @Test
-    public void testTableWriterUncommittedTransactionIsRolledBack() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
-
-            drainWalQueue();
-            try (TableWriter writer = engine.getWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
-                    tableName,
-                    "wal killer")
-            ) {
-                writer.newRow(123);
             }
 
             compile("alter table " + tableName + " add column dddd2 long");

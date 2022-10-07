@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -38,9 +39,10 @@ import io.questdb.std.str.LPSZ;
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
     protected int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private int madviseOpts = -1;
 
     public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
-        of(ff, name, 0, size, memoryTag);
+        of(ff, name, 0, size, memoryTag, 0);
     }
 
     public MemoryCMRImpl() {
@@ -66,11 +68,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
-    public boolean isMapped(long offset, long len) {
-        return offset + len <= size();
-    }
-
-    @Override
     public void extend(long newSize) {
         if (newSize > size) {
             setSize0(newSize);
@@ -78,16 +75,35 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public boolean isMapped(long offset, long len) {
+        return offset + len <= size();
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         this.memoryTag = memoryTag;
+        this.madviseOpts = madviseOpts;
         openFile(ff, name);
         if (size < 0) {
             size = ff.length(fd);
             if (size < 0) {
-                throw CairoException.critical(ff.errno()).put("Could not get length: ").put(name);
+                close();
+                throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
             }
         }
         map(ff, name, size);
+    }
+
+    @Override
+    public void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        // Override default implementation to defer ff.length() call to use fd instead of path
+        of(ff, name, ff.getPageSize(), -1, memoryTag, CairoConfiguration.O_NONE, -1);
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        // Override default implementation to defer ff.length() call to use fd instead of path
+        of(ff, name, ff.getMapPageSize(), -1, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size) {
@@ -95,6 +111,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         if (size > 0) {
             try {
                 this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                ff.madvise(pageAddress, size, madviseOpts);
             } catch (Throwable e) {
                 close();
                 throw e;
@@ -118,9 +135,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         try {
             if (size > 0) {
                 pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+                ff.madvise(pageAddress, newSize, madviseOpts);
             } else {
                 assert pageAddress == 0;
                 pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
+                ff.madvise(pageAddress, newSize, madviseOpts);
             }
             size = newSize;
         } catch (Throwable e) {

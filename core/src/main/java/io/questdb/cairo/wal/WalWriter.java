@@ -934,7 +934,8 @@ public class WalWriter implements TableWriterFrontend {
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts()
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_RANDOM
             );
 
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
@@ -945,7 +946,8 @@ public class WalWriter implements TableWriterFrontend {
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
                 );
                 mem2.putLong(0L);
             }
