@@ -322,7 +322,7 @@ public class LogFactory implements Closeable {
                     final String key = envVar.replaceFirst("QDB_LOG_", "").replace('_', '.').toLowerCase();
                     final String val = env.get(envVar);
                     if (val != "") {
-                        properties.setProperty(key, env.get(envVar));
+                        properties.setProperty(key, val);
                         System.err.printf("Reading log setting '%s=%s' from environment%n", key, val);
                     }
 
