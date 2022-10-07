@@ -80,6 +80,7 @@ public interface CairoConfiguration {
     int getColumnIndexerQueueCapacity();
 
     int getColumnPurgeQueueCapacity();
+    int getPartitionPurgeQueueCapacity();
 
     long getColumnPurgeRetryDelay();
 

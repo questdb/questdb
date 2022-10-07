@@ -118,6 +118,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionPurgeQueueCapacity() {
+        return conf.getPartitionPurgeQueueCapacity();
+    }
+
+    @Override
     public long getColumnPurgeRetryDelay() {
         return conf.getColumnPurgeRetryDelay();
     }

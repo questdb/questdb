@@ -84,7 +84,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
     private final SCSequence columnPurgeSubSeq;
     private final MPSequence columnPurgePubSeq;
-
+    private final RingQueue<PartitionPurgeTask> partitionPurgeQueue;
+    private final SCSequence partitionPurgeSubSeq;
+    private final MPSequence partitionPurgePubSeq;
     private final RingQueue<TextImportTask> textImportQueue;
     private final SPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
@@ -106,29 +108,29 @@ public class MessageBusImpl implements MessageBus {
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
 
         this.o3CallbackQueue = new RingQueue<>(O3CallbackTask::new, configuration.getO3CallbackQueueCapacity());
-        this.o3CallbackPubSeq = new MPSequence(this.o3CallbackQueue.getCycle());
-        this.o3CallbackSubSeq = new MCSequence(this.o3CallbackQueue.getCycle());
+        this.o3CallbackPubSeq = new MPSequence(o3CallbackQueue.getCycle());
+        this.o3CallbackSubSeq = new MCSequence(o3CallbackQueue.getCycle());
         o3CallbackPubSeq.then(o3CallbackSubSeq).then(o3CallbackPubSeq);
 
         this.o3PartitionQueue = new RingQueue<>(O3PartitionTask::new, configuration.getO3PartitionQueueCapacity());
-        this.o3PartitionPubSeq = new MPSequence(this.o3PartitionQueue.getCycle());
-        this.o3PartitionSubSeq = new MCSequence(this.o3PartitionQueue.getCycle());
+        this.o3PartitionPubSeq = new MPSequence(o3PartitionQueue.getCycle());
+        this.o3PartitionSubSeq = new MCSequence(o3PartitionQueue.getCycle());
         o3PartitionPubSeq.then(o3PartitionSubSeq).then(o3PartitionPubSeq);
 
         this.o3OpenColumnQueue = new RingQueue<>(O3OpenColumnTask::new, configuration.getO3OpenColumnQueueCapacity());
-        this.o3OpenColumnPubSeq = new MPSequence(this.o3OpenColumnQueue.getCycle());
-        this.o3OpenColumnSubSeq = new MCSequence(this.o3OpenColumnQueue.getCycle());
+        this.o3OpenColumnPubSeq = new MPSequence(o3OpenColumnQueue.getCycle());
+        this.o3OpenColumnSubSeq = new MCSequence(o3OpenColumnQueue.getCycle());
         o3OpenColumnPubSeq.then(o3OpenColumnSubSeq).then(o3OpenColumnPubSeq);
 
         this.o3CopyQueue = new RingQueue<>(O3CopyTask::new, configuration.getO3CopyQueueCapacity());
-        this.o3CopyPubSeq = new MPSequence(this.o3CopyQueue.getCycle());
-        this.o3CopySubSeq = new MCSequence(this.o3CopyQueue.getCycle());
+        this.o3CopyPubSeq = new MPSequence(o3CopyQueue.getCycle());
+        this.o3CopySubSeq = new MCSequence(o3CopyQueue.getCycle());
         o3CopyPubSeq.then(o3CopySubSeq).then(o3CopyPubSeq);
 
         this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PartitionPurgeTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
-        this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCycle());
-        this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCycle());
-        this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
+        this.o3PurgeDiscoveryPubSeq = new MPSequence(o3PurgeDiscoveryQueue.getCycle());
+        this.o3PurgeDiscoverySubSeq = new MCSequence(o3PurgeDiscoveryQueue.getCycle());
+        this.o3PurgeDiscoveryPubSeq.then(o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
 
         this.latestByQueue = new RingQueue<>(LatestByTask::new, configuration.getLatestByQueueCapacity());
         this.latestByPubSeq = new MPSequence(latestByQueue.getCycle());
@@ -141,18 +143,23 @@ public class MessageBusImpl implements MessageBus {
                 configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
         );
-        this.tableWriterEventPubSeq = new MPSequence(this.tableWriterEventQueue.getCycle());
+        this.tableWriterEventPubSeq = new MPSequence(tableWriterEventQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
-        this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
+        this.tableWriterEventPubSeq.then(tableWriterEventSubSeq).then(tableWriterEventPubSeq);
 
         this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
         this.queryCacheEventSubSeq = new FanOut();
-        this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
+        this.queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
 
         this.columnPurgeQueue = new RingQueue<>(ColumnPurgeTask::new, configuration.getColumnPurgeQueueCapacity());
         this.columnPurgeSubSeq = new SCSequence();
-        this.columnPurgePubSeq = new MPSequence(this.columnPurgeQueue.getCycle());
-        this.columnPurgePubSeq.then(this.columnPurgeSubSeq).then(this.columnPurgePubSeq);
+        this.columnPurgePubSeq = new MPSequence(columnPurgeQueue.getCycle());
+        this.columnPurgePubSeq.then(columnPurgeSubSeq).then(columnPurgePubSeq);
+
+        this.partitionPurgeQueue = new RingQueue<>(PartitionPurgeTask::new, configuration.getPartitionPurgeQueueCapacity());
+        this.partitionPurgeSubSeq = new SCSequence();
+        this.partitionPurgePubSeq = new MPSequence(partitionPurgeQueue.getCycle());
+        this.columnPurgePubSeq.then(partitionPurgeSubSeq).then(partitionPurgePubSeq);
 
         this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
 
@@ -203,6 +210,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getColumnPurgePubSeq() {
         return columnPurgePubSeq;
+    }
+
+    @Override
+    public RingQueue<PartitionPurgeTask> getPartitionPurgeQueue() {
+        return partitionPurgeQueue;
+    }
+
+    @Override
+    public Sequence getPartitionPurgeSubSeq() {
+        return partitionPurgeSubSeq;
+    }
+
+    @Override
+    public Sequence getPartitionPurgePubSeq() {
+        return partitionPurgePubSeq;
     }
 
     @Override

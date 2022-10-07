@@ -45,6 +45,21 @@ public class MessageBusStub implements MessageBus {
     }
 
     @Override
+    public RingQueue<PartitionPurgeTask> getPartitionPurgeQueue() {
+        return null;
+    }
+
+    @Override
+    public Sequence getPartitionPurgeSubSeq() {
+        return null;
+    }
+
+    @Override
+    public Sequence getPartitionPurgePubSeq() {
+        return null;
+    }
+
+    @Override
     public RingQueue<ColumnPurgeTask> getColumnPurgeQueue() {
         return null;
     }

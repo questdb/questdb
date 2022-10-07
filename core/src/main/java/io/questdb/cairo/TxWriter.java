@@ -246,10 +246,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void removeAttachedPartitions(long timestamp) {
-        recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
+        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
+        removeAttachedPartitionByIndex(index);
+    }
+
+    public void removeAttachedPartitionByIndex(int index) {
         if (index > -1) {
+            recordStructureVersion++;
             final int size = attachedPartitions.size();
             final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
             if (index < lim) {
@@ -260,6 +264,32 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         } else {
             assert false;
         }
+    }
+
+    public void removeActivePartition(
+            int index,
+            long newMaxTimestamp,
+            long newTransientRowCount,
+            long newColumnVersion
+    ) {
+        if (index > 0) {
+            fixedRowCount = fixedRowCount - newTransientRowCount;
+        } else {
+            // we are dropping the only partition
+            minTimestamp = Long.MAX_VALUE;
+            fixedRowCount = 0;
+        }
+        maxTimestamp = newMaxTimestamp;
+        transientRowCount = newTransientRowCount;
+        final int lim = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
+        if (lim > -1) {
+            attachedPartitions.setPos(lim);
+        }
+        columnVersion = newColumnVersion;
+        txPartitionCount = getPartitionCount();
+        recordStructureVersion++;
+        partitionTableVersion++;
+        truncateVersion++;
     }
 
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
