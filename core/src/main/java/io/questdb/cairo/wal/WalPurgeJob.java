@@ -35,7 +35,6 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 import java.util.PrimitiveIterator;
 
-// TODO [amunra]: Should this just be a sync job?
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     /** Table of columns grouping segment information. One row per walId. */

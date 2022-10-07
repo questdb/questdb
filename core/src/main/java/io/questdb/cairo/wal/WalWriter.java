@@ -116,6 +116,7 @@ public class WalWriter implements TableWriterFrontend {
 
         try {
             lockWal();
+            mkWalDir();
 
             metadata = new SequencerMetadata(ff);
             tableRegistry.copyMetadataTo(tableName, metadata);
@@ -318,6 +319,8 @@ public class WalWriter implements TableWriterFrontend {
         freeSymbolMapReaders();
         Misc.free(symbolMapMem);
         freeColumns(truncate);
+
+        releaseSegmentLock();
 
         try {
             releaseWalLock(!truncate);
@@ -892,11 +895,15 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void rolloverSegmentLock() {
+    private void releaseSegmentLock() {
         if (segmentLockFd != -1L) {
             ff.close(segmentLockFd);
             segmentLockFd = -1L;
         }
+    }
+
+    private void rolloverSegmentLock() {
+        releaseSegmentLock();
         final int segmentPathLen = path.length();
         try {
             lockName(path);
@@ -945,6 +952,14 @@ public class WalWriter implements TableWriterFrontend {
         } finally {
             path.trimTo(pathTrimToLen);
         }
+    }
+
+    private void mkWalDir() {
+        final int walDirLength = path.length();
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
+        }
+        path.trimTo(walDirLength);
     }
 
     private void openNewSegment() {

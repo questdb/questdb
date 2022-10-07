@@ -401,8 +401,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     @Test
     public void testCreateWalTableAsSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            // TODO [amunra]: Simplify test to have fewer columns.
-
             String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
