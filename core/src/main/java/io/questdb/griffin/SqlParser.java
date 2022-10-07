@@ -543,6 +543,7 @@ public final class SqlParser {
             tok = tok(lexer, "like");
             if (isLikeKeyword(tok)) {
                 parseLikeTableName(lexer, model);
+                return model;
             } else {
                 lexer.unparseLast();
                 parseCreateTableColumns(lexer, model);

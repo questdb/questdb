@@ -1109,13 +1109,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableFromMissingLikeTable() throws Exception {
-        assertSyntaxError("create table x (like y) ",
-                13,
-                "Could not create table");
-    }
-
-    @Test
     public void testCreateTableMissing() throws Exception {
         assertSyntaxError(
                 "create",

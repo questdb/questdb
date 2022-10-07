@@ -4,6 +4,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.IntList;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -187,7 +188,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "a INT," +
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\tt\n", "select * from tab", "create table tab (like x)", "t");
-        assertPartitionIndex("tab", PartitionBy.MONTH, 1);
+        assertPartitionAndTimestamp("tab", PartitionBy.MONTH, 1);
     }
 
     @Test
@@ -237,6 +238,16 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableLikeTableNotPresent() throws Exception {
+        String likeTableName = "y";
+        try {
+            assertQuery("s1\n", "select * from x", "create table x (like " + likeTableName + ")", null);
+        } catch (SqlException se) {
+            TestUtils.assertContains(se.getFlyweightMessage(), "table does not exist [table=" + likeTableName + "]");
+        }
+    }
+
+    @Test
     public void testCreateTableLikeTableWithWALEnabled() throws Exception {
         boolean isWalEnabled = true;
         String walParameterValue = isWalEnabled ? "WAL" : "NONE";
@@ -249,9 +260,9 @@ public class CreateTableTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableLikeTableWithWALDisabled() throws Exception {
         boolean isWalEnabled = false;
-        String walParameterValue = isWalEnabled ? "WAL" : "NONE";
+        String walParameterValue = isWalEnabled ? "WAL" : "BYPASS WAL";
 
-        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY " + walParameterValue);
+        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
         assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
         assertWalEnabled("x", false);
     }
@@ -279,13 +290,16 @@ public class CreateTableTest extends AbstractGriffinTest {
                 {"t", "TIMESTAMP"},
                 {"x", "SYMBOL"},
                 {"z", "STRING"},
-                {"y", "BOOLEAN"}
+                {"y", "BOOLEAN"},
+                {"l", "LONG256"},
+                {"gh1", "GEOHASH(7c)"},
+                {"gh2", "GEOHASH(4b)"}
         };
 
         assertCompile("create table x (" +
                 getColumnDefinitions(columnTypes) + ")"
         );
-        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\n", "select * from tab", "create table tab (like x)", null);
+        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
         assertColumnTypes("tab", columnTypes);
     }
 
@@ -334,7 +348,7 @@ public class CreateTableTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertPartitionIndex(String tableName, int partitionIndex, int timestampIndex) throws Exception {
+    private void assertPartitionAndTimestamp(String tableName, int partitionIndex, int timestampIndex) throws Exception {
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 Assert.assertEquals(partitionIndex, reader.getPartitionedBy());
@@ -376,7 +390,7 @@ public class CreateTableTest extends AbstractGriffinTest {
         });
     }
 
-    static class SymbolParameters {
+    private static class SymbolParameters {
         private Integer symbolCapacity;
         private boolean isCached;
         private boolean isIndexed;

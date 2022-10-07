@@ -1444,7 +1444,9 @@ public class SqlCompiler implements Closeable {
     }
 
     private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
-        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), model.getLikeTableName().token)) {
+        CharSequence likeTableName = model.getLikeTableName().token;
+        tableExistsOrFail(model.getLikeTableName().position, likeTableName, executionContext);
+        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableName)) {
             model.setCommitLag(rdr.getCommitLag());
             model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
             TableReaderMetadata rdrMetadata = rdr.getMetadata();
