@@ -729,7 +729,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     static class IndexChunk {
         String path;
-        long[] data;//timestamp+offset pairs
+        long[] data; // timestamp+offset pairs
 
         IndexChunk(String path, long... data) {
             this.path = path;
@@ -1897,12 +1897,13 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 for (int i = 0; i < data.length; i++) {
                     long val = memory.getLong(i * Long.BYTES);
                     if ((i & 1) == 1) {
-                        val = val & MASK;//ignore length packed in offset for time being
+                        val = val & MASK; // ignore length packed in offset for time being
                     }
                     data[i] = val;
                 }
 
-                result.add(new IndexChunk(chunk.getParentFile().getName() + File.separator + chunk.getName(), data));
+                // we use '/' as the path separator on all OSes to simply test code
+                result.add(new IndexChunk(chunk.getParentFile().getName() + "/" + chunk.getName(), data));
             }
         } finally {
             p.close();
