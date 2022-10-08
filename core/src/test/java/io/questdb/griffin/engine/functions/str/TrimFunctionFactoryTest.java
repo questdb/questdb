@@ -40,14 +40,18 @@ public class TrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNotTrimSpace() throws SqlException {
-        call(" a b c ").andAssert("a b c");
+        call("a b c").andAssert("a b c");
         call("kkk").andAssert("kkk");
         call("()  /  {}").andAssert("()  /  {}");
     }
 
     @Test
-    public void testEmptyTrimSpace() throws SqlException {
+    public void testEmptyOrNullTrimSpace() throws SqlException {
         call("").andAssert("");
+        call(" ").andAssert("");
+        call("    ").andAssert("");
+        final String nullVal = null;
+        call(nullVal).andAssert(null);
     }
 
     @Override

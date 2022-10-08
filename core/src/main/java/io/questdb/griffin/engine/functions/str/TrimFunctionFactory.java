@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class TrimFunctionFactory implements FunctionFactory {
     @Override
@@ -72,7 +73,11 @@ public class TrimFunctionFactory implements FunctionFactory {
             return trim(getArg().getStr(rec), sink2);
         }
 
+        @Nullable
         private static CharSequence trim(CharSequence str, StringSink sink) {
+            if (str == null) {
+                return null;
+            }
             int startIdx = 0;
             int endIdx = str.length()-1;
             while (startIdx < endIdx && str.charAt(startIdx) == ' ') {
@@ -82,8 +87,10 @@ public class TrimFunctionFactory implements FunctionFactory {
                 endIdx--;
             }
             sink.clear();
-            while (startIdx <= endIdx) {
-                sink.put(str.charAt(startIdx++));
+            if (startIdx != endIdx) {
+                while (startIdx <= endIdx) {
+                    sink.put(str.charAt(startIdx++));
+                }
             }
             return sink;
         }
