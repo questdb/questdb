@@ -49,11 +49,11 @@ public class StartWithFunctionFactory implements FunctionFactory {
     public static class StartWithFunc extends BooleanFunction implements BinaryFunction {
 
         private final Function strFunc;
-        private final Function startWithFunc;
+        private final Function prefixFunc;
 
-        public StartWithFunc(Function strFunc, Function startWithFunc) {
+        public StartWithFunc(Function strFunc, Function prefixFunc) {
             this.strFunc = strFunc;
-            this.startWithFunc = startWithFunc;
+            this.prefixFunc = prefixFunc;
         }
 
         @Override
@@ -62,11 +62,11 @@ public class StartWithFunctionFactory implements FunctionFactory {
             if (str == null) {
                 return false;
             }
-            final var startWith = startWithFunc.getStr(rec);
-            if (startWith == null) {
+            final var prefix = prefixFunc.getStr(rec);
+            if (prefix == null) {
                 return false;
             }
-            return startWith(str, startWith);
+            return isStartWith(str, prefix);
         }
 
         @Override
@@ -76,14 +76,14 @@ public class StartWithFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getRight() {
-            return startWithFunc;
+            return prefixFunc;
         }
 
-        private static boolean startWith(CharSequence str, CharSequence startWith) {
-            if (startWith.length() > str.length()) {
+        private static boolean isStartWith(CharSequence str, CharSequence prefix) {
+            if (prefix.length() > str.length()) {
                 return false;
             }
-            return str.subSequence(0, startWith.length()).equals(startWith);
+            return str.subSequence(0, prefix.length()).equals(prefix);
         }
     }
 }
