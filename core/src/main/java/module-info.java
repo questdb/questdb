@@ -543,6 +543,9 @@ open module io.questdb {
 //                  ceil()
             io.questdb.griffin.engine.functions.math.CeilDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory,
+//                  ceil()
+            io.questdb.griffin.engine.functions.math.CeilingDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory,
 //                  floor()
             io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,
