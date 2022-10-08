@@ -618,6 +618,8 @@ io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFa
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
 io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
+io.questdb.griffin.engine.functions.str.LowerFunctionFactory
+io.questdb.griffin.engine.functions.str.UpperFunctionFactory
 
 # analytic functions
 io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
