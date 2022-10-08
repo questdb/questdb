@@ -22,16 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
+package io.questdb.griffin.engine.functions.str;
 
-public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
+public class PositionFunctionFactory extends StrPosFunctionFactory{
     @Override
     public String getSignature() {
-        return "like(SS)";
-    }
-
-    @Override
-    protected boolean isCaseInsensitive() {
-        return false;
+        return "position(SS)";
     }
 }
