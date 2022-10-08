@@ -623,6 +623,8 @@ open module io.questdb {
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
+            // startwith
+            io.questdb.griffin.engine.functions.str.StartWithFunctionFactory,
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
             io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory,

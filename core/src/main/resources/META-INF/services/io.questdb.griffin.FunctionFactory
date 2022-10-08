@@ -589,6 +589,9 @@ io.questdb.griffin.engine.functions.str.RightFunctionFactory
 # substring()
 io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
 
+# start_with()
+io.questdb.griffin.engine.functions.str.StartWithFunctionFactory
+
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory
