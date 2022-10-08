@@ -44,42 +44,42 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function strFunc1 = args.get(0);
-        Function strFunc2 = args.get(1);
+        Function strFunc = args.get(0);
+        Function prefixFunc = args.get(1);
 
-        return new StartsWithStrFunction(strFunc1, strFunc2);
+        return new StartsWithStrFunction(strFunc, prefixFunc);
     }
 
     private static class StartsWithStrFunction extends BooleanFunction implements BinaryFunction {
-        private final Function strFunc1;
-        private final Function strFunc2;
+        private final Function strFunc;
+        private final Function prefixFunc;
 
-        public StartsWithStrFunction(Function strFunc1, Function strFunc2) {
-            this.strFunc1 = strFunc1;
-            this.strFunc2 = strFunc2;
+        public StartsWithStrFunction(Function strFunc, Function prefixFunc) {
+            this.strFunc = strFunc;
+            this.prefixFunc = prefixFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence str1 = strFunc1.getStr(rec);
-            CharSequence str2 = strFunc2.getStr(rec);
-            if (str1 == null || str2 == null)
+            CharSequence str = strFunc.getStr(rec);
+            CharSequence prefix = prefixFunc.getStr(rec);
+            if (str == null || prefix == null)
                 return false;
 
-            if (Chars.equals(str2, ""))
+            if (Chars.equals(prefix, ""))
                 return true;
 
-            return Chars.startsWith(str1, str2);
+            return Chars.startsWith(str, prefix);
         }
 
         @Override
         public Function getLeft() {
-            return strFunc1;
+            return strFunc;
         }
 
         @Override
         public Function getRight() {
-            return strFunc2;
+            return prefixFunc;
         }
     }
 }

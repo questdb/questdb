@@ -40,6 +40,7 @@ public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testStartsWith() throws Exception {
         assertQuery("col\ntrue\n", "select starts_with('ABCDEFGH', 'ABC') col");
         assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH', 'XYZ') col");
+        assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH', 'ABCDEFGHIJK') col");
     }
 
     @Test
