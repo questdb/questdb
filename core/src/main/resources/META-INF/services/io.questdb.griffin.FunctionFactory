@@ -512,6 +512,10 @@ io.questdb.griffin.engine.functions.math.RoundHalfEvenDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory
 
+# CeilingFunctionFactory
+io.questdb.griffin.engine.functions.math.CeilingDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory
+
 # FloorFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory
@@ -600,6 +604,9 @@ io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFac
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
 
+# position()
+io.questdb.griffin.engine.functions.str.PositionFunctionFactory
+
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
 io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory
@@ -617,6 +624,8 @@ io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFa
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
 io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
+io.questdb.griffin.engine.functions.str.LowerFunctionFactory
+io.questdb.griffin.engine.functions.str.UpperFunctionFactory
 
 # analytic functions
 io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
