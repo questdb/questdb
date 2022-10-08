@@ -45,7 +45,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -95,7 +94,6 @@ public class TableWriter implements Closeable {
     private final int partitionBy;
     private final LongList columnTops;
     private final FilesFacade ff;
-    private final MicrosecondClock clock;
     private final DateFormat partitionDirFmt;
     private final MemoryMAR ddlMem;
     private final int mkDirMode;
@@ -235,7 +233,6 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
         this.parallelIndexerEnabled = configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
-        this.clock = configuration.getMicrosecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
@@ -3004,10 +3001,6 @@ public class TableWriter implements Closeable {
 
     private long getPartitionLo(long timestamp) {
         return partitionFloorMethod.floor(timestamp);
-    }
-
-    private long getPartitionHi(long timestamp) {
-        return partitionCeilMethod.ceil(timestamp) - 1;
     }
 
     long getPartitionNameTxnByIndex(int index) {
