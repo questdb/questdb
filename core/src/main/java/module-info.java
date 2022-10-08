@@ -629,6 +629,8 @@ open module io.questdb {
 //                  Change string case
             io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
             io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LowerFunctionFactory,
+            io.questdb.griffin.engine.functions.str.UpperFunctionFactory,
 //          left/right
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,
