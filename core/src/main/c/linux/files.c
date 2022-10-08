@@ -105,6 +105,20 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixFadvSequential(JNIEnv *
     return POSIX_FADV_SEQUENTIAL;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_madvise0
+        (JNIEnv *e, jclass cls, jlong address, jlong len, jint advise) {
+    void *memAddr = (void *) address;
+    return posix_madvise(memAddr, (off_t) len, advise);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvRandom(JNIEnv *e, jclass cls) {
+    return POSIX_MADV_RANDOM;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixMadvSequential(JNIEnv *e, jclass cls) {
+    return POSIX_MADV_SEQUENTIAL;
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         (JNIEnv *e, jclass cl, jlong lpszName) {
     struct statfs sb;

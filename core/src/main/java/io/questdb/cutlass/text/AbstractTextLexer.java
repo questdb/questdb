@@ -32,8 +32,8 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class TextLexer implements Closeable, Mutable {
-    private final static Log LOG = LogFactory.getLog(TextLexer.class);
+public abstract class AbstractTextLexer implements Closeable, Mutable {
+    private final static Log LOG = LogFactory.getLog(AbstractTextLexer.class);
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final int lineRollBufLimit;
@@ -54,14 +54,13 @@ public class TextLexer implements Closeable, Mutable {
     private boolean eol;
     private boolean useLineRollBuf = false;
     private boolean rollBufferUnusable = false;
-    private byte columnDelimiter;
     private boolean inQuote;
     private boolean delayedOutQuote;
     private long fieldLo;
     private long fieldHi;
     private boolean skipLinesWithExtraValues;
 
-    public TextLexer(TextConfiguration textConfiguration) {
+    public AbstractTextLexer(TextConfiguration textConfiguration) {
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
         this.lineRollBufSize = textConfiguration.getRollBufferSize();
         this.lineRollBufLimit = textConfiguration.getRollBufferLimit();
@@ -93,16 +92,14 @@ public class TextLexer implements Closeable, Mutable {
         return lineCount;
     }
 
-    public void of(byte columnDelimiter) {
-        clear();
-        this.columnDelimiter = columnDelimiter;
+    public void parse(long lo, long hi, int lineCountLimit, Listener textLexerListener) {
+        setupLimits(lineCountLimit, textLexerListener);
+        parse(lo, hi);
     }
 
-    public void parse(long lo, long hi, int lineCountLimit, Listener textLexerListener) {
-        this.textLexerListener = textLexerListener;
+    public void parse(long lo, long hi) {
         this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
-        this.lineCountLimit = lineCountLimit;
-        parse(lo, hi);
+        parse0(lo, hi);
     }
 
     public void parseExactLines(long lo, long hi) {
@@ -112,22 +109,11 @@ public class TextLexer implements Closeable, Mutable {
         try {
             while (ptr < hi) {
                 final byte c = Unsafe.getUnsafe().getByte(ptr++);
-
                 this.fieldHi++;
-
                 if (delayedOutQuote && c != '"') {
                     inQuote = delayedOutQuote = false;
                 }
-
-                if (c == columnDelimiter) {
-                    onColumnDelimiter(lo);
-                } else if (c == '"') {
-                    onQuote();
-                } else if (c == '\n' || c == '\r') {
-                    onLineEnd(ptr);
-                } else {
-                    checkEol(lo);
-                }
+                doSwitch(lo, hi, c);
             }
         } catch (LineLimitException ignore) {
             // loop exit
@@ -172,15 +158,41 @@ public class TextLexer implements Closeable, Mutable {
         this.lineCountLimit = Integer.MAX_VALUE;
     }
 
+    public void setupLimits(int lineCountLimit, Listener textLexerListener) {
+        this.lineCountLimit = lineCountLimit;
+        this.textLexerListener = textLexerListener;
+    }
+
     private void addField() {
         fields.add(csPool.next());
         fieldMax++;
     }
 
-    private void checkEol(long lo) {
+    protected void checkEol(long lo) {
         if (eol) {
             uneol(lo);
         }
+    }
+
+    private boolean checkState(long ptr, byte c) {
+        if (rollBufferUnusable) {
+            eol(ptr, c);
+            return false;
+        }
+
+        if (useLineRollBuf) {
+            putToRollBuf(c);
+            if (rollBufferUnusable) {
+                return false;
+            }
+        }
+
+        this.fieldHi++;
+
+        if (delayedOutQuote && c != '"') {
+            inQuote = delayedOutQuote = false;
+        }
+        return true;
     }
 
     private void clearRollBuffer(long ptr) {
@@ -188,6 +200,8 @@ public class TextLexer implements Closeable, Mutable {
         lineRollBufCur = lineRollBufPtr;
         this.fieldLo = this.fieldHi = ptr;
     }
+
+    protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
 
     private void eol(long ptr, byte c) {
         if (c == '\n' || c == '\r') {
@@ -269,7 +283,7 @@ public class TextLexer implements Closeable, Mutable {
         ignoreEolOnce = false;
     }
 
-    private void onColumnDelimiter(long lo) {
+    protected void onColumnDelimiter(long lo) {
         checkEol(lo);
 
         if (inQuote || ignoreEolOnce) {
@@ -278,7 +292,7 @@ public class TextLexer implements Closeable, Mutable {
         stashField(fieldIndex++);
     }
 
-    private void onLineEnd(long ptr) throws LineLimitException {
+    protected void onLineEnd(long ptr) throws LineLimitException {
         if (inQuote) {
             return;
         }
@@ -302,7 +316,7 @@ public class TextLexer implements Closeable, Mutable {
         }
     }
 
-    private void onQuote() {
+    protected void onQuote() {
         if (inQuote) {
             delayedOutQuote = !delayedOutQuote;
             lastQuotePos = this.fieldHi;
@@ -312,39 +326,15 @@ public class TextLexer implements Closeable, Mutable {
         }
     }
 
-    private void parse(long lo, long hi) {
+    private void parse0(long lo, long hi) {
         long ptr = lo;
 
         try {
             while (ptr < hi) {
                 final byte c = Unsafe.getUnsafe().getByte(ptr++);
 
-                if (rollBufferUnusable) {
-                    eol(ptr, c);
-                    continue;
-                }
-
-                if (useLineRollBuf) {
-                    putToRollBuf(c);
-                    if (rollBufferUnusable) {
-                        continue;
-                    }
-                }
-
-                this.fieldHi++;
-
-                if (delayedOutQuote && c != '"') {
-                    inQuote = delayedOutQuote = false;
-                }
-
-                if (c == columnDelimiter) {
-                    onColumnDelimiter(lo);
-                } else if (c == '"') {
-                    onQuote();
-                } else if (c == '\n' || c == '\r') {
-                    onLineEnd(ptr);
-                } else {
-                    checkEol(lo);
+                if (checkState(ptr, c)) {
+                    doSwitch(lo, ptr, c);
                 }
             }
         } catch (LineLimitException ignore) {
@@ -399,7 +389,7 @@ public class TextLexer implements Closeable, Mutable {
     }
 
     private void stashField(int fieldIndex) {
-        if (lineCount == 0 && fieldIndex >= fields.size()) {
+        if (lineCount == 0 && fieldIndex >= fieldMax) {
             addField();
         }
 
@@ -443,7 +433,7 @@ public class TextLexer implements Closeable, Mutable {
         void onFields(long line, ObjList<DirectByteCharSequence> fields, int hi);
     }
 
-    private static final class LineLimitException extends Exception {
+    protected static final class LineLimitException extends Exception {
         private static final LineLimitException INSTANCE = new LineLimitException();
     }
 }

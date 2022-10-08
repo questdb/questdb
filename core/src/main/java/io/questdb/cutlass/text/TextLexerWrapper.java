@@ -22,16 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
+package io.questdb.cutlass.text;
 
-public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "like(SS)";
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+
+public class TextLexerWrapper implements QuietCloseable {
+    private final TextConfiguration configuration;
+    private final CsvTextLexer csvLexer;
+    private GenericTextLexer genericTextLexer;
+
+    public TextLexerWrapper(TextConfiguration configuration) {
+        this.configuration = configuration;
+        this.csvLexer = new CsvTextLexer(configuration);
+    }
+
+    public AbstractTextLexer getLexer(byte delimiter) {
+        if (delimiter == ',') {
+            csvLexer.clear();
+            return csvLexer;
+        } else {
+            if (genericTextLexer == null) {
+                this.genericTextLexer = new GenericTextLexer(configuration);
+            }
+            this.genericTextLexer.clear();
+            this.genericTextLexer.of(delimiter);
+            return this.genericTextLexer;
+        }
     }
 
     @Override
-    protected boolean isCaseInsensitive() {
-        return false;
+    public void close() {
+        Misc.free(csvLexer);
+        genericTextLexer = Misc.free(genericTextLexer);
     }
 }
