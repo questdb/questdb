@@ -1417,6 +1417,9 @@ public class SqlCompiler implements Closeable {
                 }
                 try {
                     if (createTableModel.getQueryModel() == null) {
+                        if (createTableModel.getLikeTableName() != null) {
+                            copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
+                        }
                         engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                         newTable = true;
                     } else {
@@ -1438,6 +1441,33 @@ public class SqlCompiler implements Closeable {
         } else {
             return compiledQuery.ofCreateTableAsSelect(insertCount);
         }
+    }
+
+    private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
+        ExpressionNode likeTableName = model.getLikeTableName();
+        CharSequence likeTableNameToken = likeTableName.token;
+        tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
+        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
+            model.setCommitLag(rdr.getCommitLag());
+            model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
+            TableReaderMetadata rdrMetadata = rdr.getMetadata();
+            for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
+                int columnType = rdrMetadata.getColumnType(i);
+                boolean isSymbol = ColumnType.isSymbol(columnType);
+                int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
+                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
+                if (isSymbol) {
+                    model.cached(rdr.getSymbolMapReader(i).isCached());
+                }
+                model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
+            }
+            model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
+            if (rdrMetadata.getTimestampIndex() != -1) {
+                model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
+            }
+            model.setWalEnabled(rdrMetadata.isWalEnabled());
+        }
+        model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws
