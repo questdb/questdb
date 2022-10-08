@@ -41,6 +41,7 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     private static final String LastPartitionTs = "2024-10-15";
+    private static final String EmptyTable = "id\ttimestamp\n";
 
 
     private WorkerPool workerPool;
@@ -68,7 +69,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     String tableName = "x0";
                     createTableXSinglePartition(tableName);
                     dropActivePartition(tableName);
-                    assertTableXSinglePartition(tableName);
+                    assertTableX(tableName, EmptyTable);
                 }
         );
     }
@@ -85,7 +86,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         dropActivePartition(tableName);
                     }
                     Os.sleep(500L);
-                    assertTableXSinglePartition(tableName);
+                    assertTableX(tableName, EmptyTable);
                 }
         );
     }
@@ -179,9 +180,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         row.append();
 
                         reader.openPartition(3); // last partition
-
                         writer.removePartition(lastTs);
-
                     }
                     assertTableXMultiplePartitions(tableName);
                 }
@@ -189,13 +188,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     }
 
     private void createTableXMultiplePartitions(String tableName) throws SqlException {
-        compile(
-                "create table " + tableName + " (" +
-                        "    id int," +
-                        "    ts timestamp" +
-                        ") timestamp(ts) partition by DAY;",
-                sqlExecutionContext
-        );
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
+            CairoTestUtils.create(model);
+        }
         insert("insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')");
         insert("insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z');");
         insert("insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z');");
@@ -203,7 +198,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z');");
         insert("insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z');");
         assertSql(tableName,
-                "id\tts\n" +
+                "id\ttimestamp\n" +
                         "1\t2024-10-10T00:00:00.000000Z\n" +
                         "2\t2024-10-11T00:00:00.000000Z\n" +
                         "3\t2024-10-12T00:00:00.000000Z\n" +
@@ -213,41 +208,37 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         );
     }
 
+    private void createTableXSinglePartition(String tableName) throws SqlException {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z');");
+        assertSql(tableName,
+                "id\ttimestamp\n" +
+                        "5\t2024-10-15T00:00:00.000000Z\n"
+        );
+    }
+
     private void assertTableXMultiplePartitions(String tableName) throws SqlException {
-        engine.releaseAllReaders();
-        assertSql("select count() from " + tableName + " where ts in '2024'", "count\n5\n");
-        assertSql(tableName, "id\tts\n" +
+        assertTableX(tableName, "id\ttimestamp\n" +
                 "1\t2024-10-10T00:00:00.000000Z\n" +
                 "2\t2024-10-11T00:00:00.000000Z\n" +
                 "3\t2024-10-12T00:00:00.000000Z\n" +
                 "4\t2024-10-12T00:00:01.000000Z\n" +
                 "6\t2024-10-12T00:00:02.000000Z\n");
-        assertFolderDoesNotExist(tableName, LastPartitionTs);
-        dropTable(tableName);
     }
 
-    private void createTableXSinglePartition(String tableName) throws SqlException {
-        compile(
-                "create table " + tableName + " (" +
-                        "    id int," +
-                        "    ts timestamp" +
-                        ") timestamp(ts) partition by DAY;",
-                sqlExecutionContext
-        );
-
-        insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z');");
-        assertSql(tableName,
-                "id\tts\n" +
-                        "5\t2024-10-15T00:00:00.000000Z\n"
-        );
-    }
-
-    private void assertTableXSinglePartition(String tableName) throws SqlException {
-        assertSql("select count() from " + tableName + " where ts in '" + LastPartitionTs + "'", "count\n0\n");
+    private void assertTableX(String tableName, String expected) throws SqlException {
         engine.releaseAllReaders();
-        assertSql(tableName, "id\tts\n");
-        assertFolderDoesNotExist(tableName, LastPartitionTs);
-        dropTable(tableName);
+        assertSql(tableName, expected);
+        try (Path path = new Path().of(root).concat(tableName).concat(LastPartitionTs).$()) {
+            Assert.assertFalse(Files.exists(path));
+        }
+        try {
+            compiler.compile("drop table if exists " + tableName, sqlExecutionContext).execute(null).await();
+        } catch (SqlException e) {
+            Assert.fail();
+        }
     }
 
     private void insert(String stmt) throws SqlException {
@@ -257,19 +248,5 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     private void dropActivePartition(String tableName) throws SqlException {
         Assert.assertEquals(ALTER,
                 compile("alter table " + tableName + " drop partition list '" + LastPartitionTs + "'", sqlExecutionContext).getType());
-    }
-
-    private void dropTable(String tableName) {
-        try {
-            compiler.compile("drop table if exists " + tableName, sqlExecutionContext).execute(null).await();
-        } catch (SqlException e) {
-            Assert.fail();
-        }
-    }
-
-    private void assertFolderDoesNotExist(String tableName, String partitionName) {
-        try (Path path = new Path().of(root).concat(tableName).concat(partitionName).$()) {
-            Assert.assertFalse(Files.exists(path));
-        }
     }
 }

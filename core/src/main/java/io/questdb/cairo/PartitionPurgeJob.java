@@ -111,8 +111,8 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
                     if (txnScoreboard == null) {
                         txnScoreboard = new TxnScoreboard(ff, txnScoreboardEntryCount);
                     }
-                    txnScoreboard.ofRW(path);
                     try {
+                        txnScoreboard.ofRW(path);
                         if (txnScoreboard.acquireTxn(txn)) {
                             txnScoreboard.releaseTxn(txn);
                         }

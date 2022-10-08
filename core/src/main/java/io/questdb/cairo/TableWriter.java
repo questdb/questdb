@@ -1468,28 +1468,19 @@ public class TableWriter implements Closeable {
             // removing the active partition
             rollback();
 
-            // are there any readers, if so will remove the partition async-ly
-            final long txn = txWriter.getTxn();
-            boolean scheduleAsync;
-            try {
-                if (txnScoreboard.acquireTxn(txn)) {
-                    txnScoreboard.releaseTxn(txn);
-                }
-                scheduleAsync = txnScoreboard.getActiveReaderCount(txn) > 0 || txnScoreboard.getMin() != txn;
-            } catch (CairoException ex) {
-                // scoreboard has readers before last committed txn
-                scheduleAsync = true;
-            }
-
             // calculate new boundaries
-            final long newTransientRowCount;
             final long openTimestamp;
+            final long newFixedRowCount;
+            final long newTransientRowCount;
             final long newMaxTimestamp;
             final long newMinTimestamp;
             if (index > 0) {
                 final int prevIndex = index - 1;
-                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+
                 openTimestamp = txWriter.getPartitionTimestamp(prevIndex);
+                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                newFixedRowCount = txWriter.getFixedRowCount() - newTransientRowCount;
+
                 setPathForPartition(path.trimTo(rootLen), partitionBy, openTimestamp, false);
                 TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
                 readPartitionMinMax(ff, openTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
@@ -1497,20 +1488,47 @@ public class TableWriter implements Closeable {
                 newMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(openTimestamp));
             } else {
                 // we are dropping the only partition
-                openTimestamp = clock.getTicks();
-                newMaxTimestamp = Long.MIN_VALUE;
+                openTimestamp = 0L;
+                newFixedRowCount = 0L;
+                newTransientRowCount = 0L;
                 newMinTimestamp = Long.MAX_VALUE;
-                newTransientRowCount = 0;
+                newMaxTimestamp = Long.MIN_VALUE;
+            }
+
+            // are there any readers, if so will remove the partition async-ly
+            boolean deletePartitionFolderAsync;
+            final long txn = txWriter.getTxn();
+            try {
+                if (txnScoreboard.acquireTxn(txn)) {
+                    txnScoreboard.releaseTxn(txn);
+                }
+                deletePartitionFolderAsync = txnScoreboard.getActiveReaderCount(txn) > 0 || txnScoreboard.getMin() != txn;
+            } catch (CairoException ex) {
+                // scoreboard has readers before last committed txn
+                deletePartitionFolderAsync = true;
             }
 
             final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
             columnVersionWriter.removePartition(timestamp);
             columnVersionWriter.commit();
-            txWriter.removeActivePartition(index, newMinTimestamp, newMaxTimestamp, newTransientRowCount, columnVersionWriter.getVersion());
+            txWriter.removeActivePartition(
+                    newMinTimestamp,
+                    newMaxTimestamp,
+                    newFixedRowCount,
+                    newTransientRowCount,
+                    columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+
             closeActivePartition(true);
-            openFirstPartition(openTimestamp);
-            safeDeletePartitionDir(timestamp, partitionNameTxn, scheduleAsync);
+            if (index < 1) {
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+            } else {
+                row = regularRow;
+                openPartition(openTimestamp);
+                populateDenseIndexerList();
+                setAppendPosition(newTransientRowCount, false);
+            }
+            safeDeletePartitionDir(timestamp, partitionNameTxn, deletePartitionFolderAsync);
         } else {
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
