@@ -34,7 +34,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -47,7 +49,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2134,8 +2135,7 @@ if __name__ == "__main__":
                     tbl.execute();
 
                     PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
-
-                    connection.setNetworkTimeout(Runnable::run, 5);
+                    connection.setNetworkTimeout(Runnable::run, 1);
                     int testSize = 100000;
                     stmt.setFetchSize(testSize);
                     assertEquals(testSize, stmt.getFetchSize());
@@ -2148,9 +2148,7 @@ if __name__ == "__main__":
                         Assert.assertNotNull(ex);
                     }
                 }
-                Thread.sleep(100); // Give connection some time to close before closing the server.
             }
-            // Assertion that no open readers left will be performed in assertMemoryLeak
         });
     }
 
