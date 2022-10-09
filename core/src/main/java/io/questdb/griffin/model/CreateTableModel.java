@@ -41,6 +41,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private ExpressionNode name;
+    private ExpressionNode likeTableName;
     private QueryModel queryModel;
     private ExpressionNode timestamp;
     private ExpressionNode partitionBy;
@@ -90,6 +91,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         queryModel = null;
         timestamp = null;
         partitionBy = null;
+        likeTableName = null;
         name = null;
         columnBits.clear();
         columnNames.clear();
@@ -213,6 +215,14 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         this.name = name;
     }
 
+    public ExpressionNode getLikeTableName() {
+        return likeTableName;
+    }
+
+    public void setLikeTableName(ExpressionNode tableName) {
+        this.likeTableName = tableName;
+    }
+
     public QueryModel getQueryModel() {
         return queryModel;
     }
@@ -299,28 +309,33 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
             }
         } else {
             sink.put(" (");
-            int count = getColumnCount();
-            for (int i = 0; i < count; i++) {
-                if (i > 0) {
-                    sink.put(", ");
-                }
-                sink.put(getColumnName(i));
-                sink.put(' ');
-                sink.put(ColumnType.nameOf(getColumnType(i)));
-
-                if (ColumnType.isSymbol(getColumnType(i))) {
-                    sink.put(" capacity ");
-                    sink.put(getSymbolCapacity(i));
-                    if (getSymbolCacheFlag(i)) {
-                        sink.put(" cache");
-                    } else {
-                        sink.put(" nocache");
+            if (getLikeTableName() != null) {
+                sink.put("like ");
+                sink.put(getLikeTableName().token);
+            } else {
+                int count = getColumnCount();
+                for (int i = 0; i < count; i++) {
+                    if (i > 0) {
+                        sink.put(", ");
                     }
-                }
+                    sink.put(getColumnName(i));
+                    sink.put(' ');
+                    sink.put(ColumnType.nameOf(getColumnType(i)));
 
-                if (isIndexed(i)) {
-                    sink.put(" index capacity ");
-                    sink.put(getIndexBlockCapacity(i));
+                    if (ColumnType.isSymbol(getColumnType(i))) {
+                        sink.put(" capacity ");
+                        sink.put(getSymbolCapacity(i));
+                        if (getSymbolCacheFlag(i)) {
+                            sink.put(" cache");
+                        } else {
+                            sink.put(" nocache");
+                        }
+                    }
+
+                    if (isIndexed(i)) {
+                        sink.put(" index capacity ");
+                        sink.put(getIndexBlockCapacity(i));
+                    }
                 }
             }
             sink.put(')');

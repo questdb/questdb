@@ -133,7 +133,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    public class CachedAnalyticRecordCursor implements RecordCursor {
+    class CachedAnalyticRecordCursor implements RecordCursor {
 
         private final ObjList<LongTreeChain> orderedSources;
         private final RecordChain recordChain;
@@ -167,7 +167,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
 
-        private void reopen(ObjList list) {
+        private void reopen(ObjList<?> list) {
             for (int i = 0, n = list.size(); i < n; i++) {
                 if (list.getQuick(i) instanceof Reopenable) {
                     ((Reopenable) list.getQuick(i)).reopen();
@@ -238,12 +238,12 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void close() {
             if (isOpen) {
-                base.close();
+                Misc.free(base);
                 Misc.free(recordChain);
                 for (int i = 0, n = orderedSources.size(); i < n; i++) {
                     Misc.free(orderedSources.getQuick(i));
                 }
-                resetFunctions();//calls close on map within RowNumber
+                resetFunctions(); // calls close on map within RowNumber
                 isOpen = false;
             }
         }

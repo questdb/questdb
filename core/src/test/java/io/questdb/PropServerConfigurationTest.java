@@ -1107,6 +1107,7 @@ public class PropServerConfigurationTest {
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {
         try {
+            properties.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT.getPropertyPath(), value);
             properties.setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath(), value);
             new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
             Assert.fail("Should fail for " + value);

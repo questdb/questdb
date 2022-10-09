@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -606,6 +607,26 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
+        String inputWorkRootTmp = inputWorkRoot;
+        try (Path path = new Path().of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$()) {
+            inputWorkRoot = path.toString();
+        }
+
+        CopyRunnable stmt = () -> {
+            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
+        };
+
+        CopyRunnable test = this::assertQuotesTableContent;
+
+        testCopy(stmt, test);
+
+        inputWorkRoot = inputWorkRootTmp;
+    }
+
+    @Test
     public void testParallelCopyIntoNewTable() throws Exception {
         CopyRunnable stmt = () -> runAndFetchImportId(
                 "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
@@ -685,6 +706,23 @@ public class CopyTest extends AbstractGriffinTest {
         CopyRunnable test = this::assertQuotesTableContent;
 
         testCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
+        String inputWorkRootTmp = inputWorkRoot;
+        try (Path path = new Path().of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$()) {
+            inputWorkRoot = path.toString();
+        }
+
+        CopyRunnable stmt = () -> runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+
+        CopyRunnable test = this::assertQuotesTableContent;
+
+        testCopy(stmt, test);
+
+        inputWorkRoot = inputWorkRootTmp;
     }
 
     @Test
@@ -797,13 +835,14 @@ public class CopyTest extends AbstractGriffinTest {
         CopyRunnable stmt = () -> runAndFetchImportId("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
 
-        CopyRunnable test = () -> assertQuery("message\ncould not remove work dir because it points to one of main instance directories\n",
-                "select left(message, 79) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
+        CopyRunnable test = () -> assertQuery("message\ncould not remove import work directory because it points to one of main directories\n",
+                "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true
         );
 
         testCopy(stmt, test);
+
         inputWorkRoot = inputWorkRootTmp;
     }
 

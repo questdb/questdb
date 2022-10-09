@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -36,6 +36,7 @@ import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -58,9 +59,9 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     private long root = -1;
 
     public RecordTreeChain(
-            ColumnTypes columnTypes,
-            RecordSink recordSink,
-            RecordComparator comparator,
+            @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            @NotNull RecordComparator comparator,
             long keyPageSize,
             int keyMaxPages,
             long valuePageSize,
@@ -163,6 +164,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         root = -1;
         Misc.free(recordChain);
         Misc.free(mem);
+        Misc.free(cursor);
     }
 
     public TreeCursor getCursor(RecordCursor base) {
@@ -312,11 +314,19 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     public class TreeCursor implements RecordCursor {
         private long current;
         private RecordCursor base;
+        private boolean isOpen;
+
+        public TreeCursor() {
+            this.isOpen = true;
+        }
 
         @Override
         public void close() {
-            base.close();
-            current = -1;
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(base);
+                current = -1;
+            }
         }
 
         @Override
@@ -376,6 +386,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         }
 
         private void of(RecordCursor base) {
+            isOpen = true;
             this.base = base;
             recordChain.setSymbolTableResolver(base);
             toTop();
