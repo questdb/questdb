@@ -66,9 +66,6 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
             if (str == null || prefix == null)
                 return false;
 
-            if (Chars.equals(prefix, ""))
-                return true;
-
             return Chars.startsWith(str, prefix);
         }
 
