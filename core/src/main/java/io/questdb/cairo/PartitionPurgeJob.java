@@ -80,6 +80,7 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
         Misc.free(taskObjPool);
         Misc.free(txnScoreboard);
         Misc.free(path);
+        retryQueue.clear();
     }
 
     @Override
@@ -107,6 +108,8 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
                 final int rootTableNameLen = path.length();
 
                 useful = true;
+
+                // check there are no readers
                 if (txn > -1) {
                     if (txnScoreboard == null) {
                         txnScoreboard = new TxnScoreboard(ff, txnScoreboardEntryCount);
@@ -116,7 +119,7 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
                         if (txnScoreboard.acquireTxn(txn)) {
                             txnScoreboard.releaseTxn(txn);
                         }
-                        useful = txnScoreboard.getMin() > txn - 1;
+                        useful = txnScoreboard.getMin() > txn;
                     } catch (CairoException ignore) {
                         useful = false;
                     }
@@ -130,11 +133,16 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
                             false
                     );
                     txnPartitionConditionally(path, txn);
-                    if (ff.exists(path.slash$())) {
+                    if (ff.exists(path.$())) {
                         long errno = ff.rmdir(path);
                         if (errno == 0 || errno == -1) {
                             taskObjPool.push(task);
-                            LOG.infoW().$("dropped formerly active partition [").$(path).I$();
+                            LOG.infoW().$("removed formerly active partition [table=").$(task.getTableName())
+                                    .$(", partitionBy=").$(PartitionBy.toString(task.getPartitionBy()))
+                                    .$(", timestamp=").$(task.getTimestamp())
+                                    .$(", txn=").$(task.getPartitionNameTxn())
+                                    .$(", path=").$(path)
+                                    .I$();
                         } else {
                             task.updateNextRunTimestamp(now);
                             retryQueue.add(task);
@@ -173,13 +181,13 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private static class PartitionPurgeRetryTask extends PartitionPurgeTask implements Mutable {
-        private static final long START_RETRY_DELAY = 5_000L;
+        private static final long START_RETRY_DELAY = 1_000_000L; // 1 second
 
         private long retryDelay = START_RETRY_DELAY;
         private long nextRunTimestamp;
 
-        PartitionPurgeRetryTask copyFrom(PartitionPurgeTask inTask, long ticks) {
-            super.copyFrom(inTask);
+        PartitionPurgeRetryTask copyFrom(PartitionPurgeTask task, long ticks) {
+            super.copyFrom(task);
             retryDelay = START_RETRY_DELAY;
             nextRunTimestamp = ticks + retryDelay;
             return this;
@@ -190,7 +198,7 @@ public class PartitionPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         void updateNextRunTimestamp(long now) {
-            retryDelay = Math.min(60_000_000L, retryDelay * 2L);
+            retryDelay = Math.min(60_000_000L, retryDelay * 2L); // every (up to) 60 seconds
             nextRunTimestamp = now + retryDelay;
         }
 

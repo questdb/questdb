@@ -1450,7 +1450,7 @@ public class TableWriter implements Closeable {
 
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
-            LOG.error().$("partition is already dropped [path=").$(path).I$();
+            LOG.error().$("partition is already removed [path=").$(path).I$();
             return false;
         }
 
@@ -5846,8 +5846,13 @@ public class TableWriter implements Closeable {
             while (true) {
                 long cursor = pubSeq.next();
                 if (cursor > -1L) {
-                    PartitionPurgeTask task = messageBus.getPartitionPurgeQueue().get(cursor);
-                    task.of(tableName, timestamp, partitionBy, partitionNameTxn);
+                    LOG.info().$("scheduling async removal of active partition [table=").$(tableName)
+                            .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
+                            .$(", timestamp=").$(timestamp)
+                            .$(", txn=").$(partitionNameTxn)
+                            .I$();
+                    PartitionPurgeTask partitionPurgeTask = messageBus.getPartitionPurgeQueue().get(cursor);
+                    partitionPurgeTask.of(tableName, timestamp, partitionBy, partitionNameTxn);
                     pubSeq.done(cursor);
                     break;
                 } else if (cursor == -1L) {

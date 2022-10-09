@@ -46,10 +46,12 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     private WorkerPool workerPool;
     private PartitionPurgeJob partitionPurgeJob;
+    private int txn;
 
     @Before
     public void setUp() {
         super.setUp();
+        txn = -1;
         workerPool = new TestWorkerPool(1);
         partitionPurgeJob = new PartitionPurgeJob(engine);
         workerPool.assign(partitionPurgeJob);
@@ -85,7 +87,25 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     ) {
                         dropActivePartition(tableName);
                     }
-                    Os.sleep(500L);
+                    assertTableX(tableName, EmptyTable);
+                }
+        );
+    }
+
+    @Test
+    public void testDropOnlyPartitionWithAncientReaders() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+                    String tableName = "x1";
+                    createTableXSinglePartition(tableName);
+                    insert("insert into " + tableName + " values(111, '2024-10-15T11:11:11.111111Z');");
+                    try (TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                        insert("insert into " + tableName + " values(888, '2024-10-15T00:00:00.000000Z');");
+                        try (TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                            Assert.assertEquals(2, reader0.size());
+                            dropActivePartition(tableName);
+                            Assert.assertEquals(3, reader1.size());
+                        }
+                    }
                     assertTableX(tableName, EmptyTable);
                 }
         );
@@ -212,11 +232,17 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
             CairoTestUtils.create(model);
         }
+        txn++;
         insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z');");
         assertSql(tableName,
                 "id\ttimestamp\n" +
                         "5\t2024-10-15T00:00:00.000000Z\n"
         );
+    }
+
+    private void insert(String stmt) throws SqlException {
+        compiler.compile(stmt, sqlExecutionContext).execute(null).await();
+        txn++;
     }
 
     private void assertTableXMultiplePartitions(String tableName) throws SqlException {
@@ -231,7 +257,10 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     private void assertTableX(String tableName, String expected) throws SqlException {
         engine.releaseAllReaders();
         assertSql(tableName, expected);
-        try (Path path = new Path().of(root).concat(tableName).concat(LastPartitionTs).$()) {
+        engine.releaseAllWriters();
+        try (Path path = new Path().of(root).concat(tableName).concat(LastPartitionTs)) {
+            TableUtils.txnPartitionConditionally(path, txn);
+            path.$();
             Assert.assertFalse(Files.exists(path));
         }
         try {
@@ -239,10 +268,6 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         } catch (SqlException e) {
             Assert.fail();
         }
-    }
-
-    private void insert(String stmt) throws SqlException {
-        compiler.compile(stmt, sqlExecutionContext).execute(null).await();
     }
 
     private void dropActivePartition(String tableName) throws SqlException {
