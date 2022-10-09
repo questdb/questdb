@@ -512,6 +512,10 @@ io.questdb.griffin.engine.functions.math.RoundHalfEvenDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory
 
+# CeilingFunctionFactory
+io.questdb.griffin.engine.functions.math.CeilingDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory
+
 # FloorFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory
@@ -599,6 +603,9 @@ io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFac
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
+
+# position()
+io.questdb.griffin.engine.functions.str.PositionFunctionFactory
 
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
