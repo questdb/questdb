@@ -42,7 +42,7 @@ public class LnFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLnInt() throws Exception {
-        assertLog("select ln(8965)", "9.101083386039234\n");
+        assertLog("select ln(11211)", "9.324650718153594\n");
     }
 
     private void assertLog(String sql, String expected) throws Exception {

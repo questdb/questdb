@@ -186,7 +186,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory,
-            io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory,
 //                    # '~=',
