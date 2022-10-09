@@ -219,8 +219,11 @@ public class TableUpdateDetails implements Closeable {
         }
         if (writer != null) {
             final long commitInterval = writer.getCommitInterval();
+            long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
-            nextCommitTime += commitInterval;
+            // Do not commit row by row if the commit takes longer than commitInterval.
+            // Exclude time to commit from the commit interval.
+            nextCommitTime += commitInterval + millisecondClock.getTicks() - start;
         }
         return nextCommitTime;
     }

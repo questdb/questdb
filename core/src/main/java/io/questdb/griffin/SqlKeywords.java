@@ -1886,6 +1886,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isLikeKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'k'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {
         if (tok.length() < 7) {
             return false;
