@@ -1464,8 +1464,6 @@ public class TableWriter implements Closeable {
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
             // removing the active partition
-            rollback();
-
             // calculate new boundaries
             final long openTimestamp;
             final long newFixedRowCount;
@@ -1474,14 +1472,16 @@ public class TableWriter implements Closeable {
             final long newMinTimestamp;
             if (index > 0) {
                 final int prevIndex = index - 1;
-
                 openTimestamp = txWriter.getPartitionTimestamp(prevIndex);
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
                 newFixedRowCount = txWriter.getFixedRowCount() - newTransientRowCount;
-
-                setPathForPartition(path.trimTo(rootLen), partitionBy, openTimestamp, false);
-                TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
-                readPartitionMinMax(ff, openTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                try {
+                    setPathForPartition(path.trimTo(rootLen), partitionBy, openTimestamp, false);
+                    TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
+                    readPartitionMinMax(ff, openTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                } finally {
+                    path.trimTo(rootLen);
+                }
                 newMinTimestamp = Math.max(attachMinTimestamp, openTimestamp);
                 newMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(openTimestamp));
             } else {
@@ -1493,28 +1493,15 @@ public class TableWriter implements Closeable {
                 newMaxTimestamp = Long.MIN_VALUE;
             }
 
-            // are there any readers, if so will remove the partition async-ly
-            boolean deletePartitionFolderAsync;
-            final long txn = txWriter.getTxn();
-            try {
-                if (txnScoreboard.acquireTxn(txn)) {
-                    txnScoreboard.releaseTxn(txn);
-                }
-                deletePartitionFolderAsync = txnScoreboard.getActiveReaderCount(txn) > 0 || txnScoreboard.getMin() != txn;
-            } catch (CairoException ex) {
-                // scoreboard has readers before last committed txn
-                deletePartitionFolderAsync = true;
-            }
-
-            final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
             columnVersionWriter.removePartition(timestamp);
-            columnVersionWriter.commit();
             txWriter.removeActivePartition(
                     newMinTimestamp,
                     newMaxTimestamp,
                     newFixedRowCount,
-                    newTransientRowCount,
-                    columnVersionWriter.getVersion());
+                    newTransientRowCount);
+            txWriter.bumpTruncateVersion();
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             closeActivePartition(true);
@@ -1526,7 +1513,6 @@ public class TableWriter implements Closeable {
                 populateDenseIndexerList();
                 setAppendPosition(newTransientRowCount, false);
             }
-            // TODO: needs to be deleted async
         } else {
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
