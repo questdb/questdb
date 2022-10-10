@@ -544,6 +544,9 @@ open module io.questdb {
 //                  ceil()
             io.questdb.griffin.engine.functions.math.CeilDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory,
+//                  ceil()
+            io.questdb.griffin.engine.functions.math.CeilingDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory,
 //                  floor()
             io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,
@@ -627,9 +630,13 @@ open module io.questdb {
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
             io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory,
+            // position
+            io.questdb.griffin.engine.functions.str.PositionFunctionFactory,
 //                  Change string case
             io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
             io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LowerFunctionFactory,
+            io.questdb.griffin.engine.functions.str.UpperFunctionFactory,
 //          left/right
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,

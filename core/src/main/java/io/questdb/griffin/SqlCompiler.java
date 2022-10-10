@@ -1467,6 +1467,9 @@ public class SqlCompiler implements Closeable {
                 }
                 try {
                     if (createTableModel.getQueryModel() == null) {
+                        if (createTableModel.getLikeTableName() != null) {
+                            copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
+                        }
                         engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                         newTable = true;
                     } else {

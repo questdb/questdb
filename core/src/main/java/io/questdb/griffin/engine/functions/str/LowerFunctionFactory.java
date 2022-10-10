@@ -22,16 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
+package io.questdb.griffin.engine.functions.str;
 
-public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
+/**
+ * Postgres-compatibility lower() alias for the to_lowercase() function.
+ */
+public class LowerFunctionFactory extends ToLowercaseFunctionFactory {
     @Override
     public String getSignature() {
-        return "like(SS)";
-    }
-
-    @Override
-    protected boolean isCaseInsensitive() {
-        return false;
+        return "lower(S)";
     }
 }

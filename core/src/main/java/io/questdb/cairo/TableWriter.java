@@ -107,6 +107,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private final String tableName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
+    private final boolean directIOFlag;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
@@ -215,7 +216,6 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private UpdateOperator updateOperator;
     private DropIndexOperator dropIndexOperator;
     private final WalEventReader walEventReader;
-
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
@@ -228,6 +228,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
+        this.directIOFlag = (Os.type != Os.WINDOWS || configuration.getWriterFileOpenOpts() != CairoConfiguration.O_NONE);
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
         if (ownMessageBus != null) {
@@ -2990,6 +2991,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
     CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    boolean preferDirectIO() {
+        return directIOFlag;
     }
 
     Sequence getO3CopyPubSeq() {

@@ -506,8 +506,8 @@ public final class Chars {
         return lp != lhi || rp != rhi;
     }
 
-    public static boolean nonEmpty(final CharSequence value) {
-        return value != null && value.length() > 0;
+    public static boolean empty(final CharSequence value) {
+        return value == null || value.length() < 1;
     }
 
     public static CharSequence repeat(String s, int times) {
