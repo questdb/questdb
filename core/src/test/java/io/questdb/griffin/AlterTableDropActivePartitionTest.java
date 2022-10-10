@@ -26,12 +26,15 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+
+import java.util.UUID;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
@@ -41,23 +44,31 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     private static final String EmptyTable = "id\ttimestamp\n";
 
 
+    private WorkerPool workerPool;
+    private O3PartitionPurgeJob partitionPurgeJob;
     private int txn;
 
     @Before
     public void setUp() {
         super.setUp();
         txn = -1;
+        workerPool = new TestWorkerPool(1);
+        partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
+        workerPool.assign(partitionPurgeJob);
+        workerPool.freeOnExit(partitionPurgeJob);
+        workerPool.start();
     }
 
     @After
     public void tearDown() {
         super.tearDown();
+        Misc.free(workerPool);
     }
 
     @Test
     public void testDropOnlyPartitionNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x0";
+                    String tableName = generateTableName();
                     createTableXSinglePartition(tableName);
                     dropActivePartition(tableName);
                     assertTableX(tableName, EmptyTable);
@@ -68,7 +79,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropOnlyPartitionWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x1";
+                    String tableName = generateTableName();
                     createTableXSinglePartition(tableName);
                     try (
                             TableReader ignore0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
@@ -84,7 +95,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropOnlyPartitionWithAncientReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x1";
+                    String tableName = generateTableName();
                     createTableXSinglePartition(tableName);
                     insert("insert into " + tableName + " values(111, '2024-10-15T11:11:11.111111Z');");
                     try (TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
@@ -103,7 +114,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x2";
+                    String tableName = generateTableName();
                     createTableXMultiplePartitions(tableName);
                     dropActivePartition(tableName);
                     assertTableXMultiplePartitions(tableName);
@@ -114,7 +125,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x3";
+                    String tableName = generateTableName();
                     createTableXMultiplePartitions(tableName);
                     try (
                             TableReader ignore0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
@@ -131,7 +142,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotDropWhenThereIsAWriter() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x4";
+                    String tableName = generateTableName();
                     createTableXMultiplePartitions(tableName);
                     try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                         dropActivePartition(tableName);
@@ -146,7 +157,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropWithUncommittedRowsNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x5";
+                    String tableName = generateTableName();
                     createTableXMultiplePartitions(tableName);
                     try (
                             TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")
@@ -171,7 +182,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropWithUncommittedRowsWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = "x6";
+                    String tableName = generateTableName();
                     createTableXMultiplePartitions(tableName);
                     try (
                             TableReader ignore0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
@@ -262,5 +273,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     private void dropActivePartition(String tableName) throws SqlException {
         Assert.assertEquals(ALTER,
                 compile("alter table " + tableName + " drop partition list '" + LastPartitionTs + "'", sqlExecutionContext).getType());
+    }
+
+    private static String generateTableName() {
+        return UUID.randomUUID().toString().split("[-]")[0];
     }
 }
