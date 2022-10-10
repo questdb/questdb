@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.*;
 import io.questdb.mp.TestWorkerPool;
@@ -110,6 +111,11 @@ public class BasePGTest extends AbstractGriffinTest {
             @Override
             public long getTimeout() {
                 return maxQueryTime;
+            }
+
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK) ? 0 : super.getCircuitBreakerThrottle();//fail on first check
             }
         };
 

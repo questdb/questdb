@@ -42,7 +42,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private long buffer;
     private int testCount;
     private long fd = -1;
-    private long powerUpTime;
+    private long powerUpTime = Long.MAX_VALUE;
     private final int memoryTag;
 
     public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
@@ -56,6 +56,8 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         long timeout = configuration.getTimeout();
         if (timeout > 0) {
             this.timeout = timeout;
+        } else if (timeout == TIMEOUT_FAIL_ON_FIRST_CHECK) {
+            this.timeout = -1;
         } else {
             this.timeout = Long.MAX_VALUE;
         }
@@ -81,12 +83,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void unsetTimer() {
-        powerUpTime = 0;
+        powerUpTime = Long.MAX_VALUE;
     }
 
     @Override
     public boolean isTimerSet() {
-        return powerUpTime > 0;
+        return powerUpTime < Long.MAX_VALUE;
     }
 
     public void resetMaxTimeToDefault() {

@@ -24,13 +24,22 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.*;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.RostiAllocFacadeImpl;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -40,7 +49,7 @@ import static org.hamcrest.MatcherAssert.*;
 import static org.hamcrest.Matchers.*;
 
 /**
- * This test verifies that various factories use circuit breaker and thus can time out or recognize broken connection.
+ * This test verifies that various factories use circuit breaker and thus can time out or detect broken connection.
  */
 public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
@@ -68,18 +77,109 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedWithManyWorkersAndMinimalQueue() throws Exception {
+        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testLatestByAllIndexedWithOneWorkerAndMinimalQueue() throws Exception {
+        executeWithPool(1, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testLatestByAllIndexedWithOneWorkerAndRegularQueue() throws Exception {
+        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+        });
+    }
+
+
+    @Test
+    public void testLatestByAllIndexedWithManyWorkersAndRegularQueue() throws Exception {
+        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+        });
+    }
+
+    //keyed
+    @Test
+    public void testTimeoutInVectorizedKeyedGroupByWithOneWorkerAndMinimalQueue() throws Exception {
+        pageFrameMaxRows = 1000;
+        executeWithPool(1, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testTimeoutInVectorizedKeyedGroupByWithOneWorkerAndRegularQueue() throws Exception {
+        pageFrameMaxRows = 1000;
+        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testTimeoutInVectorizedKeyedGroupByWithManyWorkersAndMinimalQueue() throws Exception {
+        pageFrameMaxRows = 1000;
+        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testTimeoutInVectorizedKeyedGroupByWithManyWorkersAndRegularQueue() throws Exception {
+        pageFrameMaxRows = 1000;
+        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+        });
+    }
+
+    //non-keyed
+    @Test//triggers timeout when processing task in main thread because queue is too small 
+    public void testTimeoutInVectorizedNonKeyedGroupByWithManyWorkersAndMinimalQueue() throws Exception {
+        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test//triggers timeout at end of task creation in main thread 
+    public void testTimeoutInVectorizedNonKeyedGroupByWithOneWorkersAndRegularQueue() throws Exception {
+        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test//triggers timeout at end of task creation in main thread 
+    public void testTimeoutInVectorizedNonKeyedGroupByWithManyWorkersAndRegularQueue() throws Exception {
+        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testTimeoutInVectorizedKeyedGroupBy() throws Exception {
+        testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+    }
+
+    private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
                 "select i, avg(l), max(l) \n" +
                         "from grouptest \n" +
-                        "group by i");
+                        "group by i", compiler, sqlExecutionContext);
     }
 
     @Test
     public void testTimeoutInVectorizedNonKeyedGroupBy() throws Exception {
+        testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
+    }
+
+    private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
-                "select avg(l), max(l) \n" +
-                        "from grouptest \n");
+                "select avg(l), max(l) from grouptest", compiler, sqlExecutionContext);
     }
 
     @Test
@@ -124,6 +224,10 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testTimeoutInLatestByAllIndexed() throws Exception {
+        testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+    }
+
+    private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         assertTimeout("create table x as " +
                         "(" +
                         "select" +
@@ -135,7 +239,8 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                         " rnd_symbol(5,4,4,1) b" +
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
-                "select * from (select a,k,b from x latest on k partition by b) where a > 40");
+                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
+                compiler, sqlExecutionContext);
     }
 
     @Test
@@ -296,36 +401,30 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     @Test
     public void testTimeoutInInsertAsSelect() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double ) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000)",
-                "select count(*) from instest");
+                "insert into instest select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInInsertAsSelectBatchedAndOrderedByTs() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)",
-                "select count(*) from instest");
+                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInInsertAsSelectBatchedAndOrderedByTsAsString() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(cast(x as timestamp) as string) from long_sequence(10000000)",
-                "select count(*) from instest");
+                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(cast(x as timestamp) as string) from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInInsertAsSelectOrderedByTs() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)",
-                "select count(*) from instest");
+                "insert into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInCreateTableAsSelectFromVirtualTable() throws Exception {
-        assertTimeout("create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000))",
-                "",
-                "select count(*) from instest");
+        assertTimeout("create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000))");
 
         try {
             compile("select * from instest");
@@ -339,9 +438,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     public void testTimeoutInCreateTableAsSelectFromRealTable() throws Exception {
         unsetTimeout();
         try {
-            compiler.compile("create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000))", sqlExecutionContext);
-            resetTimeout();
-            assertTimeout("create table instest2 as (select * from instest);", "");
+            assertTimeout("create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000))", "create table instest2 as (select * from instest);");
         } finally {
             resetTimeout();
         }
@@ -356,15 +453,8 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testTimeoutInUpdateTable() throws Exception {
-        unsetTimeout();
-        try {
-            compiler.compile("create table updtest as (select rnd_int() i, rnd_long() l, rnd_double() d from long_sequence(10000))", sqlExecutionContext);
-            resetTimeout();
-            assertTimeout("update updtest  set i = rnd_int(), l = i * l, d = d/7 *31",
-                    "");
-        } finally {
-            resetTimeout();
-        }
+        assertTimeout("create table updtest as (select rnd_int() i, rnd_long() l, rnd_double() d from long_sequence(10000))",
+                "update updtest  set i = rnd_int(), l = i * l, d = d/7 *31", null);
     }
 
     private void unsetTimeout() {
@@ -375,30 +465,155 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
         ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
     }
 
+    private void assertTimeout(String ddl) throws Exception {
+        assertTimeout(ddl, null, null);
+    }
+
     private void assertTimeout(String ddl, String query) throws Exception {
         assertTimeout(ddl, null, query);
     }
 
+    private void assertTimeout(String ddl, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+        assertTimeout(ddl, null, query, compiler, context);
+    }
+
     private void assertTimeout(String ddl, String dml, String query) throws Exception {
+        assertTimeout(ddl, dml, query, compiler, sqlExecutionContext);
+    }
+
+    private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         try {
             assertMemoryLeak(() -> {
-                compile(ddl, sqlExecutionContext);
+                if (dml != null || query != null) {
+                    unsetTimeout();
+                }
+                compiler.compile(ddl, context);
                 if (dml != null) {
-                    compile(dml, sqlExecutionContext).execute(null);
+                    if (query == null) {
+                        resetTimeout();
+                    }
+
+                    CompiledQuery cc = compiler.compile(dml, context);
+                    if (cc.getType() == CompiledQuery.UPDATE) {
+                        try (UpdateOperation op = cc.getUpdateOperation()) {
+                            try (OperationFuture future = cc.getDispatcher().execute(op, sqlExecutionContext, null)) {
+                                future.await();
+                            }
+                        }
+                    } else {
+                        try (OperationFuture future = cc.execute(null)) {
+                            future.await();
+                        }
+                    }
+
+
                 }
 
-                snapshotMemoryUsage();
-                CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-                try (RecordCursorFactory factory = cc.getRecordCursorFactory();
-                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    cursor.hasNext();
+                if (query != null) {
+                    resetTimeout();
+                    snapshotMemoryUsage();
+                    CompiledQuery cc = compiler.compile(query, context);
+                    try (RecordCursorFactory factory = cc.getRecordCursorFactory();
+                         RecordCursor cursor = factory.getCursor(context)) {
+                        cursor.hasNext();
+                    }
+                    assertFactoryMemoryUsage();
                 }
-                assertFactoryMemoryUsage();
             });
 
             fail("Cairo timeout exception expected!");
         } catch (CairoException ce) {
+            resetTimeout();
             Assert.assertTrue("Exception should be interrupted! " + ce, ce.isInterruption());
+        }
+    }
+
+    private void executeWithPool(
+            int workerCount,
+            int queueSize,
+            CustomisableRunnable runnable) throws Exception {
+        executeWithPool(workerCount, queueSize, RostiAllocFacadeImpl.INSTANCE, runnable);
+    }
+
+    private void executeWithPool(
+            int workerCount,
+            int queueSize,
+            RostiAllocFacade rostiAllocFacade,
+            CustomisableRunnable runnable
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            if (workerCount > 0) {
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount - 1;
+                    }
+
+                    @Override
+                    public long getSleepTimeout() {
+                        return 1;
+                    }
+                });
+
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public int getVectorAggregateQueueCapacity() {
+                        return queueSize;
+                    }
+
+                    @Override
+                    public int getLatestByQueueCapacity() {
+                        return queueSize;
+                    }
+
+                    @Override
+                    public RostiAllocFacade getRostiAllocFacade() {
+                        return rostiAllocFacade;
+                    }
+
+                    @Override
+                    public int getSqlPageFrameMaxRows() {
+                        return configuration.getSqlPageFrameMaxRows();
+                    }
+                };
+
+                execute(pool, runnable, configuration1);
+            } else {
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root);
+                execute(null, runnable, configuration1);
+            }
+        });
+    }
+
+    protected static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
+
+        try (final CairoEngine engine = new CairoEngine(configuration);
+             final SqlCompiler compiler = new SqlCompiler(engine)) {
+            //workerCount - 1 
+            try (final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
+                sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, circuitBreaker);
+
+                try {
+                    if (pool != null) {
+                        pool.assign(new GroupByJob(engine.getMessageBus()));
+                        pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
+                        pool.start(LOG);
+                    }
+
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+                } finally {
+                    if (pool != null) {
+                        pool.halt();
+                    }
+                }
+            }
         }
     }
 }

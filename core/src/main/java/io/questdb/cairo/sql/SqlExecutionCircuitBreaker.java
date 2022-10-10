@@ -25,6 +25,11 @@
 package io.questdb.cairo.sql;
 
 public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
+
+    //Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset 
+    //(used mainly for testing) 
+    long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;
+
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
         public void statefulThrowExceptionIfTripped() {
@@ -95,7 +100,9 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     long getFd();
 
+    /* Unsets timer reset/power-up time so it won't time out on any check (unless resetTimer() is called)  */
     void unsetTimer();
 
+    /* Returns true if time was reset/powered up (for current sql command) and false otherwise . */
     boolean isTimerSet();
 }

@@ -273,9 +273,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         } catch (Throwable e) {
             sharedCircuitBreaker.cancel();
-
             Misc.free(cursor);
-            resetRostiMemorySize();
             throw e;
         } finally {
             // all done? great start consuming the queue we just published
@@ -288,6 +286,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // start at the back to reduce chance of clashing
             reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG, circuitBreaker, sharedCircuitBreaker);
+            //we can't reallocate rosti until tasks are complete because some other thread could be using it
+            if (sharedCircuitBreaker.isCanceled()) {
+                resetRostiMemorySize();
+            }
         }
 
         if (oomCounter.get() > 0) {
@@ -363,13 +365,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
             }
-        } catch (CairoException ce) {
-            if (ce.isInterruption()) {
-                Misc.free(cursor);
-                resetRostiMemorySize();
-            }
+        } catch (Throwable t) {
+            Misc.free(cursor);
+            resetRostiMemorySize();
 
-            throw ce;
+            throw t;
         }
 
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
