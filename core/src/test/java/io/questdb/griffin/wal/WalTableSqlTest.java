@@ -28,10 +28,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.str.Path;
-import org.junit.Assert;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import org.junit.Test;
@@ -396,97 +392,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
         });
-    }
-
-    @Test
-    public void testWalPurgeOneSegment() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-            assertWalExistance(true, tableName, 1);
-            assertSegmentExistance(true, tableName, 1, 0);
-
-            drainWalQueue();
-
-            assertWalExistance(true, tableName, 1);
-
-            assertSql(tableName, "x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n");
-
-            purgeWalSegments();
-
-            assertSegmentExistance(true, tableName, 1, 0);
-            assertWalExistance(true, tableName, 1);
-
-            engine.releaseInactive();
-
-            purgeWalSegments();
-
-            assertSegmentExistance(false, tableName, 1, 0);
-            assertWalExistance(false, tableName, 1);
-        });
-    }
-
-    @Test
-    public void testWalPurgeTwoSegments() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-            assertWalExistance(true, tableName, 1);
-            assertSegmentExistance(true, tableName, 1, 0);
-
-            drainWalQueue();
-
-            assertWalExistance(true, tableName, 1);
-            assertSegmentExistance(true, tableName, 1, 0);
-
-            executeInsert("insert into " + tableName + " values (6, '2022-02-24T00:00:05.000000Z')");
-            compile("alter table " + tableName + " add column sss string");
-
-            drainWalQueue();
-
-            assertSql(tableName, "x\tts\tsss\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\t\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\t\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\t\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\t\n" +
-                    "6\t2022-02-24T00:00:05.000000Z\t\n");
-
-            assertWalExistance(true, tableName, 1);
-            assertSegmentExistance(true, tableName, 1, 0);
-            assertSegmentExistance(true, tableName, 1, 1);
-        });
-    }
-
-    private void assertWalExistance(boolean expectExists, String tableName, int walId) {
-        CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
-        }
-    }
-
-    private void assertSegmentExistance(boolean expectExists, String tableName, int walId, int segmentId) {
-        CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).slash().put(segmentId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
-        }
     }
 
     @Test
