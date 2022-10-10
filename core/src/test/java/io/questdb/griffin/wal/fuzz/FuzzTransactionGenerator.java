@@ -112,8 +112,8 @@ public class FuzzTransactionGenerator {
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
-                generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols);
-                rowCount -= blockRows;
+                generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols, i, transactionCount);
+               rowCount -= blockRows;
                 lastTimestamp = stopTs;
             }
         }
@@ -178,12 +178,18 @@ public class FuzzTransactionGenerator {
             double nullSet,
             double rollback,
             int strLen,
-            String[] symbols
+            String[] symbols,
+            int seed,
+            long tsRound
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = minTimestamp;
         for (int i = 0; i < rowCount; i++) {
-            timestamp = o3 ? minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp) : timestamp + (maxTimestamp - minTimestamp) / rowCount;
+            if (o3) {
+                timestamp = ((minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp)) / tsRound) * tsRound + seed;
+            } else {
+                timestamp = timestamp + (maxTimestamp - minTimestamp) / rowCount;
+            }
             transaction.operationList.add(new FuzzInsertOperation(rnd, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
