@@ -26,16 +26,11 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 public class RTrimFunctionFactory implements FunctionFactory {
     @Override
@@ -45,51 +40,6 @@ public class RTrimFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new TrimFunc(args.getQuick(0));
-    }
-
-    public static class TrimFunc extends StrFunction implements UnaryFunction {
-        private final Function arg;
-
-        private final StringSink sink1 = new StringSink();
-        private final StringSink sink2 = new StringSink();
-
-        public TrimFunc(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public CharSequence getStr(final Record rec) {
-            return rTrim(getArg().getStr(rec), sink1);
-        }
-
-        @Override
-        public CharSequence getStrB(final Record rec) {
-            return rTrim(getArg().getStr(rec), sink2);
-        }
-
-        @Nullable
-        private static CharSequence rTrim(CharSequence str, StringSink sink) {
-            if (str == null) {
-                return null;
-            }
-            int startIdx = 0;
-            int endIdx = str.length()-1;
-            while (startIdx < endIdx && str.charAt(endIdx) == ' ') {
-                endIdx--;
-            }
-            sink.clear();
-            if (startIdx != endIdx) {
-                while (startIdx <= endIdx) {
-                    sink.put(str.charAt(startIdx++));
-                }
-            }
-            return sink;
-        }
+        return new TrimFunctionFactory.TrimFunc(args.getQuick(0), TrimFunctionFactory.TrimFunc.Type.RTRIM);
     }
 }

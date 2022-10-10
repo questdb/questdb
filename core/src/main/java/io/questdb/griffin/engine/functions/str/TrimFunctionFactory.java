@@ -45,17 +45,25 @@ public class TrimFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new TrimFunc(args.getQuick(0));
+        return new TrimFunc(args.getQuick(0), TrimFunc.Type.TRIM);
     }
 
     public static class TrimFunc extends StrFunction implements UnaryFunction {
-        private final Function arg;
+
+        public enum Type {
+            TRIM,
+            LTRIM,
+            RTRIM
+        }
 
         private final StringSink sink1 = new StringSink();
         private final StringSink sink2 = new StringSink();
+        private final Function arg;
+        private final Type type;
 
-        public TrimFunc(Function arg) {
+        public TrimFunc(Function arg, Type type) {
             this.arg = arg;
+            this.type = type;
         }
 
         @Override
@@ -74,17 +82,21 @@ public class TrimFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private static CharSequence trim(CharSequence str, StringSink sink) {
+        private CharSequence trim(CharSequence str, StringSink sink) {
             if (str == null) {
                 return null;
             }
             int startIdx = 0;
-            int endIdx = str.length()-1;
-            while (startIdx < endIdx && str.charAt(startIdx) == ' ') {
-                startIdx++;
+            int endIdx = str.length() - 1;
+            if (type == Type.LTRIM || type == Type.TRIM) {
+                while (startIdx < endIdx && str.charAt(startIdx) == ' ') {
+                    startIdx++;
+                }
             }
-            while (startIdx < endIdx && str.charAt(endIdx) == ' ') {
-                endIdx--;
+            if (type == Type.RTRIM || type == Type.TRIM) {
+                while (startIdx < endIdx && str.charAt(endIdx) == ' ') {
+                    endIdx--;
+                }
             }
             sink.clear();
             if (startIdx != endIdx) {
