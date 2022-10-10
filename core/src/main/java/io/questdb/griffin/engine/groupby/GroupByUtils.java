@@ -261,8 +261,27 @@ public class GroupByUtils {
     }
 
     public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).computeNext(value, record);
+        // Try to avoid megamorphic calls and force inlining for the <=4 functions case.
+        switch (n) {
+            default:
+                for (int i = n - 1; i >= 4; i--) {
+                    groupByFunctions.getQuick(i).computeNext(value, record);
+                }
+                // fall through
+            case 4:
+                groupByFunctions.getQuick(3).computeNext(value, record);
+                // fall through
+            case 3:
+                groupByFunctions.getQuick(2).computeNext(value, record);
+                // fall through
+            case 2:
+                groupByFunctions.getQuick(1).computeNext(value, record);
+                // fall through
+            case 1:
+                groupByFunctions.getQuick(0).computeNext(value, record);
+                break;
+            case 0:
+                break;
         }
     }
 
