@@ -256,7 +256,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerFileOpenOpts;
     private final int queryCacheEventQueueCapacity;
     private final int columnPurgeQueueCapacity;
-    private final int partitionPurgeQueueCapacity;
     private final long columnPurgeRetryDelayLimit;
     private final double columnPurgeRetryDelayMultiplier;
     private final String systemTableNamePrefix;
@@ -741,7 +740,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
-            this.partitionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_PARTITION_PURGE_QUEUE_CAPACITY, 64);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
             this.columnPurgeRetryDelayLimit = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 60_000_000L);
             this.columnPurgeRetryDelay = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
@@ -1942,11 +1940,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getColumnPurgeQueueCapacity() {
             return columnPurgeQueueCapacity;
-        }
-
-        @Override
-        public int getPartitionPurgeQueueCapacity() {
-            return partitionPurgeQueueCapacity;
         }
 
         @Override

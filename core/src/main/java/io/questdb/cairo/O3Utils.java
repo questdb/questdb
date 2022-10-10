@@ -31,7 +31,6 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -51,18 +50,15 @@ public class O3Utils {
         final int workerCount = workerPool.getWorkerCount();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
         final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-        final PartitionPurgeJob partitionPurgeJob = new PartitionPurgeJob(cairoEngine);
 
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(columnPurgeJob);
-        workerPool.assign(partitionPurgeJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnExit(purgeDiscoveryJob);
         workerPool.freeOnExit(columnPurgeJob);
-        workerPool.freeOnExit(partitionPurgeJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();

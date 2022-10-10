@@ -26,11 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.mp.TestWorkerPool;
-import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -44,25 +41,17 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     private static final String EmptyTable = "id\ttimestamp\n";
 
 
-    private WorkerPool workerPool;
-    private PartitionPurgeJob partitionPurgeJob;
     private int txn;
 
     @Before
     public void setUp() {
         super.setUp();
         txn = -1;
-        workerPool = new TestWorkerPool(1);
-        partitionPurgeJob = new PartitionPurgeJob(engine);
-        workerPool.assign(partitionPurgeJob);
-        workerPool.start();
     }
 
     @After
     public void tearDown() {
         super.tearDown();
-        workerPool.close();
-        partitionPurgeJob.close();
     }
 
     @Test

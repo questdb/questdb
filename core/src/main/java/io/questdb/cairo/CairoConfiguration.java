@@ -81,9 +81,6 @@ public interface CairoConfiguration {
 
     int getColumnPurgeQueueCapacity();
 
-    int getPartitionPurgeQueueCapacity();
-    // partition retryDelay, retryDelayLimit, and retryDelayMultiplier are constants
-
     long getColumnPurgeRetryDelay();
 
     long getColumnPurgeRetryDelayLimit();

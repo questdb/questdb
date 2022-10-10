@@ -4319,7 +4319,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                     Assert.assertTrue(
-                            // active patition
+                            // active partition
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
 

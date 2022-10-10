@@ -1526,7 +1526,7 @@ public class TableWriter implements Closeable {
                 populateDenseIndexerList();
                 setAppendPosition(newTransientRowCount, false);
             }
-            safeDeletePartitionDir(timestamp, partitionNameTxn, deletePartitionFolderAsync);
+            // TODO: needs to be deleted async
         } else {
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
@@ -5841,32 +5841,6 @@ public class TableWriter implements Closeable {
         o3PartitionRemoveCandidates.clear();
         o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
         o3ProcessPartitionRemoveCandidates();
-    }
-
-    private void safeDeletePartitionDir(long timestamp, long partitionNameTxn, boolean scheduleAsync) {
-        if (!scheduleAsync) {
-            safeDeletePartitionDir(timestamp, partitionNameTxn);
-        } else {
-            Sequence pubSeq = messageBus.getPartitionPurgePubSeq();
-            while (true) {
-                long cursor = pubSeq.next();
-                if (cursor > -1L) {
-                    LOG.info().$("scheduling async removal of active partition [table=").$(tableName)
-                            .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
-                            .$(", timestamp=").$(timestamp)
-                            .$(", txn=").$(partitionNameTxn)
-                            .I$();
-                    PartitionPurgeTask partitionPurgeTask = messageBus.getPartitionPurgeQueue().get(cursor);
-                    partitionPurgeTask.of(tableName, timestamp, partitionBy, partitionNameTxn);
-                    pubSeq.done(cursor);
-                    break;
-                } else if (cursor == -1L) {
-                    // queue overflow. the partition will be cleaned up eventually (unused partition)
-                    break;
-                }
-                Os.pause();
-            }
-        }
     }
 
     private void setAppendPosition(final long position, boolean doubleAllocate) {
