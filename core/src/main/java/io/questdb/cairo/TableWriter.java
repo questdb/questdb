@@ -101,6 +101,7 @@ public class TableWriter implements Closeable {
     private final String tableName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
+    private final boolean directIOFlag;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
@@ -209,7 +210,6 @@ public class TableWriter implements Closeable {
     private UpdateOperator updateOperator;
     private DropIndexOperator dropIndexOperator;
 
-
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
@@ -222,6 +222,7 @@ public class TableWriter implements Closeable {
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
+        this.directIOFlag = (Os.type != Os.WINDOWS || configuration.getWriterFileOpenOpts() != CairoConfiguration.O_NONE);
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
         if (ownMessageBus != null) {
@@ -2918,6 +2919,10 @@ public class TableWriter implements Closeable {
         return configuration;
     }
 
+    boolean preferDirectIO() {
+        return directIOFlag;
+    }
+
     Sequence getO3CopyPubSeq() {
         return messageBus.getO3CopyPubSeq();
     }
@@ -4125,7 +4130,8 @@ public class TableWriter implements Closeable {
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts()
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_RANDOM
             );
             if (mem2 != null) {
                 mem2.of(
@@ -4134,7 +4140,8 @@ public class TableWriter implements Closeable {
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
                 );
             }
         } finally {
