@@ -1814,6 +1814,9 @@ public class O3Test extends AbstractO3Test {
                     sqlExecutionContext
             );
         }
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select sum(i) from x", sink, "sum\n" +
+                "527250\n");
     }
 
     private static void testAppendOrderStability(
