@@ -120,6 +120,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testIsoYear() throws Exception {
+        assertThat("YYYY", "2010-01-01T00:00:00.000Z", "2010");
+    }
+
+    @Test
     public void testDayOneDigit() throws Exception {
         assertThat("dyyyy", "2014-01-03T00:00:00.000Z", "32014");
     }
@@ -165,7 +170,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatWeekOfYear() throws Exception {
-        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
+        assertFormat("53", "w", "2010-01-01T00:00:00.000Z");
         assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
         assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
     }
@@ -425,6 +430,13 @@ public class TimestampFormatCompilerTest {
 
         assertFormat("09, 0007", "dd, yyyy", "0007-04-09T00:00:00.000Z");
         assertFormat("0007", "yyyy", "0007-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatYearIsoFourDigits() throws Exception {
+        assertFormat("2020", "YYYY", "2021-01-02T00:00:00.000Z");
+
+        assertFormat("1970", "YYYY", "1970-01-01T00:00:00.000Z");
     }
 
     @Test
