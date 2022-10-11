@@ -80,5 +80,25 @@ public interface SequencerTableWriterSPI extends TableWriterSPI {
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
     }
+
+    @Override
+    default void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
+        throw CairoException.critical(0).put("change commit interval does not update sequencer metadata");
+    }
+
+    @Override
+    default long getCommitInterval() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default long getMetaMaxUncommittedRows() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default void tick() {
+        // no-op
+    }
 }
 

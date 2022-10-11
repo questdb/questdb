@@ -531,7 +531,7 @@ public class TruncateTest extends AbstractGriffinTest {
             TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "symbol1");
         });
     }
-    
+
     private void testDropColumnWithCachedPlan() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
@@ -560,7 +560,7 @@ public class TruncateTest extends AbstractGriffinTest {
             }
         });
     }
-    
+
     private void createX() throws SqlException {
         createX(10);
     }

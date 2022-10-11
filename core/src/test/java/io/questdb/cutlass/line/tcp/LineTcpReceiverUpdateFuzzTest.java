@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -60,6 +61,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     private int numOfUpdateThreads;
     private SqlCompiler[] compilers;
     private SqlExecutionContext[] executionContexts;
+
+    public LineTcpReceiverUpdateFuzzTest(WalMode walMode) {
+        super(walMode);
+    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -151,6 +156,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         for (String sql: updatesQueue) {
             executeUpdate(compiler, executionContext, sql, null);
         }
+        mayDrainWalQueue();
     }
 
     private List<ColumnNameType> getMetaData(Map<CharSequence, ArrayList<ColumnNameType>> columnsCache, CharSequence tableName) {
@@ -180,7 +186,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         executionContexts = new SqlExecutionContext[numOfUpdateThreads];
         for (int i = 0; i < numOfUpdateThreads; i++) {
             compilers[i] = new SqlCompiler(engine, null, null);
-            executionContexts[i] = new SqlExecutionContextImpl(engine, numOfUpdateThreads);
+            BindVariableServiceImpl bindService = new BindVariableServiceImpl(configuration);
+            SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, numOfUpdateThreads);
+            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, bindService, null);
+            executionContexts[i] = sqlExecutionContext;
         }
     }
 

@@ -45,9 +45,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.engine.ops.AlterOperation.ADD_COLUMN;
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cairo.sql.OperationFuture.QUERY_NO_RESPONSE;
+import static io.questdb.griffin.engine.ops.AlterOperation.ADD_COLUMN;
 
 public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
@@ -71,7 +71,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 fut.await();
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertEquals("Invalid alter table command [code=1000]", ex.getFlyweightMessage());
+                TestUtils.assertEquals("async cmd failed: invalid alter table command [code=1000]", ex.getFlyweightMessage());
             } finally {
                 Misc.free(fut);
             }
@@ -179,7 +179,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try {
                 fut.await();
             } catch (SqlException exception) {
-                TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column");
+                TestUtils.assertContains(exception.getFlyweightMessage(), "async cmd failed");
             } finally {
                 fut.close();
             }
@@ -214,7 +214,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 fut.close();
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2020-01-01'");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "async cmd failed");
             }
         });
     }
@@ -246,10 +246,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (SqlException exception) {
                         Assert.assertNotNull(exception);
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column [");
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "async cmd failed");
                     }
                 }
-
             } // Unblock table
             try (OperationFuture operationFuture = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null)) {
                 int status = operationFuture.getStatus();
@@ -490,7 +489,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         fut.await();
                         Assert.fail();
                     } catch (SqlException exception) {
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "Invalid column: timestamp");
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "invalid column: timestamp");
                     }
                 }
             }

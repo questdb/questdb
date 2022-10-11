@@ -33,6 +33,10 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverFuzzTest.class);
 
+    public LineTcpReceiverFuzzTest(WalMode walMode) {
+        super(walMode);
+    }
+
     @Override
     protected Log getLog() {
         return LOG;

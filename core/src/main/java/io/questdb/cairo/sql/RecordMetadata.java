@@ -89,7 +89,8 @@ public interface RecordMetadata extends ColumnTypes {
      */
     int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);
 
-    /** Retrieves column name.
+    /**
+     * Retrieves column name.
      *
      * @param columnIndex numeric index of the column
      * @return name of the column
@@ -116,8 +117,8 @@ public interface RecordMetadata extends ColumnTypes {
     }
 
     /**
-     * How many row IDs to store in a single storage block on disk for an indexed column.
-     * Fewer blocks used to store row IDs achieves better performance.
+     * The returned value defines how many row IDs to store in a single storage block on disk
+     * for an indexed column. Fewer blocks used to store row IDs achieves better performance.
      *
      * @param columnIndex numeric index of the column
      * @return number of row IDs per block
@@ -125,8 +126,8 @@ public interface RecordMetadata extends ColumnTypes {
     int getIndexValueBlockCapacity(int columnIndex);
 
     /**
-     * How many row IDs to store in a single storage block on disk for an indexed column.
-     * Fewer blocks used to store row IDs achieves better performance.
+     * The returned value defines how many row IDs to store in a single storage block on disk
+     * for an indexed column. Fewer blocks used to store row IDs achieves better performance.
      *
      * @param columnName name of the column
      * @return number of row IDs per block
@@ -165,6 +166,12 @@ public interface RecordMetadata extends ColumnTypes {
     default RecordMetadata getMetadata(int columnIndex) {
         return null;
     }
+
+    /**
+     * @param columnIndex column index
+     * @return true if the column with the given column index is present, otherwise false.
+     */
+    boolean hasColumn(int columnIndex);
 
     /**
      * @param columnIndex numeric index of the column

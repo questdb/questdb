@@ -51,8 +51,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
-import static org.hamcrest.Matchers.*;
-
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -61,6 +59,9 @@ import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 public final class TestUtils {
 

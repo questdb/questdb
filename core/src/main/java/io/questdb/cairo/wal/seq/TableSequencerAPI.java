@@ -266,7 +266,8 @@ public class TableSequencerAPI implements QuietCloseable {
         return isWalTable(tableName, path, ff);
     }
 
-    private static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
+    // kept visible for tests
+    public static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
         root.concat(tableName).concat(SEQ_DIR);
         return ff.exists(root.$());
     }

@@ -36,7 +36,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.EVENT_FILE_NAME;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 class WalWriterEvents implements Closeable {
@@ -44,7 +45,7 @@ class WalWriterEvents implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final StringSink sink = new StringSink();
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
-    private IntList initialSymbolCounts;
+    private CowIntList initialSymbolCounts;
     private long txn = 0;
     private long startOffset = 0;
 
@@ -52,7 +53,7 @@ class WalWriterEvents implements Closeable {
         this.ff = ff;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, IntList initialSymbolCounts) {
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, CowIntList initialSymbolCounts) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
     }
@@ -121,7 +122,7 @@ class WalWriterEvents implements Closeable {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
-        eventMem.putInt(cmdType); //byte would be enough probably
+        eventMem.putInt(cmdType); // byte would be enough probably
         eventMem.putStr(sql);
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         writeIndexedVariables(bindVariableService);
@@ -220,21 +221,6 @@ class WalWriterEvents implements Closeable {
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
-        }
-    }
-
-    void startTxn() {
-        final int numOfColumns = txnSymbolMaps.size();
-        for (int i = 0; i < numOfColumns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
-            if (symbolMap != null) {
-                final int initialCount = initialSymbolCounts.get(i);
-                if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
-                    final int size = symbolMap.size();
-                    initialSymbolCounts.setQuick(i, initialCount + size);
-                    symbolMap.clear();
-                }
-            }
         }
     }
 

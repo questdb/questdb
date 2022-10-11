@@ -69,7 +69,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
         indexBuilder = Misc.free(indexBuilder);
     }
 
-    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws SqlException, ReaderOutOfDateException {
+    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws ReaderOutOfDateException {
 
         LOG.info().$("updating [table=").$(tableWriter.getTableName()).$(" instance=").$(op.getCorrelationId()).I$();
 
@@ -234,6 +234,9 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
         } catch (ReaderOutOfDateException e) {
             tableWriter.rollbackUpdate();
             throw e;
+        } catch (SqlException e) {
+            tableWriter.rollbackUpdate();
+            throw CairoException.nonCritical().put("could not update: ").put(e.getFlyweightMessage());
         } catch (Throwable th) {
             LOG.error().$("could not update").$(th).$();
             tableWriter.rollbackUpdate();
@@ -314,7 +317,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             long currentRow,
             Record masterRecord,
             long firstUpdatedRowId
-    ) throws SqlException {
+    ) {
         final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
         final long partitionTimestamp = tableWriter.getPartitionTimestamp(rowPartitionIndex);
         for (int i = 0; i < affectedColumnCount; i++) {
@@ -404,8 +407,8 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     dstFixMem.putLong(masterRecord.getLong128Hi(i));
                     break;
                 default:
-                    throw SqlException.$(0, "Column type ")
-                            .put(ColumnType.nameOf(columnType))
+                    throw CairoException.nonCritical()
+                            .put("Column type ").put(ColumnType.nameOf(columnType))
                             .put(" not supported for updates");
             }
         }

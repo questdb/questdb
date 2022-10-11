@@ -59,7 +59,7 @@ public interface AsyncWriterCommand extends TableMetadataChange,Closeable {
         int OK = 0;
         int READER_OUT_OF_DATE = -1;
         int STRUCTURE_CHANGE_NOT_ALLOWED = -2;
-        int SQL_OR_CAIRO_ERROR = -3;
+        int CAIRO_ERROR = -3;
         int UNEXPECTED_ERROR = -4;
     }
 }

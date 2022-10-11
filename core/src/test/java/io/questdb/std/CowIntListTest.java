@@ -22,12 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.ops.UpdateOperation;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface UpdateOperator {
-    long executeUpdate(SqlExecutionContext executionContext, UpdateOperation op) throws ReaderOutOfDateException;
+public class CowIntListTest {
+
+    @Test
+    public void testBasic() {
+        CowIntList list = new CowIntList();
+        Assert.assertEquals(0, list.size());
+
+        list.add(0);
+        Assert.assertEquals(0, list.get(0));
+        Assert.assertEquals(1, list.size());
+
+        list = new CowIntList(1);
+        Assert.assertEquals(-1, list.get(0));
+        Assert.assertEquals(1, list.size());
+
+        list.extendAndSet(2, 2);
+        Assert.assertEquals(-1, list.get(1));
+        Assert.assertEquals(2, list.get(2));
+        Assert.assertEquals(3, list.size());
+
+        list.set(1, 1);
+        Assert.assertEquals(1, list.get(1));
+        Assert.assertEquals(3, list.size());
+
+        list.extendAndSet(2, -2);
+        Assert.assertEquals(-1, list.get(0));
+        Assert.assertEquals(1, list.get(1));
+        Assert.assertEquals(-2, list.get(2));
+        Assert.assertEquals(3, list.size());
+    }
 }

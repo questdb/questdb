@@ -137,7 +137,7 @@ public class SqlCompiler implements Closeable {
                 functionFactoryCache != null
                         ? functionFactoryCache
                         : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
-                        FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+                                FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
         this.vacuumColumnVersions = new VacuumColumnVersions(engine);

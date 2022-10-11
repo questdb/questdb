@@ -50,7 +50,7 @@ public class TxReader implements Closeable, Mutable {
     protected int symbolColumnCount;
     protected long truncateVersion;
     protected long dataVersion;
-    protected long structureVersion;
+    protected volatile long structureVersion;
     protected long fixedRowCount;
     protected long transientRowCount;
     protected int partitionBy;

@@ -217,13 +217,12 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                         }
                         return super.rename(from, to);
                     }
-
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
-                } catch (CairoException e) {
+                } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table 'X' could not be altered");
                 }
 
