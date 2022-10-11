@@ -80,7 +80,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-
                 start += rowCount * tsIncrement + 1;
                 addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -108,7 +107,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-
 
                 start += rowCount * tsIncrement - 2 * Timestamps.SECOND_MICROS;
                 addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
@@ -223,6 +221,55 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     start += rowCount * tsIncrement + 1;
                 }
             }
+        });
+    }
+
+    @Test
+    public void testOutOfOrderDuplicateTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            try (
+                    TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                            .col("i", ColumnType.INT)
+                            .timestamp("ts")
+                            .wal()
+            ) {
+                createTable(model);
+            }
+
+            final int tableId;
+            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                tableId = tableWriter.getMetadata().getId();
+            }
+
+            try (
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+                TableWriter.Row row = walWriter.newRow(1000);
+                row.putInt(0, 1);
+                row.append();
+                // second row is out-of-order
+                row = walWriter.newRow(500);
+                row.putInt(0, 2);
+                row.append();
+                // third row is in-order
+                row = walWriter.newRow(1500);
+                row.putInt(0, 3);
+                row.append();
+                // forth row is in-order with duplicate timestamp
+                row = walWriter.newRow(1500);
+                row.putInt(0, 4);
+                row.append();
+                walWriter.commit();
+
+                applyWalToTable(tableName, tableId);
+            }
+
+            assertSql(tableName, "i\tts\n" +
+                    "2\t1970-01-01T00:00:00.000500Z\n" +
+                    "1\t1970-01-01T00:00:00.001000Z\n" +
+                    "3\t1970-01-01T00:00:00.001500Z\n" +
+                    "4\t1970-01-01T00:00:00.001500Z\n");
         });
     }
 
