@@ -34,7 +34,7 @@ public class AvgBooleanGroupByFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> assertSql(
                 "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)",
                 "avg\tmax\tmin\n" +
-                        "0.7\t1.0\t0.0\n"
+                        "0.2\t1.0\t0.0\n"
         ));
 
         assertMemoryLeak(() -> assertSql(

@@ -286,13 +286,15 @@ public class GroupByUtils {
     }
 
     public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        for (int i = 0; i < n; i++) {
+        // We iterate in the same order as in updateExisting() for the sake of consistency
+        for (int i = n - 1; i >= 0; i--) {
             groupByFunctions.getQuick(i).computeFirst(value, record);
         }
     }
 
     public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
-        for (int i = 0; i < n; i++) {
+        // We iterate in the same order as in updateExisting() for the sake of consistency
+        for (int i = n - 1; i >= 0; i--) {
             groupByFunctions.getQuick(i).setEmpty(value);
         }
     }
