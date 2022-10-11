@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
@@ -430,7 +431,7 @@ public abstract class AbstractCairoTest {
 
             @Override
             public boolean isO3QuickSortEnabled() {
-                return isO3QuickSortEnabled > 0 ? true : (isO3QuickSortEnabled < 0 ? false : super.isO3QuickSortEnabled());
+                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
             }
         };
         metrics = Metrics.enabled();
@@ -639,11 +640,19 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void drainWalQueue() {
-        ApplyWal2TableJob job = new ApplyWal2TableJob(engine);
-        while (job.run(0)) {
-            // run until empty
+        try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
+            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            for (int i = 0; i < 1; i++) {
+                while (job.run(0)) {
+                    // run until empty
+                }
+
+                if (!checkWalTransactionsJob.run(0)) {
+                    return;
+                }
+                // Do not go in re-try loop in tests. Try to re-process once
+            }
         }
-        job.close();
     }
 
     protected static void purgeWalSegments() {
@@ -668,13 +677,5 @@ public abstract class AbstractCairoTest {
         FACTORY_TAGS[MemoryTag.NATIVE_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_PARALLEL_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_REPL] = false;
-    }
-
-    protected static void clearWalQueue() {
-        final MessageBus bus = engine.getMessageBus();
-        long cursor;
-        while ((cursor = bus.getWalTxnNotificationSubSequence().next()) > -1L) {
-            bus.getWalTxnNotificationSubSequence().done(cursor);
-        }
     }
 }

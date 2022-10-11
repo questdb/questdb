@@ -264,7 +264,7 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' zone",
                 80,
-                "'with offset' expected",
+                "unexpected token: zone",
                 model()
         );
     }
@@ -335,6 +335,33 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset rnd_str('foo','bar')",
                 92,
                 "offset must be a constant expression of STRING or CHAR type",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00'",
+                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarWithTimeZoneAndLimit() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00' limit 1",
+                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' limit 1;",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarWithTimeZoneAndOrderBy() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00' order by a desc",
+                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' order by a desc;",
                 model()
         );
     }

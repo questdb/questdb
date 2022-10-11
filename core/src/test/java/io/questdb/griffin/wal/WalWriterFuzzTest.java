@@ -26,6 +26,7 @@ package io.questdb.griffin.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -35,7 +36,10 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -57,8 +61,16 @@ import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 // to
 // Rnd rnd = new Rnd(A, B);
 // where A, B are seeds in the failed run log.
+//
+// When the same timestamp is used in multiple transactions
+// the order of records when executed in parallel WAL writing is not guaranteed.
+// The creates failures in tests that assume that the order of records is preserved.
+// There are already measures to prevent invalid data generation but it still can happen.
+// In order to verify that the test is not broken we check that there are no duplicate timestamps for the record where the comparison fails.
+//
 public class WalWriterFuzzTest extends AbstractGriffinTest {
 
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
     private int initialRowCount;
     private int fuzzRowCount;
     private boolean isO3;
@@ -74,6 +86,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private int strLen;
     private int symbolStrLenMax;
     private int symbolCountMax;
+    private int partitionCount;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -84,21 +97,21 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0);
-        setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0);
+        setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0);
-        setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000);
+        setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0);
-        setFuzzCounts(false, 100_000, 300, 20, 1000, 1000, 100);
+        setFuzzCounts(false, 100_000, 300, 20, 1000, 1000, 100, 5);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
@@ -125,7 +138,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalWriteRollbackHeavy() throws Exception {
         Rnd rnd1 = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.7, 0.5, 0.1, 0.7, 0.05, 0.05, 0.05, 1.0);
-        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100);
+        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd1);
     }
 
@@ -142,7 +155,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 20,
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
-                50
+                50,
+                3 + rnd.nextInt(20)
         );
         runFuzz(rnd, testName.getMethodName(), tableCount);
     }
@@ -150,7 +164,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWriteO3DataOnlyBig() throws Exception {
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0);
-        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100);
+        setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 
@@ -160,7 +174,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
             int transactionSize = transactions.size();
             for (int i = 0; i < transactionSize; i++) {
-                LOG.infoW().$("applying transaction ").$(i).$();
                 FuzzTransaction transaction = transactions.getQuick(i);
                 int size = transaction.operationList.size();
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
@@ -426,11 +439,13 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         try (TableReader reader = new TableReader(configuration, tableNameNoWal)) {
             TableReaderMetadata metadata = reader.getMetadata();
 
+            long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+            long end = start + partitionCount * Timestamps.DAY_MICROS;
             transactions = FuzzTransactionGenerator.generateSet(
                     metadata,
                     rnd,
-                    IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17"),
-                    IntervalUtils.parseFloorPartialTimestamp("2022-02-27T17"),
+                    start,
+                    end,
                     fuzzRowCount,
                     isO3,
                     cancelRowsProb,
@@ -470,7 +485,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1_000_000)
+                rnd.nextInt(1_000_000),
+                5 + rnd.nextInt(10)
         );
         runFuzz(rnd);
     }
@@ -494,7 +510,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1_000_000)
+                rnd.nextInt(1_000_000),
+                5 + rnd.nextInt(10)
         );
         runFuzz(rnd, testName.getMethodName(), tableCount);
     }
@@ -529,14 +546,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
         try {
             int i = 0;
+            CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
                 while (done.get() == 0 && errors.size() == 0) {
                     Unsafe.getUnsafe().loadFence();
-                    while (job.run(0)) ;
+                    while (job.run(0) || checkJob.run(0)) ;
                     Os.sleep(1);
                     i++;
                 }
-                while (job.run(0)) ;
+                while (job.run(0) || checkJob.run(0)) ;
                 i++;
             }
             LOG.info().$("finished apply thread after iterations: ").$(i).$();
@@ -563,11 +581,13 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             try (TableReader reader = new TableReader(configuration, tableNameWal)) {
                 TableReaderMetadata metadata = reader.getMetadata();
 
+                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+                long end = start + partitionCount * Timestamps.DAY_MICROS;
                 transactions = FuzzTransactionGenerator.generateSet(
                         metadata,
                         rnd,
-                        IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17"),
-                        IntervalUtils.parseFloorPartialTimestamp("2022-02-27T17"),
+                        start,
+                        end,
                         fuzzRowCount,
                         isO3,
                         cancelRowsProb,
@@ -584,25 +604,33 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 );
             }
 
-            long startMicro = System.nanoTime() / 1000;
-            applyNonWal(transactions, tableNameNoWal);
-            long endNonWalMicro = System.nanoTime() / 1000;
-            long nonWalTotal = endNonWalMicro - startMicro;
+            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+            sharedWorkerPool.start(LOG);
 
-            applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd));
-            long endWalMicro = System.nanoTime() / 1000;
-            long walTotal = endWalMicro - endNonWalMicro;
+            try {
+                long startMicro = System.nanoTime() / 1000;
+                applyNonWal(transactions, tableNameNoWal);
+                long endNonWalMicro = System.nanoTime() / 1000;
+                long nonWalTotal = endNonWalMicro - startMicro;
 
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd));
 
-            startMicro = System.nanoTime() / 1000;
-            applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd));
-            endWalMicro = System.nanoTime() / 1000;
-            long totalWalParallel = endWalMicro - startMicro;
+                long endWalMicro = System.nanoTime() / 1000;
+                long walTotal = endWalMicro - endNonWalMicro;
 
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
 
-            LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+                startMicro = System.nanoTime() / 1000;
+                applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd));
+                endWalMicro = System.nanoTime() / 1000;
+                long totalWalParallel = endWalMicro - startMicro;
+
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+
+                LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
+            } finally {
+                sharedWorkerPool.halt();
+            }
         });
     }
 
@@ -627,7 +655,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         });
     }
 
-    private void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount) {
+    private void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
         this.isO3 = isO3;
         this.fuzzRowCount = fuzzRowCount;
         this.transactionCount = transactionCount;
@@ -635,6 +663,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         this.symbolStrLenMax = symbolStrLenMax;
         this.symbolCountMax = symbolCountMax;
         this.initialRowCount = initialRowCount;
+        this.partitionCount = partitionCount;
     }
 
     private void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb) {

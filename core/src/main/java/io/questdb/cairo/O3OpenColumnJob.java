@@ -30,10 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
@@ -1909,6 +1906,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcFixFd = Math.abs(srcDataFixFd);
         final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
         final FilesFacade ff = tableWriter.getFilesFacade();
+        final boolean directIoFlag = tableWriter.preferDirectIO();
 
         try {
             txnPartition(pathToPartition.trimTo(pplen), txn);
@@ -1921,6 +1919,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
                     Vect.memcpy(srcDataFixAddr + srcDataMaxBytes, srcDataFixAddr, srcDataActualBytes);
                     srcDataTop = 0;
@@ -1931,11 +1930,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
                     srcDataFixSize = srcDataActualBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataFixOffset = 0;
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
                 srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
             }
 
@@ -1945,6 +1946,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+            if (directIoFlag) {
+                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
+            } else {
+                ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
+            }
 
             // when prefix is "data" we need to reduce it by "srcDataTop"
             if (prefixType == O3_BLOCK_DATA) {
@@ -2123,6 +2129,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcFixFd = Math.abs(srcDataFixFd);
         final long srcVarFd = Math.abs(srcDataVarFd);
         final FilesFacade ff = tableWriter.getFilesFacade();
+        final boolean directIoFlag = tableWriter.preferDirectIO();
 
         try {
             txnPartition(pathToPartition.trimTo(pplen), txn);
@@ -2135,6 +2142,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
 
                     if (srcDataActualBytes > 0) {
                         srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataActualBytes);
@@ -2150,6 +2158,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         reservedBytesForColTopNulls = srcDataTop * Integer.BYTES;
                         srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
                         srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
 
                         // Set var column values to null first srcDataTop times
                         // Next line should be:
@@ -2185,6 +2194,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         reservedBytesForColTopNulls = srcDataTop * Long.BYTES;
                         srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
                         srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
 
                         // Set var column values to null first srcDataTop times
                         // Next line should be:
@@ -2221,19 +2231,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
                     srcDataFixSize = srcDataActualBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataFixOffset = 0;
 
                     srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
                     srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
             } else {
                 // var index column is n+1
                 srcDataFixSize = (srcDataMax + 1) * Long.BYTES;
                 srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
 
                 srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
                 srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
             // upgrade srcDataTop to offset
@@ -2243,12 +2257,22 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+            if (directIoFlag) {
+                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
+            } else {
+                ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
+            }
 
             dFile(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
             dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstVarSize = srcDataVarSize - srcDataVarOffset
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
+            if (directIoFlag) {
+                ff.fadvise(dstVarFd, 0, dstVarSize, Files.POSIX_FADV_RANDOM);
+            } else {
+                ff.madvise(dstVarAddr, dstVarSize, Files.POSIX_MADV_RANDOM);
+            }
 
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) * Long.BYTES;
