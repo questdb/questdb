@@ -1463,42 +1463,45 @@ public class TableWriter implements Closeable {
         // re-compute table size and its minTimestamp from what remains on disk
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
-            // removing the active partition
+
+            commit();
+
             // calculate new boundaries
-            final long openTimestamp;
-            final long newFixedRowCount;
-            final long newTransientRowCount;
-            final long newMaxTimestamp;
-            final long newMinTimestamp;
+            final long nextFixedRowCount;
+            final long nextTransientRowCount;
+            final long nextMaxTimestamp;
+            final long nextMinTimestamp;
+            final long nextTimestamp;
             if (index > 0) {
                 final int prevIndex = index - 1;
-                openTimestamp = txWriter.getPartitionTimestamp(prevIndex);
-                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
-                newFixedRowCount = txWriter.getFixedRowCount() - newTransientRowCount;
+                nextTimestamp = txWriter.getPartitionTimestamp(prevIndex);
+                nextTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                nextFixedRowCount = txWriter.getFixedRowCount() - nextTransientRowCount;
                 try {
-                    setPathForPartition(path.trimTo(rootLen), partitionBy, openTimestamp, false);
+                    setPathForPartition(path.trimTo(rootLen), partitionBy, nextTimestamp, false);
                     TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMax(ff, openTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                    readPartitionMinMax(ff, nextTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), nextTransientRowCount);
                 } finally {
                     path.trimTo(rootLen);
                 }
-                newMinTimestamp = Math.max(attachMinTimestamp, openTimestamp);
-                newMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(openTimestamp));
+                nextMinTimestamp = Math.max(attachMinTimestamp, nextTimestamp);
+                nextMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(nextTimestamp));
             } else {
                 // we are dropping the only partition
-                openTimestamp = 0L;
-                newFixedRowCount = 0L;
-                newTransientRowCount = 0L;
-                newMinTimestamp = Long.MAX_VALUE;
-                newMaxTimestamp = Long.MIN_VALUE;
+                // not the same as truncating the table
+                nextTimestamp = Long.MIN_VALUE; // this value is not used
+                nextFixedRowCount = 0L;
+                nextTransientRowCount = 0L;
+                nextMinTimestamp = Long.MAX_VALUE;
+                nextMaxTimestamp = Long.MIN_VALUE;
             }
 
             columnVersionWriter.removePartition(timestamp);
             txWriter.removeActivePartition(
-                    newMinTimestamp,
-                    newMaxTimestamp,
-                    newFixedRowCount,
-                    newTransientRowCount);
+                    nextMinTimestamp,
+                    nextMaxTimestamp,
+                    nextFixedRowCount,
+                    nextTransientRowCount);
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();
@@ -1510,9 +1513,9 @@ public class TableWriter implements Closeable {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
             } else {
                 row = regularRow;
-                openPartition(openTimestamp);
+                openPartition(nextTimestamp);
                 populateDenseIndexerList();
-                setAppendPosition(newTransientRowCount, false);
+                setAppendPosition(nextTransientRowCount, false);
             }
         } else {
             // find out if we are removing min partition
@@ -3573,13 +3576,14 @@ public class TableWriter implements Closeable {
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
-        final long transientRowsAdded = Math.min(txWriter.getTransientRowCount(), rowsAdded);
+        final long transientRowCount = txWriter.getTransientRowCount();
+        final long transientRowsAdded = Math.min(transientRowCount, rowsAdded);
         if (transientRowsAdded > 0) {
             LOG.debug()
                     .$("o3 move uncommitted [table=").utf8(tableName)
                     .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
-            final long committedTransientRowCount = txWriter.getTransientRowCount() - transientRowsAdded;
+            final long committedTransientRowCount = transientRowCount - transientRowsAdded;
             return o3ScheduleMoveUncommitted0(
                     timestampIndex,
                     transientRowsAdded,
