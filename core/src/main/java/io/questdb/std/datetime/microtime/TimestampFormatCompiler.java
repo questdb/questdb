@@ -37,6 +37,7 @@ public class TimestampFormatCompiler {
     static final int OP_YEAR_TWO_DIGITS = 3;
     static final int OP_YEAR_THREE_DIGITS = 148;
     static final int OP_YEAR_FOUR_DIGITS = 4;
+    static final int OP_YEAR_ISO_FOUR_DIGITS = 41;
     static final int OP_MONTH_ONE_DIGIT = 5;
     static final int OP_MONTH_TWO_DIGITS = 6;
     static final int OP_MONTH_SHORT_NAME = 7;
@@ -101,6 +102,7 @@ public class TimestampFormatCompiler {
     private static final int FA_MONTH = 6;
     private static final int FA_YEAR = 7;
     private static final int FA_LEAP = 8;
+    private static final int FA_ISO_YEAR = 9;
     private static final int FA_DAY_OF_WEEK = 10;
     private static final int FA_DAY_OF_YEAR = 14;
     private static final int FA_WEEK_OF_YEAR = 12;
@@ -135,6 +137,7 @@ public class TimestampFormatCompiler {
         addOp("yy", OP_YEAR_TWO_DIGITS);
         addOp("yyy", OP_YEAR_THREE_DIGITS);
         addOp("yyyy", OP_YEAR_FOUR_DIGITS);
+        addOp("YYYY", OP_YEAR_ISO_FOUR_DIGITS);
         addOp("M", OP_MONTH_ONE_DIGIT);
         addOp("MM", OP_MONTH_TWO_DIGITS);
         addOp("MMM", OP_MONTH_SHORT_NAME);
@@ -263,6 +266,7 @@ public class TimestampFormatCompiler {
             int appendHour121Index,
             int appendHour121PaddedIndex,
             int getYearIndex,
+            int getIsoYearIndex,
             int isLeapYearIndex,
             int getMonthOfYearIndex,
             int getDayOfMonthIndex,
@@ -285,7 +289,7 @@ public class TimestampFormatCompiler {
             int formatSigIndex,
             int getDayOfYearIndex,
             int getWeekOfMonthIndex,
-            int getWeekOfYearIndex
+            int getWeekIndex
     ) {
         int formatAttributes = computeFormatAttributes(ops);
         asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
@@ -293,6 +297,7 @@ public class TimestampFormatCompiler {
         assembleFormatMethodStack(
                 formatAttributes,
                 getYearIndex,
+                getIsoYearIndex,
                 isLeapYearIndex,
                 getMonthOfYearIndex,
                 getDayOfMonthIndex,
@@ -304,7 +309,7 @@ public class TimestampFormatCompiler {
                 getDayOfWeekIndex,
                 getDayOfYearIndex,
                 getWeekOfMonthIndex,
-                getWeekOfYearIndex
+                getWeekIndex
         );
 
         for (int i = 0, n = ops.size(); i < n; i++) {
@@ -553,6 +558,11 @@ public class TimestampFormatCompiler {
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.invokeStatic(appendYear000Index);
                     break;
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_ISO_YEAR]);
+                    asm.invokeStatic(appendYear000Index);
+                    break;
                 // ERA
                 case TimestampFormatCompiler.OP_ERA:
                     asm.aload(FA_LOCAL_SINK);
@@ -604,6 +614,7 @@ public class TimestampFormatCompiler {
     private void assembleFormatMethodStack(
             int formatAttributes,
             int getYearIndex,
+            int getIsoYearIndex,
             int isLeapYearIndex,
             int getMonthOfYearIndex,
             int getDayOfMonthIndex,
@@ -615,10 +626,14 @@ public class TimestampFormatCompiler {
             int getDayOfWeekIndex,
             int getDayOfYearIndex,
             int getWeekOfMonthIndex,
-            int getWeekOfYearIndex) {
+            int getWeekIndex) {
         int index = FORMAT_METHOD_STACK_START;
         if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {
             fmtAttributeIndex[FA_YEAR] = index++;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_ISO_YEAR, getIsoYearIndex, index)) {
+            fmtAttributeIndex[FA_ISO_YEAR] = index++;
         }
 
         if ((formatAttributes & (1 << FA_LEAP)) != 0) {
@@ -679,7 +694,7 @@ public class TimestampFormatCompiler {
             fmtAttributeIndex[FA_WEEK_OF_MONTH] = index;
         }
 
-        if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_YEAR, getWeekOfYearIndex, index)) {
+        if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_YEAR, getWeekIndex, index)) {
             fmtAttributeIndex[FA_WEEK_OF_YEAR] = index;
         }
 
@@ -1171,6 +1186,7 @@ public class TimestampFormatCompiler {
                     asm.invokeStatic(parseIntIndex);
                     asm.istore(LOCAL_YEAR);
                     break;
+                case OP_YEAR_ISO_FOUR_DIGITS:
                 case OP_YEAR_FOUR_DIGITS: {
                     // if (pos < hi && in.charAt(pos) == '-') {
                     //    assertRemaining(pos + 4, hi);
@@ -1537,6 +1553,7 @@ public class TimestampFormatCompiler {
 
         int parseOffsetIndex = asm.poolMethod(Timestamps.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
+        int getIsoYearIndex = asm.poolMethod(Timestamps.class, "getIsoYear", "(J)I");
         int isLeapYearIndex = asm.poolMethod(Timestamps.class, "isLeapYear", "(I)Z");
         int getMonthOfYearIndex = asm.poolMethod(Timestamps.class, "getMonthOfYear", "(JIZ)I");
         int getDayOfMonthIndex = asm.poolMethod(Timestamps.class, "getDayOfMonth", "(JIIZ)I");
@@ -1547,7 +1564,7 @@ public class TimestampFormatCompiler {
         int getMicrosOfSecondIndex = asm.poolMethod(Timestamps.class, "getMicrosOfSecond", "(J)I");
         int getDayOfWeekIndex = asm.poolMethod(Timestamps.class, "getDayOfWeekSundayFirst", "(J)I");
         int getDayOfYearIndex = asm.poolMethod(Timestamps.class, "getDayOfYear", "(J)I");
-        int getWeekOfYearIndex = asm.poolMethod(Timestamps.class, "getWeekOfYear", "(J)I");
+        int getWeekIndex = asm.poolMethod(Timestamps.class, "getWeek", "(J)I");
         int getWeekOfMonthIndex = asm.poolMethod(Timestamps.class, "getWeekOfMonth", "(J)I");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
@@ -1630,6 +1647,7 @@ public class TimestampFormatCompiler {
                 appendHour121Index,
                 appendHour121PaddedIndex,
                 getYearIndex,
+                getIsoYearIndex,
                 isLeapYearIndex,
                 getMonthOfYearIndex,
                 getDayOfMonthIndex,
@@ -1652,7 +1670,7 @@ public class TimestampFormatCompiler {
                 formatSigIndex,
                 getDayOfYearIndex,
                 getWeekOfMonthIndex,
-                getWeekOfYearIndex
+                getWeekIndex
         );
 
         // class attribute count
@@ -1755,6 +1773,9 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     attributes |= (1 << FA_YEAR);
                     break;
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                    attributes |= (1 << FA_ISO_YEAR);
+                    break;
                 // ERA
                 case TimestampFormatCompiler.OP_ERA:
                     attributes |= (1 << FA_YEAR);
@@ -1845,6 +1866,7 @@ public class TimestampFormatCompiler {
                 case OP_YEAR_TWO_DIGITS:
                 case OP_YEAR_THREE_DIGITS:
                 case OP_YEAR_FOUR_DIGITS:
+                case OP_YEAR_ISO_FOUR_DIGITS:
                     result |= (1 << LOCAL_YEAR);
                     break;
                 case OP_ERA:
