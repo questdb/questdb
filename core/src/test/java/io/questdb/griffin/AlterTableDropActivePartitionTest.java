@@ -43,28 +43,6 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     private static final String LastPartitionTs = "2024-10-15";
     private static final String EmptyTable = "id\ttimestamp\n";
 
-
-    private WorkerPool workerPool;
-    private O3PartitionPurgeJob partitionPurgeJob;
-    private int txn;
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        txn = -1;
-        workerPool = new TestWorkerPool(1);
-        partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
-        workerPool.assign(partitionPurgeJob);
-        workerPool.freeOnExit(partitionPurgeJob);
-        workerPool.start();
-    }
-
-    @After
-    public void tearDown() {
-        super.tearDown();
-        Misc.free(workerPool);
-    }
-
     @Test
     public void testDropOnlyPartitionNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
@@ -149,6 +127,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (EntryUnavailableException ex) {
                         TestUtils.assertContains("[-1] table busy [reason=testing]", ex.getFlyweightMessage());
+                        Misc.free(workerPool);
                     }
                 }
         );
@@ -207,42 +186,32 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         );
     }
 
+    private WorkerPool workerPool;
+    private O3PartitionPurgeJob partitionPurgeJob;
+    private int txn;
+
     private void createTableXMultiplePartitions(String tableName) throws SqlException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        insert("insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')");
-        insert("insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z');");
-        insert("insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z');");
-        insert("insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z');");
-        insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z');");
-        insert("insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z');");
-        assertSql(tableName,
+        createTableX(tableName,
                 "id\ttimestamp\n" +
                         "1\t2024-10-10T00:00:00.000000Z\n" +
                         "2\t2024-10-11T00:00:00.000000Z\n" +
                         "3\t2024-10-12T00:00:00.000000Z\n" +
                         "4\t2024-10-12T00:00:01.000000Z\n" +
                         "6\t2024-10-12T00:00:02.000000Z\n" +
-                        "5\t2024-10-15T00:00:00.000000Z\n"
-        );
+                        "5\t2024-10-15T00:00:00.000000Z\n",
+                "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
+                "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
+                "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
+                "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
+                "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
+                "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
     }
 
     private void createTableXSinglePartition(String tableName) throws SqlException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        txn++;
-        insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z');");
-        assertSql(tableName,
+        createTableX(tableName,
                 "id\ttimestamp\n" +
-                        "5\t2024-10-15T00:00:00.000000Z\n"
-        );
-    }
-
-    private void insert(String stmt) throws SqlException {
-        compiler.compile(stmt, sqlExecutionContext).execute(null).await();
-        txn++;
+                        "5\t2024-10-15T00:00:00.000000Z\n",
+                "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
     }
 
     private void assertTableXMultiplePartitions(String tableName) throws SqlException {
@@ -254,6 +223,28 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                 "6\t2024-10-12T00:00:02.000000Z\n");
     }
 
+    private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        txn = 0;
+        for (int i = 0, n = insertStmt.length; i < n; i++) {
+            insert(insertStmt[i]);
+        }
+        assertSql(tableName, expected);
+
+        workerPool = new TestWorkerPool(1);
+        partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
+        workerPool.assign(partitionPurgeJob);
+        workerPool.freeOnExit(partitionPurgeJob);
+        workerPool.start(); // closed by assertTableX
+    }
+
+    private void insert(String stmt) throws SqlException {
+        compiler.compile(stmt, sqlExecutionContext).execute(null).await();
+        txn++;
+    }
+
     private void assertTableX(String tableName, String expected) throws SqlException {
         engine.releaseAllReaders();
         assertSql(tableName, expected);
@@ -262,11 +253,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
             TableUtils.txnPartitionConditionally(path, txn);
             path.$();
             Assert.assertFalse(Files.exists(path));
-        }
-        try {
-            compiler.compile("drop table if exists " + tableName, sqlExecutionContext).execute(null).await();
-        } catch (SqlException e) {
-            Assert.fail();
+        } finally {
+            Misc.free(workerPool);
         }
     }
 

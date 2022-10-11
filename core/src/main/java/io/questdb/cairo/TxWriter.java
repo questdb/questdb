@@ -266,20 +266,25 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void removeActivePartition(long newMinTimestamp, long newMaxTimestamp, long newFixedRowCount, long newTransientRowCount) {
+    public void removeActivePartition(long nextMinTimestamp, long nextMaxTimestamp, long nextFixedRowCount, long nextTransientRowCount) {
+        beginPartitionSizeUpdate();
+
+        // finish partition size update
         recordStructureVersion++;
         prevMinTimestamp = minTimestamp;
-        minTimestamp = newMinTimestamp;
+        minTimestamp = nextMinTimestamp;
         prevMaxTimestamp = maxTimestamp;
-        maxTimestamp = newMaxTimestamp;
-        fixedRowCount = newFixedRowCount;
+        maxTimestamp = nextMaxTimestamp;
+        fixedRowCount = nextFixedRowCount;
         prevTransientRowCount = transientRowCount;
-        transientRowCount = newTransientRowCount;
+        transientRowCount = nextTransientRowCount;
+
         partitionTableVersion++;
         final int lim = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
         if (lim > -1) {
             attachedPartitions.setPos(lim);
         }
+        txPartitionCount = getPartitionCount();
     }
 
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {

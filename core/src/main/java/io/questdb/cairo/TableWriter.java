@@ -1500,6 +1500,7 @@ public class TableWriter implements Closeable {
                     newFixedRowCount,
                     newTransientRowCount);
             txWriter.bumpTruncateVersion();
+
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
