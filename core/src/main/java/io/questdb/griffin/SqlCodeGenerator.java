@@ -2990,7 +2990,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (factory == null) {
                 if (specialCaseKeys) {
-                    QueryModel.restoreWhereClause(model);
+                    QueryModel.restoreWhereClause(expressionNodePool, model);
                 }
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
@@ -3093,9 +3093,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (specialCaseKeys) {
                 // uh-oh, we had special case keys, but could not find implementation for the functions
                 // release factory we created unnecessarily
-                Misc.free(factory);
+                factory = Misc.free(factory);
                 // create factory on top level model
-                QueryModel.restoreWhereClause(model);
+                QueryModel.restoreWhereClause(expressionNodePool, model);
                 factory = generateSubQuery(model, executionContext);
                 // and reset metadata
                 metadata = factory.getMetadata();
