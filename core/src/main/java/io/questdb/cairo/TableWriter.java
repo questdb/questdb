@@ -1441,8 +1441,10 @@ public class TableWriter implements Closeable {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
+
         final long minTimestamp = txWriter.getMinTimestamp();
         final long maxTimestamp = txWriter.getMaxTimestamp();
+
         timestamp = getPartitionLo(timestamp);
         if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
             LOG.error().$("partition is empty, folder does not exist [path=").$(path).I$();
@@ -1464,37 +1466,27 @@ public class TableWriter implements Closeable {
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
 
+            if (index == 0) {
+                truncate();
+                return true;
+            }
+
             commit();
 
             // calculate new boundaries
-            final long nextFixedRowCount;
-            final long nextTransientRowCount;
-            final long nextMaxTimestamp;
-            final long nextMinTimestamp;
-            final long nextTimestamp;
-            if (index > 0) {
-                final int prevIndex = index - 1;
-                nextTimestamp = txWriter.getPartitionTimestamp(prevIndex);
-                nextTransientRowCount = txWriter.getPartitionSize(prevIndex);
-                nextFixedRowCount = txWriter.getFixedRowCount() - nextTransientRowCount;
-                try {
-                    setPathForPartition(path.trimTo(rootLen), partitionBy, nextTimestamp, false);
-                    TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMax(ff, nextTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), nextTransientRowCount);
-                } finally {
-                    path.trimTo(rootLen);
-                }
-                nextMinTimestamp = Math.max(attachMinTimestamp, nextTimestamp);
-                nextMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(nextTimestamp));
-            } else {
-                // we are dropping the only partition
-                // not the same as truncating the table
-                nextTimestamp = Long.MIN_VALUE; // this value is not used
-                nextFixedRowCount = 0L;
-                nextTransientRowCount = 0L;
-                nextMinTimestamp = Long.MAX_VALUE;
-                nextMaxTimestamp = Long.MIN_VALUE;
+            final int prevIndex = index - 1;
+            final long nextTimestamp = txWriter.getPartitionTimestamp(prevIndex);
+            final long nextTransientRowCount = txWriter.getPartitionSize(prevIndex);
+            final long nextFixedRowCount = txWriter.getFixedRowCount() - nextTransientRowCount;
+            try {
+                setPathForPartition(path.trimTo(rootLen), partitionBy, nextTimestamp, false);
+                TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
+                readPartitionMinMax(ff, nextTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), nextTransientRowCount);
+            } finally {
+                path.trimTo(rootLen);
             }
+            final long nextMinTimestamp = Math.max(attachMinTimestamp, nextTimestamp);
+            final long nextMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(nextTimestamp));
 
             columnVersionWriter.removePartition(timestamp);
             txWriter.removeActivePartition(
@@ -1509,14 +1501,10 @@ public class TableWriter implements Closeable {
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             closeActivePartition(true);
-            if (index < 1) {
-                rowAction = ROW_ACTION_OPEN_PARTITION;
-            } else {
-                row = regularRow;
-                openPartition(nextTimestamp);
-                populateDenseIndexerList();
-                setAppendPosition(nextTransientRowCount, false);
-            }
+            row = regularRow;
+            openPartition(nextTimestamp);
+            populateDenseIndexerList();
+            setAppendPosition(nextTransientRowCount, false);
         } else {
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
