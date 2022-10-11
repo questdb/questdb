@@ -41,15 +41,18 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     private static final String LastPartitionTs = "2024-10-15";
-    private static final String EmptyTable = "id\ttimestamp\n";
+    private static final String TableHeader = "id\ttimestamp\n";
 
     @Test
     public void testDropOnlyPartitionNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXSinglePartition(tableName);
+                    String tableName = randomTableName();
+                    createTableX(tableName,
+                            TableHeader +
+                                    "5\t2024-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
                     dropActivePartition(tableName);
-                    assertTableX(tableName, EmptyTable);
+                    assertTableX(tableName, TableHeader);
                 }
         );
     }
@@ -57,24 +60,11 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropOnlyPartitionWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXSinglePartition(tableName);
-                    try (
-                            TableReader ignore0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                            TableReader ignore1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
-                    ) {
-                        dropActivePartition(tableName);
-                    }
-                    assertTableX(tableName, EmptyTable);
-                }
-        );
-    }
-
-    @Test
-    public void testDropOnlyPartitionWithAncientReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXSinglePartition(tableName);
+                    String tableName = randomTableName();
+                    createTableX(tableName,
+                            TableHeader +
+                                    "5\t2024-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
                     insert("insert into " + tableName + " values(111, '2024-10-15T11:11:11.111111Z');");
                     try (TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                         insert("insert into " + tableName + " values(888, '2024-10-15T00:00:00.000000Z');");
@@ -84,7 +74,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             Assert.assertEquals(3, reader1.size());
                         }
                     }
-                    assertTableX(tableName, EmptyTable);
+                    assertTableX(tableName, TableHeader);
                 }
         );
     }
@@ -92,10 +82,28 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXMultiplePartitions(tableName);
+                    String tableName = randomTableName();
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2024-10-10T00:00:00.000000Z\n" +
+                                    "2\t2024-10-11T00:00:00.000000Z\n" +
+                                    "3\t2024-10-12T00:00:00.000000Z\n" +
+                                    "4\t2024-10-12T00:00:01.000000Z\n" +
+                                    "6\t2024-10-12T00:00:02.000000Z\n" +
+                                    "5\t2024-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
                     dropActivePartition(tableName);
-                    assertTableXMultiplePartitions(tableName);
+                    assertTableX(tableName, TableHeader +
+                            "1\t2024-10-10T00:00:00.000000Z\n" +
+                            "2\t2024-10-11T00:00:00.000000Z\n" +
+                            "3\t2024-10-12T00:00:00.000000Z\n" +
+                            "4\t2024-10-12T00:00:01.000000Z\n" +
+                            "6\t2024-10-12T00:00:02.000000Z\n");
                 }
         );
     }
@@ -103,15 +111,33 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXMultiplePartitions(tableName);
+                    String tableName = randomTableName();
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2024-10-10T00:00:00.000000Z\n" +
+                                    "2\t2024-10-11T00:00:00.000000Z\n" +
+                                    "3\t2024-10-12T00:00:00.000000Z\n" +
+                                    "4\t2024-10-12T00:00:01.000000Z\n" +
+                                    "6\t2024-10-12T00:00:02.000000Z\n" +
+                                    "5\t2024-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
                     try (
                             TableReader ignore0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
                             TableReader ignore1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
                     ) {
                         dropActivePartition(tableName);
                     }
-                    assertTableXMultiplePartitions(tableName);
+                    assertTableX(tableName, TableHeader +
+                            "1\t2024-10-10T00:00:00.000000Z\n" +
+                            "2\t2024-10-11T00:00:00.000000Z\n" +
+                            "3\t2024-10-12T00:00:00.000000Z\n" +
+                            "4\t2024-10-12T00:00:01.000000Z\n" +
+                            "6\t2024-10-12T00:00:02.000000Z\n");
                 }
         );
     }
@@ -120,8 +146,21 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotDropWhenThereIsAWriter() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXMultiplePartitions(tableName);
+                    String tableName = randomTableName();
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2024-10-10T00:00:00.000000Z\n" +
+                                    "2\t2024-10-11T00:00:00.000000Z\n" +
+                                    "3\t2024-10-12T00:00:00.000000Z\n" +
+                                    "4\t2024-10-12T00:00:01.000000Z\n" +
+                                    "6\t2024-10-12T00:00:02.000000Z\n" +
+                                    "5\t2024-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
                     try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                         dropActivePartition(tableName);
                         Assert.fail();
@@ -136,8 +175,21 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropWithUncommittedRowsNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXMultiplePartitions(tableName);
+                    String tableName = randomTableName();
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2024-10-10T00:00:00.000000Z\n" +
+                                    "2\t2024-10-11T00:00:00.000000Z\n" +
+                                    "3\t2024-10-12T00:00:00.000000Z\n" +
+                                    "4\t2024-10-12T00:00:01.000000Z\n" +
+                                    "6\t2024-10-12T00:00:02.000000Z\n" +
+                                    "5\t2024-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
                     try (
                             TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")
                     ) {
@@ -153,7 +205,12 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                         writer.removePartition(lastTs);
                     }
-                    assertTableXMultiplePartitions(tableName);
+                    assertTableX(tableName, TableHeader +
+                            "1\t2024-10-10T00:00:00.000000Z\n" +
+                            "2\t2024-10-11T00:00:00.000000Z\n" +
+                            "3\t2024-10-12T00:00:00.000000Z\n" +
+                            "4\t2024-10-12T00:00:01.000000Z\n" +
+                            "6\t2024-10-12T00:00:02.000000Z\n");
                 }
         );
     }
@@ -161,8 +218,21 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropWithUncommittedRowsWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-                    String tableName = generateTableName();
-                    createTableXMultiplePartitions(tableName);
+                    String tableName = randomTableName();
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2024-10-10T00:00:00.000000Z\n" +
+                                    "2\t2024-10-11T00:00:00.000000Z\n" +
+                                    "3\t2024-10-12T00:00:00.000000Z\n" +
+                                    "4\t2024-10-12T00:00:01.000000Z\n" +
+                                    "6\t2024-10-12T00:00:02.000000Z\n" +
+                                    "5\t2024-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
                     try (
                             TableReader ignore0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
                             TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
@@ -181,7 +251,12 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         reader.openPartition(3); // last partition
                         writer.removePartition(lastTs);
                     }
-                    assertTableXMultiplePartitions(tableName);
+                    assertTableX(tableName, TableHeader +
+                            "1\t2024-10-10T00:00:00.000000Z\n" +
+                            "2\t2024-10-11T00:00:00.000000Z\n" +
+                            "3\t2024-10-12T00:00:00.000000Z\n" +
+                            "4\t2024-10-12T00:00:01.000000Z\n" +
+                            "6\t2024-10-12T00:00:02.000000Z\n");
                 }
         );
     }
@@ -189,39 +264,6 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     private WorkerPool workerPool;
     private O3PartitionPurgeJob partitionPurgeJob;
     private int txn;
-
-    private void createTableXMultiplePartitions(String tableName) throws SqlException {
-        createTableX(tableName,
-                "id\ttimestamp\n" +
-                        "1\t2024-10-10T00:00:00.000000Z\n" +
-                        "2\t2024-10-11T00:00:00.000000Z\n" +
-                        "3\t2024-10-12T00:00:00.000000Z\n" +
-                        "4\t2024-10-12T00:00:01.000000Z\n" +
-                        "6\t2024-10-12T00:00:02.000000Z\n" +
-                        "5\t2024-10-15T00:00:00.000000Z\n",
-                "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
-    }
-
-    private void createTableXSinglePartition(String tableName) throws SqlException {
-        createTableX(tableName,
-                "id\ttimestamp\n" +
-                        "5\t2024-10-15T00:00:00.000000Z\n",
-                "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
-    }
-
-    private void assertTableXMultiplePartitions(String tableName) throws SqlException {
-        assertTableX(tableName, "id\ttimestamp\n" +
-                "1\t2024-10-10T00:00:00.000000Z\n" +
-                "2\t2024-10-11T00:00:00.000000Z\n" +
-                "3\t2024-10-12T00:00:00.000000Z\n" +
-                "4\t2024-10-12T00:00:01.000000Z\n" +
-                "6\t2024-10-12T00:00:02.000000Z\n");
-    }
 
     private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
@@ -263,7 +305,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                 compile("alter table " + tableName + " drop partition list '" + LastPartitionTs + "'", sqlExecutionContext).getType());
     }
 
-    private static String generateTableName() {
+    private static String randomTableName() {
         return UUID.randomUUID().toString().split("[-]")[0];
     }
 }
