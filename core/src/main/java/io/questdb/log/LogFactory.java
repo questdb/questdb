@@ -53,7 +53,7 @@ public class LogFactory implements Closeable {
 
     // name of default logging configuration file (in jar and in $root/conf/ dir )
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
-    private static final String DEFAULT_LOG_LEVEL = "INFO";
+    private static final String DEFAULT_LOG_LEVEL = "INFO,ERROR,CRITICAL,ADVISORY";
 
     // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
@@ -212,7 +212,8 @@ public class LogFactory implements Closeable {
                     null,
                     null,
                     null,
-                    null);
+                    null
+            );
         }
         final Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.INFO));
         final Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.DEBUG));
@@ -232,7 +233,8 @@ public class LogFactory implements Closeable {
                     cri == null ? null : cri.ring,
                     cri == null ? null : cri.lSeq,
                     adv == null ? null : adv.ring,
-                    adv == null ? null : adv.lSeq);
+                    adv == null ? null : adv.lSeq
+            );
         }
 
         return new SyncLogger(
@@ -284,8 +286,7 @@ public class LogFactory implements Closeable {
                                 // Keep running the job until it returns false to log all the buffered messages
                             }
                         } catch (Exception th) {
-                            // Exception means we cannot log anymore. Perhaps network is down or disk is
-                            // full.
+                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
                             // Switch to the next job.
                         }
                     }
@@ -339,7 +340,8 @@ public class LogFactory implements Closeable {
     static synchronized void configureFromSystemProperties(
             @NotNull LogFactory logFactory,
             @Nullable String rootDir,
-            boolean replacePrevInstance) {
+            boolean replacePrevInstance
+    ) {
         String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
         if (conf == null) {
             conf = DEFAULT_CONFIG;
@@ -372,8 +374,7 @@ public class LogFactory implements Closeable {
         }
 
         if (!initialized) {
-            // in this order of initialization specifying -Dout might end up using internal
-            // jar resources ...
+            //in this order of initialization specifying -Dout might end up using internal jar resources ...
             try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
                 if (is != null) {
                     Properties properties = new Properties();
@@ -423,6 +424,7 @@ public class LogFactory implements Closeable {
         Properties properties = new Properties();
         properties.setProperty("writers", "stdout");
         properties.setProperty("w.stdout.level", level);
+        properties.setProperty("w.stdout.class", "io.questdb.log.LogConsoleWriter");
 
         updatePropertiesFromEnv(properties);
         configureFromProperties(properties, logDir);
@@ -685,8 +687,7 @@ public class LogFactory implements Closeable {
 
         /**
          * Aggregates channels into set of queues. Consumer interest is represented by
-         * level, where consumer sets bits corresponding to channel indexes is it
-         * interested in.
+         * level, where consumer sets bits corresponding to channel indexes is it interested in.
          * <p>
          * Consumer 1 requires channels D & E. So its interest looks like {1,0,1}
          * Consumer 2 requires channel I, so its interest is {0,1,0}
@@ -707,16 +708,12 @@ public class LogFactory implements Closeable {
          * <p>
          * channels = {1,1,1}
          * <p>
-         * which means that both consumers will be sharing same queue and they will have
-         * to
+         * which means that both consumers will be sharing same queue and they will have to
          * filter applicable messages as they get them.
          * <p>
-         * Algorithm iterates over set of bits in "level" twice. First pass is to
-         * establish
-         * minimum number of channel[] element out of those entries where bit in level
-         * is set.
-         * Additionally, this pass will set channel[] elements to current consumer index
-         * where
+         * Algorithm iterates over set of bits in "level" twice. First pass is to establish
+         * minimum number of channel[] element out of those entries where bit in level is set.
+         * Additionally, this pass will set channel[] elements to current consumer index where
          * channel[] element is zero.
          * <p>
          * Second pass sets channel[] element to min value found on first pass.
@@ -784,7 +781,8 @@ public class LogFactory implements Closeable {
                     LogRecordSink::new,
                     Numbers.ceilPow2(recordLength),
                     queueDepth,
-                    MemoryTag.NATIVE_LOGGER);
+                    MemoryTag.NATIVE_LOGGER
+            );
             this.lSeq = new MPSequence(queueDepth);
         }
 
