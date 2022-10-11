@@ -65,6 +65,7 @@ public class AbstractO3Test {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+    protected static int partitionUpdateQueueCapacity = -1;
 
     @BeforeClass
     public static void setupStatic() {
@@ -88,6 +89,7 @@ public class AbstractO3Test {
     public void tearDown() {
         TestUtils.removeTestPath(root);
         dataAppendPageSize = -1;
+        partitionUpdateQueueCapacity = -1;
     }
 
     protected static void assertIndexConsistency(
@@ -256,6 +258,11 @@ public class AbstractO3Test {
                     public int getO3ColumnMemorySize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
+
+                    @Override
+                    public int getO3PartitionUpdateQueueCapacity() {
+                        return partitionUpdateQueueCapacity > 0 ? partitionUpdateQueueCapacity : super.getO3PartitionUpdateQueueCapacity();
+                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration, LOG);
@@ -299,7 +306,7 @@ public class AbstractO3Test {
 
                     @Override
                     public int getO3PartitionUpdateQueueCapacity() {
-                        return 0;
+                        return partitionUpdateQueueCapacity > 0 ? partitionUpdateQueueCapacity : super.getO3PartitionUpdateQueueCapacity();
                     }
 
                     @Override
