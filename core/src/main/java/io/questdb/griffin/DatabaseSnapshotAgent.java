@@ -117,7 +117,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                 final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
                 final CharSequence snapshotInstanceId = mem.getStr(0);
-                if (!Chars.nonEmpty(currentInstanceId) || !Chars.nonEmpty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
+                if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
                     return;
                 }
 

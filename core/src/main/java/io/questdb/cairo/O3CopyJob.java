@@ -29,7 +29,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3PartitionUpdateTask;
 import org.jetbrains.annotations.Nullable;
@@ -97,8 +100,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
-        final long opts = tableWriter.getConfiguration().getWriterFileOpenOpts();
-        boolean directIoFlag = Os.type != Os.WINDOWS || opts != CairoConfiguration.O_NONE;
+        final boolean directIoFlag = tableWriter.preferDirectIO();
 
         LOG.debug().$("o3 copy [blockType=").$(blockType)
                 .$(", columnType=").$(columnType)
