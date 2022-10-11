@@ -66,6 +66,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private FilesFacade ff;
     private TxReader txReader;
     private Path path = new Path();
+    private NativeLPSZ tableName = new NativeLPSZ();
     private NativeLPSZ walName = new NativeLPSZ();
     private NativeLPSZ segmentName = new NativeLPSZ();  // TODO [amunra]: Can we have a single "name" instead of "walName" and "segmentName"?
     private final IntHashSet discoveredWalIds = new IntHashSet();
@@ -74,8 +75,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private int walId;
     private int walsLatestSegmentId;
-
-    private CharSequence tableName;
 
     private boolean anySegmentsKept = false;
 
@@ -120,6 +119,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setTablePath(CharSequence tableName) {
         return path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).$();
+    }
+
+    private Path setSeqTxnPath(CharSequence tableName) {
+        return path.of(engine.getConfiguration().getRoot())
+                .concat(tableName)
+                .concat(Sequencer.SEQ_DIR).$();
     }
 
     private Path setTxnPath(CharSequence tableName) {
@@ -313,29 +318,36 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void broadSweepIter(int _tableId, CharSequence tableName, long _lastTxn) {
-        this.tableName = tableName;
+    private boolean isWalTable(CharSequence tableName) {
+        final int tableNameLen = tableName.length();
+        final boolean result = ff.exists(setSeqTxnPath(tableName));
+        path.trimTo(tableNameLen).$();
+        return result;
+    }
 
-        discoveredWalIds.clear();
-        walsInUse.clear();
-        walInfoDataFrame.clear();
+    private void broadSweepIter(long pUtf8NameZ, int type) {
+        if ((type == Files.DT_DIR) && isWalTable(tableName.of(pUtf8NameZ))) {
+            discoveredWalIds.clear();
+            walsInUse.clear();
+            walInfoDataFrame.clear();
 
-        System.err.println("broadSweepIter :: (A) " + tableName);
-        discoverWalDirectories();
-        _logState("B");
-        populateWalInfoTable();
-        _logState("C");
-        deleteUnreachableSegments();
-        _logState("D");
+            System.err.println("broadSweepIter :: (A) " + tableName);
+            discoverWalDirectories();
+            _logState("B");
+            populateWalInfoTable();
+            _logState("C");
+            deleteUnreachableSegments();
+            _logState("D");
 
-        // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
-        // and don't have any active segments. The walNNN directories themselves may be deleted if they don't have
-        // an associated open WalWriter.
-        // Note that this also handles cases where a wal directory was created shortly before a crash and thus
-        // never recorded and tracked by the sequencer for that table.
-        deleteOutstandingWalDirectories();
-        _logState("E");
-        System.err.println("broadSweepIter :: (Z) " + tableName);
+            // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
+            // and don't have any active segments. The walNNN directories themselves may be deleted if they don't have
+            // an associated open WalWriter.
+            // Note that this also handles cases where a wal directory was created shortly before a crash and thus
+            // never recorded and tracked by the sequencer for that table.
+            deleteOutstandingWalDirectories();
+            _logState("E");
+            System.err.println("broadSweepIter :: (Z) " + tableName);
+        }
     }
 
     /**
@@ -343,7 +355,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * WAL segments across the database and deletes any which are no longer needed.
      */
     private void broadSweep() {
-        engine.getTableRegistry().forAllWalTables(this::broadSweepIter);
+        path.of(engine.getConfiguration().getRoot()).slash$();
+        ff.iterateDir(path, this::broadSweepIter);
     }
 
     @Override
