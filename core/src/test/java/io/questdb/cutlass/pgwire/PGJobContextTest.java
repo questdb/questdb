@@ -4960,11 +4960,24 @@ nodejs code:
     }
 
     @Test
-    public void testSimpleQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT /*| CONN_AWARE_SIMPLE_BINARY*/, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+    public void testSimpleGroupByQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
             compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select s, count(*) from t1 group by s ");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleCountQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("select count(*) from t1 where s = 's10'");
                 Assert.fail();
             } catch (SQLException e) {
                 TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
