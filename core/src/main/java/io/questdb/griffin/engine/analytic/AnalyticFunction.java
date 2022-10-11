@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.RecordComparator;
 
 public interface AnalyticFunction extends Function {
     int STREAM = 1;
@@ -43,4 +44,6 @@ public interface AnalyticFunction extends Function {
     void reset();
 
     void setColumnIndex(int columnIndex);
+
+    void setRecordComparator(RecordComparator recordComparator);
 }

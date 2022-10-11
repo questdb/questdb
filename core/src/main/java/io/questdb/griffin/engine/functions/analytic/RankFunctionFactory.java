@@ -38,45 +38,51 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 
-public class RowNumberFunctionFactory implements FunctionFactory {
+public class RankFunctionFactory implements FunctionFactory {
 
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
 
     @Override
     public String getSignature() {
-        return "row_number()";
+        return "rank()";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
 
-        if (analyticContext.getPartitionByRecord() != null) {
-            Map map = MapFactory.createMap(
-                    configuration,
-                    analyticContext.getPartitionByKeyTypes(),
-                    LONG_COLUMN_TYPE
-            );
-            return new RowNumberFunction(
-                    map,
-                    analyticContext.getPartitionByRecord(),
-                    analyticContext.getPartitionBySink()
-            );
+        Map map = MapFactory.createMap(
+                configuration,
+                analyticContext.getPartitionByKeyTypes(),
+                LONG_COLUMN_TYPE
+        );
+
+        Map rankMap = MapFactory.createMap(
+                configuration,
+                analyticContext.getPartitionByKeyTypes(),
+                LONG_COLUMN_TYPE
+        );
+
+        Map offsetMap = MapFactory.createMap(
+                configuration,
+                analyticContext.getPartitionByKeyTypes(),
+                LONG_COLUMN_TYPE
+        );
+
+        if (analyticContext.getPartitionByRecord() != null && analyticContext.isOrdered()) {
+            return new RankFunction(map, rankMap, offsetMap, analyticContext.getPartitionByRecord(), analyticContext.getPartitionBySink());
         }
-        return new SequenceRowNumberFunction();
+        return new SequenceRankFunction();
     }
 
-    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction {
+    private static class SequenceRankFunction extends LongFunction implements ScalarFunction {
         private long next = 1;
 
         @Override
         public long getLong(Record rec) {
-            return next++;
+            return next;
         }
 
         @Override
@@ -90,28 +96,44 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
-        private final Map map;
+    private static class RankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
+        private final Map map;
+        private final Map rankMap;
+        private final Map offsetMap;
         private int columnIndex;
+        private RecordComparator recordComparator;
 
-        public RowNumberFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
-            this.map = map;
+
+        public RankFunction(Map map, Map rankMap, Map offsetMap, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
+            this.map = map;
+            this.rankMap = rankMap;
+            this.offsetMap = offsetMap;
         }
 
         @Override
         public void close() {
             Misc.free(map);
+            Misc.free(rankMap);
+            Misc.free(offsetMap);
             Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
         @Override
         public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
+            MapKey currentIndexKey = rankMap.withKey();
+            currentIndexKey.put(partitionByRecord, partitionBySink);
+            MapValue currentIndexValue = currentIndexKey.createValue();
+            long currentIndex;
+            if (currentIndexValue.isNew()) {
+                currentIndex = 0;
+            } else {
+                currentIndex = currentIndexValue.getLong(0);
+            }
+            return currentIndex;
         }
 
         @Override
@@ -122,17 +144,43 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
-            long x;
-            if (value.isNew()) {
-                x = 0;
+
+            MapKey maxIndexKey = map.withKey();
+            maxIndexKey.put(partitionByRecord, partitionBySink);
+            MapValue maxIndexValue = maxIndexKey.createValue();
+            long maxIndex;
+            if (maxIndexValue.isNew()) {
+                maxIndex = 0;
             } else {
-                x = value.getLong(0);
+                maxIndex = maxIndexValue.getLong(0);
             }
-            value.putLong(0, x + 1);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), x);
+
+            MapKey currentIndexKey = rankMap.withKey();
+            currentIndexKey.put(partitionByRecord, partitionBySink);
+            MapValue currentIndexValue = currentIndexKey.createValue();
+            long currentIndex;
+            if (currentIndexValue.isNew()) {
+                currentIndex = 0;
+            } else {
+                currentIndex = currentIndexValue.getLong(0);
+            }
+            // compare with prev record
+            MapKey offsetKey = offsetMap.withKey();
+            offsetKey.put(partitionByRecord, partitionBySink);
+            MapValue offsetValue = offsetKey.createValue();
+            if (offsetValue.isNew()) {
+                offsetValue.putLong(0, recordOffset);
+                currentIndexValue.putLong(0, currentIndex + 1);
+            } else {
+                long offset = offsetValue.getLong(0);
+                recordComparator.setLeft(record);
+                if (recordComparator.compare(spi.cloneRecord(offset)) != 0) {
+                    offsetValue.putLong(0, recordOffset);
+                    currentIndexValue.putLong(0, maxIndex + 1);
+                }
+            }
+            maxIndexValue.putLong(0, maxIndex + 1);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndexValue.getLong(0));
         }
 
         @Override
@@ -145,12 +193,10 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void reopen() {
-            map.reopen();
         }
 
         @Override
         public void reset() {
-            map.close();
         }
 
         @Override
@@ -160,6 +206,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void setRecordComparator(RecordComparator recordComparator) {
+            this.recordComparator = recordComparator;
         }
     }
 }

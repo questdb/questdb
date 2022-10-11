@@ -22,10 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.analytic;
 
-public interface AnalyticSPI {
-    long getAddress(long recordAddress, int columnIndex);
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory;
+import org.junit.Test;
 
-    Record cloneRecord(long recordOffset);
+public class RankFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    // todo how to test it ?
+
+    @Override
+    protected FunctionFactory getFunctionFactory() { return new RankFunctionFactory();
+    }
 }

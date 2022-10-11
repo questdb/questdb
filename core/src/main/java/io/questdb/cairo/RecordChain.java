@@ -111,6 +111,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
+    public Record cloneRecord(long recordOffset) {
+        RecordChainRecord clone = new RecordChainRecord();
+        clone.of(rowToDataOffset(recordOffset));
+        return clone;
+    }
+
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
         return rowToDataOffset(recordOffset) + varOffset + columnOffsets[columnIndex];
     }
