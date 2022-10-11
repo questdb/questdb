@@ -174,7 +174,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
             int transactionSize = transactions.size();
             for (int i = 0; i < transactionSize; i++) {
-                LOG.infoW().$("applying transaction ").$(i).$();
                 FuzzTransaction transaction = transactions.getQuick(i);
                 int size = transaction.operationList.size();
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
