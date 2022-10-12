@@ -1794,7 +1794,6 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        partitionUpdateQueueCapacity = 4;
         compiler.compile(
                 "create table x as (" +
                         "select" +
