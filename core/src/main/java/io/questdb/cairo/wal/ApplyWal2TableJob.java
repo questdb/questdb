@@ -167,8 +167,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // This is metadata change
                         // to be taken from Sequencer directly
                         // This may look odd, but on metadata change record, segment ID means structure version.
-                        @SuppressWarnings("UnnecessaryLocalVariable")
-                        final int newStructureVersion = segmentId;
+                        @SuppressWarnings("UnnecessaryLocalVariable") final int newStructureVersion = segmentId;
                         if (writer.getStructureVersion() != newStructureVersion - 1) {
                             throw CairoException.critical(0)
                                     .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
@@ -214,6 +213,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     default:
                         writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
                 }
+            }
         } finally {
             if (reusableStructureChangeCursor != null) {
                 reusableStructureChangeCursor.reset();

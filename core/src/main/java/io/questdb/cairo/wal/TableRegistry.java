@@ -57,8 +57,15 @@ public class TableRegistry extends AbstractPool {
     public TableRegistry(CairoEngine engine, CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveWriterTTL()); //todo: separate config option
         this.engine = engine;
-        open();
+        populateCache();
         notifyListener(Thread.currentThread().getId(), "TableRegistry", PoolListener.EV_POOL_OPEN);
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        tableNameRegistry.clear();
+        tableNameMemory.close(true);
     }
 
     public CharSequence getSystemTableNameOrDefault(final CharSequence tableName) {
@@ -73,7 +80,7 @@ public class TableRegistry extends AbstractPool {
         return tableNameRegistry.get(tableName);
     }
 
-    public void open() {
+    private void populateCache() {
         tableNameRegistry.clear();
         CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();

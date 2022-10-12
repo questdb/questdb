@@ -384,8 +384,6 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // drop index thread
             new Thread(() -> {
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
-                Path path2 = new Path().put(configuration.getRoot()).concat(systemTableName);
                 try {
                     CompiledQuery cc = compiler2.compile(dropIndexStatement(), sqlExecutionContext2);
                     startBarrier.await();

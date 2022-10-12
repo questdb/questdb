@@ -1578,13 +1578,14 @@ public class SqlCompiler implements Closeable {
         }
 
         if (engine.isWalTable(tableName)) {
-            TableWriterFrontend writer = engine.getTableWriterFrontEnd(
-                    executionContext.getCairoSecurityContext(),
-                    tableName,
-                    "removeTable"
-            );
-
-            writer.dropTable();
+            engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
+//            TableWriterFrontend writer = engine.getTableWriterFrontEnd(
+//                    executionContext.getCairoSecurityContext(),
+//                    tableName,
+//                    "removeTable"
+//            );
+//
+//            writer.dropTable();
         } else {
             engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
         }
