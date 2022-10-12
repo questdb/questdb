@@ -36,49 +36,55 @@ public interface QuarternaryFunction extends Function {
         getLeftEnd().close();
         getCenterLeft().close();
 		getCenterRight().close();
-        getRight().close();
+        getRightEnd().close();
     }
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        getLeft().init(symbolTableSource, executionContext);
-        getCenter().init(symbolTableSource, executionContext);
-        getRight().init(symbolTableSource, executionContext);
+        getLeftEnd().init(symbolTableSource, executionContext);
+        getCenterLeft().init(symbolTableSource, executionContext);
+		getCenterRight().init(symbolTableSource, executionContext);
+        getRightEnd().init(symbolTableSource, executionContext);
     }
 
     @Override
     default boolean isConstant() {
-        return getLeft().isConstant() && getCenter().isConstant() && getRight().isConstant();
+        return getLeftEnd().isConstant() && getCenterLeft().isConstant() && getCenterRight().isConstant() && getRightEnd().isConstant();
     }
 
     @Override
     default boolean isRuntimeConstant() {
-        boolean arc = getLeft().isRuntimeConstant();
-        boolean brc = getCenter().isRuntimeConstant();
-        boolean crc = getRight().isRuntimeConstant();
+        boolean arc = getLeftEnd().isRuntimeConstant();
+        boolean brc = getCenterLeft().isRuntimeConstant();
+		boolean crc = getCenterRight().isRuntimeConstant();
+        boolean drc = getRightEnd().isRuntimeConstant();
 
-        boolean ac = getLeft().isConstant();
-        boolean bc = getCenter().isConstant();
-        boolean cc = getRight().isConstant();
+        boolean ac = getLeftEnd().isConstant();
+        boolean bc = getCenterLeft().isConstant();
+		boolean cc = getCenterRight().isConstant();
+        boolean dc = getRightEnd().isConstant();
 
-        return (ac || arc) && (bc || brc) && (cc || crc) && (arc || brc || crc);
+        return (ac || arc) && (bc || brc) && (cc || crc) && (dc || drc) && (arc || brc || crc || drc);
     }
 
     @Override
     default boolean isReadThreadSafe() {
-        return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
+        return getLeftEnd().isReadThreadSafe() && getCenterLeft().isReadThreadSafe() && getCenterRight().isReadThreadSafe() && getRightEnd().isReadThreadSafe();
     }
 
     @Override
     default void toTop() {
-        getLeft().toTop();
-        getCenter().toTop();
-        getRight().toTop();
+        getLeftEnd().toTop();
+        getCenterLeft().toTop();
+		getCenterRight().toTop();
+        getRightEnd().toTop();
     }
 
-    Function getLeft();
+    Function getLeftEnd();
 
-    Function getCenter();
+    Function getCenterLeft();
 
-    Function getRight();
+	Function getCenterRight();
+
+    Function getRightEnd();
 }
