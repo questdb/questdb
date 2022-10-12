@@ -35,7 +35,6 @@ public enum PropertyKey {
     CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
-    CAIRO_SQL_APPEND_PAGE_SIZE("cairo.sql.append.page.size"),
     CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT("cairo.writer.alter.busy.wait.timeout"),
     CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT("cairo.writer.alter.max.wait.timeout"),
     CAIRO_WRITER_TICK_ROWS_COUNT("cairo.writer.tick.rows.count"),
