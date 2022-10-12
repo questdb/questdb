@@ -472,12 +472,16 @@ public class LineTcpParser {
     }
 
     private ParseResult getError() {
-        if (entityHandler == ENTITY_HANDLER_NAME) {
-            errorCode = ErrorCode.INVALID_COLUMN_NAME;
-        } else if (entityHandler == ENTITY_HANDLER_TABLE) {
-            errorCode = ErrorCode.INVALID_TABLE_NAME;
-        } else if (entityHandler == ENTITY_HANDLER_VALUE) {
-            errorCode = ErrorCode.INVALID_FIELD_VALUE;
+        switch (entityHandler) {
+            case ENTITY_HANDLER_NAME:
+                errorCode = ErrorCode.INVALID_COLUMN_NAME;
+                break;
+            case ENTITY_HANDLER_TABLE:
+                errorCode = ErrorCode.INVALID_TABLE_NAME;
+                break;
+            case ENTITY_HANDLER_VALUE:
+                errorCode = ErrorCode.INVALID_FIELD_VALUE;
+                break;
         }
         return ParseResult.ERROR;
     }
