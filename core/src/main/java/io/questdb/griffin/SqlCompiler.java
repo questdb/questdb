@@ -336,7 +336,8 @@ public class SqlCompiler implements Closeable {
     ) {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
-        for (int i = reader.getPartitionCount() - 2; i > -1; i--) {
+        final int partitionCount = reader.getPartitionCount();
+        for (int i = partitionCount - 2; i > -1; i--) {
             long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
@@ -344,7 +345,7 @@ public class SqlCompiler implements Closeable {
             }
         }
         // remove last partition
-        long partitionTimestamp = reader.getPartitionTimestampByIndex(0);
+        long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
         partitionFunctionRec.setTimestamp(partitionTimestamp);
         if (function.getBool(partitionFunctionRec)) {
             changePartitionStatement.ofPartition(partitionTimestamp);

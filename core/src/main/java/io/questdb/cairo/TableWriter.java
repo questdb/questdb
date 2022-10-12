@@ -1724,6 +1724,7 @@ public class TableWriter implements Closeable {
         checkDistressed();
         if (o3InError || inTransaction()) {
             try {
+                LOG.info().$("tx rollback [name=").utf8(tableName).I$();
                 if ((masterRef & 1) != 0) {
                     masterRef++;
                 }

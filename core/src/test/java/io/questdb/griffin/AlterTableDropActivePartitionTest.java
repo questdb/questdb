@@ -41,18 +41,18 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     private static final String TableHeader = "id\ttimestamp\n";
+    private static final String LastPartitionTs = "2023-10-15";
     private static final String MinMaxCountHeader = "min\tmax\tcount\n";
-    private static final String LastPartitionTs = "2024-10-15";
     private static final String EmptyTableMinMaxCount = MinMaxCountHeader + "\t\t0\n";
 
     @Test
-    public void testDropOnlyPartitionNoReaders() throws Exception {
+    public void testDropLastPartitionNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
                 }
@@ -60,33 +60,33 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropOnlyPartitionWithReaders() throws Exception {
+    public void testDropLastPartitionWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
-                                    "5\t2024-10-15T00:00:00.000000Z\n" +
-                                    "111\t2024-10-15T11:11:11.111111Z\n",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(111, '2024-10-15T11:11:11.111111Z')");
+                                    "5\t2023-10-15T00:00:00.000000Z\n" +
+                                    "111\t2023-10-15T11:11:11.111111Z\n",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(111, '2023-10-15T11:11:11.111111Z')");
 
-                    final String inTransactionReaderExpected = "id\ttimestamp\n" +
-                            "777\t2024-10-13T00:10:00.000000Z\n" +
-                            "888\t2024-10-15T00:00:00.000000Z\n" +
-                            "5\t2024-10-15T00:00:00.000000Z\n" +
-                            "111\t2024-10-15T11:11:11.111111Z\n";
+                    final String expectedTableInTracsaction = TableHeader +
+                            "777\t2023-10-13T00:10:00.000000Z\n" +
+                            "888\t2023-10-15T00:00:00.000000Z\n" +
+                            "5\t2023-10-15T00:00:00.000000Z\n" +
+                            "111\t2023-10-15T11:11:11.111111Z\n";
 
-                    final String afterDropActivePartitionExpected = TableHeader + "777\t2024-10-13T00:10:00.000000Z\n";
+                    final String expectedTableAfterDrop = TableHeader + "777\t2023-10-13T00:10:00.000000Z\n";
 
                     try (TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                        insert("insert into " + tableName + " values(888, '2024-10-15T00:00:00.000000Z');");
+                        insert("insert into " + tableName + " values(888, '2023-10-15T00:00:00.000000Z');");
                         try (TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                            insert("insert into " + tableName + " values(777, '2024-10-13T00:10:00.000000Z');"); // o3
+                            insert("insert into " + tableName + " values(777, '2023-10-13T00:10:00.000000Z');"); // o3
 
                             Assert.assertEquals(2, reader0.size());
                             Assert.assertEquals(3, reader1.size());
-                            assertSql(tableName, inTransactionReaderExpected);
+                            assertSql(tableName, expectedTableInTracsaction);
 
                             dropPartition(tableName, LastPartitionTs);
 
@@ -98,94 +98,94 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             Assert.assertEquals(1, reader1.size());
                             try (RecordCursorFactory factory = compiler.compile(tableName, sqlExecutionContext).getRecordCursorFactory()) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    assertCursor(afterDropActivePartitionExpected, cursor, factory.getMetadata(), true);
+                                    assertCursor(expectedTableAfterDrop, cursor, factory.getMetadata(), true);
                                 }
                             }
                             assertFactoryMemoryUsage();
                         }
                     }
-                    assertTableX(tableName, afterDropActivePartitionExpected, MinMaxCountHeader +
-                            "2024-10-13T00:10:00.000000Z\t2024-10-13T00:10:00.000000Z\t1\n");
+                    assertTableX(tableName, expectedTableAfterDrop, MinMaxCountHeader +
+                            "2023-10-13T00:10:00.000000Z\t2023-10-13T00:10:00.000000Z\t1\n");
                 }
         );
     }
 
     @Test
-    public void testDropPartitionNoReaders() throws Exception {
+    public void testDropActivePartitionNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n",
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n",
                             MinMaxCountHeader +
-                                    "2024-10-10T00:00:00.000000Z\t2024-10-12T00:00:02.000000Z\t5\n");
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-12T00:00:02.000000Z\t5\n");
                 }
         );
     }
 
     @Test
-    public void testDropPartitionWithReaders() throws Exception {
+    public void testDropActivePartitionWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
 
                     final String expectedTable = TableHeader +
-                            "1\t2024-10-10T00:00:00.000000Z\n" +
-                            "2\t2024-10-11T00:00:00.000000Z\n" +
-                            "3\t2024-10-12T00:00:00.000000Z\n" +
-                            "4\t2024-10-12T00:00:01.000000Z\n" +
-                            "6\t2024-10-12T00:00:02.000000Z\n" +
-                            "5\t2024-10-15T00:00:00.000000Z\n";
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n" +
+                            "5\t2023-10-15T00:00:00.000000Z\n";
 
                     final String expectedTableInTransaction = TableHeader +
-                            "1\t2024-10-10T00:00:00.000000Z\n" +
-                            "2\t2024-10-11T00:00:00.000000Z\n" +
-                            "3\t2024-10-12T00:00:00.000000Z\n" +
-                            "4\t2024-10-12T00:00:01.000000Z\n" +
-                            "6\t2024-10-12T00:00:02.000000Z\n" +
-                            "8\t2024-10-12T00:00:05.000001Z\n" +
-                            "7\t2024-10-15T00:00:01.000000Z\n";
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n" +
+                            "8\t2023-10-12T00:00:05.000001Z\n" +
+                            "7\t2023-10-15T00:00:01.000000Z\n";
 
                     final String expectedTableAfterFirstDrop = TableHeader +
-                            "1\t2024-10-10T00:00:00.000000Z\n" +
-                            "2\t2024-10-11T00:00:00.000000Z\n" +
-                            "3\t2024-10-12T00:00:00.000000Z\n" +
-                            "4\t2024-10-12T00:00:01.000000Z\n" +
-                            "6\t2024-10-12T00:00:02.000000Z\n";
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n";
 
                     final String expectedTableAfterSecondDrop = TableHeader +
-                            "1\t2024-10-10T00:00:00.000000Z\n" +
-                            "2\t2024-10-11T00:00:00.000000Z\n" +
-                            "3\t2024-10-12T00:00:00.000000Z\n" +
-                            "4\t2024-10-12T00:00:01.000000Z\n" +
-                            "6\t2024-10-12T00:00:02.000000Z\n" +
-                            "8\t2024-10-12T00:00:05.000001Z\n";
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n" +
+                            "8\t2023-10-12T00:00:05.000001Z\n";
 
                     createTableX(tableName,
                             expectedTable,
-                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
                     try (
                             TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
                             TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
@@ -201,8 +201,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         Assert.assertEquals(5, reader1.size());
                         assertSql(tableName, expectedTableAfterFirstDrop);
 
-                        insert("insert into " + tableName + " values(8, '2024-10-12T00:00:05.000001Z')");
-                        insert("insert into " + tableName + " values(7, '2024-10-15T00:00:01.000000Z')");
+                        insert("insert into " + tableName + " values(8, '2023-10-12T00:00:05.000001Z')");
+                        insert("insert into " + tableName + " values(7, '2023-10-15T00:00:01.000000Z')");
                         assertSql(tableName, expectedTableInTransaction);
                         reader0.reload();
                         reader1.reload();
@@ -211,11 +211,10 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         dropPartition(tableName, LastPartitionTs);
                     }
                     assertTableX(tableName, expectedTableAfterSecondDrop, MinMaxCountHeader +
-                            "2024-10-10T00:00:00.000000Z\t2024-10-12T00:00:05.000001Z\t6\n");
+                            "2023-10-10T00:00:00.000000Z\t2023-10-12T00:00:05.000001Z\t6\n");
                 }
         );
     }
-
 
     @Test
     public void testCannotDropWhenThereIsAWriter() throws Exception {
@@ -223,18 +222,18 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
                     try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                         dropPartition(tableName, LastPartitionTs);
                         Assert.fail();
@@ -247,19 +246,21 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropOnlyPartitionWithUncommittedRowsNoReaders0() throws Exception {
+    public void testDropLastPartitionWithUncommittedO3RowsNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName, TableHeader); // empty table
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
-                        long o3Ts = TimestampFormatUtils.parseTimestamp("2024-10-14T23:59:59.999999Z");
+                        long o3Ts = TimestampFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // o3 previous day
 
-                        TableWriter.Row row = writer.newRow(lastTs); // will not survive
+                        TableWriter.Row row = writer.newRow(lastTs); // will not survive, as it belongs in the active partition
                         row.putInt(0, 100);
                         row.append();
 
-                        row = writer.newRow(o3Ts); // will not survive
+                        // TODO: this row is lost as it is out of order, it may be an edge case.
+                        //  the next test sends these rows in order and the result is different
+                        row = writer.newRow(o3Ts); // will not survive,
                         row.putInt(0, 300);
                         row.append();
 
@@ -271,50 +272,50 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropOnlyPartitionWithUncommittedRowsNoReaders1() throws Exception {
+    public void testDropLastPartitionWithUncommittedRowsNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName, TableHeader); // empty table
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                        long prevTs = TimestampFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // previous day
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
-                        long o3Ts = TimestampFormatUtils.parseTimestamp("2024-10-14T23:59:59.999999Z");
 
-                        TableWriter.Row row = writer.newRow(o3Ts); // expected to survive
+                        TableWriter.Row row = writer.newRow(prevTs); // expected to survive
                         row.putInt(0, 300);
                         row.append();
 
-                        row = writer.newRow(lastTs); // will not survive
+                        row = writer.newRow(lastTs); // will not survive, as it belongs in the active partition
                         row.putInt(0, 100);
                         row.append();
 
                         writer.removePartition(lastTs);
                     }
                     assertTableX(tableName, TableHeader +
-                                    "300\t2024-10-14T23:59:59.999999Z\n",
+                                    "300\t2023-10-14T23:59:59.999999Z\n",
                             MinMaxCountHeader +
-                            "2024-10-14T23:59:59.999999Z\t2024-10-14T23:59:59.999999Z\t1\n");
+                                    "2023-10-14T23:59:59.999999Z\t2023-10-14T23:59:59.999999Z\t1\n");
                 }
         );
     }
 
     @Test
-    public void testDropPartitionWithUncommittedRowsNoReaders() throws Exception {
+    public void testDropActivePartitionWithUncommittedRowsNoReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
@@ -322,102 +323,205 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         row.putInt(0, 100);
                         row.append();
 
-                        row = writer.newRow(TimestampFormatUtils.parseTimestamp("2024-10-10T00:00:07.000000Z")); // expected to survive
+                        row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-10T00:00:07.000000Z")); // expected to survive
                         row.putInt(0, 50);
                         row.append();
 
-                        row = writer.newRow(TimestampFormatUtils.parseTimestamp("2024-10-12T10:00:03.000000Z")); // expected to be lost
+                        row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-12T10:00:03.000000Z")); // expected to be lost
                         row.putInt(0, 75);
                         row.append();
 
                         writer.removePartition(lastTs);
                     }
                     assertTableX(tableName, TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "50\t2024-10-10T00:00:07.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "75\t2024-10-12T10:00:03.000000Z\n",
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "50\t2023-10-10T00:00:07.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "75\t2023-10-12T10:00:03.000000Z\n",
                             MinMaxCountHeader +
-                            "2024-10-10T00:00:00.000000Z\t2024-10-12T10:00:03.000000Z\t7\n");
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-12T10:00:03.000000Z\t7\n");
                 }
         );
     }
 
     @Test
-    public void testDropWithUncommittedRowsWithReaders() throws Exception {
+    public void testDropActivePartitionWithUncommittedRowsWithReaders() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
+
+                    final String expectedTable = TableHeader +
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n" +
+                            "5\t2023-10-15T00:00:00.000000Z\n";
+
                     createTableX(tableName,
-                            TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
+                            expectedTable,
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+
+                    final String expectedTableInTransaction = expectedTable;
+
+                    final String expectedTableAfterDrop = TableHeader +
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n" +
+                            "50\t2023-10-12T00:00:03.000000Z\n";
+
                     try (
-                            TableReader ignore0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                            TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                            TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")
+                    ) {
+                        long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
+
+                        TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-12T00:00:03.000000Z")); // earlier timestamp
+                        row.putInt(0, 50);
+                        row.append();
+
+                        row = writer.newRow(lastTs);
+                        row.putInt(0, 100); // will be removed
+                        row.append();
+
+                        Assert.assertEquals(6, reader0.size());
+                        Assert.assertEquals(6, reader1.size());
+
+                        assertSql(tableName, expectedTableInTransaction);
+
+                        writer.removePartition(lastTs);
+
+                        Assert.assertEquals(6, reader0.size());
+                        Assert.assertEquals(6, reader1.size());
+                        assertSql(tableName, expectedTableAfterDrop);
+                        reader0.reload();
+                        reader1.reload();
+                        Assert.assertEquals(6, reader0.size());
+                        Assert.assertEquals(6, reader1.size());
+                    }
+                    assertTableX(tableName, TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "50\t2023-10-12T00:00:03.000000Z\n",
+                            MinMaxCountHeader +
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-12T00:00:03.000000Z\t6\n");
+                }
+        );
+    }
+
+    @Test
+    public void testDropActivePartitionWithUncommittedO3RowsWithReaders() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    final String expectedTable = TableHeader +
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n" +
+                            "5\t2023-10-15T00:00:00.000000Z\n";
+
+                    createTableX(tableName,
+                            expectedTable,
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+
+                    final String expectedTableInTransaction = expectedTable;
+
+                    final String expectedTableAfterDrop = TableHeader +
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n" +
+                            "3\t2023-10-12T00:00:00.000000Z\n" +
+                            "4\t2023-10-12T00:00:01.000000Z\n" +
+                            "6\t2023-10-12T00:00:02.000000Z\n" +
+                            "50\t2023-10-12T00:00:03.000000Z\n";
+
+                    try (
+                            TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                            TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
                             TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")
                     ) {
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
                         TableWriter.Row row = writer.newRow(lastTs);
-                        row.putInt(0, 100);
+                        row.putInt(0, 100); // will be removed
                         row.append();
 
-                        row = writer.newRow(TimestampFormatUtils.parseTimestamp("2024-10-12T00:00:03.000000Z"));
+                        row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-12T00:00:03.000000Z")); // earlier timestamp
                         row.putInt(0, 50);
                         row.append();
 
-                        reader.openPartition(3); // last partition
+                        Assert.assertEquals(6, reader0.size());
+                        Assert.assertEquals(6, reader1.size());
+
+                        assertSql(tableName, expectedTableInTransaction);
+
                         writer.removePartition(lastTs);
+
+                        Assert.assertEquals(6, reader0.size());
+                        Assert.assertEquals(6, reader1.size());
+                        assertSql(tableName, expectedTableAfterDrop);
+                        reader0.reload();
+                        reader1.reload();
+                        Assert.assertEquals(6, reader0.size());
+                        Assert.assertEquals(6, reader1.size());
                     }
                     assertTableX(tableName, TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "50\t2024-10-12T00:00:03.000000Z\n",
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "50\t2023-10-12T00:00:03.000000Z\n",
                             MinMaxCountHeader +
-                                    "2024-10-10T00:00:00.000000Z\t2024-10-12T00:00:03.000000Z\t6\n");
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-12T00:00:03.000000Z\t6\n");
                 }
         );
     }
 
     @Test
-    public void testDropActiveInsertActiveDropAgain0() throws Exception {
+    public void testDropActivePartitionCreateItAgainAndDoItAgain() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
-                    insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
+                    insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
-                    insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
-                    insert("insert into " + tableName + " values(1, '2024-10-16T00:00:00.000000Z')");
+                    insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
+                    insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
                     assertSql(tableName, TableHeader +
-                            "5\t2024-10-15T00:00:00.000000Z\n" +
-                            "1\t2024-10-16T00:00:00.000000Z\n");
+                            "5\t2023-10-15T00:00:00.000000Z\n" +
+                            "1\t2023-10-16T00:00:00.000000Z\n");
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader +
-                                    "1\t2024-10-16T00:00:00.000000Z\n",
+                                    "1\t2023-10-16T00:00:00.000000Z\n",
                             MinMaxCountHeader +
-                            "2024-10-16T00:00:00.000000Z\t2024-10-16T00:00:00.000000Z\t1\n");
+                                    "2023-10-16T00:00:00.000000Z\t2023-10-16T00:00:00.000000Z\t1\n");
+                    dropPartition(tableName, "2023-10-16");
+                    assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
                 }
         );
     }
@@ -429,41 +533,41 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     createTableX(tableName,
                             TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
                     dropPartition(tableName, LastPartitionTs);
-                    insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
-                    dropPartition(tableName, "2024-10-12");
+                    insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
+                    dropPartition(tableName, "2023-10-12");
                     dropPartition(tableName, LastPartitionTs);
                     assertSql(tableName, TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n");
-                    insert("insert into " + tableName + " values(5, '2024-10-12T00:00:00.000000Z')");
-                    insert("insert into " + tableName + " values(1, '2024-10-16T00:00:00.000000Z')");
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n");
+                    insert("insert into " + tableName + " values(5, '2023-10-12T00:00:00.000000Z')");
+                    insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
                     } catch (SqlException ex) {
-                        TestUtils.assertContains("[26] could not remove partition '2024-10-15'", ex.getFlyweightMessage());
+                        TestUtils.assertContains("[26] could not remove partition '2023-10-15'", ex.getFlyweightMessage());
                     }
                     assertTableX(tableName, TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "5\t2024-10-12T00:00:00.000000Z\n" +
-                                    "1\t2024-10-16T00:00:00.000000Z\n",
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "5\t2023-10-12T00:00:00.000000Z\n" +
+                                    "1\t2023-10-16T00:00:00.000000Z\n",
                             MinMaxCountHeader +
-                            "2024-10-10T00:00:00.000000Z\t2024-10-16T00:00:00.000000Z\t4\n");
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-16T00:00:00.000000Z\t4\n");
                 }
         );
     }
@@ -475,41 +579,68 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     createTableX(tableName,
                             TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n" +
-                                    "3\t2024-10-12T00:00:00.000000Z\n" +
-                                    "4\t2024-10-12T00:00:01.000000Z\n" +
-                                    "6\t2024-10-12T00:00:02.000000Z\n" +
-                                    "5\t2024-10-15T00:00:00.000000Z\n",
-                            "insert into " + tableName + " values(1, '2024-10-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-10-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-10-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-10-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-10-12T00:00:02.000000Z')");
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
                     dropPartition(tableName, LastPartitionTs);
-                    insert("insert into " + tableName + " values(5, '2024-10-15T00:00:00.000000Z')");
-                    dropPartition(tableName, "2024-10-12");
+                    insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
+                    dropPartition(tableName, "2023-10-12");
                     dropPartition(tableName, LastPartitionTs);
                     assertSql(tableName, TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n");
-                    insert("insert into " + tableName + " values(5, '2024-10-12T00:00:00.000000Z')");
-                    insert("insert into " + tableName + " values(1, '2024-10-16T00:00:00.000000Z')");
+                            "1\t2023-10-10T00:00:00.000000Z\n" +
+                            "2\t2023-10-11T00:00:00.000000Z\n");
+                    insert("insert into " + tableName + " values(5, '2023-10-12T00:00:00.000000Z')");
+                    insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
                     } catch (SqlException ex) {
-                        TestUtils.assertContains("[26] could not remove partition '2024-10-15'", ex.getFlyweightMessage());
+                        TestUtils.assertContains("[26] could not remove partition '2023-10-15'", ex.getFlyweightMessage());
                     }
-                    detachPartition(tableName, "2024-10-12");
-                    dropPartition(tableName, "2024-10-16");
+                    detachPartition(tableName, "2023-10-12");
+                    dropPartition(tableName, "2023-10-16");
                     assertTableX(tableName, TableHeader +
-                                    "1\t2024-10-10T00:00:00.000000Z\n" +
-                                    "2\t2024-10-11T00:00:00.000000Z\n",
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n",
                             MinMaxCountHeader +
-                            "2024-10-10T00:00:00.000000Z\t2024-10-11T00:00:00.000000Z\t2\n");
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-11T00:00:00.000000Z\t2\n");
+                }
+        );
+    }
+
+    @Test
+    public void testDropAllPartitions() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+
+                    Assert.assertEquals(ALTER,
+                            compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
+                    assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
                 }
         );
     }
