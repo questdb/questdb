@@ -26,16 +26,12 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 public class TrimFunctionFactory implements FunctionFactory {
     @Override
@@ -45,66 +41,14 @@ public class TrimFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new TrimFunc(args.getQuick(0), TrimFunc.Type.TRIM);
-    }
-
-    public static class TrimFunc extends StrFunction implements UnaryFunction {
-
-        public enum Type {
-            TRIM,
-            LTRIM,
-            RTRIM
-        }
-
-        private final StringSink sink1 = new StringSink();
-        private final StringSink sink2 = new StringSink();
-        private final Function arg;
-        private final Type type;
-
-        public TrimFunc(Function arg, Type type) {
-            this.arg = arg;
-            this.type = type;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public CharSequence getStr(final Record rec) {
-            return trim(getArg().getStr(rec), sink1);
-        }
-
-        @Override
-        public CharSequence getStrB(final Record rec) {
-            return trim(getArg().getStr(rec), sink2);
-        }
-
-        @Nullable
-        private CharSequence trim(CharSequence str, StringSink sink) {
-            if (str == null) {
-                return null;
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            if (arg.getStrLen(null) < 0) {
+                return StrConstant.NULL;
+            } else {
+                return new TrimConstFunction(args.getQuick(0), TrimType.TRIM);
             }
-            int startIdx = 0;
-            int endIdx = str.length() - 1;
-            if (type == Type.LTRIM || type == Type.TRIM) {
-                while (startIdx < endIdx && str.charAt(startIdx) == ' ') {
-                    startIdx++;
-                }
-            }
-            if (type == Type.RTRIM || type == Type.TRIM) {
-                while (startIdx < endIdx && str.charAt(endIdx) == ' ') {
-                    endIdx--;
-                }
-            }
-            sink.clear();
-            if (startIdx != endIdx) {
-                while (startIdx <= endIdx) {
-                    sink.put(str.charAt(startIdx++));
-                }
-            }
-            return sink;
         }
+        return new TrimFunction(args.getQuick(0), TrimType.TRIM);
     }
 }

@@ -40,6 +40,6 @@ public class LTrimFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new TrimFunctionFactory.TrimFunc(args.getQuick(0), TrimFunctionFactory.TrimFunc.Type.LTRIM);
+        return new TrimFunction(args.getQuick(0), TrimType.LTRIM);
     }
 }

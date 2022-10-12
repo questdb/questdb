@@ -24,22 +24,39 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.StringSink;
+import static io.questdb.std.Chars.trim;
 
-public class RTrimFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "rtrim(S)";
+public class TrimFunction extends StrFunction implements UnaryFunction {
+
+    private final StringSink sink1 = new StringSink();
+    private final StringSink sink2 = new StringSink();
+    private final Function arg;
+    private final TrimType type;
+
+    public TrimFunction(Function arg, TrimType type) {
+        this.arg = arg;
+        this.type = type;
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new TrimFunction(args.getQuick(0), TrimType.RTRIM);
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public CharSequence getStr(final Record rec) {
+        trim(type, getArg().getStr(rec), sink1);
+        return sink1;
+    }
+
+    @Override
+    public CharSequence getStrB(final Record rec) {
+        trim(type, getArg().getStr(rec), sink2);
+        return sink2;
     }
 }

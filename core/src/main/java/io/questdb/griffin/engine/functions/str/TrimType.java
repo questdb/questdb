@@ -24,22 +24,8 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-public class RTrimFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "rtrim(S)";
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new TrimFunction(args.getQuick(0), TrimType.RTRIM);
-    }
+public enum TrimType {
+    TRIM,
+    LTRIM,
+    RTRIM
 }

@@ -50,8 +50,7 @@ public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call("").andAssert("");
         call(" ").andAssert("");
         call("    ").andAssert("");
-        final String nullVal = null;
-        call(nullVal).andAssert(null);
+        call((Object) null).andAssert(null);
     }
 
     @Override
