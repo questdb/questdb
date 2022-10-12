@@ -22,16 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
+package io.questdb.griffin.engine.functions.math;
 
-public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "like(SS)";
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
+
+public class CeilingFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-13.1f).andAssert(-13.0, 0.0000000001);
     }
 
     @Override
-    protected boolean isCaseInsensitive() {
-        return false;
+    protected FunctionFactory getFunctionFactory() {
+        return new CeilingFloatFunctionFactory();
     }
 }

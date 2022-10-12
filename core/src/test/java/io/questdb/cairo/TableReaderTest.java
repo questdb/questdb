@@ -1508,7 +1508,8 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 500 : 50;
+            int totalColAddCount = 100;
+//                    Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 500 : 50;
 
             String tableName = "tbl_meta_test";
             createTable(tableName, PartitionBy.HOUR);
@@ -1545,13 +1546,14 @@ public class TableReaderTest extends AbstractCairoTest {
             Thread readerThread = new Thread(() -> {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     start.await();
-                    int colAdded = -1, newColsAdded;
+                    int colAdded = -1;
                     while (colAdded < totalColAddCount) {
-                        if (colAdded < (newColsAdded = columnsAdded.get())) {
-                            reader.reload();
-                            Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
-                            colAdded = newColsAdded;
-                            reloadCount.incrementAndGet();
+                        if (colAdded < columnsAdded.get()) {
+                            if (reader.reload()) {
+                                Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
+                                colAdded = reader.getMetadata().getColumnCount();
+                                reloadCount.incrementAndGet();
+                            }
                         }
                         Os.pause();
                     }
@@ -1571,8 +1573,6 @@ public class TableReaderTest extends AbstractCairoTest {
                 ex.printStackTrace();
                 throw new Exception(ex);
             }
-
-            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
     }
@@ -1845,33 +1845,6 @@ public class TableReaderTest extends AbstractCairoTest {
             Assert.assertTrue(stopLatch.await(30, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
         });
-    }
-
-    @Test
-    public void testReaderGoesToPoolWhenCommitHappen() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "testReaderGoesToPoolWhenCommitHappen";
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("l", ColumnType.LONG)) {
-                CairoTestUtils.create(model);
-            }
-
-            int rowCount = 10;
-            try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
-                try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                    for (int i = 0; i < rowCount; i++) {
-                        TableWriter.Row row = writer.newRow();
-                        row.putLong(0, i);
-                        row.append();
-                    }
-                    writer.commit();
-                }
-            }
-
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(rowCount, reader.size());
-            }
-        });
-
     }
 
     @Test
@@ -2427,6 +2400,33 @@ public class TableReaderTest extends AbstractCairoTest {
                 Assert.assertTrue(reloadCount.get() > 0);
             }
         });
+    }
+
+    @Test
+    public void testReaderGoesToPoolWhenCommitHappen() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "testReaderGoesToPoolWhenCommitHappen";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("l", ColumnType.LONG)) {
+                CairoTestUtils.create(model);
+            }
+
+            int rowCount = 10;
+            try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow();
+                        row.putLong(0, i);
+                        row.append();
+                    }
+                    writer.commit();
+                }
+            }
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(rowCount, reader.size());
+            }
+        });
+
     }
 
     @Test
@@ -3245,7 +3245,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
-                appendTwoSymbols(writer, rnd, 0, 1);
+                appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3276,7 +3276,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try to do add values to new column
-                    appendTwoSymbols(writer, rnd, 0, 2);
+                    appendTwoSymbols(writer, rnd, 2);
                     writer.commit();
 
                     // now assert what reader sees
@@ -3354,7 +3354,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
-                appendTwoSymbols(writer, rnd, 0, 1);
+                appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3381,7 +3381,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try to do add values to new column
-                    appendTwoSymbols(writer, rnd, 0, 2);
+                    appendTwoSymbols(writer, rnd, 2);
                     writer.commit();
 
                     // now assert what reader sees
@@ -3459,7 +3459,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
-                appendTwoSymbols(writer, rnd, 0, 1);
+                appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3486,7 +3486,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try to do add values to new column
-                    appendTwoSymbols(writer, rnd, 0, 2);
+                    appendTwoSymbols(writer, rnd, 2);
                     writer.commit();
 
                     // now assert what reader sees
@@ -3564,7 +3564,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
-                appendTwoSymbols(writer, rnd, 0, 1);
+                appendTwoSymbols(writer, rnd, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3670,10 +3670,10 @@ public class TableReaderTest extends AbstractCairoTest {
         return "0" + s;
     }
 
-    private void appendTwoSymbols(TableWriter writer, Rnd rnd, int index1, int index2) {
+    private void appendTwoSymbols(TableWriter writer, Rnd rnd, int index2) {
         for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow();
-            row.putSym(index1, rnd.nextChars(10));
+            row.putSym(0, rnd.nextChars(10));
             row.putSym(index2, rnd.nextChars(15));
             row.append();
         }

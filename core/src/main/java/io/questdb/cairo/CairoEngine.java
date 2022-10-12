@@ -70,11 +70,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final IDGenerator tableIdGenerator;
     private final TableRegistry tableRegistry;
-    private final Path rootPath;
-    private final int rootPathLen;
     private final TextImportExecutionContext textImportExecutionContext;
-    private TxReader tempTxReader;
     private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
+    private final AtomicLong failedWalTxnCount = new AtomicLong(1);
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -123,15 +121,30 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             throw e;
         }
 
-        this.rootPath = new Path().of(configuration.getRoot());
-        this.rootPathLen = rootPath.length();
         this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalIoThreads);
     }
 
-    public void checkMissingWalTransactions() {
-        try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
-            tempTxReader = txReader;
-            tableRegistry.forAllWalTables(this::checkNotifyOutstandingTxnInWal);
+    public long getFailedWalTxnCount() {
+        return failedWalTxnCount.get();
+    }
+
+    public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
+        Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
+        while (true) {
+            long cursor = pubSeq.next();
+            if (cursor > -1L) {
+                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                task.of(tableName, tableId, txn);
+                pubSeq.done(cursor);
+                return;
+            } else if (cursor == -1L) {
+                LOG.info().$("cannot publish WAL notifications, queue is full [current=")
+                        .$(pubSeq.current()).$(", table=").$(tableName)
+                        .$();
+                // Oh, no queue overflow! Throw away notification and trigger a job to rescan all the tables
+                notifyWalTxnFailed();
+                return;
+            }
         }
     }
 
@@ -149,7 +162,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(readerPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
-        Misc.free(rootPath);
         Misc.free(tableRegistry);
         Misc.free(telemetryQueue);
     }
@@ -325,84 +337,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return getWriter(securityContext, tableName, lockReason);
     }
 
-    public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
-        rootPath.trimTo(rootPathLen).concat(getSystemTableName(tableName)).concat(TableUtils.TXN_FILE_NAME).$();
-        try (TxReader txReader = tempTxReader.ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader.unsafeReadTxn()  < txn) {
-                // table name should be immutable when in the notification message
-                String tableNameStr = Chars.toString(tableName);
-                notifyWalTxnCommitted(tableId, tableNameStr, txn);
-            }
-        }
-    }
-
-    public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
-        Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
-        int steelingAttempts = 100;
-        SqlToOperation sqlToOperation = null;
-        IntLongHashMap localCommittedTransactions = new IntLongHashMap();
-
-        try {
-            while (true) {
-                long cursor = pubSeq.next();
-                if (cursor > -1L) {
-                    WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                    task.of(tableName, tableId, txn);
-                    pubSeq.done(cursor);
-                    return;
-                } else if (cursor == -1L) {
-                    // Oh, no queue overflow!
-                    // Steel the work!
-                    if (steelingAttempts-- > 0) {
-                        Sequence subSeq = messageBus.getWalTxnNotificationSubSequence();
-                        if (sqlToOperation == null) {
-                            sqlToOperation = new SqlToOperation(this);
-                        }
-                        try {
-                            while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
-                                if (cursor > -1L) {
-                                    WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                                    String taskTableName = task.getTableName();
-                                    int taskTableId = task.getTableId();
-                                    // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
-                                    subSeq.done(cursor);
-
-                                    LOG.info().$("stealing work from wal txn queue: ").$(taskTableName).$();
-
-                                    if (localCommittedTransactions.get(taskTableId) < task.getTxn()) {
-                                        long lastCommittedTxn = ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, this, sqlToOperation);
-                                        if (lastCommittedTxn > -1) {
-                                            localCommittedTransactions.put(taskTableId, lastCommittedTxn);
-                                        }
-                                    }
-
-                                    // If this is the same table we want to notify about
-                                    // then we don't to notify about it anymore, whoever processes the WAL
-                                    // for the table will apply the transaction we want to notify about too
-                                    if (tableName.equals(taskTableName) && tableId == taskTableId) {
-                                        return;
-                                    }
-                                }
-                            }
-                        } catch (Throwable throwable) {
-                            LOG.criticalW()
-                                    .$("error in steeling and processing WAL notifications. Attempts left: ").$(steelingAttempts)
-                                    .$(throwable).$();
-                        }
-                    } else {
-                        LOG.criticalW().$("error publishing WAL notifications, queue is full, current=").$(pubSeq.current()).$();
-                        // WAL is committed and can eventually be picked up and applied to the table.
-                        // Error is critical but throwing exception will make client assume
-                        // that commit failed but in fact the data is written.
-                        return;
-                    }
-                }
-            }
-        } finally {
-            if (sqlToOperation != null) {
-                Misc.free(sqlToOperation);
-            }
-        }
+    public void notifyWalTxnFailed() {
+        failedWalTxnCount.incrementAndGet();
     }
 
     public void setPoolListener(PoolListener poolListener) {

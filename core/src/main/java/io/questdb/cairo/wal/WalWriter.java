@@ -1052,7 +1052,7 @@ public class WalWriter implements TableWriterFrontend {
         if (rowTimestamp > txnMaxTimestamp) {
             txnMaxTimestamp = rowTimestamp;
         } else {
-            txnOutOfOrder = txnMaxTimestamp != rowTimestamp;
+            txnOutOfOrder |= (txnMaxTimestamp != rowTimestamp);
         }
         if (rowTimestamp < txnMinTimestamp) {
             txnMinTimestamp = rowTimestamp;

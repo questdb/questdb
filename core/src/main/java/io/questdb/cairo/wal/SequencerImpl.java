@@ -244,6 +244,7 @@ public class SequencerImpl implements Sequencer {
     private void applyToMetadata(AlterOperation operation) {
         try {
             operation.apply(sequencerMetadataUpdater, true);
+            metadata.syncToMetaFile();
         } catch (SqlException e) {
             throw CairoException.critical(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
         }

@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
@@ -40,7 +40,10 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.Map;
@@ -326,13 +329,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[9].getClassName().endsWith("WalWriter") && stackTrace[9].getMethodName().equals("applyStructureChanges")) {
-                        return -1;
-                    }
+                if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
+                    return -1;
                 }
                 return Files.openRW(name, opts);
             }

@@ -22,16 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
+package io.questdb.griffin.engine.functions.str;
 
-public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
+/**
+ * Postgres-compatibility upper() alias for the to_uppercase() function.
+ */
+public class UpperFunctionFactory extends ToUppercaseFunctionFactory {
     @Override
     public String getSignature() {
-        return "like(SS)";
-    }
-
-    @Override
-    protected boolean isCaseInsensitive() {
-        return false;
+        return "upper(S)";
     }
 }

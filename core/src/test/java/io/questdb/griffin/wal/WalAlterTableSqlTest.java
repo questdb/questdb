@@ -184,4 +184,24 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n");
         });
     }
+
+    @Test
+    public void testInsertAfterAddColumn() throws Exception {
+        String tableName = testName.getMethodName();
+        compile("create table " + tableName + "("
+                + "x long,"
+                + "ts timestamp"
+                + ") timestamp(ts) partition by DAY WAL");
+        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        compile("alter table " + tableName + " add column s1 string");
+        compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'str')");
+
+        // Release WAL and sequencer
+        engine.releaseInactive();
+
+        drainWalQueue();
+        assertSql(tableName, "x\tts\ts1\n" +
+                "1\t2022-02-24T00:00:00.000000Z\t\n" +
+                "2\t2022-02-24T00:00:01.000000Z\tstr\n");
+    }
 }

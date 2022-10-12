@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
@@ -100,6 +101,7 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new ColumnIndexerJob(messageBus));
                     sharedPool.assign(new GroupByJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+                    sharedPool.assign(new CheckWalTransactionsJob(engine));
 
                     if (!config.getWalApplyPoolConfiguration().isEnabled()) {
                         final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
@@ -144,9 +146,6 @@ public class ServerMain implements Closeable {
             workerPool.assign(applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }
-
-        // Scan WAL tables to find out if all wall transactions are applied.
-        engine.checkMissingWalTransactions();
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
