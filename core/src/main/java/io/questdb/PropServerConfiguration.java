@@ -2660,6 +2660,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isSqlParallelFilterPreTouchEnabled() {
             return sqlParallelFilterPreTouchEnabled;
         }
+
+        @Override
+        public boolean mangleTableSystemNames() {
+            return false;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {

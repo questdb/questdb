@@ -414,4 +414,6 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean mangleTableSystemNames();
 }

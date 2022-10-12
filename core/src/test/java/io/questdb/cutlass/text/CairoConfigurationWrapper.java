@@ -808,6 +808,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean mangleTableSystemNames() {
+        return conf.mangleTableSystemNames();
+    }
+
+    @Override
     public int getSqlCopyLogRetentionDays() {
         return conf.getSqlCopyLogRetentionDays();
     }

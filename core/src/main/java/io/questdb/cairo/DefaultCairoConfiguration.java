@@ -434,6 +434,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean mangleTableSystemNames() {
+        return false;
+    }
+
+    @Override
     public int getSqlCopyLogRetentionDays() {
         return 3;
     }

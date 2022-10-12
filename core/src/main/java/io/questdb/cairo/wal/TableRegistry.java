@@ -53,10 +53,12 @@ public class TableRegistry extends AbstractPool {
     private final CairoEngine engine;
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final ConcurrentHashMap<CharSequence> tableNameRegistry = new ConcurrentHashMap<>();
+    private final boolean mangleTableSystemNames;
 
     public TableRegistry(CairoEngine engine, CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveWriterTTL()); //todo: separate config option
         this.engine = engine;
+        this.mangleTableSystemNames = configuration.mangleTableSystemNames();
         populateCache();
         notifyListener(Thread.currentThread().getId(), "TableRegistry", PoolListener.EV_POOL_OPEN);
     }
@@ -72,7 +74,10 @@ public class TableRegistry extends AbstractPool {
         final CharSequence systemName = tableNameRegistry.get(tableName);
         if (systemName != null) {
             return systemName;
+        } else if (!mangleTableSystemNames) {
+            return tableName;
         }
+
         return tableName.toString() + '_';
     }
 

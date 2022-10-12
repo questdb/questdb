@@ -38,6 +38,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -50,6 +51,13 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class EngineMigrationTest extends AbstractGriffinTest {
+
+    @BeforeClass
+    public static void setUpStatic() {
+        mangleTableSystemName = false;
+        AbstractGriffinTest.setUpStatic();
+    }
+
 
     public static void replaceDbContent(String path) throws IOException {
 

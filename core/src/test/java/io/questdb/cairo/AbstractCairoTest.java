@@ -132,6 +132,7 @@ public abstract class AbstractCairoTest {
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     public static long dataAppendPageSize = -1;
     public static int walTxnNotificationQueueCapacity = -1;
+    public static boolean mangleTableSystemName = true;
 
     protected static void assertFactoryMemoryUsage() {
         if (memoryUsage > -1) {
@@ -428,8 +429,13 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public boolean mangleTableSystemNames() {
+                return mangleTableSystemName;
+            }
+
+            @Override
             public boolean isO3QuickSortEnabled() {
-                return isO3QuickSortEnabled > 0 ? true : (isO3QuickSortEnabled < 0 ? false : super.isO3QuickSortEnabled());
+                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
             }
         };
         metrics = Metrics.enabled();
