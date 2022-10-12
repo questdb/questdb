@@ -511,16 +511,12 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
                     insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
-                    insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
+                    insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')"); // spureous row from the future
                     assertSql(tableName, TableHeader +
                             "5\t2023-10-15T00:00:00.000000Z\n" +
-                            "1\t2023-10-16T00:00:00.000000Z\n");
-                    dropPartition(tableName, LastPartitionTs);
-                    assertTableX(tableName, TableHeader +
-                                    "1\t2023-10-16T00:00:00.000000Z\n",
-                            MinMaxCountHeader +
-                                    "2023-10-16T00:00:00.000000Z\t2023-10-16T00:00:00.000000Z\t1\n");
+                            "1\t2023-10-16T00:00:00.000000Z\n"); // new active partition
                     dropPartition(tableName, "2023-10-16");
+                    dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
                 }
         );
