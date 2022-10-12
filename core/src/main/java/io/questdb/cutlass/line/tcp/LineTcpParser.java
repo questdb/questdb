@@ -82,7 +82,7 @@ public class LineTcpParser {
     private int nEntities;
     private ProtoEntity currentEntity;
     private ErrorCode errorCode;
-    private byte entityHandler;
+    private byte entityHandler = -1;
     private long timestamp;
     private int nQuoteCharacters;
     private boolean scape;
@@ -697,7 +697,7 @@ public class LineTcpParser {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
         controlChars = new boolean[Byte.MAX_VALUE];
         for (char ch : chars) {
             controlChars[ch] = true;
