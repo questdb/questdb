@@ -1457,43 +1457,36 @@ public class TableWriter implements Closeable {
             return false;
         }
 
-        // when we want to delete first partition we must find out minTimestamp from
-        // next partition if it exists, or next partition, and so on
-        //
-        // when somebody removed data directories manually and then attempts to tidy
-        // up metadata with logical partition delete we have to uphold the effort and
-        // re-compute table size and its minTimestamp from what remains on disk
+        // commit changes, there may be uncommitted rows of any partition
+        commit();
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
 
+            // deleting active partition
+
             if (index == 0) {
+                // removing the only partition is equivalent to truncating the table
                 truncate();
                 return true;
             }
 
-            commit();
-
-            // calculate new boundaries
+            // calculate **new** partition boundaries
             final int prevIndex = index - 1;
-            final long nextTimestamp = txWriter.getPartitionTimestamp(prevIndex);
-            final long nextTransientRowCount = txWriter.getPartitionSize(prevIndex);
-            final long nextFixedRowCount = txWriter.getFixedRowCount() - nextTransientRowCount;
+            final long prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
+            final long newTransientRowCount = txWriter.getPartitionSize(prevIndex);
             try {
-                setPathForPartition(path.trimTo(rootLen), partitionBy, nextTimestamp, false);
+                setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, false);
                 TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
-                readPartitionMinMax(ff, nextTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), nextTransientRowCount);
+                readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
             } finally {
                 path.trimTo(rootLen);
             }
-            final long nextMinTimestamp = Math.max(attachMinTimestamp, nextTimestamp);
-            final long nextMaxTimestamp = Math.min(attachMaxTimestamp, partitionCeilMethod.ceil(nextTimestamp));
 
             columnVersionWriter.removePartition(timestamp);
-            txWriter.removeActivePartition(
-                    nextMinTimestamp,
-                    nextMaxTimestamp,
-                    nextFixedRowCount,
-                    nextTransientRowCount);
+            txWriter.beginPartitionSizeUpdate();
+            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.setMaxTimestamp(attachMaxTimestamp);
+            txWriter.finishPartitionSizeUpdate(attachMinTimestamp, attachMaxTimestamp);
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();
@@ -1502,10 +1495,17 @@ public class TableWriter implements Closeable {
 
             closeActivePartition(true);
             row = regularRow;
-            openPartition(nextTimestamp);
-            populateDenseIndexerList();
-            setAppendPosition(nextTransientRowCount, false);
+            openPartition(prevTimestamp);
+            setAppendPosition(newTransientRowCount, false);
         } else {
+
+            // when we want to delete first partition we must find out minTimestamp from
+            // next partition if it exists, or next partition, and so on
+            //
+            // when somebody removed data directories manually and then attempts to tidy
+            // up metadata with logical partition delete we have to uphold the effort and
+            // re-compute table size and its minTimestamp from what remains on disk
+
             // find out if we are removing min partition
             long nextMinTimestamp = minTimestamp;
             if (timestamp == txWriter.getPartitionTimestamp(0)) {

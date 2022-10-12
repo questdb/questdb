@@ -246,14 +246,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void removeAttachedPartitions(long timestamp) {
+        recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        removeAttachedPartitionByIndex(index);
-    }
-
-    public void removeAttachedPartitionByIndex(int index) {
+        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         if (index > -1) {
-            recordStructureVersion++;
             final int size = attachedPartitions.size();
             final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
             if (index < lim) {
@@ -264,27 +260,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         } else {
             assert false;
         }
-    }
-
-    public void removeActivePartition(long nextMinTimestamp, long nextMaxTimestamp, long nextFixedRowCount, long nextTransientRowCount) {
-        beginPartitionSizeUpdate();
-
-        // finish partition size update
-        recordStructureVersion++;
-        prevMinTimestamp = minTimestamp;
-        minTimestamp = nextMinTimestamp;
-        prevMaxTimestamp = maxTimestamp;
-        maxTimestamp = nextMaxTimestamp;
-        fixedRowCount = nextFixedRowCount;
-        prevTransientRowCount = transientRowCount;
-        transientRowCount = nextTransientRowCount;
-
-        partitionTableVersion++;
-        final int lim = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
-        if (lim > -1) {
-            attachedPartitions.setPos(lim);
-        }
-        txPartitionCount = getPartitionCount();
     }
 
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
@@ -319,6 +294,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         minTimestamp = timestamp;
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
+        }
+    }
+
+    public void setMaxTimestamp(long timestamp) {
+        recordStructureVersion++;
+        maxTimestamp = timestamp;
+        if (prevMaxTimestamp == Long.MIN_VALUE) {
+            prevMaxTimestamp = maxTimestamp;
         }
     }
 
