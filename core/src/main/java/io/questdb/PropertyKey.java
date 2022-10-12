@@ -42,7 +42,7 @@ public enum PropertyKey {
     CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT("cairo.sql.backup.dir.datetime.format"),
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
-    CAIRO_CREAT_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
+    CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
     CAIRO_DEFAULT_MAP_TYPE("cairo.default.map.type"),
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),
     CAIRO_DEFAULT_SYMBOL_CAPACITY("cairo.default.symbol.capacity"),
