@@ -187,8 +187,6 @@ public interface CairoConfiguration {
 
     int getO3PartitionQueueCapacity();
 
-    int getO3PartitionUpdateQueueCapacity();
-
     int getO3PurgeDiscoveryQueueCapacity();
 
     // the '+' is used to prevent overlap with table names

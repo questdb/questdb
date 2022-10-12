@@ -1684,6 +1684,7 @@ public class TableWriter implements Closeable {
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableName).I$();
+                o3PartitionRemoveCandidates.clear();
                 if ((masterRef & 1) != 0) {
                     masterRef++;
                 }
@@ -3439,6 +3440,36 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void o3ConsumePartitionUpdateSink() {
+        int size = o3PartitionUpdateSink.size();
+
+        for (int offset = 0; offset < size; offset += PARTITION_UPDATE_SINK_ENTRY_SIZE) {
+            long partitionTimestamp = o3PartitionUpdateSink.getQuick(offset);
+            long timestampMin = o3PartitionUpdateSink.getQuick(offset + 1);
+
+            if (partitionTimestamp != -1 && timestampMin != -1) {
+                long timestampMax = o3PartitionUpdateSink.getQuick(offset + 2);
+                long srcOooPartitionLo = o3PartitionUpdateSink.getQuick(offset + 3);
+                long srcOooPartitionHi = o3PartitionUpdateSink.getQuick(offset + 4);
+                boolean partitionMutates = o3PartitionUpdateSink.getQuick(offset + 5) != 0;
+                long srcOooMax = o3PartitionUpdateSink.getQuick(offset + 6);
+                long srcDataMax = o3PartitionUpdateSink.getQuick(offset + 7);
+
+                o3PartitionUpdate(
+                        timestampMin,
+                        timestampMax,
+                        partitionTimestamp,
+                        srcOooPartitionLo,
+                        srcOooPartitionHi,
+                        srcOooMax,
+                        srcDataMax,
+                        partitionMutates
+                );
+
+            }
+        }
+    }
+
     private void o3ConsumePartitionUpdates() {
         final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
         final RingQueue<O3PartitionTask> partitionQueue = messageBus.getO3PartitionQueue();
@@ -3518,7 +3549,7 @@ public class TableWriter implements Closeable {
         } while (this.o3PartitionUpdRemaining.get() > 0);
 
         if (o3ErrorCount.get() == 0) {
-            o3PartitionUpdateFromSink();
+            o3ConsumePartitionUpdateSink();
         }
     }
 
@@ -3738,6 +3769,32 @@ public class TableWriter implements Closeable {
         }
     }
 
+    void o3NotifyPartitionUpdate(
+            long timestampMin,
+            long timestampMax,
+            long partitionTimestamp,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            boolean partitionMutates,
+            long srcOooMax,
+            long srcDataMax
+    ) {
+        long basePartitionTs = o3PartitionUpdateSink.getQuick(0);
+        int partitionSinkIndex = (int) ((partitionTimestamp - basePartitionTs) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy));
+        int offset = partitionSinkIndex * PARTITION_UPDATE_SINK_ENTRY_SIZE;
+
+        o3PartitionUpdateSink.setQuick(offset, partitionTimestamp);
+        o3PartitionUpdateSink.setQuick(offset + 1, timestampMin);
+        o3PartitionUpdateSink.setQuick(offset + 2, timestampMax);
+        o3PartitionUpdateSink.setQuick(offset + 3, srcOooPartitionLo);
+        o3PartitionUpdateSink.setQuick(offset + 4, srcOooPartitionHi);
+        o3PartitionUpdateSink.setQuick(offset + 5, partitionMutates ? 1 : 0);
+        o3PartitionUpdateSink.setQuick(offset + 6, srcOooMax);
+        o3PartitionUpdateSink.setQuick(offset + 7, srcDataMax);
+
+        o3ClockDownPartitionUpdateCount();
+    }
+
     private void o3OpenColumnSafe(Sequence openColumnSubSeq, long cursor, O3OpenColumnTask openColumnTask) {
         try {
             O3OpenColumnJob.openColumn(openColumnTask, cursor, openColumnSubSeq);
@@ -3816,62 +3873,6 @@ public class TableWriter implements Closeable {
                 txWriter.bumpPartitionTableVersion();
             }
             txWriter.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
-        }
-    }
-
-    void o3NotifyPartitionUpdate(
-            long timestampMin,
-            long timestampMax,
-            long partitionTimestamp,
-            long srcOooPartitionLo,
-            long srcOooPartitionHi,
-            boolean partitionMutates,
-            long srcOooMax,
-            long srcDataMax
-    ) {
-        long basePartitionTs = o3PartitionUpdateSink.getQuick(0);
-        int partitionSinkIndex = (int) ((partitionTimestamp - basePartitionTs) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy));
-        int offset = partitionSinkIndex * PARTITION_UPDATE_SINK_ENTRY_SIZE;
-
-        o3PartitionUpdateSink.setQuick(offset, partitionTimestamp);
-        o3PartitionUpdateSink.setQuick(offset + 1, timestampMin);
-        o3PartitionUpdateSink.setQuick(offset + 2, timestampMax);
-        o3PartitionUpdateSink.setQuick(offset + 3, srcOooPartitionLo);
-        o3PartitionUpdateSink.setQuick(offset + 4, srcOooPartitionHi);
-        o3PartitionUpdateSink.setQuick(offset + 5, partitionMutates ? 1 : 0);
-        o3PartitionUpdateSink.setQuick(offset + 6, srcOooMax);
-        o3PartitionUpdateSink.setQuick(offset + 7, srcDataMax);
-
-        o3ClockDownPartitionUpdateCount();
-    }
-
-    private void o3PartitionUpdateFromSink() {
-        int size = o3PartitionUpdateSink.size();
-
-        for (int offset = 0; offset < size; offset += PARTITION_UPDATE_SINK_ENTRY_SIZE) {
-            long partitionTimestamp = o3PartitionUpdateSink.getQuick(offset);
-            long timestampMin = o3PartitionUpdateSink.getQuick(offset + 1);
-
-            if (partitionTimestamp != -1 && timestampMin != -1) {
-                long timestampMax = o3PartitionUpdateSink.getQuick(offset + 2);
-                long srcOooPartitionLo = o3PartitionUpdateSink.getQuick(offset + 3);
-                long srcOooPartitionHi = o3PartitionUpdateSink.getQuick(offset + 4);
-                boolean partitionMutates = o3PartitionUpdateSink.getQuick(offset + 5) != 0;
-                long srcOooMax = o3PartitionUpdateSink.getQuick(offset + 6);
-                long srcDataMax = o3PartitionUpdateSink.getQuick(offset + 7);
-
-                o3PartitionUpdate(
-                        timestampMin,
-                        timestampMax,
-                        partitionTimestamp,
-                        srcOooPartitionLo,
-                        srcOooPartitionHi,
-                        srcOooMax,
-                        srcDataMax,
-                        partitionMutates
-                );
-
-            }
         }
     }
 

@@ -258,11 +258,6 @@ public class AbstractO3Test {
                     public int getO3ColumnMemorySize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
-
-                    @Override
-                    public int getO3PartitionUpdateQueueCapacity() {
-                        return partitionUpdateQueueCapacity > 0 ? partitionUpdateQueueCapacity : super.getO3PartitionUpdateQueueCapacity();
-                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration, LOG);
@@ -302,11 +297,6 @@ public class AbstractO3Test {
                     @Override
                     public int getO3PartitionQueueCapacity() {
                         return 0;
-                    }
-
-                    @Override
-                    public int getO3PartitionUpdateQueueCapacity() {
-                        return partitionUpdateQueueCapacity > 0 ? partitionUpdateQueueCapacity : super.getO3PartitionUpdateQueueCapacity();
                     }
 
                     @Override
