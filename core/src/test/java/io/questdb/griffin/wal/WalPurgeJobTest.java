@@ -259,6 +259,14 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
 
+            // Idempotency check
+            for (int count = 0; count < 1000; ++count) {
+                purgeWalSegments();
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(true, tableName, 1, 1);
+            }
+
             // After draining, it's all deleted.
             drainWalQueue();
             assertSql(tableName, "x\tts\ts1\n" +
@@ -289,7 +297,6 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 path.of(root).concat(tableName).$();
-                ff.mkdir(path, configuration.getMkDirMode());
                 Assert.assertEquals(path.toString(), true, ff.exists(path));
                 path.of(root).concat(tableName).concat("waldo").$();
                 ff.mkdir(path, configuration.getMkDirMode());
@@ -299,6 +306,12 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 purgeWalSegments();
                 Assert.assertEquals(path.toString(), true, ff.exists(path));
 
+                // idempotency check.
+                for (int count = 0; count < 1000; ++count) {
+                    purgeWalSegments();
+                    Assert.assertEquals(path.toString(), true, ff.exists(path));
+                }
+
                 path.of(root).concat(tableName).concat("wal1000").$();
                 ff.mkdir(path, configuration.getMkDirMode());
                 Assert.assertEquals(path.toString(), true, ff.exists(path));
@@ -306,6 +319,58 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 // Purging will delete wal1000: Wal name matched and the WAL has no lock.
                 purgeWalSegments();
                 Assert.assertEquals(path.toString(), false, ff.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentDirnamePattern() throws Exception {
+        // We create a directory called "stuff" inside the wal1 and ensure it's not deleted.
+        // This tests that non-numeric directories aren't matched.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+            compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+
+            drainWalQueue();
+            assertWalExistence(true, tableName, 1);
+            assertWalLockExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLockEngagement(true, tableName, 1, 0);  // Segment 0 is locked.
+            assertWalLockEngagement(true, tableName, 1);
+
+            compile("alter table " + tableName + " add column s1 string");
+            compile("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+            assertWalLockEngagement(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 1);
+            assertSegmentLockExistence(true, tableName, 1, 1);
+            assertSegmentLockEngagement(false, tableName, 1, 0);  // Segment 0 is unlocked.
+            assertSegmentLockEngagement(true, tableName, 1, 1);  // Segment 1 is locked.
+
+            CharSequence root = engine.getConfiguration().getRoot();
+            try (Path path = new Path()) {
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                path.of(root).concat(tableName).concat("wal1").concat("stuff").$();
+                ff.mkdir(path, configuration.getMkDirMode());
+                Assert.assertEquals(path.toString(), true, ff.exists(path));
+
+                purgeWalSegments();
+                assertSegmentLockExistence(false, tableName, 1, 0);
+
+                // "stuff" is untouched.
+                Assert.assertEquals(path.toString(), true, ff.exists(path));
+
+                // After draining, releasing and purging, it's all deleted.
+                drainWalQueue();
+                engine.releaseInactive();
+                purgeWalSegments();
+
+                Assert.assertEquals(path.toString(), false, ff.exists(path));
+                assertWalExistence(false, tableName, 1);
             }
         });
     }
