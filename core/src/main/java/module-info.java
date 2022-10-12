@@ -639,6 +639,10 @@ open module io.questdb {
 //          left/right
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,
+            // Pad strings
+            io.questdb.griffin.engine.functions.str.PadFunctionFactory
+            io.questdb.griffin.engine.functions.str.LPadunctionFactory
+            io.questdb.griffin.engine.functions.str.RPadFunctionFactory
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
 
