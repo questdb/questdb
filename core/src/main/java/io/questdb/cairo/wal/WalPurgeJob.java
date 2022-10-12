@@ -31,11 +31,10 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.util.PrimitiveIterator;
-
-// TODO [amunra]: Only run this on a periodic schedule.
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
@@ -68,7 +67,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path path = new Path();
     private NativeLPSZ tableName = new NativeLPSZ();
     private NativeLPSZ walName = new NativeLPSZ();
-    private NativeLPSZ segmentName = new NativeLPSZ();  // TODO [amunra]: Can we have a single "name" instead of "walName" and "segmentName"?
+    private NativeLPSZ segmentName = new NativeLPSZ();
     private final IntHashSet discoveredWalIds = new IntHashSet();
     private final IntHashSet walsInUse = new IntHashSet();
     private WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
@@ -76,12 +75,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private int walId;
     private int walsLatestSegmentId;
 
-    private boolean anySegmentsKept = false;
+    private StringSink debugBuffer = new StringSink();
+
+    public WalPurgeJob(CairoEngine engine, FilesFacade ff) {
+        this.engine = engine;
+        this.ff = ff;
+        this.txReader = new TxReader(ff);
+    }
 
     public WalPurgeJob(CairoEngine engine) {
-        this.engine = engine;
-        this.ff = engine.getConfiguration().getFilesFacade();
-        this.txReader = new TxReader(ff);
+        this(engine, engine.getConfiguration().getFilesFacade());
     }
 
     /** Validate equivalent of "^wal\d+$" regex. */
@@ -190,9 +193,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         ff.iterateDir(setTablePath(tableName), this::discoverWalDirectoriesIter);
     }
 
-    private void populateWalInfoTable() {
+    private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
-        txReader.ofRO(path, PartitionBy.NONE);  // TODO [amunra]: Does the partitioning param matter here? - I guess not
+        txReader.ofRO(path, PartitionBy.NONE);
         final long lastAppliedTxn = txReader.unsafeReadVersion();
 
         TableRegistry tableRegistry = engine.getTableRegistry();
@@ -207,24 +210,37 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void silentRecursiveDelete(Path path) {
-        // TODO [amunra]: Is this a recursive delete? Are errors suppressed?
-        ff.rmdir(path);
+    private void recursiveDelete(Path path) {
+        final int errno = ff.rmdir(path);
+        // 2 == ENOENT
+        if ((errno != 0) && ((errno != 2)))  {
+            LOG.error().$("Could not delete directory [path=").$(path)
+                    .$(", errno=").$(errno).$(']').$();
+        }
+    }
+
+    private void mayLogDebugInfo() {
+        if (debugBuffer.length() > 0) {
+            LOG.info().$(debugBuffer).$();
+            debugBuffer.clear();
+        }
     }
 
     private void deleteWalDirectory() {
+        mayLogDebugInfo();
         LOG.info().$("deleting WAL directory [table=").$(tableName)
                 .$(", walId=").$(walId).$(']').$();
-        silentRecursiveDelete(setWalPath(tableName, walId));
-        ff.remove(setWalLockPath(tableName, walId));
+        recursiveDelete(setWalPath(tableName, walId));
+        ff.remove(setWalLockPath(tableName, walId));  // TODO [amunra]: Error handling.
     }
 
     private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
+        mayLogDebugInfo();
         LOG.info().$("deleting WAL segment directory [table=").$(tableName)
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
-        silentRecursiveDelete(setSegmentPath(tableName, walId, segmentId));
-        ff.remove(setSegmentLockPath(tableName, walId, segmentId));
+        recursiveDelete(setSegmentPath(tableName, walId, segmentId));
+        ff.remove(setSegmentLockPath(tableName, walId, segmentId));  // TODO [amunra]: Error handling.
     }
 
     private void deleteClosedSegmentsIter(long pUtf8NameZ, int type) {
@@ -274,9 +290,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (segmentIsReapable(segmentId, walsLatestSegmentId)) {
                 deleteSegmentDirectory(tableName, walId, segmentId);
             }
-            else {
-                anySegmentsKept = true;
-            }
         }
     }
 
@@ -284,38 +297,40 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         for (int index = 0; index < walInfoDataFrame.size(); ++index) {
             walId = walInfoDataFrame.walIds.get(index);
             walsLatestSegmentId = walInfoDataFrame.segmentIds.get(index);
-            anySegmentsKept = false;
+//            anySegmentsKept = false;
             ff.iterateDir(setWalPath(tableName, walId), this::deleteUnreachableSegmentsIter);
 
-            // If all known segments were deleted, then this whole WAL directory is candidate for deletion.
-            // We add it for clean-up by `deleteOutstandingWalDirectories`.
-            if (!anySegmentsKept) {
-                discoveredWalIds.add(walId);
-            }
+//            // If all known segments were deleted, then this whole WAL directory is candidate for deletion.
+//            // We add it for clean-up by `deleteOutstandingWalDirectories`.
+//            if (!anySegmentsKept) {
+//                discoveredWalIds.add(walId);
+//            }
         }
     }
 
-    private void _logState(String marker) {
-        System.err.println("    (" + marker + ") :: Table: " + tableName + ", WALs: " + discoveredWalIds.size() + ", walsInUse: " + walsInUse.size() + ", walInfoDataFrame: " + walInfoDataFrame.size());
-        if (discoveredWalIds.size() > 0) {
-            System.err.println("        discoveredWalIds: ");
-            for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
-                System.err.println("            " + it.nextInt());
-
+    private void accumDebugState() {
+        debugBuffer.clear();
+        debugBuffer.put("table=").put(tableName)
+                        .put(", discoveredWalIds=[");
+        for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
+            final int walId = it.nextInt();
+            debugBuffer.put(walId);
+            if (walsInUse.contains(walId)) {
+                debugBuffer.put("(locked)");
+            }
+            if (it.hasNext()) {
+                debugBuffer.put(',');
             }
         }
-        if (walsInUse.size() > 0) {
-            System.err.println("        walsInUse: ");
-            for (PrimitiveIterator.OfInt it = walsInUse.iterator(); it.hasNext(); ) {
-                System.err.println("            " + it.nextInt());
+        debugBuffer.put("], walInfoDataFrame=[");
+        for (int index = 0; index < walInfoDataFrame.size(); ++index) {
+            debugBuffer.put('(').put(walInfoDataFrame.walIds.get(index)).put(',')
+                    .put(walInfoDataFrame.segmentIds.get(index)).put(')');
+            if (index < walInfoDataFrame.size() - 1) {
+                debugBuffer.put(',');
             }
         }
-        if (walInfoDataFrame.size() > 0) {
-            System.err.println("        walInfoDataFrame (walId / segmentId): ");
-            for (int index = 0; index < walInfoDataFrame.size(); ++index) {
-                System.err.println("            " + walInfoDataFrame.walIds.get(index) + ", " + walInfoDataFrame.segmentIds.get(index));
-            }
-        }
+        debugBuffer.put(']');
     }
 
     private boolean isWalTable(CharSequence tableName) {
@@ -330,23 +345,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             discoveredWalIds.clear();
             walsInUse.clear();
             walInfoDataFrame.clear();
-
-            System.err.println("broadSweepIter :: (A) " + tableName);
+            
             discoverWalDirectories();
-            _logState("B");
-            populateWalInfoTable();
-            _logState("C");
+            populateWalInfoDataFrame();
+            accumDebugState();
+
             deleteUnreachableSegments();
-            _logState("D");
 
             // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
-            // and don't have any active segments. The walNNN directories themselves may be deleted if they don't have
-            // an associated open WalWriter.
+            // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
+            // pending segments that are yet to be applied to the table.
             // Note that this also handles cases where a wal directory was created shortly before a crash and thus
             // never recorded and tracked by the sequencer for that table.
             deleteOutstandingWalDirectories();
-            _logState("E");
-            System.err.println("broadSweepIter :: (Z) " + tableName);
         }
     }
 
@@ -361,6 +372,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
+        // TODO [amunra]: Only run this on a periodic schedule.
+        // See: io.questdb.cairo.CairoEngine.EngineMaintenanceJob.runSerially
         broadSweep();
         return false;
     }

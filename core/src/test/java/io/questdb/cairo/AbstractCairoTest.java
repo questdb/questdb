@@ -655,12 +655,16 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void purgeWalSegments() {
-        WalPurgeJob job = new WalPurgeJob(engine);
+    protected static void purgeWalSegments(FilesFacade ff) {
+        WalPurgeJob job = new WalPurgeJob(engine, ff);
         while (job.run(0)) {
             // run until empty
         }
         job.close();
+    }
+
+    protected static void purgeWalSegments() {
+        purgeWalSegments(engine.getConfiguration().getFilesFacade());
     }
 
     static {

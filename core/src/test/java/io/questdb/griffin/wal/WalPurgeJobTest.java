@@ -24,19 +24,23 @@
 
 package io.questdb.griffin.wal;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.wal.Sequencer;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.io.File;
 
 public class WalPurgeJobTest  extends AbstractGriffinTest {
 
@@ -373,5 +377,82 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 assertWalExistence(false, tableName, 1);
             }
         });
+    }
+
+    static void addColumn(TableWriterFrontend writer, String columnName, int columnType) throws SqlException {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
+        writer.applyAlter(addColumnC.build(), true);
+    }
+
+    @Test
+    public void testDirectorySequencerRace() throws Exception {
+        // We need to enter a state where `tableName`:
+        //   * Has two WAL directories, wal1 and wal2.
+        //   * Both wal1 and wal2 have an inactive segment 0 and an active segment 1.
+        //   * The sequencer is tracking both WALs and all segments.
+        //
+        // However, to simulate a race condition, during the `purgeWalSegments()` scan we
+        // fudge the `FilesFacade` to only list wal0 (and not wal1).
+        // This means that the logic will encounter (and ignore) wal1.
+        //
+        // We will then assert that only wal1/0 is cleaned and wal2/0 is not.
+
+        String tableName = testName.getMethodName();
+        compile("create table " + tableName + "("
+                + "x long,"
+                + "ts timestamp"
+                + ") timestamp(ts) partition by DAY WAL");
+
+        // Test a race condition where a WAL is created whilst the purge job is running.
+        FilesFacade testFF = new FilesFacadeImpl() {
+            // private final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+//            @Override
+//            void iterateDir(LPSZ path, FindVisitor func) {
+//                if (Chars.endsWith(path, "wal")) {
+//                    // Create a WAL whilst the purge job is running.
+//                    try (Path p = new Path()) {
+//                        p.of(path).concat("wal2").$();
+//                        mkdir(p, configuration.getMkDirMode());
+//                    }
+//                }
+//                super.iterateDir(path, func);
+//            }
+        };
+
+        try (AlterOperation alterOperation = new AlterOperation()) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+//                addColumn(walWriter1, "i1", ColumnType.INT);
+//
+//                alterOperation.of(AlterOperation.ADD_COLUMN, tableName, tableId, 100);  // TODO [amunra]: 100?
+//                assertWalExistence(true, tableName, 1);
+//                TableWriter.Row row = walWriter1.newRow();
+//                row.putLong(0, 1);
+//                row.putTimestamp(1, 0);
+//                row.append();
+//                walWriter1.commit();
+//                assertSegmentExistence(true, tableName, 1, 0);
+//                walWriter1.applyAlter()
+//
+//                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+//                    assertWalExistence(true, tableName, 2);
+//
+//
+//                }
+            }
+        }
+    }
+
+    @Test
+    public void testRollback() throws Exception {
+//        create table1 ... partition by day wal
+//        insert .... into table1
+//        alter table1 add c1 string
+//        insert .... => rollback  (TableWriter.Row = walWriter.newRow(); ... walWriter.rollback());
+//        drainWalQueue()
+//        engine.releaseInactive()
+//        purgeWalJob()
+//        // assert it's all gone.
     }
 }
