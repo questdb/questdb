@@ -60,6 +60,7 @@ public class LineTcpParser {
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_CHAR + 1;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
+    private final static boolean[] controlChars;
 
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
@@ -156,9 +157,19 @@ public class LineTcpParser {
         while (bufAt < bufHi) {
             // take the byte
             byte b = Unsafe.getUnsafe().getByte(bufAt);
+
+            if (nEscapedChars == 0 && b >= 0 && !controlChars[b]) {
+                // hot path
+                nextValueCanBeOpenQuote = false;
+                bufAt++;
+                continue;
+            }
+
+            // slow path
             hasNonAscii |= b < 0;
             boolean endOfLine = false;
             boolean appendByte = false;
+            // Important note: don't forget to update controlChars array when changing the following switch.
             switch (b) {
                 case '\n':
                 case '\r':
@@ -670,6 +681,14 @@ public class LineTcpParser {
             }
             type = ENTITY_TYPE_TAG;
             return !tagStartsWithQuote || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
+        }
+    }
+
+    static {
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0'};
+        controlChars = new boolean[Byte.MAX_VALUE];
+        for (char ch : chars) {
+            controlChars[ch] = true;
         }
     }
 }
