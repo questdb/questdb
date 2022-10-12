@@ -19,6 +19,8 @@ If you're not sure whether you should raise an issue, you can also join our
 community **[Slack channel](https://slack.questdb.io/)** and post your questions
 there.
 
+If you find any **security bug**, kindly refer to [SECURITY.md](https://github.com/questdb/questdb/blob/master/SECURITY.md) file for more info.
+
 We aim to respond to your issues and questions soonest. If you wish to receive a
 faster response, we recommend you always describe your steps and provide
 information about your environment in the bug reports. And if you're proposing a
