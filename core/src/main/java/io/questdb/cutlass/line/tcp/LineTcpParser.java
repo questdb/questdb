@@ -59,13 +59,18 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_CHAR = 19;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_CHAR + 1;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
+
+    private static final byte ENTITY_HANDLER_TABLE = 0;
+    private static final byte ENTITY_HANDLER_NAME = 1;
+    private static final byte ENTITY_HANDLER_VALUE = 2;
+    private static final byte ENTITY_HANDLER_TIMESTAMP = 3;
+    private static final byte ENTITY_HANDLER_NEW_LINE = 4;
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
-    private final static boolean[] controlChars;
+    private static final boolean[] controlChars;
 
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
-    private final EntityHandler entityEndOfLineHandler = this::expectEndOfLine;
     private final boolean stringAsTagSupported;
     private final boolean symbolAsFieldSupported;
     private long bufAt;
@@ -77,15 +82,11 @@ public class LineTcpParser {
     private int nEntities;
     private ProtoEntity currentEntity;
     private ErrorCode errorCode;
-    private EntityHandler entityHandler;
+    private byte entityHandler;
     private long timestamp;
-    private final EntityHandler entityTimestampHandler = this::expectTimestamp;
     private int nQuoteCharacters;
-    private final EntityHandler entityTableHandler = this::expectTableName;
     private boolean scape;
-    private final EntityHandler entityValueHandler = this::expectEntityValue;
     private boolean nextValueCanBeOpenQuote;
-    private final EntityHandler entityNameHandler = this::expectEntityName;
     private boolean hasNonAscii;
 
     public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
@@ -137,7 +138,7 @@ public class LineTcpParser {
         // We can resume from random place of the line message
         // the class member variables should resume byte by byte parsing from the last place
         // processing stopped.
-        if (nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler) {
+        if (nQuoteCharacters == 1 && tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
             // when nQuoteCharacters it means that parsing of quoted value has started.
             // continue parsing quoted value
             if (!prepareQuotedEntity(entityLo, bufHi)) {
@@ -179,7 +180,7 @@ public class LineTcpParser {
                 case ',':
                 case ' ':
                     isQuotedFieldValue = false;
-                    if (!entityHandler.completeEntity(b, bufHi)) {
+                    if (!completeEntity(b, bufHi)) {
                         // parse of key or value is unsuccessful
                         if (errorCode == ErrorCode.EMPTY_LINE) {
                             // An empty line
@@ -195,7 +196,7 @@ public class LineTcpParser {
                     if (endOfLine) {
                         // EOL reached, time to return
                         if (nEntities > 0) {
-                            entityHandler = entityEndOfLineHandler;
+                            entityHandler = ENTITY_HANDLER_NEW_LINE;
                             return ParseResult.MEASUREMENT_COMPLETE;
                         }
                         errorCode = ErrorCode.NO_FIELDS;
@@ -220,7 +221,7 @@ public class LineTcpParser {
                     nEscapedChars++;
                     bufAt++;
                     b = Unsafe.getUnsafe().getByte(bufAt);
-                    if (b == '\\' && (entityHandler != entityValueHandler)) {
+                    if (b == '\\' && (entityHandler != ENTITY_HANDLER_VALUE)) {
                         return getError();
                     }
                     hasNonAscii |= b < 0;
@@ -261,7 +262,7 @@ public class LineTcpParser {
                     LOG.info().$("could not parse [byte=\\0]").$();
                     return getError();
                 case '/':
-                    if (entityHandler != entityValueHandler) {
+                    if (entityHandler != ENTITY_HANDLER_VALUE) {
                         LOG.info().$("could not parse [byte=/]").$();
                         return getError();
                     }
@@ -314,13 +315,29 @@ public class LineTcpParser {
         tagStartsWithQuote = false;
         nEntities = 0;
         currentEntity = null;
-        entityHandler = entityTableHandler;
+        entityHandler = ENTITY_HANDLER_TABLE;
         timestamp = NULL_TIMESTAMP;
         errorCode = ErrorCode.NONE;
         nQuoteCharacters = 0;
         scape = false;
         nextValueCanBeOpenQuote = false;
         hasNonAscii = false;
+    }
+
+    private boolean completeEntity(byte endOfEntityByte, long bufHi) {
+        switch (entityHandler) {
+            case ENTITY_HANDLER_TABLE:
+                return expectTableName(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_NAME:
+                return expectEntityName(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_VALUE:
+                return expectEntityValue(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_TIMESTAMP:
+                return expectTimestamp(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_NEW_LINE:
+                return expectEndOfLine(endOfEntityByte, bufHi);
+        }
+        return false;
     }
 
     private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
@@ -345,7 +362,7 @@ public class LineTcpParser {
 
             nEntities++;
             currentEntity.setName();
-            entityHandler = entityValueHandler;
+            entityHandler = ENTITY_HANDLER_VALUE;
             if (tagsComplete) {
                 if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
                     long candidateQuoteIdx = bufAt + 1;
@@ -369,7 +386,7 @@ public class LineTcpParser {
         if (emptyEntity) {
             if (endOfEntityByte == (byte) ' ') {
                 if (tagsComplete) {
-                    entityHandler = entityTimestampHandler;
+                    entityHandler = ENTITY_HANDLER_TIMESTAMP;
                 } else {
                     tagsComplete = true;
                 }
@@ -401,13 +418,13 @@ public class LineTcpParser {
             if (currentEntity.setValue()) {
                 if (endOfSet) {
                     if (tagsComplete) {
-                        entityHandler = entityTimestampHandler;
+                        entityHandler = ENTITY_HANDLER_TIMESTAMP;
                     } else {
-                        entityHandler = entityNameHandler;
+                        entityHandler = ENTITY_HANDLER_NAME;
                         tagsComplete = true;
                     }
                 } else {
-                    entityHandler = entityNameHandler;
+                    entityHandler = ENTITY_HANDLER_NAME;
                 }
                 return true;
             }
@@ -425,7 +442,7 @@ public class LineTcpParser {
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             long hi = bufAt - nEscapedChars;
             measurementName.of(entityLo, hi);
-            entityHandler = entityNameHandler;
+            entityHandler = ENTITY_HANDLER_NAME;
             return true;
         }
 
@@ -443,7 +460,7 @@ public class LineTcpParser {
                 if (entityLo < bufAt - nEscapedChars) {
                     timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
                 }
-                entityHandler = null;
+                entityHandler = -1;
                 return true;
             }
             errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
@@ -455,11 +472,11 @@ public class LineTcpParser {
     }
 
     private ParseResult getError() {
-        if (entityHandler == entityNameHandler) {
+        if (entityHandler == ENTITY_HANDLER_NAME) {
             errorCode = ErrorCode.INVALID_COLUMN_NAME;
-        } else if (entityHandler == entityTableHandler) {
+        } else if (entityHandler == ENTITY_HANDLER_TABLE) {
             errorCode = ErrorCode.INVALID_TABLE_NAME;
-        } else if (entityHandler == entityValueHandler) {
+        } else if (entityHandler == ENTITY_HANDLER_VALUE) {
             errorCode = ErrorCode.INVALID_FIELD_VALUE;
         }
         return ParseResult.ERROR;
@@ -532,11 +549,6 @@ public class LineTcpParser {
         INVALID_TABLE_NAME,
         INVALID_COLUMN_NAME,
         NONE
-    }
-
-    @FunctionalInterface
-    private interface EntityHandler {
-        boolean completeEntity(byte endOfEntityByte, long bufHi);
     }
 
     public class ProtoEntity {
