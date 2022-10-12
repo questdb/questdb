@@ -176,8 +176,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testAnalyticFunctionWithFilter() throws Exception {
         assertQuery("author\tsym\tcommits\trk\n" +
-                        "user2\tETH\t3\t1\n" +
-                        "user1\tETH\t3\t0\n",
+                        "user2\tETH\t3\t2\n" +
+                        "user1\tETH\t3\t1\n",
                 "with active_devs as (" +
                         "    select author, sym, count() as commits" +
                         "    from dev_stats" +
