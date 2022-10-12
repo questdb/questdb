@@ -25,10 +25,7 @@
 package io.questdb.griffin.engine.functions.analytic;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
@@ -53,25 +50,22 @@ public class RankFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
 
-        Map map = MapFactory.createMap(
-                configuration,
-                analyticContext.getPartitionByKeyTypes(),
-                LONG_COLUMN_TYPE
-        );
-
-        Map rankMap = MapFactory.createMap(
-                configuration,
-                analyticContext.getPartitionByKeyTypes(),
-                LONG_COLUMN_TYPE
-        );
-
-        Map offsetMap = MapFactory.createMap(
-                configuration,
-                analyticContext.getPartitionByKeyTypes(),
-                LONG_COLUMN_TYPE
-        );
-
         if (analyticContext.getPartitionByRecord() != null && analyticContext.isOrdered()) {
+            Map map = MapFactory.createMap(
+                    configuration,
+                    analyticContext.getPartitionByKeyTypes(),
+                    LONG_COLUMN_TYPE
+            );
+            Map rankMap = MapFactory.createMap(
+                    configuration,
+                    analyticContext.getPartitionByKeyTypes(),
+                    LONG_COLUMN_TYPE
+            );
+            Map offsetMap = MapFactory.createMap(
+                    configuration,
+                    analyticContext.getPartitionByKeyTypes(),
+                    LONG_COLUMN_TYPE
+            );
             return new RankFunction(map, rankMap, offsetMap, analyticContext.getPartitionByRecord(), analyticContext.getPartitionBySink());
         }
         return new SequenceRankFunction();
@@ -124,16 +118,8 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            MapKey currentIndexKey = rankMap.withKey();
-            currentIndexKey.put(partitionByRecord, partitionBySink);
-            MapValue currentIndexValue = currentIndexKey.createValue();
-            long currentIndex;
-            if (currentIndexValue.isNew()) {
-                currentIndex = 0;
-            } else {
-                currentIndex = currentIndexValue.getLong(0);
-            }
-            return currentIndex;
+            // not called
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -164,7 +150,7 @@ public class RankFunctionFactory implements FunctionFactory {
             } else {
                 currentIndex = currentIndexValue.getLong(0);
             }
-            // compare with prev record
+
             MapKey offsetKey = offsetMap.withKey();
             offsetKey.put(partitionByRecord, partitionBySink);
             MapValue offsetValue = offsetKey.createValue();
@@ -172,6 +158,7 @@ public class RankFunctionFactory implements FunctionFactory {
                 offsetValue.putLong(0, recordOffset);
                 currentIndexValue.putLong(0, currentIndex + 1);
             } else {
+                // compare with prev record
                 long offset = offsetValue.getLong(0);
                 recordComparator.setLeft(record);
                 if (recordComparator.compare(spi.cloneRecord(offset)) != 0) {
@@ -193,10 +180,16 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public void reopen() {
+            map.reopen();
+            rankMap.reopen();
+            offsetMap.reopen();
         }
 
         @Override
         public void reset() {
+            map.close();
+            rankMap.close();
+            offsetMap.close();
         }
 
         @Override
