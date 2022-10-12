@@ -50,7 +50,7 @@ public class RankFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
 
-        if (analyticContext.getPartitionByRecord() != null && analyticContext.isOrdered()) {
+        if (analyticContext.getPartitionByRecord() != null) {
             Map map = MapFactory.createMap(
                     configuration,
                     analyticContext.getPartitionByKeyTypes(),
@@ -141,33 +141,39 @@ public class RankFunctionFactory implements FunctionFactory {
                 maxIndex = maxIndexValue.getLong(0);
             }
 
-            MapKey currentIndexKey = rankMap.withKey();
-            currentIndexKey.put(partitionByRecord, partitionBySink);
-            MapValue currentIndexValue = currentIndexKey.createValue();
-            long currentIndex;
-            if (currentIndexValue.isNew()) {
-                currentIndex = 0;
+            if (recordComparator == null) {
+                // no order or order dismiss
+                maxIndexValue.putLong(0, maxIndex + 1);
+                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
             } else {
-                currentIndex = currentIndexValue.getLong(0);
-            }
-
-            MapKey offsetKey = offsetMap.withKey();
-            offsetKey.put(partitionByRecord, partitionBySink);
-            MapValue offsetValue = offsetKey.createValue();
-            if (offsetValue.isNew()) {
-                offsetValue.putLong(0, recordOffset);
-                currentIndexValue.putLong(0, currentIndex + 1);
-            } else {
-                // compare with prev record
-                long offset = offsetValue.getLong(0);
-                recordComparator.setLeft(record);
-                if (recordComparator.compare(spi.cloneRecord(offset)) != 0) {
-                    offsetValue.putLong(0, recordOffset);
-                    currentIndexValue.putLong(0, maxIndex + 1);
+                MapKey currentIndexKey = rankMap.withKey();
+                currentIndexKey.put(partitionByRecord, partitionBySink);
+                MapValue currentIndexValue = currentIndexKey.createValue();
+                long currentIndex;
+                if (currentIndexValue.isNew()) {
+                    currentIndex = 0;
+                } else {
+                    currentIndex = currentIndexValue.getLong(0);
                 }
+
+                MapKey offsetKey = offsetMap.withKey();
+                offsetKey.put(partitionByRecord, partitionBySink);
+                MapValue offsetValue = offsetKey.createValue();
+                if (offsetValue.isNew()) {
+                    offsetValue.putLong(0, recordOffset);
+                    currentIndexValue.putLong(0, currentIndex + 1);
+                } else {
+                    // compare with prev record
+                    long offset = offsetValue.getLong(0);
+                    recordComparator.setLeft(record);
+                    if (recordComparator.compare(spi.cloneRecord(offset)) != 0) {
+                        offsetValue.putLong(0, recordOffset);
+                        currentIndexValue.putLong(0, maxIndex + 1);
+                    }
+                }
+                maxIndexValue.putLong(0, maxIndex + 1);
+                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndexValue.getLong(0));
             }
-            maxIndexValue.putLong(0, maxIndex + 1);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndexValue.getLong(0));
         }
 
         @Override
