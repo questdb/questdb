@@ -266,7 +266,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     sink.put(Timestamps.getWeekOfMonth(micros));
                     break;
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
-                    sink.put(Timestamps.getWeekOfYear(micros));
+                    sink.put(Timestamps.getWeek(micros));
                     break;
                 // MONTH
 
@@ -348,7 +348,12 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     TimestampFormatUtils.appendYear000(sink, year);
                     break;
-
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                    if (year == Integer.MIN_VALUE) {
+                        year = Timestamps.getIsoYear(micros);
+                    }
+                    TimestampFormatUtils.appendYear000(sink, year);
+                    break;
                 // ERA
                 case TimestampFormatCompiler.OP_ERA:
                     if (year == Integer.MIN_VALUE) {
@@ -644,6 +649,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     TimestampFormatUtils.assertRemaining(pos + 2, hi);
                     year = Numbers.parseInt(in, pos, pos += 3);
                     break;
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {
                         TimestampFormatUtils.assertRemaining(pos + 4, hi);
