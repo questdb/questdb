@@ -29,9 +29,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.TernaryFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.QuarternaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -46,22 +45,51 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
         return new WidthBucketFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
     }
 
-    private static class WidthBucketFunction extends DoubleFunction implements TernaryFunction {
-        private final Function function;
+    private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
+        private final Function leftEnd;
+		private final Function centerLeft;
+		private final Function centerRight;
+		private final Function rightEnd;
 
-        public CeilFunction(Function function) {
-            this.function = function;
+        public WidthBucketFunction(Function leftEnd, Function centerLeft, Function centerRight, Function rightEnd) {
+            this.leftEnd = leftEnd;
+			this.centerLeft = centerLeft;
+			this.centerRight = centerRight;
+			this.rightEnd = rightEnd;
         }
 
-        @Override
-        public Function getArg() {
-            return function;
-        }
+		@Override
+		public Function getLeftEnd() {
+			return leftEnd;
+		}
 
-        @Override
-        public double getDouble(Record rec) {
-            double value = function.getDouble(rec);
-            return Math.ceil(value);
-        }
+		@Override
+		public Function getCenterLeft() {
+			return centerLeft;
+		}
+
+		@Override
+		public Function getCenterRight() {
+			return centerRight;
+		}
+
+		@Override
+		public Function getRightEnd() {
+			return rightEnd;
+		}
+
+		@Override
+		public int getInt(Record rec) {
+			double operand = leftEnd.getDouble(rec);
+			double low = centerLeft.getDouble(rec);
+			double high = centerRight.getDouble(rec);
+			int count = rightEnd.getInt(rec);
+			if (operand < low)
+				return 0;
+			else if (operand > high)
+				return (count + 1);
+			else
+				return (int) ((operand - low) / (high - low) * count) + 1;
+		}
     }
 }
