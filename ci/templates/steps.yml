@@ -11,6 +11,9 @@ steps:
       key: '"questdb_main" | "maven"'
       restoreKeys: |
       path: $(MAVEN_CACHE_FOLDER)
+  - bash: curl -L -o agent https://app.testcontainers.cloud/download/testcontainers-cloud-agent_linux_$([[ $(uname -m) == "aarch64" ]] && echo "arm64" || echo "x86-64") && chmod +x agent && ./agent &
+    displayName: "Start Testcontainers Cloud Agent"
+    condition: eq(variables['os'], 'Linux')
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
