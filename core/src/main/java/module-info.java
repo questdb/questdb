@@ -640,9 +640,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,
             // Pad strings
-            io.questdb.griffin.engine.functions.str.PadFunctionFactory
-            io.questdb.griffin.engine.functions.str.LPadunctionFactory
-            io.questdb.griffin.engine.functions.str.RPadFunctionFactory
+            io.questdb.griffin.engine.functions.str.PadFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LPadFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RPadFunctionFactory,
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
 
