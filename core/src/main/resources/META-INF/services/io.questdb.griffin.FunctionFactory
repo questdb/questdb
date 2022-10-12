@@ -520,6 +520,9 @@ io.questdb.griffin.engine.functions.math.CeilingFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory
 
+# width_bucket()
+io.questdb.griffin.engine.functions.math.WidthBucketFuncctionFactory
+
 # case conditional statement
 io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
 io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
