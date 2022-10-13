@@ -79,7 +79,7 @@ public class VacuumColumnVersions implements Closeable {
 
         CairoConfiguration configuration = engine.getConfiguration();
 
-        CharSequence fsTableName = engine.getSystemTableName(tableName);
+        CharSequence fsTableName = reader.getSystemTableName();
         Path path = Path.getThreadLocal(configuration.getRoot());
         path.concat(fsTableName);
         tablePathLen = path.length();
@@ -126,7 +126,7 @@ public class VacuumColumnVersions implements Closeable {
                     writerIndex = metadata.getWriterIndex(newReaderIndex);
                     CharSequence columnName = metadata.getColumnName(newReaderIndex);
                     int columnType = metadata.getColumnType(newReaderIndex);
-                    purgeTask.of(reader.getTableName(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+                    purgeTask.of(reader.getSystemTableName(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
 
                 }
             }

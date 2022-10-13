@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -61,20 +59,11 @@ public class TxnTest extends AbstractCairoTest {
             assertMemoryLeak(() -> {
 
                 String tableName = "txntest";
-                try (Path path = new Path()) {
-                    try (
-                            MemoryMARW mem = Vm.getCMARWInstance();
-                            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    ) {
-                        model.timestamp();
-                        TableUtils.createTable(
-                                configuration,
-                                mem,
-                                path,
-                                model,
-                                1
-                        );
-                    }
+                try (
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                ) {
+                    model.timestamp();
+                    CairoTestUtils.create(model);
                 }
 
                 try (Path path = new Path()) {
@@ -138,20 +127,9 @@ public class TxnTest extends AbstractCairoTest {
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();
 
-            try (Path path = new Path()) {
-                try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                ) {
-                    model.timestamp();
-                    TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            1
-                    );
-                }
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+                model.timestamp();
+                CairoTestUtils.create(model);
             }
             int truncateIteration = 33;
             Thread writerThread = createWriterThread(
@@ -246,20 +224,9 @@ public class TxnTest extends AbstractCairoTest {
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();
 
-            try (Path path = new Path()) {
-                try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                ) {
-                    model.timestamp();
-                    TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            1
-                    );
-                }
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+                model.timestamp();
+                CairoTestUtils.create(model);
             }
             Thread writerThread = createWriterThread(
                     start,

@@ -1055,7 +1055,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                try (TableReader dstReader = new TableReader(configuration, dst.getTableName())) {
+                try (TableReader dstReader = newTableReader(configuration, dst.getTableName())) {
                     dstReader.openPartition(0);
                     dstReader.openPartition(1);
                     dstReader.goPassive();

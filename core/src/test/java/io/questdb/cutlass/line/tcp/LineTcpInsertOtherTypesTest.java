@@ -877,7 +877,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
-            try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), table)) {
+            try (TableReader reader = newTableReader(new DefaultCairoConfiguration(root), table)) {
                 TestUtils.assertReader(expected, reader, sink);
             }
         });

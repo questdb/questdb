@@ -32,7 +32,10 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
@@ -111,14 +114,30 @@ public class IODispatcherTest {
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
-    public static void createTestTable(CairoConfiguration configuration, int n) {
-        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
-            model
-                    .col("j", ColumnType.SYMBOL);
-            CairoTestUtils.create(model);
+    public static HttpServer createHttpServer(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            Metrics metrics
+    ) {
+        return Services.createHttpServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                workerPool.getWorkerCount(),
+                null,
+                null,
+                metrics
+        );
+    }
+
+    public static void createTestTable(CairoEngine engine, int n) {
+        try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
+            model.col("j", ColumnType.SYMBOL);
+            CairoTestUtils.create(model, engine);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "y", metrics)) {
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), "y", engine.getSystemTableName("y"), metrics)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -2328,7 +2347,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             30,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -3198,10 +3217,7 @@ public class IODispatcherTest {
     public void testJsonQueryJsonEncodeZeroCharacter() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
-            createTestTable(
-                    engine.getConfiguration(),
-                    20
-            );
+            createTestTable(engine, 20);
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     "GET /query?query=y HTTP/1.1\r\n" +
@@ -3706,7 +3722,7 @@ public class IODispatcherTest {
         testJsonQuery0(2, engine -> {
             // create table with all column types
             CairoTestUtils.createTestTable(
-                    engine.getConfiguration(),
+                    engine,
                     20,
                     new Rnd(),
                     new TestRecord.ArrayBinarySequence());
@@ -4160,7 +4176,7 @@ public class IODispatcherTest {
 
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             20,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -4265,7 +4281,7 @@ public class IODispatcherTest {
         testJsonQuery0(2, engine -> {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             20,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence()
@@ -4309,7 +4325,7 @@ public class IODispatcherTest {
     public void testJsonQueryVacuumTable() throws Exception {
         testJsonQuery0(2, engine -> {
             CairoTestUtils.createTestTable(
-                    engine.getConfiguration(),
+                    engine,
                     20,
                     new Rnd(),
                     new TestRecord.ArrayBinarySequence());
@@ -4385,7 +4401,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             30,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -4461,7 +4477,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             1000,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -4590,7 +4606,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             tableRowCount,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence()
@@ -6848,7 +6864,7 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
 
-        try (TableReader reader = new TableReader(configuration, "telemetry")) {
+        try (TableReader reader = new TableReader(configuration, "telemetry", "telemetry")) {
             final StringSink sink = new StringSink();
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
@@ -6867,7 +6883,7 @@ public class IODispatcherTest {
                                        String expectedData) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+        try (TableReader reader = new TableReader(configuration, tableName, tableName)) {
             Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
@@ -6959,7 +6975,7 @@ public class IODispatcherTest {
         try (TableModel model = new TableModel(configuration, tableName, partitionBy)
                 .timestamp("ts")
                 .col("int", ColumnType.INT)) {
-            CairoTestUtils.create(model);
+            CairoTestUtils.createTable(model, tableName);
         }
 
         String command = "POST /upload?fmt=json&" +
@@ -7139,7 +7155,7 @@ public class IODispatcherTest {
         testJsonQuery0(2, engine -> {
             // create table with all column types
             CairoTestUtils.createTestTable(
-                    engine.getConfiguration(),
+                    engine,
                     recordCount,
                     new Rnd(),
                     new TestRecord.ArrayBinarySequence()
@@ -7579,22 +7595,5 @@ public class IODispatcherTest {
             }
             return (char) bytes[index];
         }
-    }
-
-    public static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
-    ) {
-        return Services.createHttpServer(
-                configuration,
-                cairoEngine,
-                workerPool,
-                workerPool.getWorkerCount(),
-                null,
-                null,
-                metrics
-        );
     }
 }

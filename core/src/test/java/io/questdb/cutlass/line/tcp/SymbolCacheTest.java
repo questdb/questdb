@@ -182,7 +182,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 CairoTestUtils.create(model);
                 CharSequence systemTableName = engine.getSystemTableName(tableName);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -346,7 +346,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 CairoTestUtils.create(model);
                 CharSequence systemTableName = engine.getSystemTableName(tableName);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
@@ -491,7 +491,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                         mem,
                         path,
                         model,
-                        1
+                        1,
+                        engine.getSystemTableName(model.getTableName())
                 );
             }
         }

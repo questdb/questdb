@@ -38,6 +38,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.TableUtils.convertSystemToTableName;
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
 
@@ -376,7 +377,8 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public CharSequence getStr(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return TableUtils.FsToUserTableName(sink);
+                    convertSystemToTableName(sink);
+                    return sink;
                 }
                 return null;
             }
@@ -394,7 +396,8 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public int getStrLen(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return TableUtils.FsToUserTableName(sink).length();
+                    convertSystemToTableName(sink);
+                    return sink.length();
                 }
                 return -1;
             }
@@ -403,7 +406,8 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             private CharSequence getName(StringSink sink) {
                 sink.clear();
                 if (Chars.utf8DecodeZ(ff.findName(findFileStruct), sink)) {
-                    return TableUtils.FsToUserTableName(sink);
+                    convertSystemToTableName(sink);
+                    return sink;
                 } else {
                     return null;
                 }

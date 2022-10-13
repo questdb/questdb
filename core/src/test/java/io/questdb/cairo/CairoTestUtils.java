@@ -31,76 +31,73 @@ import io.questdb.std.Rnd;
 public class CairoTestUtils {
 
     public static void create(TableModel model) {
+        create(model, AbstractCairoTest.engine);
+    }
+
+    public static void create(TableModel model, CairoEngine engine) {
         TableUtils.createTable(
                 model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
-                1
+                ColumnType.VERSION,
+                1,
+                engine.getSystemTableName(model.getTableName())
         );
     }
 
-    public static void createTableWithVersion(TableModel model, int version) {
+    public static void createAllTable(CairoEngine engine, int partitionBy) {
+        try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy)) {
+            createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
+        }
+    }
+
+    public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy) {
+        try (TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy)) {
+            create(model, engine);
+        }
+    }
+
+    public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
+        try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
+            createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
+        }
+    }
+
+    public static void createTable(TableModel model, CharSequence systemTableName) {
+        createTable(model, ColumnType.VERSION, systemTableName);
+    }
+
+    public static void createTable(TableModel model, int version, CharSequence systemTableName) {
         TableUtils.createTable(
                 model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
                 version,
-                1
+                1,
+                systemTableName
         );
     }
 
-    public static void createAllTable(CairoConfiguration configuration, int partitionBy) {
-        try (TableModel model = getAllTypesModel(configuration, partitionBy)) {
-            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
-        }
-    }
-
-    public static void createAllTableWithNewTypes(CairoConfiguration configuration, int partitionBy) {
-        try (TableModel model = getAllTypesModelWithNewTypes(configuration, partitionBy)) {
-            create(model);
-        }
-    }
-
-    public static void createAllTableWithTimestamp(CairoConfiguration configuration, int partitionBy) {
-        try (TableModel model = getAllTypesModel(configuration, partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
-            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
-        }
-    }
-
-    public static void createTable(TableModel model) {
-        createTable(model, ColumnType.VERSION);
-    }
-
-    public static void createTable(TableModel model, int version) {
+    public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
         TableUtils.createTable(
                 model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
                 version,
-                1
-        );
-    }
-
-    public static void createTableWithVersionAndId(TableModel model, int version, int tableId) {
-        TableUtils.createTable(
-                model.getConfiguration(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                version,
-                tableId
+                tableId,
+                engine.getSystemTableName(model.getTableName())
         );
     }
 
     public static void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
-        createTestTable(AbstractCairoTest.configuration, n, rnd, binarySequence);
+        createTestTable(AbstractCairoTest.engine, n, rnd, binarySequence);
     }
 
-    public static void createTestTable(CairoConfiguration configuration, int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+    public static void createTestTable(CairoEngine engine, int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
+        try (TableModel model = new TableModel(engine.getConfiguration(), "x", PartitionBy.NONE)) {
             model
                     .col("a", ColumnType.BYTE)
                     .col("b", ColumnType.SHORT)
@@ -114,10 +111,10 @@ public class CairoTestUtils {
                     .col("j", ColumnType.SYMBOL)
                     .col("k", ColumnType.BOOLEAN)
                     .col("l", ColumnType.BINARY);
-            create(model);
+            create(model, engine);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "x", Metrics.disabled())) {
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), "x", engine.getSystemTableName("x"), Metrics.disabled())) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

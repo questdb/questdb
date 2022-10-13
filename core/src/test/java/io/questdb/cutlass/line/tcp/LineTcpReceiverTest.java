@@ -51,7 +51,10 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -115,7 +118,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
             m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
-            CairoTestUtils.createTable(m);
+            CairoTestUtils.create(m);
         }
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
@@ -217,7 +220,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testFieldsReducedNonPartitioned() throws Exception {
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
             m.col("windspeed", ColumnType.DOUBLE).timestamp();
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
+            CairoTestUtils.create(m);
         }
 
         String lineData =
@@ -701,7 +704,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
                     .col("поле", ColumnType.STRING)
                     .timestamp("время");
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.create(m);
         }
 
         runInContext((receiver) -> {
@@ -741,7 +744,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                         .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                         .col("Length", ColumnType.INT);
-                CairoTestUtils.createTable(m, ColumnType.VERSION);
+                CairoTestUtils.create(m);
             }
 
             String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
@@ -844,7 +847,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     .col("guild", ColumnType.LONG)
                     .col("channel", ColumnType.LONG)
                     .col("flags", ColumnType.BYTE);
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
+            CairoTestUtils.create(m);
         }
 
         String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
@@ -863,7 +866,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                     .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                     .col("Length", ColumnType.INT);
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
+            CairoTestUtils.create(m);
         }
 
         runInContext((receiver) -> {

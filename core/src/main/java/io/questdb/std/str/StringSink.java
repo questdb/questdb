@@ -90,6 +90,11 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         return this;
     }
 
+    public CharSink deleteCharAt(int index) {
+        builder.deleteCharAt(index);
+        return this;
+    }
+
     @Override
     public CharSink put(char c) {
         builder.append(c);

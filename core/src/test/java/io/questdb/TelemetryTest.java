@@ -217,7 +217,7 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     protected void assertColumn(CharSequence expected, int index) {
-        try (TableReader reader = new TableReader(configuration, "telemetry")) {
+        try (TableReader reader = newTableReader(configuration, "telemetry")) {
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);

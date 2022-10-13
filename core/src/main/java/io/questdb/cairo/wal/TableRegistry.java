@@ -44,6 +44,7 @@ import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.concurrent.locks.ReentrantLock;
 
+import static io.questdb.cairo.TableUtils.convertSystemToTableName;
 import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
 
 public class TableRegistry extends AbstractPool {
@@ -53,6 +54,8 @@ public class TableRegistry extends AbstractPool {
     private final CairoEngine engine;
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final ConcurrentHashMap<CharSequence> tableNameRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<CharSequence> reverseTableNameRegistry = new ConcurrentHashMap<>();
+
     private final boolean mangleTableSystemNames;
 
     public TableRegistry(CairoEngine engine, CairoConfiguration configuration) {
@@ -70,15 +73,25 @@ public class TableRegistry extends AbstractPool {
         tableNameMemory.close(true);
     }
 
-    public CharSequence getSystemTableNameOrDefault(final CharSequence tableName) {
-        final CharSequence systemName = tableNameRegistry.get(tableName);
-        if (systemName != null) {
-            return systemName;
-        } else if (!mangleTableSystemNames) {
-            return tableName;
-        }
+    public void forAllWalTables(final RegisteredTable callback) {
+        final CharSequence root = getConfiguration().getRoot();
+        final FilesFacade ff = getConfiguration().getFilesFacade();
 
-        return tableName.toString() + '_';
+        try (Path path = new Path().of(root).slash$()) {
+            final StringSink nameSink = new StringSink();
+            int rootLen = path.length();
+            ff.iterateDir(path, (name, type) -> {
+                if (Files.isDir(name, type, nameSink)) {
+                    path.trimTo(rootLen);
+                    if (isWalTable(nameSink, path, ff)) {
+                        convertSystemToTableName(nameSink);
+                        try (SequencerImpl sequencer = openSequencer(nameSink)) {
+                            callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
+                        }
+                    }
+                }
+            });
+        }
     }
 
     public CharSequence getSystemTableName(final CharSequence tableName) {
@@ -167,7 +180,6 @@ public class TableRegistry extends AbstractPool {
             appendEntry(tableNameStr, tableId);
             sink.put(tableId);
             return tableNameStr + "#" + sink;
-//            return tableNameStr + "_";
         });
         return str;
     }
@@ -196,25 +208,15 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public void forAllWalTables(final RegisteredTable callback) {
-        final CharSequence root = getConfiguration().getRoot();
-        final FilesFacade ff = getConfiguration().getFilesFacade();
-
-        try (Path path = new Path().of(root).slash$()) {
-            final StringSink nameSink = new StringSink();
-            int rootLen = path.length();
-            ff.iterateDir(path, (name, type) -> {
-                if (Files.isDir(name, type, nameSink)) {
-                    path.trimTo(rootLen);
-                    if (isWalTable(nameSink, path, ff)) {
-                        CharSequence tableName = TableUtils.FsToUserTableName(nameSink);
-                        try (SequencerImpl sequencer = openSequencer(tableName)) {
-                            callback.onTable(sequencer.getTableId(), tableName, sequencer.lastTxn());
-                        }
-                    }
-                }
-            });
+    public CharSequence getSystemTableNameOrDefault(final CharSequence tableName) {
+        final CharSequence systemName = tableNameRegistry.get(tableName);
+        if (systemName != null) {
+            return systemName;
+        } else if (!mangleTableSystemNames) {
+            return tableName;
         }
+
+        return tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
     }
 
     @FunctionalInterface

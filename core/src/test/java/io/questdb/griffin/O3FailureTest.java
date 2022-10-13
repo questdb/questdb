@@ -111,12 +111,62 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public long openRW(LPSZ name, long opts) {
             long fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, TableUtils.fsTableName("x") + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
+            if (Chars.endsWith(name, fsTableName("x") + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
                 theFd = fd;
             }
             return fd;
         }
     };
+
+    @Test
+    public void testOOOFollowedByAnotherOOO() throws Exception {
+        counter.set(1);
+        final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
+        executeWithPool(0,
+                (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
+                new FilesFacadeImpl() {
+
+                    long theFd = 0;
+                    boolean armageddon = false;
+
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (restoreDiskSpace.get()) {
+                            return super.allocate(fd, size);
+                        }
+
+                        if (armageddon) {
+                            return false;
+                        }
+                        if (fd == theFd) {
+                            theFd = 0;
+                            armageddon = true;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
+                    public boolean close(long fd) {
+                        if (fd == theFd) {
+                            theFd = 0;
+                        }
+                        return super.close(fd);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
+                        if (Chars.endsWith(name, fsTableName("x") + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                            if (counter.decrementAndGet() == 0) {
+                                theFd = fd;
+                            }
+                        }
+                        return fd;
+                    }
+                });
+    }
+
     private static final FilesFacade ffAllocateFailure = new FilesFacadeImpl() {
         private boolean failNextAlloc = false;
 
@@ -698,53 +748,8 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testInsertAsSelectNulls0);
     }
 
-    @Test
-    public void testOOOFollowedByAnotherOOO() throws Exception {
-        counter.set(1);
-        final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
-        executeWithPool(0,
-                (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
-                new FilesFacadeImpl() {
-
-                    long theFd = 0;
-                    boolean armageddon = false;
-
-                    @Override
-                    public boolean allocate(long fd, long size) {
-                        if (restoreDiskSpace.get()) {
-                            return super.allocate(fd, size);
-                        }
-
-                        if (armageddon) {
-                            return false;
-                        }
-                        if (fd == theFd) {
-                            theFd = 0;
-                            armageddon = true;
-                            return false;
-                        }
-                        return super.allocate(fd, size);
-                    }
-
-                    @Override
-                    public boolean close(long fd) {
-                        if (fd == theFd) {
-                            theFd = 0;
-                        }
-                        return super.close(fd);
-                    }
-
-                    @Override
-                    public long openRW(LPSZ name, long opts) {
-                        long fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, TableUtils.fsTableName("x") + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
-                            if (counter.decrementAndGet() == 0) {
-                                theFd = fd;
-                            }
-                        }
-                        return fd;
-                    }
-                });
+    private static String fsTableName(CharSequence x) {
+        return "";
     }
 
     @Test

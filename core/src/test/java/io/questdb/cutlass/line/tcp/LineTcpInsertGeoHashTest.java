@@ -71,7 +71,7 @@ abstract class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
             closeContext();
             assertTable(expected, tableName);
             if (expectedExtraStringColumns != null) {
-                try (TableReader reader = new TableReader(configuration, tableName)) {
+                try (TableReader reader = newTableReader(configuration, tableName)) {
                     TableReaderMetadata meta = reader.getMetadata();
                     Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
                     for (String colName : expectedExtraStringColumns) {

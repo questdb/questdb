@@ -498,7 +498,7 @@ public class TextImportTask {
             int plen = path.length();
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
-                path.put('_').put(i).put('_');
+                path.put('_').put(i);
                 int tableLen = path.length();
                 try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
                     path.trimTo(tableLen);
@@ -572,7 +572,7 @@ public class TextImportTask {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
 
             CharSequence systemTableName = cairoEngine.getSystemTableName(tableStructure.getTableName());
-            path.of(root).concat(systemTableName).put('_').put(index).put('_');
+            path.of(root).concat(systemTableName).put('_').put(index);
             int plen = path.length();
             PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
@@ -647,16 +647,13 @@ public class TextImportTask {
         public void run() {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             tableNameSink.clear();
-
             CharSequence systemTableName = cairoEngine.getSystemTableName(tableStructure.getTableName());
             tableNameSink.put(systemTableName).put('_').put(index);
 
-            CharSequence systemTableName1 = cairoEngine.getSystemTableName(tableNameSink);
-            tableNameSink.put(systemTableName).put('_').put(index);
             final int columnCount = metadata.getColumnCount();
             try (TableWriter w = new TableWriter(configuration,
                     tableNameSink,
-                    systemTableName1,
+                    tableNameSink,
                     cairoEngine.getMessageBus(),
                     null,
                     true,
@@ -862,14 +859,13 @@ public class TextImportTask {
 
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
-            createTable(cairoEngine, ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0, configuration);
+            createTable(ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0);
 
-            CharSequence systemTableName1 = cairoEngine.getSystemTableName(tableNameSink);
             try (
                     TableWriter writer = new TableWriter(
                             configuration,
                             tableNameSink,
-                            systemTableName1,
+                            tableNameSink,
                             cairoEngine.getMessageBus(),
                             null,
                             true,

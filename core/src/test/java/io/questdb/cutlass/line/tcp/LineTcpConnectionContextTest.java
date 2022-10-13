@@ -62,7 +62,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tcast\t23.0\n";
-            try (TableReader reader = new TableReader(configuration, tableName)) {
+            try (TableReader reader = newTableReader(configuration, tableName)) {
                 TableReaderMetadata meta = reader.getMetadata();
                 assertCursorTwoPass(expected, reader.getCursor(), meta);
                 Assert.assertEquals(5, meta.getColumnCount());
@@ -1248,26 +1248,21 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3000", "NaN");
     }
 
-    private void testDefaultColumnType(short expectedType, String ilpValue, String tableValue, String emptyValue) throws Exception {
-        String table = "addDefColType";
-        addTable(table);
-        runInContext(() -> {
-            recvBuffer =
-                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
-                            table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
-            try (TableReader reader = new TableReader(configuration, table)) {
-                assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
-                Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
+    private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
+        try (TableReader reader = newTableReader(configuration, tableName)) {
+            Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
+            int timestampColIndex = reader.getMetadata().getTimestampIndex();
+            TableReaderRecordCursor recordCursor = reader.getCursor();
+            int nRows = 0;
+            long timestampinNanos = 1465839830100400200L;
+            while (recordCursor.hasNext()) {
+                long actualTimestampInMicros = recordCursor.getRecord().getTimestamp(timestampColIndex);
+                Assert.assertEquals(timestampinNanos / 1000, actualTimestampInMicros);
+                timestampinNanos += 1000;
+                nRows++;
             }
-        });
+            Assert.assertEquals(nExpectedRows, nRows);
+        }
     }
 
     @Test
@@ -2047,21 +2042,26 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         }
     }
 
-    private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
-            int timestampColIndex = reader.getMetadata().getTimestampIndex();
-            TableReaderRecordCursor recordCursor = reader.getCursor();
-            int nRows = 0;
-            long timestampinNanos = 1465839830100400200L;
-            while (recordCursor.hasNext()) {
-                long actualTimestampInMicros = recordCursor.getRecord().getTimestamp(timestampColIndex);
-                Assert.assertEquals(timestampinNanos / 1000, actualTimestampInMicros);
-                timestampinNanos += 1000;
-                nRows++;
+    private void testDefaultColumnType(short expectedType, String ilpValue, String tableValue, String emptyValue) throws Exception {
+        String table = "addDefColType";
+        addTable(table);
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                            table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
+            try (TableReader reader = newTableReader(configuration, table)) {
+                assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+                Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
             }
-            Assert.assertEquals(nExpectedRows, nRows);
-        }
+        });
     }
 
     @NotNull

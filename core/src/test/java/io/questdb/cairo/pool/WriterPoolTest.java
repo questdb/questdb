@@ -201,7 +201,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             // check that we can't create standalone writer either
             try {
-                new TableWriter(configuration, "z", metrics);
+                newTableWriter(configuration, "z", metrics);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -209,7 +209,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock("z");
 
             // check if we can create standalone writer after pool unlocked it
-            writer = new TableWriter(configuration, "z", metrics);
+            writer = newTableWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
 
@@ -856,7 +856,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             pool.close();
 
-            TableWriter writer = new TableWriter(configuration, "z", metrics);
+            TableWriter writer = newTableWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
         });

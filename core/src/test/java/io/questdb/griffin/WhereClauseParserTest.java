@@ -117,16 +117,16 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        reader = new TableReader(configuration, "x");
+        reader = newTableReader(configuration, "x");
         metadata = reader.getMetadata();
 
-        noTimestampReader = new TableReader(configuration, "y");
+        noTimestampReader = newTableReader(configuration, "y");
         noTimestampMetadata = noTimestampReader.getMetadata();
 
-        unindexedReader = new TableReader(configuration, "z");
+        unindexedReader = newTableReader(configuration, "z");
         unindexedMetadata = unindexedReader.getMetadata();
 
-        noDesignatedTimestampNorIdxReader = new TableReader(configuration, "w");
+        noDesignatedTimestampNorIdxReader = newTableReader(configuration, "w");
         noDesignatedTimestampNorIdxMetadata = noDesignatedTimestampNorIdxReader.getMetadata();
 
         bindVariableService = new BindVariableServiceImpl(configuration);

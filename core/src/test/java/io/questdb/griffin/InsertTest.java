@@ -26,8 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.BinarySequence;
@@ -53,7 +53,7 @@ public class InsertTest extends AbstractGriffinTest {
 
         assertMemoryLeak(() -> {
             try (TableModel model = CairoTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR)) {
-                CairoTestUtils.createTable(model);
+                CairoTestUtils.create(model, engine);
             }
             Rnd rnd = new Rnd();
 
@@ -1024,7 +1024,7 @@ public class InsertTest extends AbstractGriffinTest {
             boolean columnSet
     ) throws Exception {
         assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithNewTypes(configuration, partitionBy);
+            CairoTestUtils.createAllTableWithNewTypes(engine, partitionBy);
             // this is BLOB
             byte[] blob = new byte[500];
             TestBinarySequence bs = new TestBinarySequence();

@@ -48,7 +48,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() {
-        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
     }
 
     @Test
@@ -396,7 +396,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "all");
         }
-        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
 
         // Test in one go
         runWithManipulators(expected, w -> {
@@ -415,7 +415,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     tableId = metadata.getId();
                     for (ColumnManipulator manipulator : manipulators) {
                         long structVersion;
-                        try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                        try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
                             manipulator.restructure(writer);
                             structVersion = writer.getStructureVersion();
                         }

@@ -40,7 +40,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -63,7 +62,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final String tableName;
-    private final CharSequence systemTableName;
+    private final String systemTableName;
     private final MessageBus messageBus;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -83,9 +82,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean txnAcquired = false;
     private final MillisecondClock clock;
 
-    @TestOnly
-    public TableReader(CairoConfiguration configuration, CharSequence tableName) {
-        this(configuration,  tableName, TableUtils.fsTableName(tableName), null);
+    public TableReader(CairoConfiguration configuration, CharSequence tableName, CharSequence systemTableName) {
+        this(configuration, tableName, systemTableName, null);
     }
 
     public TableReader(CairoConfiguration configuration,
@@ -97,10 +95,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.clock = configuration.getMillisecondClock();
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
-        this.systemTableName = systemTableName;
+        this.systemTableName = Chars.toString(systemTableName);
         this.messageBus = messageBus;
         this.path = new Path();
-        this.path.of(configuration.getRoot()).concat(systemTableName);
+        this.path.of(configuration.getRoot()).concat(this.systemTableName);
         this.rootLen = path.length();
         path.trimTo(rootLen);
         try {
@@ -113,6 +111,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
                     .$(", table=").$(this.tableName)
+                    .$(", systemName=").$(this.systemTableName)
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
@@ -297,6 +296,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
         return getSymbolMapReader(columnIndex);
+    }
+
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     @Override

@@ -39,14 +39,12 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
-
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1436,9 +1434,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         CharSequence systemTableName = engine.getSystemTableName(tableModel.getTableName());
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
-                Path path = new Path().of(configuration.getRoot()).concat(systemTableName);
+                Path path = new Path().of(configuration.getRoot()).concat(systemTableName)
         ) {
-            TableUtils.createTable(configuration, mem, path, tableModel, tableId);
+            TableUtils.createTable(configuration, mem, path, tableModel, tableId, systemTableName);
             compiler.compile(
                     TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
                     sqlExecutionContext

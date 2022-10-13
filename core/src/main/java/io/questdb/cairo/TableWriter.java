@@ -349,25 +349,26 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     @TestOnly
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        this(configuration, tableName, TableUtils.fsTableName(tableName), null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence systemTableName, Metrics metrics) {
+        this(configuration, tableName, systemTableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
 
     @TestOnly
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence systemTableName, @NotNull MessageBus messageBus, Metrics metrics) {
+        this(configuration, tableName, systemTableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
     }
 
     @TestOnly
     TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
+            CharSequence systemTableName,
             @NotNull MessageBus messageBus,
             boolean lock,
             LifecycleManager lifecycleManager,
             Metrics metrics
     ) {
-        this(configuration, tableName, TableUtils.fsTableName(tableName), messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
+        this(configuration, tableName, systemTableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public static int getPrimaryColumnIndex(int index) {

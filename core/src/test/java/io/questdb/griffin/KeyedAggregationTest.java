@@ -36,12 +36,11 @@ import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-
-import static org.hamcrest.Matchers.*;
-
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.hamcrest.Matchers.*;
 
 public class KeyedAggregationTest extends AbstractGriffinTest {
 
@@ -1262,7 +1261,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testCountAggregations() throws Exception {
         try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
             tt1.col("tts", ColumnType.LONG);
-            CairoTestUtils.createTable(tt1);
+            CairoTestUtils.create(tt1);
         }
 
         String expected = "max\tcount\n" +
@@ -1441,7 +1440,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 tt1.col(colType.colName, colType.columnType);
             }
 
-            CairoTestUtils.createTable(tt1);
+            CairoTestUtils.create(tt1);
         }
 
         for (TypeVal colType : aggregateColTypes) {

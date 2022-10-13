@@ -436,7 +436,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         createInitialTable(tableNameWal, true, initialRowCount);
 
         ObjList<FuzzTransaction> transactions;
-        try (TableReader reader = new TableReader(configuration, tableNameNoWal)) {
+        try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
             TableReaderMetadata metadata = reader.getMetadata();
 
             long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
@@ -578,7 +578,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             createInitialTable(tableNameNoWal, false, initialRowCount);
 
             ObjList<FuzzTransaction> transactions;
-            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+            try (TableReader reader = newTableReader(configuration, tableNameWal)) {
                 TableReaderMetadata metadata = reader.getMetadata();
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");

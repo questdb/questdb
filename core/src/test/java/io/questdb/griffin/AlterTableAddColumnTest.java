@@ -385,6 +385,11 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         public boolean getDefaultSymbolCacheFlag() {
                             return false;
                         }
+
+                        @Override
+                        public boolean mangleTableSystemNames() {
+                            return AbstractCairoTest.configuration.mangleTableSystemNames();
+                        }
                     };
 
                     try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -545,6 +550,11 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         public boolean getDefaultSymbolCacheFlag() {
                             return false;
                         }
+
+                        @Override
+                        public boolean mangleTableSystemNames() {
+                            return AbstractCairoTest.configuration.mangleTableSystemNames();
+                        }
                     };
 
                     try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -584,6 +594,11 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
                             return true;
+                        }
+
+                        @Override
+                        public boolean mangleTableSystemNames() {
+                            return AbstractCairoTest.configuration.mangleTableSystemNames();
                         }
                     };
 

@@ -23,7 +23,10 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -33,6 +36,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+
+import static io.questdb.cairo.TableUtils.convertSystemToTableName;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -128,7 +133,8 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
-                    return TableUtils.FsToUserTableName(sink);
+                    convertSystemToTableName(sink);
+                    return sink;
                 }
                 return null;
             }

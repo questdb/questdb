@@ -248,7 +248,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter w = new TableWriter(configuration, names[i], metrics)) {
+            try (TableWriter w = newTableWriter(configuration, names[i], metrics)) {
                 for (int k = 0; k < 10; k++) {
                     TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());
@@ -258,7 +258,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             sink.clear();
-            try (TableReader r = new TableReader(configuration, names[i])) {
+            try (TableReader r = newTableReader(configuration, names[i])) {
                 printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRows[i] = sink.toString();

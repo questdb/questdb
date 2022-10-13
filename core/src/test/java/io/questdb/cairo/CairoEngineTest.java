@@ -29,7 +29,9 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.mp.Job;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -255,7 +257,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            try (TableWriter ignored1 = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter ignored1 = newTableWriter(configuration, "x", metrics)) {
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try {
@@ -295,13 +297,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     return counter < 1;
                 }
             };
-
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+            AbstractCairoTest.ff = ff;
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");

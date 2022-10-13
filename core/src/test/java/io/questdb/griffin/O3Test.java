@@ -33,11 +33,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.number.OrderingComparison;
@@ -97,13 +99,13 @@ public class O3Test extends AbstractO3Test {
                 .timestamp()
                 .col("supplier", ColumnType.SYMBOL)
         ) {
-            CairoTestUtils.create(model);
+            CairoTestUtils.createTable(model, tableName);
 
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
             IntList newColTypes = new IntList();
             CyclicBarrier barrier = new CyclicBarrier(1);
 
-            try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
+            try (TableWriter writer = new TableWriter(configuration, tableName, tableName, Metrics.disabled())) {
                 Thread writerT = new Thread(() -> {
                     try {
                         int i = 0;

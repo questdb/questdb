@@ -34,7 +34,7 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithNewTypes(configuration, PartitionBy.NONE);
+            CairoTestUtils.createAllTableWithNewTypes(engine, PartitionBy.NONE);
 
             compiler.compile("insert into all2 select * from (" +
                             "select" +

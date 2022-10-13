@@ -129,7 +129,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 path.concat(systemTableName);
                 int tableNameLen = path.length();
                 FilesFacade ff = configuration.getFilesFacade();
-                try (TableReader tableReader = new TableReader(configuration, "t")) {
+                try (TableReader tableReader = newTableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(ff, "t", path)) {

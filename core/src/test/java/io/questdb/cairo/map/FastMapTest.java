@@ -245,7 +245,7 @@ public class FastMapTest extends AbstractCairoTest {
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
             createTestTable(10, new Rnd(), binarySequence);
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 try {
                     new CompactMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75, 1, Integer.MAX_VALUE);
                     Assert.fail();
@@ -293,7 +293,7 @@ public class FastMapTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
@@ -304,7 +304,7 @@ public class FastMapTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -533,7 +533,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -633,7 +633,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -707,7 +707,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 ListColumnFilter listColumnFilter = new ListColumnFilter();
                 for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
                     listColumnFilter.add(i + 1);
@@ -980,7 +980,7 @@ public class FastMapTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+        try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

@@ -90,7 +90,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             CairoTestUtils.create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+        try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
             TableWriter.Row row = writer.newRow();
             row.putSym(writer.getColumnIndex("asymbol"), KNOWN_SYMBOL_1);
             row.putSym(writer.getColumnIndex("anothersymbol"), KNOWN_SYMBOL_2);

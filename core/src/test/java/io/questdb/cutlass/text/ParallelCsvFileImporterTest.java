@@ -61,23 +61,43 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFindChunkBoundariesForFileWithNoQuotes() throws Exception {
-        executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("test-import.csv", list(0, 0, 4565, 44, 9087, 87, 13612, 130), sqlExecutionContext)
-        );
+    public void testAssignPartitionsToWorkers() {
+        ObjList<PartitionInfo> partitions = new ObjList<>();
+
+        partitions.add(new PartitionInfo(1, "A", 10));
+        partitions.add(new PartitionInfo(2, "B", 70));
+        partitions.add(new PartitionInfo(3, "C", 50));
+        partitions.add(new PartitionInfo(4, "D", 100));
+        partitions.add(new PartitionInfo(5, "E", 5));
+
+        int tasks = ParallelCsvFileImporter.assignPartitions(partitions, 2);
+
+        MatcherAssert.assertThat(partitions, equalTo(new ObjList<PartitionInfo>(new PartitionInfo(1, "A", 10, 0),
+                new PartitionInfo(4, "D", 100, 0),
+                new PartitionInfo(5, "E", 5, 0),
+                new PartitionInfo(2, "B", 70, 1),
+                new PartitionInfo(3, "C", 50, 1))));
+        MatcherAssert.assertThat(tasks, equalTo(2));
     }
 
     @Test
-    public void testFindChunkBoundariesWith1WorkerForFileWithLongLines() throws Exception {
-        executeWithPool(1, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 256, 0), sqlExecutionContext)
-        );
+    public void testBacklogTableCleanup() throws Exception {
+        for (int i = 0; i < 6; i++) {
+            testStatusLogCleanup(i);
+        }
     }
 
     @Test
     public void testFindChunkBoundariesForFileWithLongLines() throws Exception {
         executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
                 assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 90, 2, 185, 3, 256, 5), sqlExecutionContext)
+        );
+    }
+
+    @Test
+    public void testFindChunkBoundariesForFileWithNoQuotes() throws Exception {
+        executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                assertChunkBoundariesFor("test-import.csv", list(0, 0, 4565, 44, 9087, 87, 13612, 130), sqlExecutionContext)
         );
     }
 
@@ -102,73 +122,1480 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         );
     }
 
-    private LongList list(long... values) {
-        LongList result = new LongList();
-        for (long l : values) {
-            result.add(l);
+    @Test
+    public void testFindChunkBoundariesWith1WorkerForFileWithLongLines() throws Exception {
+        executeWithPool(1, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 256, 0), sqlExecutionContext)
+        );
+    }
+
+    @Test
+    public void testImportAllTypesIntoExistingTable() throws Exception {
+        executeWithPool(4, 8, this::importAllIntoExisting);
+    }
+
+    @Test
+    public void testImportAllTypesIntoExistingTableBrokenRename() throws Exception {
+        AtomicInteger counter = new AtomicInteger(0);
+        FilesFacade brokenRename = new FilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (counter.incrementAndGet() < 11) {
+                    return Files.FILES_RENAME_ERR_EXDEV;
+                }
+                return super.rename(from, to);
+            }
+        };
+        executeWithPool(4, 8, brokenRename, this::importAllIntoExisting);
+    }
+
+    @Test
+    public void testImportAllTypesIntoNewTable() throws Exception {
+        executeWithPool(4, 8, this::importAllIntoNew);
+    }
+
+    @Test
+    public void testImportAllTypesWithGaps() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table alltypes (\n" +
+                    "  bo boolean,\n" +
+                    "  by byte,\n" +
+                    "  sh short,\n" +
+                    "  ch char,\n" +
+                    "  in_ int,\n" +
+                    "  lo long,\n" +
+                    "  dat date, \n" +
+                    "  tstmp timestamp, \n" +
+                    "  ft float,\n" +
+                    "  db double,\n" +
+                    "  str string,\n" +
+                    "  sym symbol,\n" +
+                    "  l256 long256," +
+                    "  ge geohash(20b)" +
+                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, null);
+                importer.process();
+            }
+
+            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+                            "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
+                            "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
+                            "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
+                            "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
+                            "false\t123\t8110\tE\tNaN\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
+                            "false\t98\t25729\tM\t6\tNaN\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1000\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
+                            "false\t44\t-19823\tU\t7\tNaN\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1000\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
+                            "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
+                            "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1000\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
+                            "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                    "select * from alltypes", "tstmp", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportAllTypesWithGapsIndexed() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table alltypes (\n" +
+                    "  bo boolean,\n" +
+                    "  by byte,\n" +
+                    "  sh short,\n" +
+                    "  ch char,\n" +
+                    "  in_ int,\n" +
+                    "  lo long,\n" +
+                    "  dat date, \n" +
+                    "  tstmp timestamp, \n" +
+                    "  ft float,\n" +
+                    "  db double,\n" +
+                    "  str string,\n" +
+                    "  sym symbol index capacity 64,\n" +
+                    "  l256 long256," +
+                    "  ge geohash(20b)" +
+                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+            }
+
+            assertQueryCompiledQuery(
+                    compiler,
+                    sqlExecutionContext,
+                    "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+                            "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
+                            "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
+                            "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
+                            "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
+                            "false\t123\t8110\tE\tNaN\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
+                            "false\t98\t25729\tM\t6\tNaN\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1000\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
+                            "false\t44\t-19823\tU\t7\tNaN\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1000\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
+                            "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
+                            "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1000\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
+                            "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                    "select * from alltypes", "tstmp", true, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testImportCleansUpAllTemporaryFiles() throws Exception {
+        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table t ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of("t", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+
+                assertQuery("count\n1000\n", "select count(*) from t",
+                        null, false, false, true);
+
+                String[] foundFiles = new File(inputWorkRoot).list();
+                MatcherAssert.assertThat(foundFiles, equalTo(new String[0]));
+            }
+        });
+    }
+
+    @Test
+    public void testImportCsvFailsOnStructureParsingIO() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                return -1L;
+            }
+        };
+
+        executeWithPool(4, 8, ff, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab4", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("could not read from file"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportCsvFromFileWithBadColumnNamesInHeaderIntoNewTableFiltersOutBadCharacters() throws Exception {
+        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of("tab24", "test-badheadernames.csv", 1, PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+            }
+            assertQuery("Line\tTs\tD\tDescRipTION\n" +
+                            "line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1\n" +
+                            "line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2\n",
+                    "select * from tab24", "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportCsvIntoExistingTableWithColumnReorder() throws Exception {
+        executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table t ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of("t", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null);
+                importer.process();
+            }
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                    "select line, ts, d, description from t limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportCsvIntoExistingTableWithSymbol() throws Exception {
+        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab1 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of("tab1", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+            }
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                    "select line, ts, d, description from tab1 limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportCsvIntoExistingTableWithSymbolsReordered() throws Exception {
+        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+
+            final String tableName = "tableName";
+            compiler.compile("create table " + tableName + " ( ts timestamp, line symbol, d double, description symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+            }
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                    "select line, ts, d, description from " + tableName + " limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportCsvIntoNewTable() throws Exception {
+        testImportCsvIntoNewTable0("tab25");
+    }
+
+    @Test
+    public void testImportCsvIntoNewTableVanilla() throws Exception {
+        // this does not use io_uring even on Linux
+        ioURingFacade = new IOURingFacadeImpl() {
+            @Override
+            public boolean isAvailable() {
+                return false;
+            }
+        };
+
+        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            final String tableName = "tab27";
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+            }
+            assertQuery("cnt\n" +
+                            "1000\n",
+                    "select count(*) cnt from " + tableName,
+                    null, false, true);
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                    "select * from " + tableName + " limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportCsvSmallerFileBuffer() throws Exception {
+        // the buffer is enough to fit only a few lines
+        sqlCopyBufferSize = 256;
+        testImportCsvIntoNewTable0("tab26");
+    }
+
+    @Test
+    //missing symbols column is filled with nulls
+    public void testImportCsvWithMissingAndReorderedSymbolColumns() throws Exception {
+        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab2 (other symbol, txt symbol, line symbol, ts timestamp, d symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab2", "test-quotes-small.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
+                importer.process();
+            }
+            assertQuery("other\ttxt\tline\tts\td\n" +
+                            "\tsome text\r\nspanning two lines\tline1\t2022-05-10T11:52:00.000000Z\t111.11\n" +
+                            "\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\tline2\t2022-05-11T11:52:00.000000Z\t222.22\n" +
+                            "\tsingle line text without quotes\tline3\t2022-05-11T11:52:00.001000Z\t333.33\n",
+                    "select * from tab2 limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    //all rows in the file fail on timestamp parsing so indexing phase will return empty result
+    public void testImportCsvWithTimestampNotMatchingInputFormatFails() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab3", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                Assert.assertEquals("All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportEmptyCsv() throws Exception {
+        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(
+                        "t",
+                        "test-quotes-empty.csv",
+                        1,
+                        PartitionBy.MONTH,
+                        (byte) ',',
+                        "ts",
+                        "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
+                        true,
+                        null
+                );
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("ignored empty input file [file='"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFailsOnBoundaryScanningIO() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (offset > 30000) {
+                    return -1L;
+                } else {
+                    return super.read(fd, buf, len, offset);
+                }
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab5", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=boundary_check, msg=`could not read import file"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFailsOnDataImportIO() throws Exception {
+
+        // this is testing vanilla data copy method, ensure that io uring is disabled
+        ioURingFacade = new IOURingFacadeImpl() {
+            @Override
+            public boolean isAvailable() {
+                return false;
+            }
+        };
+
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (offset == 31 && len == 1940) {
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab7", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=partition_import, msg=`could not read from file"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInBoundaryCheckPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            int count = 0;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, "test-quotes-big.csv")) {
+                    if (count++ > 1) {
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase("tab8", brokenFf, "boundary_check");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInBuildSymbolIndexPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
+                    return -1;
+                }
+
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertImportFailsInPhase("tab14", brokenFf, "build_symbol_index");
+    }
+
+    @Test
+    //"[5] Can't remove import directory path='C:\Users\bolo\AppData\Local\Temp\junit2458364502615821703\imports1181738016629600\tab\1972\2_1' errno=5"
+    public void testImportFailsOnFileOpenInDataImportPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, "3_1")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase("tab11", brokenFf, "partition_import");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInIndexingPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase("tab9", brokenFf, "indexing");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInSymbolKeysUpdatePhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
+                    return -1;
+                }
+
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertImportFailsInPhase("tab13", brokenFf, "update_symbol_keys");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInSymbolMergePhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, "line.c")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase("tab12", brokenFf, "symbol_table_merge");
+    }
+
+    @Test
+    public void testImportFailsOnFileSortingInIndexingPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (Arrays.stream(new Exception().getStackTrace())
+                        .anyMatch(ste -> ste.getClassName().endsWith("CsvFileIndexer") && ste.getMethodName().equals("sort"))) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+
+        assertImportFailsInPhase("tab10", brokenFf, "indexing");
+    }
+
+    @Test
+    public void testImportFailsOnSourceFileIndexingIO() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (offset == 0 && len == 16797) {
+                    return -1;
+                }
+
+                return super.read(fd, buf, len, offset);
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab6", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=indexing, msg=`could not read file"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileFailsWhenImportingTextIntoBinaryColumn() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab36 ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab36", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process();
+            } catch (Exception e) {
+                assertThat(e.getMessage(), containsString("cannot import text into BINARY column [index=3]"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
+        String tab41 = "tab41";
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                String systemTableName = Chars.toString(engine.getSystemTableName(tab41));
+                if (Chars.contains(path, File.separator + systemTableName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
+            }
+        };
+
+        testImportThrowsException(ff, tab41, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create partition directory");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateFilesCantBeMovedOrCopied() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                if (Chars.contains(from, "tab42")) {
+                    return -1;
+                }
+                return super.copy(from, to);
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
+            }
+        };
+
+        testImportThrowsException(ff, "tab42", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not copy partition file");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateFilesCantBeMovedToTargetDirForUnexpectedReason() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_OTHER;
+            }
+        };
+
+        testImportThrowsException(ff, "tab40", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not copy partition file");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateTableDirectoryExistAndCantBeDeleted() throws Exception {
+        String tab34 = "tab34";
+        CharSequence systemTableName = engine.getSystemTableName(tab34);
+        String tab34_0 = Chars.toString(systemTableName) + "_0";
+        String fakeExists = tab34_0 + File.separator + "_txn";
+        FilesFacade ff = new FilesFacadeImpl() {
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, tab34_0)) {
+                    return true;
+                } else {
+                    if (Chars.endsWith(path, fakeExists)) {
+                        return true;
+                    }
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (Chars.endsWith(name, tab34_0)) {
+                    return -1;
+                }
+                return super.rmdir(name);
+            }
+        };
+
+        testImportThrowsException(ff, tab34, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`[-1] Table remove failed [tableName=" + systemTableName + "_0]`]");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateTableDirectoryIsMangled() throws Exception {
+        String tab33 = "tab33";
+        CharSequence systemTableName = engine.getSystemTableName(tab33);
+        CharSequence fakeExists = systemTableName + "_0";
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, fakeExists)) {
+                    return true;
+                }
+                return super.exists(path);
+            }
+        };
+
+        testImportThrowsException(ff, tab33, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`name is reserved [tableName=" + systemTableName + "_0]`]");
+    }
+
+    @Test
+    public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
+        String tabex3 = "tabex3";
+        CharSequence systemTableName = engine.getSystemTableName(tabex3);
+        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(systemTableName).slash$()) {
+            FilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
         }
-        return result;
+
+        testImportThrowsException(tabex3, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "name is reserved [table=" + tabex3 + "]");
     }
 
     @Test
-    public void testIndexChunksInSmallCsvWith1Worker() throws Exception {
-        assertIndexChunks(1, "test-quotes-small.csv",
-                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/0_1", 1652269920000000L, 90L, 1652269920001000L, 185L));
+    public void testImportFileFailsWhenTargetTableNameIsInvalid() throws Exception {
+        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "invalid table name [table=../t]");
     }
 
     @Test
-    public void testIndexChunksInSmallCsvWith2Workers() throws Exception {
-        assertIndexChunks(2, "test-quotes-small.csv",
-                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/0_1", 1652269920000000L, 90L),
-                chunk("2022-05-11/1_1", 1652269920001000L, 185L));
+    public void testImportFileFailsWhenTimestampColumnIsMissingInInputFile() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab37 ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab37", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process();
+            } catch (Exception e) {
+                assertThat(e.getMessage(), containsString("invalid timestamp column [name='ts']"));
+            }
+        });
     }
 
     @Test
-    public void testIndexChunksInSmallCsvWith3Workers() throws Exception {
-        assertIndexChunks(3, "test-quotes-small.csv",
-                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/1_1", 1652269920000000L, 90L),
-                chunk("2022-05-11/2_1", 1652269920001000L, 185L));
+    public void testImportFileFailsWhenWorkDirCantBeCreated() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public int mkdir(Path path, int mode) {
+                if (Chars.contains(path, "tab39")) {
+                    return -1;
+                }
+                return super.mkdir(path, mode);
+            }
+        };
+
+        testImportThrowsException(ff, "tab39", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create temporary import work directory");
     }
 
     @Test
-    public void testIndexChunksInSmallCsvWith4Workers() throws Exception {
-        assertIndexChunks(4, "test-quotes-small.csv",
-                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/1_1", 1652269920000000L, 90L),
-                chunk("2022-05-11/2_1", 1652269920001000L, 185L));
+    public void testImportFileFailsWhenWorkDirectoryDoesNotExistAndCantBeCreated() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            final String tempDir = inputWorkRoot + File.separator;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.equals(path, tempDir)) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (Chars.equals(name, tempDir)) {
+                    return -1;
+                }
+                return super.rmdir(name);
+            }
+        };
+
+        testImportThrowsException(ff, "tab35", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create import work root directory");
     }
 
     @Test
-    public void testIndexChunksInSingleLineCsvWithPool() throws Exception {
-        assertIndexChunks(4, "test-quotes-oneline.csv",
-                chunk("2022-05-14/0_1", 1652529121000000L, 18L));
+    public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
+        String tab35 = "tab35";
+        CharSequence systemTableName = engine.getSystemTableName(tab35);
+        FilesFacade ff = new FilesFacadeImpl() {
+            final String tempDir = inputWorkRoot + File.separator + systemTableName;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.equals(path, tempDir)) {
+                    return true;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (Chars.equals(name, tempDir)) {
+                    return -1;
+                }
+                return super.rmdir(name);
+            }
+        };
+
+        testImportThrowsException(ff, tab35, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove import work directory");
     }
 
     @Test
-    public void testIndexChunksInBigCsvByYear() throws Exception { //buffer = 93
-        assertIndexChunks(4, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", PartitionBy.YEAR, "test-quotes-big.csv",
-                chunk("1970/0_1", 86400000000L, 31L, 172800000000L, 94L, 259200000000L, 157L, 345600000000L, 220L, 432000000000L, 283L, 518400000000L, 346L, 604800000000L, 409L, 691200000000L, 472L, 777600000000L, 535L, 864000000000L, 598L, 950400000000L, 663L, 1036800000000L, 728L, 1123200000000L, 794L, 1209600000000L, 859L, 1296000000000L, 924L, 1382400000000L, 989L, 1468800000000L, 1054L, 1555200000000L, 1119L, 1641600000000L, 1184L, 1728000000000L, 1249L, 1814400000000L, 1315L, 1900800000000L, 1380L, 1987200000000L, 1445L, 2073600000000L, 1510L, 2160000000000L, 1575L, 2246400000000L, 1640L, 2332800000000L, 1705L, 2419200000000L, 1771L, 2505600000000L, 1836L, 2592000000000L, 1902L, 2678400000000L, 1972L, 2764800000000L, 2037L, 2851200000000L, 2102L, 2937600000000L, 2168L, 3024000000000L, 2233L, 3110400000000L, 2298L, 3196800000000L, 2363L, 3283200000000L, 2428L, 3369600000000L, 2493L, 3456000000000L, 2558L, 3542400000000L, 2623L, 3628800000000L, 2688L, 3715200000000L, 2753L, 3801600000000L, 2818L, 3888000000000L, 2883L, 3974400000000L, 2948L, 4060800000000L, 3013L, 4147200000000L, 3078L, 4233600000000L, 3143L, 4320000000000L, 3208L, 4406400000000L, 3274L, 4492800000000L, 3339L, 4579200000000L, 3404L, 4665600000000L, 3469L, 4752000000000L, 3534L, 4838400000000L, 3599L, 4924800000000L, 3664L, 5011200000000L, 3729L, 5097600000000L, 3794L, 5184000000000L, 3860L, 5270400000000L, 3925L, 5356800000000L, 3990L, 5443200000000L, 4055L, 5529600000000L, 4120L, 5616000000000L, 4185L, 5702400000000L, 4250L, 5788800000000L, 4315L, 5875200000000L, 4380L, 5961600000000L, 4445L, 6048000000000L, 4510L, 6134400000000L, 4575L, 6220800000000L, 4640L, 6307200000000L, 4705L, 6393600000000L, 4770L, 6480000000000L, 4835L, 6566400000000L, 4900L, 6652800000000L, 4965L, 6739200000000L, 5031L, 6825600000000L, 5096L, 6912000000000L, 5161L, 6998400000000L, 5226L, 7084800000000L, 5291L, 7171200000000L, 5356L, 7257600000000L, 5421L, 7344000000000L, 5486L, 7430400000000L, 5551L, 7516800000000L, 5616L, 7603200000000L, 5681L, 7689600000000L, 5746L, 7776000000000L, 5811L, 7862400000000L, 5876L, 7948800000000L, 5941L, 8035200000000L, 6006L, 8121600000000L, 6071L, 8208000000000L, 6136L, 8294400000000L, 6201L, 8380800000000L, 6266L, 8467200000000L, 6331L, 8553600000000L, 6396L, 8640000000000L, 6461L, 8726400000000L, 6528L, 8812800000000L, 6595L, 8899200000000L, 6662L, 8985600000000L, 6729L, 9072000000000L, 6796L, 9158400000000L, 6863L, 9244800000000L, 6930L, 9331200000000L, 6997L, 9417600000000L, 7064L, 9504000000000L, 7131L, 9590400000000L, 7198L, 9676800000000L, 7265L, 9763200000000L, 7332L, 9849600000000L, 7399L, 9936000000000L, 7466L, 10022400000000L, 7534L, 10108800000000L, 7601L, 10195200000000L, 7668L, 10281600000000L, 7735L, 10368000000000L, 7802L, 10454400000000L, 7869L, 10540800000000L, 7936L, 10627200000000L, 8003L, 10713600000000L, 8070L, 10800000000000L, 8137L, 10886400000000L, 8204L, 10972800000000L, 8271L, 11059200000000L, 8339L, 11145600000000L, 8406L, 11232000000000L, 8473L, 11318400000000L, 8540L, 11404800000000L, 8607L, 11491200000000L, 8674L, 11577600000000L, 8741L, 11664000000000L, 8808L, 11750400000000L, 8875L, 11836800000000L, 8942L, 11923200000000L, 9009L, 12009600000000L, 9076L, 12096000000000L, 9143L, 12182400000000L, 9210L, 12268800000000L, 9278L, 12355200000000L, 9345L, 12441600000000L, 9412L, 12528000000000L, 9480L, 12614400000000L, 9547L, 12700800000000L, 9614L, 12787200000000L, 9681L, 12873600000000L, 9748L, 12960000000000L, 9815L, 13046400000000L, 9882L, 13132800000000L, 9949L, 13219200000000L, 10017L, 13305600000000L, 10084L, 13392000000000L, 10151L, 13478400000000L, 10218L, 13564800000000L, 10287L, 13651200000000L, 10354L, 13737600000000L, 10421L, 13824000000000L, 10488L, 13910400000000L, 10555L, 13996800000000L, 10622L, 14083200000000L, 10689L, 14169600000000L, 10756L, 14256000000000L, 10823L, 14342400000000L, 10890L, 14428800000000L, 10957L, 14515200000000L, 11024L, 14601600000000L, 11091L, 14688000000000L, 11158L, 14774400000000L, 11226L, 14860800000000L, 11293L, 14947200000000L, 11360L, 15033600000000L, 11427L, 15120000000000L, 11494L, 15206400000000L, 11561L, 15292800000000L, 11628L, 15379200000000L, 11695L, 15465600000000L, 11762L, 15552000000000L, 11829L, 15638400000000L, 11896L, 15724800000000L, 11963L, 15811200000000L, 12030L, 15897600000000L, 12097L, 15984000000000L, 12164L, 16070400000000L, 12231L, 16156800000000L, 12299L, 16243200000000L, 12366L, 16329600000000L, 12434L, 16416000000000L, 12501L, 16502400000000L, 12568L, 16588800000000L, 12635L, 16675200000000L, 12702L, 16761600000000L, 12769L, 16848000000000L, 12836L, 16934400000000L, 12903L, 17020800000000L, 12970L, 17107200000000L, 13037L, 17193600000000L, 13104L, 17280000000000L, 13172L, 17366400000000L, 13240L, 17452800000000L, 13307L, 17539200000000L, 13374L, 17625600000000L, 13441L, 17712000000000L, 13508L, 17798400000000L, 13575L, 17884800000000L, 13642L, 17971200000000L, 13710L, 18057600000000L, 13777L, 18144000000000L, 13844L, 18230400000000L, 13911L, 18316800000000L, 13978L, 18403200000000L, 14045L, 18489600000000L, 14112L, 18576000000000L, 14179L, 18662400000000L, 14246L, 18748800000000L, 14313L, 18835200000000L, 14380L, 18921600000000L, 14447L, 19008000000000L, 14514L, 19094400000000L, 14581L, 19180800000000L, 14649L, 19267200000000L, 14716L, 19353600000000L, 14783L, 19440000000000L, 14851L, 19526400000000L, 14918L, 19612800000000L, 14985L, 19699200000000L, 15052L, 19785600000000L, 15120L, 19872000000000L, 15187L, 19958400000000L, 15254L, 20044800000000L, 15321L, 20131200000000L, 15388L, 20217600000000L, 15455L, 20304000000000L, 15523L, 20390400000000L, 15590L, 20476800000000L, 15657L, 20563200000000L, 15725L, 20649600000000L, 15792L, 20736000000000L, 15859L, 20822400000000L, 15926L, 20908800000000L, 15993L, 20995200000000L, 16060L, 21081600000000L, 16127L, 21168000000000L, 16194L, 21254400000000L, 16261L, 21340800000000L, 16328L, 21427200000000L, 16395L, 21513600000000L, 16462L, 21600000000000L, 16529L, 21686400000000L, 16596L, 21772800000000L, 16663L, 21859200000000L, 16730),
-                chunk("1970/1_1", 21945600000000L, 16797L, 22032000000000L, 16864L, 22118400000000L, 16931L, 22204800000000L, 16999L, 22291200000000L, 17066L, 22377600000000L, 17133L, 22464000000000L, 17200L, 22550400000000L, 17267L, 22636800000000L, 17334L, 22723200000000L, 17401L, 22809600000000L, 17468L, 22896000000000L, 17535L, 22982400000000L, 17602L, 23068800000000L, 17669L, 23155200000000L, 17736L, 23241600000000L, 17803L, 23328000000000L, 17870L, 23414400000000L, 17937L, 23500800000000L, 18004L, 23587200000000L, 18071L, 23673600000000L, 18138L, 23760000000000L, 18207L, 23846400000000L, 18274L, 23932800000000L, 18341L, 24019200000000L, 18408L, 24105600000000L, 18475L, 24192000000000L, 18542L, 24278400000000L, 18609L, 24364800000000L, 18676L, 24451200000000L, 18743L, 24537600000000L, 18810L, 24624000000000L, 18878L, 24710400000000L, 18945L, 24796800000000L, 19012L, 24883200000000L, 19079L, 24969600000000L, 19146L, 25056000000000L, 19213L, 25142400000000L, 19280L, 25228800000000L, 19347L, 25315200000000L, 19414L, 25401600000000L, 19481L, 25488000000000L, 19548L, 25574400000000L, 19615L, 25660800000000L, 19682L, 25747200000000L, 19749L, 25833600000000L, 19816L, 25920000000000L, 19883L, 26006400000000L, 19950L, 26092800000000L, 20017L, 26179200000000L, 20084L, 26265600000000L, 20151L, 26352000000000L, 20218L, 26438400000000L, 20285L, 26524800000000L, 20352L, 26611200000000L, 20420L, 26697600000000L, 20487L, 26784000000000L, 20554L, 26870400000000L, 20621L, 26956800000000L, 20688L, 27043200000000L, 20755L, 27129600000000L, 20822L, 27216000000000L, 20889L, 27302400000000L, 20956L, 27388800000000L, 21023L, 27475200000000L, 21090L, 27561600000000L, 21157L, 27648000000000L, 21224L, 27734400000000L, 21291L, 27820800000000L, 21358L, 27907200000000L, 21426L, 27993600000000L, 21493L, 28080000000000L, 21560L, 28166400000000L, 21629L, 28252800000000L, 21696L, 28339200000000L, 21763L, 28425600000000L, 21830L, 28512000000000L, 21897L, 28598400000000L, 21964L, 28684800000000L, 22031L, 28771200000000L, 22100L, 28857600000000L, 22167L, 28944000000000L, 22234L, 29030400000000L, 22301L, 29116800000000L, 22368L, 29203200000000L, 22435L, 29289600000000L, 22502L, 29376000000000L, 22569L, 29462400000000L, 22636L, 29548800000000L, 22703L, 29635200000000L, 22770L, 29721600000000L, 22837L, 29808000000000L, 22904L, 29894400000000L, 22971L, 29980800000000L, 23038L, 30067200000000L, 23105L, 30153600000000L, 23172L, 30240000000000L, 23240L, 30326400000000L, 23307L, 30412800000000L, 23374L, 30499200000000L, 23441L, 30585600000000L, 23508L, 30672000000000L, 23575L, 30758400000000L, 23643L, 30844800000000L, 23711L, 30931200000000L, 23778L, 31017600000000L, 23845L, 31104000000000L, 23913L, 31190400000000L, 23980L, 31276800000000L, 24047L, 31363200000000L, 24115L, 31449600000000L, 24182),
-                chunk("1971/1_1", 31536000000000L, 24249L, 31622400000000L, 24316L, 31708800000000L, 24383L, 31795200000000L, 24450L, 31881600000000L, 24517L, 31968000000000L, 24584L, 32054400000000L, 24651L, 32140800000000L, 24718L, 32227200000000L, 24786L, 32313600000000L, 24853L, 32400000000000L, 24920L, 32486400000000L, 24987L, 32572800000000L, 25054L, 32659200000000L, 25122L, 32745600000000L, 25189L, 32832000000000L, 25256L, 32918400000000L, 25323L, 33004800000000L, 25390L, 33091200000000L, 25457L, 33177600000000L, 25524L, 33264000000000L, 25591L, 33350400000000L, 25658L, 33436800000000L, 25725L, 33523200000000L, 25792L, 33609600000000L, 25859L, 33696000000000L, 25927L, 33782400000000L, 25994L, 33868800000000L, 26062L, 33955200000000L, 26129L, 34041600000000L, 26196L, 34128000000000L, 26263L, 34214400000000L, 26330L, 34300800000000L, 26397L, 34387200000000L, 26464L, 34473600000000L, 26531L, 34560000000000L, 26598L, 34646400000000L, 26665L, 34732800000000L, 26733L, 34819200000000L, 26800L, 34905600000000L, 26867L, 34992000000000L, 26934L, 35078400000000L, 27001L, 35164800000000L, 27069L, 35251200000000L, 27136L, 35337600000000L, 27203L, 35424000000000L, 27270L, 35510400000000L, 27337L, 35596800000000L, 27405L, 35683200000000L, 27472L, 35769600000000L, 27539L, 35856000000000L, 27607L, 35942400000000L, 27674L, 36028800000000L, 27741L, 36115200000000L, 27808L, 36201600000000L, 27875L, 36288000000000L, 27942L, 36374400000000L, 28009L, 36460800000000L, 28076L, 36547200000000L, 28143L, 36633600000000L, 28210L, 36720000000000L, 28278L, 36806400000000L, 28347L, 36892800000000L, 28414L, 36979200000000L, 28482L, 37065600000000L, 28549L, 37152000000000L, 28616L, 37238400000000L, 28683L, 37324800000000L, 28750L, 37411200000000L, 28817L, 37497600000000L, 28884L, 37584000000000L, 28951L, 37670400000000L, 29018L, 37756800000000L, 29085L, 37843200000000L, 29152L, 37929600000000L, 29219L, 38016000000000L, 29286L, 38102400000000L, 29353L, 38188800000000L, 29421L, 38275200000000L, 29488L, 38361600000000L, 29555L, 38448000000000L, 29622L, 38534400000000L, 29690L, 38620800000000L, 29758L, 38707200000000L, 29825L, 38793600000000L, 29892L, 38880000000000L, 29959L, 38966400000000L, 30026L, 39052800000000L, 30093L, 39139200000000L, 30160L, 39225600000000L, 30229L, 39312000000000L, 30296L, 39398400000000L, 30363L, 39484800000000L, 30430L, 39571200000000L, 30497L, 39657600000000L, 30564L, 39744000000000L, 30631L, 39830400000000L, 30698L, 39916800000000L, 30765L, 40003200000000L, 30832L, 40089600000000L, 30899L, 40176000000000L, 30966L, 40262400000000L, 31033L, 40348800000000L, 31100L, 40435200000000L, 31167L, 40521600000000L, 31234L, 40608000000000L, 31301L, 40694400000000L, 31368L, 40780800000000L, 31435L, 40867200000000L, 31502L, 40953600000000L, 31569L, 41040000000000L, 31636L, 41126400000000L, 31703L, 41212800000000L, 31770L, 41299200000000L, 31838L, 41385600000000L, 31905L, 41472000000000L, 31972L, 41558400000000L, 32039L, 41644800000000L, 32106L, 41731200000000L, 32173L, 41817600000000L, 32240L, 41904000000000L, 32307L, 41990400000000L, 32374L, 42076800000000L, 32441L, 42163200000000L, 32508L, 42249600000000L, 32575L, 42336000000000L, 32643L, 42422400000000L, 32710L, 42508800000000L, 32777L, 42595200000000L, 32844L, 42681600000000L, 32911L, 42768000000000L, 32978L, 42854400000000L, 33045L, 42940800000000L, 33112L, 43027200000000L, 33179L, 43113600000000L, 33246L, 43200000000000L, 33313L, 43286400000000L, 33380L, 43372800000000L, 33447),
-                chunk("1971/2_1", 43459200000000L, 33514L, 43545600000000L, 33581L, 43632000000000L, 33648L, 43718400000000L, 33715L, 43804800000000L, 33782L, 43891200000000L, 33849L, 43977600000000L, 33916L, 44064000000000L, 33983L, 44150400000000L, 34050L, 44236800000000L, 34117L, 44323200000000L, 34184L, 44409600000000L, 34251L, 44496000000000L, 34318L, 44582400000000L, 34385L, 44668800000000L, 34452L, 44755200000000L, 34519L, 44841600000000L, 34586L, 44928000000000L, 34653L, 45014400000000L, 34720L, 45100800000000L, 34787L, 45187200000000L, 34854L, 45273600000000L, 34921L, 45360000000000L, 34989L, 45446400000000L, 35056L, 45532800000000L, 35123L, 45619200000000L, 35190L, 45705600000000L, 35257L, 45792000000000L, 35324L, 45878400000000L, 35391L, 45964800000000L, 35458L, 46051200000000L, 35525L, 46137600000000L, 35592L, 46224000000000L, 35659L, 46310400000000L, 35726L, 46396800000000L, 35793L, 46483200000000L, 35860L, 46569600000000L, 35928L, 46656000000000L, 35995L, 46742400000000L, 36062L, 46828800000000L, 36129L, 46915200000000L, 36196L, 47001600000000L, 36263L, 47088000000000L, 36330L, 47174400000000L, 36397L, 47260800000000L, 36464L, 47347200000000L, 36531L, 47433600000000L, 36599L, 47520000000000L, 36666L, 47606400000000L, 36733L, 47692800000000L, 36801L, 47779200000000L, 36868L, 47865600000000L, 36935L, 47952000000000L, 37002L, 48038400000000L, 37069L, 48124800000000L, 37137L, 48211200000000L, 37205L, 48297600000000L, 37272L, 48384000000000L, 37339L, 48470400000000L, 37406L, 48556800000000L, 37473L, 48643200000000L, 37540L, 48729600000000L, 37607L, 48816000000000L, 37674L, 48902400000000L, 37741L, 48988800000000L, 37808L, 49075200000000L, 37875L, 49161600000000L, 37942L, 49248000000000L, 38009L, 49334400000000L, 38076L, 49420800000000L, 38143L, 49507200000000L, 38210L, 49593600000000L, 38277L, 49680000000000L, 38344L, 49766400000000L, 38411L, 49852800000000L, 38478L, 49939200000000L, 38545L, 50025600000000L, 38613L, 50112000000000L, 38680L, 50198400000000L, 38747L, 50284800000000L, 38814L, 50371200000000L, 38881L, 50457600000000L, 38948L, 50544000000000L, 39016L, 50630400000000L, 39083L, 50716800000000L, 39150L, 50803200000000L, 39217L, 50889600000000L, 39284L, 50976000000000L, 39351L, 51062400000000L, 39418L, 51148800000000L, 39485L, 51235200000000L, 39552L, 51321600000000L, 39619L, 51408000000000L, 39687L, 51494400000000L, 39754L, 51580800000000L, 39821L, 51667200000000L, 39888L, 51753600000000L, 39956L, 51840000000000L, 40023L, 51926400000000L, 40090L, 52012800000000L, 40157L, 52099200000000L, 40224L, 52185600000000L, 40291L, 52272000000000L, 40358L, 52358400000000L, 40425L, 52444800000000L, 40492L, 52531200000000L, 40559L, 52617600000000L, 40626L, 52704000000000L, 40693L, 52790400000000L, 40760L, 52876800000000L, 40827L, 52963200000000L, 40894L, 53049600000000L, 40962L, 53136000000000L, 41029L, 53222400000000L, 41096L, 53308800000000L, 41163L, 53395200000000L, 41230L, 53481600000000L, 41297L, 53568000000000L, 41364L, 53654400000000L, 41431L, 53740800000000L, 41498L, 53827200000000L, 41565L, 53913600000000L, 41632L, 54000000000000L, 41699L, 54086400000000L, 41767L, 54172800000000L, 41834L, 54259200000000L, 41901L, 54345600000000L, 41968L, 54432000000000L, 42035L, 54518400000000L, 42102L, 54604800000000L, 42169L, 54691200000000L, 42236L, 54777600000000L, 42303L, 54864000000000L, 42370L, 54950400000000L, 42437L, 55036800000000L, 42504L, 55123200000000L, 42571L, 55209600000000L, 42638L, 55296000000000L, 42705L, 55382400000000L, 42772L, 55468800000000L, 42839L, 55555200000000L, 42906L, 55641600000000L, 42973L, 55728000000000L, 43040L, 55814400000000L, 43107L, 55900800000000L, 43174L, 55987200000000L, 43241L, 56073600000000L, 43308L, 56160000000000L, 43375L, 56246400000000L, 43442L, 56332800000000L, 43509L, 56419200000000L, 43576L, 56505600000000L, 43643L, 56592000000000L, 43710L, 56678400000000L, 43777L, 56764800000000L, 43844L, 56851200000000L, 43911L, 56937600000000L, 43978L, 57024000000000L, 44046L, 57110400000000L, 44113L, 57196800000000L, 44180L, 57283200000000L, 44247L, 57369600000000L, 44314L, 57456000000000L, 44381L, 57542400000000L, 44448L, 57628800000000L, 44516L, 57715200000000L, 44583L, 57801600000000L, 44650L, 57888000000000L, 44717L, 57974400000000L, 44784L, 58060800000000L, 44851L, 58147200000000L, 44918L, 58233600000000L, 44985L, 58320000000000L, 45052L, 58406400000000L, 45119L, 58492800000000L, 45186L, 58579200000000L, 45253L, 58665600000000L, 45320L, 58752000000000L, 45387L, 58838400000000L, 45454L, 58924800000000L, 45521L, 59011200000000L, 45588L, 59097600000000L, 45655L, 59184000000000L, 45722L, 59270400000000L, 45789L, 59356800000000L, 45856L, 59443200000000L, 45923L, 59529600000000L, 45990L, 59616000000000L, 46058L, 59702400000000L, 46125L, 59788800000000L, 46192L, 59875200000000L, 46259L, 59961600000000L, 46326L, 60048000000000L, 46393L, 60134400000000L, 46460L, 60220800000000L, 46527L, 60307200000000L, 46594L, 60393600000000L, 46661L, 60480000000000L, 46728L, 60566400000000L, 46795L, 60652800000000L, 46862L, 60739200000000L, 46929L, 60825600000000L, 46996L, 60912000000000L, 47063L, 60998400000000L, 47130L, 61084800000000L, 47197L, 61171200000000L, 47264L, 61257600000000L, 47331L, 61344000000000L, 47398L, 61430400000000L, 47465L, 61516800000000L, 47532L, 61603200000000L, 47599L, 61689600000000L, 47666L, 61776000000000L, 47733L, 61862400000000L, 47800L, 61948800000000L, 47867L, 62035200000000L, 47934L, 62121600000000L, 48001L, 62208000000000L, 48068L, 62294400000000L, 48135L, 62380800000000L, 48202L, 62467200000000L, 48269L, 62553600000000L, 48336L, 62640000000000L, 48403L, 62726400000000L, 48470L, 62812800000000L, 48537L, 62899200000000L, 48604L, 62985600000000L, 48671),
-                chunk("1972/2_1", 63072000000000L, 48738L, 63158400000000L, 48806L, 63244800000000L, 48873L, 63331200000000L, 48940L, 63417600000000L, 49007L, 63504000000000L, 49074L, 63590400000000L, 49142L, 63676800000000L, 49209L, 63763200000000L, 49276L, 63849600000000L, 49344L, 63936000000000L, 49411L, 64022400000000L, 49478L, 64108800000000L, 49545L, 64195200000000L, 49612L, 64281600000000L, 49679L, 64368000000000L, 49746L, 64454400000000L, 49813L, 64540800000000L, 49881L, 64627200000000L, 49948L, 64713600000000L, 50015L, 64800000000000L, 50082L, 64886400000000L, 50149),
-                chunk("1972/3_1", 64972800000000L, 50216L, 65059200000000L, 50283L, 65145600000000L, 50350L, 65232000000000L, 50417L, 65318400000000L, 50484L, 65404800000000L, 50551L, 65491200000000L, 50618L, 65577600000000L, 50685L, 65664000000000L, 50752L, 65750400000000L, 50819L, 65836800000000L, 50886L, 65923200000000L, 50953L, 66009600000000L, 51020L, 66096000000000L, 51087L, 66182400000000L, 51154L, 66268800000000L, 51221L, 66355200000000L, 51288L, 66441600000000L, 51355L, 66528000000000L, 51422L, 66614400000000L, 51489L, 66700800000000L, 51556L, 66787200000000L, 51623L, 66873600000000L, 51691L, 66960000000000L, 51758L, 67046400000000L, 51825L, 67132800000000L, 51892L, 67219200000000L, 51959L, 67305600000000L, 52026L, 67392000000000L, 52093L, 67478400000000L, 52160L, 67564800000000L, 52227L, 67651200000000L, 52294L, 67737600000000L, 52361L, 67824000000000L, 52429L, 67910400000000L, 52497L, 67996800000000L, 52564L, 68083200000000L, 52631L, 68169600000000L, 52698L, 68256000000000L, 52765L, 68342400000000L, 52832L, 68428800000000L, 52899L, 68515200000000L, 52966L, 68601600000000L, 53033L, 68688000000000L, 53100L, 68774400000000L, 53167L, 68860800000000L, 53234L, 68947200000000L, 53301L, 69033600000000L, 53368L, 69120000000000L, 53435L, 69206400000000L, 53502L, 69292800000000L, 53569L, 69379200000000L, 53636L, 69465600000000L, 53703L, 69552000000000L, 53770L, 69638400000000L, 53837L, 69724800000000L, 53904L, 69811200000000L, 53972L, 69897600000000L, 54039L, 69984000000000L, 54106L, 70070400000000L, 54173L, 70156800000000L, 54240L, 70243200000000L, 54307L, 70329600000000L, 54374L, 70416000000000L, 54441L, 70502400000000L, 54508L, 70588800000000L, 54575L, 70675200000000L, 54642L, 70761600000000L, 54709L, 70848000000000L, 54776L, 70934400000000L, 54843L, 71020800000000L, 54910L, 71107200000000L, 54977L, 71193600000000L, 55044L, 71280000000000L, 55111L, 71366400000000L, 55178L, 71452800000000L, 55246L, 71539200000000L, 55313L, 71625600000000L, 55380L, 71712000000000L, 55447L, 71798400000000L, 55514L, 71884800000000L, 55581L, 71971200000000L, 55648L, 72057600000000L, 55715L, 72144000000000L, 55782L, 72230400000000L, 55849L, 72316800000000L, 55916L, 72403200000000L, 55983L, 72489600000000L, 56050L, 72576000000000L, 56117L, 72662400000000L, 56184L, 72748800000000L, 56251L, 72835200000000L, 56318L, 72921600000000L, 56385L, 73008000000000L, 56452L, 73094400000000L, 56519L, 73180800000000L, 56586L, 73267200000000L, 56653L, 73353600000000L, 56720L, 73440000000000L, 56787L, 73526400000000L, 56854L, 73612800000000L, 56921L, 73699200000000L, 56988L, 73785600000000L, 57055L, 73872000000000L, 57122L, 73958400000000L, 57189L, 74044800000000L, 57256L, 74131200000000L, 57323L, 74217600000000L, 57390L, 74304000000000L, 57457L, 74390400000000L, 57524L, 74476800000000L, 57591L, 74563200000000L, 57658L, 74649600000000L, 57725L, 74736000000000L, 57792L, 74822400000000L, 57859L, 74908800000000L, 57926L, 74995200000000L, 57993L, 75081600000000L, 58060L, 75168000000000L, 58127L, 75254400000000L, 58194L, 75340800000000L, 58261L, 75427200000000L, 58328L, 75513600000000L, 58395L, 75600000000000L, 58462L, 75686400000000L, 58529L, 75772800000000L, 58596L, 75859200000000L, 58663L, 75945600000000L, 58731L, 76032000000000L, 58798L, 76118400000000L, 58865L, 76204800000000L, 58933L, 76291200000000L, 59000L, 76377600000000L, 59068L, 76464000000000L, 59135L, 76550400000000L, 59202L, 76636800000000L, 59269L, 76723200000000L, 59336L, 76809600000000L, 59403L, 76896000000000L, 59470L, 76982400000000L, 59537L, 77068800000000L, 59604L, 77155200000000L, 59671L, 77241600000000L, 59738L, 77328000000000L, 59805L, 77414400000000L, 59872L, 77500800000000L, 59939L, 77587200000000L, 60007L, 77673600000000L, 60074L, 77760000000000L, 60142L, 77846400000000L, 60209L, 77932800000000L, 60276L, 78019200000000L, 60343L, 78105600000000L, 60410L, 78192000000000L, 60477L, 78278400000000L, 60544L, 78364800000000L, 60611L, 78451200000000L, 60678L, 78537600000000L, 60745L, 78624000000000L, 60812L, 78710400000000L, 60879L, 78796800000000L, 60946L, 78883200000000L, 61013L, 78969600000000L, 61080L, 79056000000000L, 61147L, 79142400000000L, 61215L, 79228800000000L, 61282L, 79315200000000L, 61349L, 79401600000000L, 61416L, 79488000000000L, 61483L, 79574400000000L, 61550L, 79660800000000L, 61617L, 79747200000000L, 61684L, 79833600000000L, 61751L, 79920000000000L, 61818L, 80006400000000L, 61885L, 80092800000000L, 61952L, 80179200000000L, 62019L, 80265600000000L, 62086L, 80352000000000L, 62153L, 80438400000000L, 62220L, 80524800000000L, 62287L, 80611200000000L, 62354L, 80697600000000L, 62421L, 80784000000000L, 62489L, 80870400000000L, 62556L, 80956800000000L, 62625L, 81043200000000L, 62692L, 81129600000000L, 62759L, 81216000000000L, 62826L, 81302400000000L, 62893L, 81388800000000L, 62960L, 81475200000000L, 63027L, 81561600000000L, 63094L, 81648000000000L, 63161L, 81734400000000L, 63228L, 81820800000000L, 63295L, 81907200000000L, 63362L, 81993600000000L, 63429L, 82080000000000L, 63496L, 82166400000000L, 63563L, 82252800000000L, 63630L, 82339200000000L, 63699L, 82425600000000L, 63766L, 82512000000000L, 63833L, 82598400000000L, 63900L, 82684800000000L, 63967L, 82771200000000L, 64034L, 82857600000000L, 64101L, 82944000000000L, 64168L, 83030400000000L, 64236L, 83116800000000L, 64303L, 83203200000000L, 64371L, 83289600000000L, 64438L, 83376000000000L, 64505L, 83462400000000L, 64572L, 83548800000000L, 64639L, 83635200000000L, 64706L, 83721600000000L, 64774L, 83808000000000L, 64841L, 83894400000000L, 64908L, 83980800000000L, 64975L, 84067200000000L, 65042L, 84153600000000L, 65109L, 84240000000000L, 65176L, 84326400000000L, 65244L, 84412800000000L, 65311L, 84499200000000L, 65378L, 84585600000000L, 65445L, 84672000000000L, 65512L, 84758400000000L, 65579L, 84844800000000L, 65646L, 84931200000000L, 65714L, 85017600000000L, 65781L, 85104000000000L, 65848L, 85190400000000L, 65915L, 85276800000000L, 65982L, 85363200000000L, 66049L, 85449600000000L, 66116L, 85536000000000L, 66183L, 85622400000000L, 66250L, 85708800000000L, 66317L, 85795200000000L, 66384L, 85881600000000L, 66452L, 85968000000000L, 66519L, 86054400000000L, 66586L, 86140800000000L, 66653L, 86227200000000L, 66720L, 86313600000000L, 66787L, 86400000000000L, 66854)
-        );
+    public void testImportFileSetsDateColumnToNullIfCsvStructureCheckCantDetectACommonFormat() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab38 ( line string, ts timestamp, d date, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab38", "test-quotes-small.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process();
+            }
+
+            assertQuery("line\tts\td\ttxt\n" +
+                            "line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r\nspanning two lines\n" +
+                            "line2\t2022-05-11T11:52:00.000000Z\t\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\n" +
+                            "line3\t2022-05-11T11:52:00.001000Z\t\tsingle line text without quotes\n",
+                    "select * from tab38", null, "ts", true, true, true);
+        });
     }
 
     @Test
-    public void testIndexChunksInReverseOrderBigCsvByYear() throws Exception {
-        assertIndexChunks(4, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", PartitionBy.YEAR, "test-quotes-big-reverseorder.csv",
-                chunk("1970/2_1", 21600000000000L, 50149, 21686400000000L, 50082, 21772800000000L, 50015, 21859200000000L, 49948, 21945600000000L, 49881, 22032000000000L, 49813, 22118400000000L, 49746, 22204800000000L, 49679, 22291200000000L, 49612, 22377600000000L, 49545, 22464000000000L, 49478, 22550400000000L, 49411, 22636800000000L, 49344, 22723200000000L, 49276, 22809600000000L, 49209, 22896000000000L, 49142, 22982400000000L, 49074, 23068800000000L, 49007, 23155200000000L, 48940, 23241600000000L, 48873, 23328000000000L, 48806, 23414400000000L, 48738, 23500800000000L, 48671, 23587200000000L, 48604, 23673600000000L, 48537, 23760000000000L, 48470, 23846400000000L, 48403, 23932800000000L, 48336, 24019200000000L, 48269, 24105600000000L, 48202, 24192000000000L, 48135, 24278400000000L, 48068, 24364800000000L, 48001, 24451200000000L, 47934, 24537600000000L, 47867, 24624000000000L, 47800, 24710400000000L, 47733, 24796800000000L, 47666, 24883200000000L, 47599, 24969600000000L, 47532, 25056000000000L, 47465, 25142400000000L, 47398, 25228800000000L, 47331, 25315200000000L, 47264, 25401600000000L, 47197, 25488000000000L, 47130, 25574400000000L, 47063, 25660800000000L, 46996, 25747200000000L, 46929, 25833600000000L, 46862, 25920000000000L, 46795, 26006400000000L, 46728, 26092800000000L, 46661, 26179200000000L, 46594, 26265600000000L, 46527, 26352000000000L, 46460, 26438400000000L, 46393, 26524800000000L, 46326, 26611200000000L, 46259, 26697600000000L, 46192, 26784000000000L, 46125, 26870400000000L, 46058, 26956800000000L, 45990, 27043200000000L, 45923, 27129600000000L, 45856, 27216000000000L, 45789, 27302400000000L, 45722, 27388800000000L, 45655, 27475200000000L, 45588, 27561600000000L, 45521, 27648000000000L, 45454, 27734400000000L, 45387, 27820800000000L, 45320, 27907200000000L, 45253, 27993600000000L, 45186, 28080000000000L, 45119, 28166400000000L, 45052, 28252800000000L, 44985, 28339200000000L, 44918, 28425600000000L, 44851, 28512000000000L, 44784, 28598400000000L, 44717, 28684800000000L, 44650, 28771200000000L, 44583, 28857600000000L, 44516, 28944000000000L, 44448, 29030400000000L, 44381, 29116800000000L, 44314, 29203200000000L, 44247, 29289600000000L, 44180, 29376000000000L, 44113, 29462400000000L, 44046, 29548800000000L, 43978, 29635200000000L, 43911, 29721600000000L, 43844, 29808000000000L, 43777, 29894400000000L, 43710, 29980800000000L, 43643, 30067200000000L, 43576, 30153600000000L, 43509, 30240000000000L, 43442, 30326400000000L, 43375, 30412800000000L, 43308, 30499200000000L, 43241, 30585600000000L, 43174, 30672000000000L, 43107, 30758400000000L, 43040, 30844800000000L, 42973, 30931200000000L, 42906, 31017600000000L, 42839, 31104000000000L, 42772, 31190400000000L, 42705, 31276800000000L, 42638, 31363200000000L, 42571, 31449600000000L, 42504),
-                chunk("1970/3_1", 86400000000L, 66854, 172800000000L, 66787, 259200000000L, 66720, 345600000000L, 66653, 432000000000L, 66586, 518400000000L, 66519, 604800000000L, 66452, 691200000000L, 66384, 777600000000L, 66317, 864000000000L, 66250, 950400000000L, 66183, 1036800000000L, 66116, 1123200000000L, 66049, 1209600000000L, 65982, 1296000000000L, 65915, 1382400000000L, 65848, 1468800000000L, 65781, 1555200000000L, 65714, 1641600000000L, 65646, 1728000000000L, 65579, 1814400000000L, 65512, 1900800000000L, 65445, 1987200000000L, 65378, 2073600000000L, 65311, 2160000000000L, 65244, 2246400000000L, 65176, 2332800000000L, 65109, 2419200000000L, 65042, 2505600000000L, 64975, 2592000000000L, 64908, 2678400000000L, 64841, 2764800000000L, 64774, 2851200000000L, 64706, 2937600000000L, 64639, 3024000000000L, 64572, 3110400000000L, 64505, 3196800000000L, 64438, 3283200000000L, 64371, 3369600000000L, 64303, 3456000000000L, 64236, 3542400000000L, 64168, 3628800000000L, 64101, 3715200000000L, 64034, 3801600000000L, 63967, 3888000000000L, 63900, 3974400000000L, 63833, 4060800000000L, 63766, 4147200000000L, 63699, 4233600000000L, 63630, 4320000000000L, 63563, 4406400000000L, 63496, 4492800000000L, 63429, 4579200000000L, 63362, 4665600000000L, 63295, 4752000000000L, 63228, 4838400000000L, 63161, 4924800000000L, 63094, 5011200000000L, 63027, 5097600000000L, 62960, 5184000000000L, 62893, 5270400000000L, 62826, 5356800000000L, 62759, 5443200000000L, 62692, 5529600000000L, 62625, 5616000000000L, 62556, 5702400000000L, 62489, 5788800000000L, 62421, 5875200000000L, 62354, 5961600000000L, 62287, 6048000000000L, 62220, 6134400000000L, 62153, 6220800000000L, 62086, 6307200000000L, 62019, 6393600000000L, 61952, 6480000000000L, 61885, 6566400000000L, 61818, 6652800000000L, 61751, 6739200000000L, 61684, 6825600000000L, 61617, 6912000000000L, 61550, 6998400000000L, 61483, 7084800000000L, 61416, 7171200000000L, 61349, 7257600000000L, 61282, 7344000000000L, 61215, 7430400000000L, 61147, 7516800000000L, 61080, 7603200000000L, 61013, 7689600000000L, 60946, 7776000000000L, 60879, 7862400000000L, 60812, 7948800000000L, 60745, 8035200000000L, 60678, 8121600000000L, 60611, 8208000000000L, 60544, 8294400000000L, 60477, 8380800000000L, 60410, 8467200000000L, 60343, 8553600000000L, 60276, 8640000000000L, 60209, 8726400000000L, 60142, 8812800000000L, 60074, 8899200000000L, 60007, 8985600000000L, 59939, 9072000000000L, 59872, 9158400000000L, 59805, 9244800000000L, 59738, 9331200000000L, 59671, 9417600000000L, 59604, 9504000000000L, 59537, 9590400000000L, 59470, 9676800000000L, 59403, 9763200000000L, 59336, 9849600000000L, 59269, 9936000000000L, 59202, 10022400000000L, 59135, 10108800000000L, 59068, 10195200000000L, 59000L, 10281600000000L, 58933, 10368000000000L, 58865, 10454400000000L, 58798, 10540800000000L, 58731, 10627200000000L, 58663, 10713600000000L, 58596, 10800000000000L, 58529, 10886400000000L, 58462, 10972800000000L, 58395, 11059200000000L, 58328, 11145600000000L, 58261, 11232000000000L, 58194, 11318400000000L, 58127, 11404800000000L, 58060, 11491200000000L, 57993, 11577600000000L, 57926, 11664000000000L, 57859, 11750400000000L, 57792, 11836800000000L, 57725, 11923200000000L, 57658, 12009600000000L, 57591, 12096000000000L, 57524, 12182400000000L, 57457, 12268800000000L, 57390, 12355200000000L, 57323, 12441600000000L, 57256, 12528000000000L, 57189, 12614400000000L, 57122, 12700800000000L, 57055, 12787200000000L, 56988, 12873600000000L, 56921, 12960000000000L, 56854, 13046400000000L, 56787, 13132800000000L, 56720, 13219200000000L, 56653, 13305600000000L, 56586, 13392000000000L, 56519, 13478400000000L, 56452, 13564800000000L, 56385, 13651200000000L, 56318, 13737600000000L, 56251, 13824000000000L, 56184, 13910400000000L, 56117, 13996800000000L, 56050, 14083200000000L, 55983, 14169600000000L, 55916, 14256000000000L, 55849, 14342400000000L, 55782, 14428800000000L, 55715, 14515200000000L, 55648, 14601600000000L, 55581, 14688000000000L, 55514, 14774400000000L, 55447, 14860800000000L, 55380, 14947200000000L, 55313, 15033600000000L, 55246, 15120000000000L, 55178, 15206400000000L, 55111, 15292800000000L, 55044, 15379200000000L, 54977, 15465600000000L, 54910, 15552000000000L, 54843, 15638400000000L, 54776, 15724800000000L, 54709, 15811200000000L, 54642, 15897600000000L, 54575, 15984000000000L, 54508, 16070400000000L, 54441, 16156800000000L, 54374, 16243200000000L, 54307, 16329600000000L, 54240, 16416000000000L, 54173, 16502400000000L, 54106, 16588800000000L, 54039, 16675200000000L, 53972, 16761600000000L, 53904, 16848000000000L, 53837, 16934400000000L, 53770, 17020800000000L, 53703, 17107200000000L, 53636, 17193600000000L, 53569, 17280000000000L, 53502, 17366400000000L, 53435, 17452800000000L, 53368, 17539200000000L, 53301, 17625600000000L, 53234, 17712000000000L, 53167, 17798400000000L, 53100, 17884800000000L, 53033, 17971200000000L, 52966, 18057600000000L, 52899, 18144000000000L, 52832, 18230400000000L, 52765, 18316800000000L, 52698, 18403200000000L, 52631, 18489600000000L, 52564, 18576000000000L, 52497, 18662400000000L, 52429, 18748800000000L, 52361, 18835200000000L, 52294, 18921600000000L, 52227, 19008000000000L, 52160, 19094400000000L, 52093, 19180800000000L, 52026, 19267200000000L, 51959, 19353600000000L, 51892, 19440000000000L, 51825, 19526400000000L, 51758, 19612800000000L, 51691, 19699200000000L, 51623, 19785600000000L, 51556, 19872000000000L, 51489, 19958400000000L, 51422, 20044800000000L, 51355, 20131200000000L, 51288, 20217600000000L, 51221, 20304000000000L, 51154, 20390400000000L, 51087, 20476800000000L, 51020, 20563200000000L, 50953, 20649600000000L, 50886, 20736000000000L, 50819, 20822400000000L, 50752, 20908800000000L, 50685, 20995200000000L, 50618, 21081600000000L, 50551, 21168000000000L, 50484, 21254400000000L, 50417, 21340800000000L, 50350, 21427200000000L, 50283, 21513600000000L, 50216),
-                chunk("1971/1_1", 43113600000000L, 33447, 43200000000000L, 33380, 43286400000000L, 33313, 43372800000000L, 33246, 43459200000000L, 33179, 43545600000000L, 33112, 43632000000000L, 33045, 43718400000000L, 32978, 43804800000000L, 32911, 43891200000000L, 32844, 43977600000000L, 32777, 44064000000000L, 32710, 44150400000000L, 32643, 44236800000000L, 32575, 44323200000000L, 32508, 44409600000000L, 32441, 44496000000000L, 32374, 44582400000000L, 32307, 44668800000000L, 32240, 44755200000000L, 32173, 44841600000000L, 32106, 44928000000000L, 32039, 45014400000000L, 31972, 45100800000000L, 31905, 45187200000000L, 31838, 45273600000000L, 31770, 45360000000000L, 31703, 45446400000000L, 31636, 45532800000000L, 31569, 45619200000000L, 31502, 45705600000000L, 31435, 45792000000000L, 31368, 45878400000000L, 31301, 45964800000000L, 31234, 46051200000000L, 31167, 46137600000000L, 31100, 46224000000000L, 31033, 46310400000000L, 30966, 46396800000000L, 30899, 46483200000000L, 30832, 46569600000000L, 30765, 46656000000000L, 30698, 46742400000000L, 30631, 46828800000000L, 30564, 46915200000000L, 30497, 47001600000000L, 30430, 47088000000000L, 30363, 47174400000000L, 30296, 47260800000000L, 30229, 47347200000000L, 30160, 47433600000000L, 30093, 47520000000000L, 30026, 47606400000000L, 29959, 47692800000000L, 29892, 47779200000000L, 29825, 47865600000000L, 29758, 47952000000000L, 29690, 48038400000000L, 29622, 48124800000000L, 29555, 48211200000000L, 29488, 48297600000000L, 29421, 48384000000000L, 29353, 48470400000000L, 29286, 48556800000000L, 29219, 48643200000000L, 29152, 48729600000000L, 29085, 48816000000000L, 29018, 48902400000000L, 28951, 48988800000000L, 28884, 49075200000000L, 28817, 49161600000000L, 28750, 49248000000000L, 28683, 49334400000000L, 28616, 49420800000000L, 28549, 49507200000000L, 28482, 49593600000000L, 28414, 49680000000000L, 28347, 49766400000000L, 28278, 49852800000000L, 28210, 49939200000000L, 28143, 50025600000000L, 28076, 50112000000000L, 28009, 50198400000000L, 27942, 50284800000000L, 27875, 50371200000000L, 27808, 50457600000000L, 27741, 50544000000000L, 27674, 50630400000000L, 27607, 50716800000000L, 27539, 50803200000000L, 27472, 50889600000000L, 27405, 50976000000000L, 27337, 51062400000000L, 27270, 51148800000000L, 27203, 51235200000000L, 27136, 51321600000000L, 27069, 51408000000000L, 27001, 51494400000000L, 26934, 51580800000000L, 26867, 51667200000000L, 26800, 51753600000000L, 26733, 51840000000000L, 26665, 51926400000000L, 26598, 52012800000000L, 26531, 52099200000000L, 26464, 52185600000000L, 26397, 52272000000000L, 26330, 52358400000000L, 26263, 52444800000000L, 26196, 52531200000000L, 26129, 52617600000000L, 26062, 52704000000000L, 25994, 52790400000000L, 25927, 52876800000000L, 25859, 52963200000000L, 25792, 53049600000000L, 25725, 53136000000000L, 25658, 53222400000000L, 25591, 53308800000000L, 25524, 53395200000000L, 25457, 53481600000000L, 25390, 53568000000000L, 25323, 53654400000000L, 25256, 53740800000000L, 25189, 53827200000000L, 25122, 53913600000000L, 25054, 54000000000000L, 24987, 54086400000000L, 24920, 54172800000000L, 24853, 54259200000000L, 24786, 54345600000000L, 24718, 54432000000000L, 24651, 54518400000000L, 24584, 54604800000000L, 24517, 54691200000000L, 24450, 54777600000000L, 24383, 54864000000000L, 24316, 54950400000000L, 24249, 55036800000000L, 24182, 55123200000000L, 24115, 55209600000000L, 24047, 55296000000000L, 23980, 55382400000000L, 23913, 55468800000000L, 23845, 55555200000000L, 23778, 55641600000000L, 23711, 55728000000000L, 23643, 55814400000000L, 23575, 55900800000000L, 23508, 55987200000000L, 23441, 56073600000000L, 23374, 56160000000000L, 23307, 56246400000000L, 23240, 56332800000000L, 23172, 56419200000000L, 23105, 56505600000000L, 23038, 56592000000000L, 22971, 56678400000000L, 22904, 56764800000000L, 22837, 56851200000000L, 22770, 56937600000000L, 22703, 57024000000000L, 22636, 57110400000000L, 22569, 57196800000000L, 22502, 57283200000000L, 22435, 57369600000000L, 22368, 57456000000000L, 22301, 57542400000000L, 22234, 57628800000000L, 22167, 57715200000000L, 22100, 57801600000000L, 22031, 57888000000000L, 21964, 57974400000000L, 21897, 58060800000000L, 21830, 58147200000000L, 21763, 58233600000000L, 21696, 58320000000000L, 21629, 58406400000000L, 21560, 58492800000000L, 21493, 58579200000000L, 21426, 58665600000000L, 21358, 58752000000000L, 21291, 58838400000000L, 21224, 58924800000000L, 21157, 59011200000000L, 21090, 59097600000000L, 21023, 59184000000000L, 20956, 59270400000000L, 20889, 59356800000000L, 20822, 59443200000000L, 20755, 59529600000000L, 20688, 59616000000000L, 20621, 59702400000000L, 20554, 59788800000000L, 20487, 59875200000000L, 20420, 59961600000000L, 20352, 60048000000000L, 20285, 60134400000000L, 20218, 60220800000000L, 20151, 60307200000000L, 20084, 60393600000000L, 20017, 60480000000000L, 19950, 60566400000000L, 19883, 60652800000000L, 19816, 60739200000000L, 19749, 60825600000000L, 19682, 60912000000000L, 19615, 60998400000000L, 19548, 61084800000000L, 19481, 61171200000000L, 19414, 61257600000000L, 19347, 61344000000000L, 19280, 61430400000000L, 19213, 61516800000000L, 19146, 61603200000000L, 19079, 61689600000000L, 19012, 61776000000000L, 18945, 61862400000000L, 18878, 61948800000000L, 18810, 62035200000000L, 18743, 62121600000000L, 18676, 62208000000000L, 18609, 62294400000000L, 18542, 62380800000000L, 18475, 62467200000000L, 18408, 62553600000000L, 18341, 62640000000000L, 18274, 62726400000000L, 18207, 62812800000000L, 18138, 62899200000000L, 18071, 62985600000000L, 18004),
-                chunk("1971/2_1", 31536000000000L, 42437, 31622400000000L, 42370, 31708800000000L, 42303, 31795200000000L, 42236, 31881600000000L, 42169, 31968000000000L, 42102, 32054400000000L, 42035, 32140800000000L, 41968, 32227200000000L, 41901, 32313600000000L, 41834, 32400000000000L, 41767, 32486400000000L, 41699, 32572800000000L, 41632, 32659200000000L, 41565, 32745600000000L, 41498, 32832000000000L, 41431, 32918400000000L, 41364, 33004800000000L, 41297, 33091200000000L, 41230, 33177600000000L, 41163, 33264000000000L, 41096, 33350400000000L, 41029, 33436800000000L, 40962, 33523200000000L, 40894, 33609600000000L, 40827, 33696000000000L, 40760, 33782400000000L, 40693, 33868800000000L, 40626, 33955200000000L, 40559, 34041600000000L, 40492, 34128000000000L, 40425, 34214400000000L, 40358, 34300800000000L, 40291, 34387200000000L, 40224, 34473600000000L, 40157, 34560000000000L, 40090, 34646400000000L, 40023, 34732800000000L, 39956, 34819200000000L, 39888, 34905600000000L, 39821, 34992000000000L, 39754, 35078400000000L, 39687, 35164800000000L, 39619, 35251200000000L, 39552, 35337600000000L, 39485, 35424000000000L, 39418, 35510400000000L, 39351, 35596800000000L, 39284, 35683200000000L, 39217, 35769600000000L, 39150, 35856000000000L, 39083, 35942400000000L, 39016, 36028800000000L, 38948, 36115200000000L, 38881, 36201600000000L, 38814, 36288000000000L, 38747, 36374400000000L, 38680, 36460800000000L, 38613, 36547200000000L, 38545, 36633600000000L, 38478, 36720000000000L, 38411, 36806400000000L, 38344, 36892800000000L, 38277, 36979200000000L, 38210, 37065600000000L, 38143, 37152000000000L, 38076, 37238400000000L, 38009, 37324800000000L, 37942, 37411200000000L, 37875, 37497600000000L, 37808, 37584000000000L, 37741, 37670400000000L, 37674, 37756800000000L, 37607, 37843200000000L, 37540, 37929600000000L, 37473, 38016000000000L, 37406, 38102400000000L, 37339, 38188800000000L, 37272, 38275200000000L, 37205, 38361600000000L, 37137, 38448000000000L, 37069, 38534400000000L, 37002, 38620800000000L, 36935, 38707200000000L, 36868, 38793600000000L, 36801, 38880000000000L, 36733, 38966400000000L, 36666, 39052800000000L, 36599, 39139200000000L, 36531, 39225600000000L, 36464, 39312000000000L, 36397, 39398400000000L, 36330, 39484800000000L, 36263, 39571200000000L, 36196, 39657600000000L, 36129, 39744000000000L, 36062, 39830400000000L, 35995, 39916800000000L, 35928, 40003200000000L, 35860, 40089600000000L, 35793, 40176000000000L, 35726, 40262400000000L, 35659, 40348800000000L, 35592, 40435200000000L, 35525, 40521600000000L, 35458, 40608000000000L, 35391, 40694400000000L, 35324, 40780800000000L, 35257, 40867200000000L, 35190, 40953600000000L, 35123, 41040000000000L, 35056, 41126400000000L, 34989, 41212800000000L, 34921, 41299200000000L, 34854, 41385600000000L, 34787, 41472000000000L, 34720, 41558400000000L, 34653, 41644800000000L, 34586, 41731200000000L, 34519, 41817600000000L, 34452, 41904000000000L, 34385, 41990400000000L, 34318, 42076800000000L, 34251, 42163200000000L, 34184, 42249600000000L, 34117, 42336000000000L, 34050, 42422400000000L, 33983, 42508800000000L, 33916, 42595200000000L, 33849, 42681600000000L, 33782, 42768000000000L, 33715, 42854400000000L, 33648, 42940800000000L, 33581, 43027200000000L, 33514),
-                chunk("1972/0_1", 64627200000000L, 16730, 64713600000000L, 16663, 64800000000000L, 16596, 64886400000000L, 16529, 64972800000000L, 16462, 65059200000000L, 16395, 65145600000000L, 16328, 65232000000000L, 16261, 65318400000000L, 16194, 65404800000000L, 16127, 65491200000000L, 16060, 65577600000000L, 15993, 65664000000000L, 15926, 65750400000000L, 15859, 65836800000000L, 15792, 65923200000000L, 15725, 66009600000000L, 15657, 66096000000000L, 15590, 66182400000000L, 15523, 66268800000000L, 15455, 66355200000000L, 15388, 66441600000000L, 15321, 66528000000000L, 15254, 66614400000000L, 15187, 66700800000000L, 15120, 66787200000000L, 15052, 66873600000000L, 14985, 66960000000000L, 14918, 67046400000000L, 14851, 67132800000000L, 14783, 67219200000000L, 14716, 67305600000000L, 14649, 67392000000000L, 14581, 67478400000000L, 14514, 67564800000000L, 14447, 67651200000000L, 14380, 67737600000000L, 14313, 67824000000000L, 14246, 67910400000000L, 14179, 67996800000000L, 14112, 68083200000000L, 14045, 68169600000000L, 13978, 68256000000000L, 13911, 68342400000000L, 13844, 68428800000000L, 13777, 68515200000000L, 13710, 68601600000000L, 13642, 68688000000000L, 13575, 68774400000000L, 13508, 68860800000000L, 13441, 68947200000000L, 13374, 69033600000000L, 13307, 69120000000000L, 13240, 69206400000000L, 13172, 69292800000000L, 13104, 69379200000000L, 13037, 69465600000000L, 12970, 69552000000000L, 12903, 69638400000000L, 12836, 69724800000000L, 12769, 69811200000000L, 12702, 69897600000000L, 12635, 69984000000000L, 12568, 70070400000000L, 12501, 70156800000000L, 12434, 70243200000000L, 12366, 70329600000000L, 12299, 70416000000000L, 12231, 70502400000000L, 12164, 70588800000000L, 12097, 70675200000000L, 12030, 70761600000000L, 11963, 70848000000000L, 11896, 70934400000000L, 11829, 71020800000000L, 11762, 71107200000000L, 11695, 71193600000000L, 11628, 71280000000000L, 11561, 71366400000000L, 11494, 71452800000000L, 11427, 71539200000000L, 11360, 71625600000000L, 11293, 71712000000000L, 11226, 71798400000000L, 11158, 71884800000000L, 11091, 71971200000000L, 11024, 72057600000000L, 10957, 72144000000000L, 10890, 72230400000000L, 10823, 72316800000000L, 10756, 72403200000000L, 10689, 72489600000000L, 10622, 72576000000000L, 10555, 72662400000000L, 10488, 72748800000000L, 10421, 72835200000000L, 10354, 72921600000000L, 10287, 73008000000000L, 10218, 73094400000000L, 10151, 73180800000000L, 10084, 73267200000000L, 10017, 73353600000000L, 9949, 73440000000000L, 9882, 73526400000000L, 9815, 73612800000000L, 9748, 73699200000000L, 9681, 73785600000000L, 9614, 73872000000000L, 9547, 73958400000000L, 9480, 74044800000000L, 9412, 74131200000000L, 9345, 74217600000000L, 9278, 74304000000000L, 9210, 74390400000000L, 9143, 74476800000000L, 9076, 74563200000000L, 9009, 74649600000000L, 8942, 74736000000000L, 8875, 74822400000000L, 8808, 74908800000000L, 8741, 74995200000000L, 8674, 75081600000000L, 8607, 75168000000000L, 8540, 75254400000000L, 8473, 75340800000000L, 8406, 75427200000000L, 8339, 75513600000000L, 8271, 75600000000000L, 8204, 75686400000000L, 8137, 75772800000000L, 8070, 75859200000000L, 8003, 75945600000000L, 7936, 76032000000000L, 7869, 76118400000000L, 7802, 76204800000000L, 7735, 76291200000000L, 7668, 76377600000000L, 7601, 76464000000000L, 7534, 76550400000000L, 7466, 76636800000000L, 7399, 76723200000000L, 7332, 76809600000000L, 7265, 76896000000000L, 7198, 76982400000000L, 7131, 77068800000000L, 7064, 77155200000000L, 6997, 77241600000000L, 6930, 77328000000000L, 6863, 77414400000000L, 6796, 77500800000000L, 6729, 77587200000000L, 6662, 77673600000000L, 6595, 77760000000000L, 6528, 77846400000000L, 6461, 77932800000000L, 6396, 78019200000000L, 6331, 78105600000000L, 6266, 78192000000000L, 6201, 78278400000000L, 6136, 78364800000000L, 6071, 78451200000000L, 6006, 78537600000000L, 5941, 78624000000000L, 5876, 78710400000000L, 5811, 78796800000000L, 5746, 78883200000000L, 5681, 78969600000000L, 5616, 79056000000000L, 5551, 79142400000000L, 5486, 79228800000000L, 5421, 79315200000000L, 5356, 79401600000000L, 5291, 79488000000000L, 5226, 79574400000000L, 5161, 79660800000000L, 5096, 79747200000000L, 5031, 79833600000000L, 4965, 79920000000000L, 4900, 80006400000000L, 4835, 80092800000000L, 4770, 80179200000000L, 4705, 80265600000000L, 4640, 80352000000000L, 4575, 80438400000000L, 4510, 80524800000000L, 4445, 80611200000000L, 4380, 80697600000000L, 4315, 80784000000000L, 4250, 80870400000000L, 4185, 80956800000000L, 4120, 81043200000000L, 4055, 81129600000000L, 3990, 81216000000000L, 3925, 81302400000000L, 3860, 81388800000000L, 3794, 81475200000000L, 3729, 81561600000000L, 3664, 81648000000000L, 3599, 81734400000000L, 3534, 81820800000000L, 3469, 81907200000000L, 3404, 81993600000000L, 3339, 82080000000000L, 3274, 82166400000000L, 3208, 82252800000000L, 3143, 82339200000000L, 3078, 82425600000000L, 3013, 82512000000000L, 2948, 82598400000000L, 2883, 82684800000000L, 2818, 82771200000000L, 2753, 82857600000000L, 2688, 82944000000000L, 2623, 83030400000000L, 2558, 83116800000000L, 2493, 83203200000000L, 2428, 83289600000000L, 2363, 83376000000000L, 2298, 83462400000000L, 2233, 83548800000000L, 2168, 83635200000000L, 2102, 83721600000000L, 2037, 83808000000000L, 1972, 83894400000000L, 1902, 83980800000000L, 1836, 84067200000000L, 1771, 84153600000000L, 1705, 84240000000000L, 1640, 84326400000000L, 1575, 84412800000000L, 1510, 84499200000000L, 1445, 84585600000000L, 1380, 84672000000000L, 1315, 84758400000000L, 1249, 84844800000000L, 1184, 84931200000000L, 1119, 85017600000000L, 1054, 85104000000000L, 989, 85190400000000L, 924, 85276800000000L, 859, 85363200000000L, 794, 85449600000000L, 728, 85536000000000L, 663, 85622400000000L, 598, 85708800000000L, 535, 85795200000000L, 472, 85881600000000L, 409, 85968000000000L, 346, 86054400000000L, 283, 86140800000000L, 220, 86227200000000L, 157, 86313600000000L, 94, 86400000000000L, 31),
-                chunk("1972/1_1", 63072000000000L, 17937, 63158400000000L, 17870, 63244800000000L, 17803, 63331200000000L, 17736, 63417600000000L, 17669, 63504000000000L, 17602, 63590400000000L, 17535, 63676800000000L, 17468, 63763200000000L, 17401, 63849600000000L, 17334, 63936000000000L, 17267, 64022400000000L, 17200, 64108800000000L, 17133, 64195200000000L, 17066, 64281600000000L, 16999, 64368000000000L, 16931, 64454400000000L, 16864, 64540800000000L, 16797)
-        );
+    public void testImportFileSkipsLinesLongerThan65kChars() throws Exception {
+        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab ( ts timestamp, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of("tab", "test-row-over-65k.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
+                importer.process();
+            }
+            assertQuery("ts\tdescription\n" +
+                            "2022-05-11T11:52:00.000000Z\tb\n",
+                    "select * from tab",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderButDifferentColumnOrderWhenTargetTableDoesExistSuccess() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab51 ( ts timestamp, line string, d double, description string ) timestamp(ts) partition by month;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab51", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", null, true);
+                importer.process();
+            }
+
+            assertQuery("count\n1000\n",
+                    "select count(*) from tab51", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderButInputPartitionByNotMatchingTargetTables() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab45 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab45", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertEquals("declared partition by unit doesn't match table's", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderButMissingTimestampColumn() throws Exception {
+        testImportThrowsException("tabex2", "test-quotes-big.csv", PartitionBy.DAY, "ts1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "timestamp column 'ts1' not found in file header");
+    }
+
+    @Test
+    public void testImportFileWithHeaderButMissingTimestampColumnName() throws Exception {
+        testImportThrowsException("test44", "test-quotes-big.csv", PartitionBy.MONTH, null, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "timestamp column must be set when importing to new table");
+    }
+
+    @Test
+    public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableDoesntExist() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab49", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertEquals("partition by unit must be set when importing to new table", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableIsNotPartitioned() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab46 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab46", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertEquals("target table is not partitioned", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderButPartitionBySetToNone() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab48", "test-quotes-big.csv", 1, PartitionBy.NONE, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("partition strategy for parallel import cannot be NONE"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderButTargetTableIsNotPartitioned2() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab47 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab47", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                Assert.assertEquals("target table is not partitioned", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderButWrongTypeOfTimestampColumn() throws Exception {
+        testImportThrowsException("test44", "test-quotes-big.csv", PartitionBy.MONTH, "d", null, "column is not a timestamp [no=2, name='d']");
+    }
+
+    @Test
+    public void testImportFileWithHeaderIntoExistingTableFailsBecauseInputColumnCountIsLargerThanTables() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab59 ( line string, ts timestamp, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab59", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+                Assert.fail("exception expected");
+            } catch (Exception e) {
+                Assert.assertEquals("column count mismatch [textColumnCount=4, tableColumnCount=3, table=tab59]", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderIntoExistingTableWhenInputColumnCountIsSmallerThanTablesSucceedsAndInsertsNullIntoMissingColumns() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab58 ( line string, ts timestamp, d double, description string, i int, l long ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab58", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+            }
+
+            assertQuery("count\ticount\tlcount\n1000\t1000\t1000\n",
+                    "select count(*), sum( case when i is null then 1 else 0 end) icount, sum( case when l is null then 1 else 0 end) lcount from tab58", null, false, false, true);
+        });
+    }
+
+    @Test//it fails even though ts column name and format are specified
+    public void testImportFileWithHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab56", "test-quotes-oneline.csv", 1, PartitionBy.DAY, (byte) ',', "ts2", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                Assert.assertEquals("timestamp column 'ts2' not found in file header", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderWhenTargetTableDoesntExistSuccess() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab50", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+
+                assertQuery("count\n1000\n",
+                        "select count(*) from tab50", null, false, false, true);
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-header-dupvalues.csv", true, "duplicate column name found [no=4,name=e]");
+    }
+
+    @Test
+    public void testImportFileWithHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-header-dupvalues.csv", false, "duplicate column name found [no=4,name=e]");
+    }
+
+    @Test
+    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTable() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab61", "test-header-missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process();
+
+                assertQueryCompiledQuery(compiler, sqlExecutionContext, "ts\tf3\tf3_\tf3__\tf4\n" +
+                        "1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1\n" +
+                        "1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2\n", "select * from tab61", "ts", true, false, true);
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTableFailesOnUniqueColumnNameGeneration() throws Exception {
+        assertColumnNameException("test-header-missing-long.csv", true, "Failed to generate unique name for column [no=22]");
+    }
+
+    @Test
+    public void testImportFileWithNoHeaderIntoExistingTableFailsBecauseTsPositionInTableIsDifferentFromFile() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab53 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab53", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', null, null, false);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                Assert.assertEquals("column is not a timestamp [no=0, name='']", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileWithNoHeaderIntoExistingTableSucceedsBecauseTsPositionInTableIsSameAsInFile() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab57 ( s string, ts timestamp, d double, s2 string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab57", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', null, null, false);
+                importer.process();
+            }
+            assertQuery("count\n3\n", "select count(*) from tab57", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testImportFileWithNoHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab54", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                Assert.assertEquals("timestamp column 'ts' not found in file header", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    //when there is no header and header is not forced then target tabel columns get following names : f0, f1, ..., fN
+    public void testImportFileWithNoHeaderIntoNewTableSucceedsBecauseSyntheticColumnNameIsUsed() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab55", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
+                importer.process();
+            }
+            assertQuery("count\n3\n", "select count(*) from tab55", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testImportFileWithoutHeader() throws Exception {
+        testImportThrowsException("tabex1", "test-quotes-oneline.csv", PartitionBy.MONTH, "ts", null, "column is not a timestamp [no=1, name='ts']");
+    }
+
+    @Test
+    public void testImportFileWithoutHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-noheader-dupvalues.csv", true, "duplicate column name found [no=3,name=_100i]");
+    }
+
+    @Test
+    public void testImportFileWithoutHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
+        assertColumnNameException("test-noheader-dupvalues.csv", false, "duplicate column name found [no=3,name=_100i]");
+    }
+
+    @Test
+    @Ignore("the cursor returns more rows than expected")
+    public void testImportIntoExistingTableWithIndex() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table alltypes (\n" +
+                    "  bo boolean,\n" +
+                    "  by byte,\n" +
+                    "  sh short,\n" +
+                    "  ch char,\n" +
+                    "  in_ int,\n" +
+                    "  lo long,\n" +
+                    "  dat date, \n" +
+                    "  tstmp timestamp, \n" +
+                    "  ft float,\n" +
+                    "  db double,\n" +
+                    "  str string,\n" +
+                    "  sym symbol index,\n" +
+                    "  l256 long256," +
+                    "  ge geohash(20b)" +
+                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                importer.process();
+            }
+
+            // verify that the index is present
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "alltypes")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = metadata.getColumnIndex("sym");
+                Assert.assertTrue("Column sym must exist", columnIndex >= 0);
+
+                BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD);
+                Assert.assertNotNull(indexReader);
+                Assert.assertTrue(indexReader.getKeyCount() > 0);
+                Assert.assertTrue(indexReader.getValueMemorySize() > 0);
+
+                // expect only the very first row in zero partition to have 'sy1' symbol value
+                StaticSymbolTable symbolTable = reader.getSymbolTable(columnIndex);
+                RowCursor ic = indexReader.getCursor(true, TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
+                Assert.assertTrue(ic.hasNext());
+                Assert.assertEquals(0, ic.next());
+                Assert.assertFalse(ic.hasNext());
+            }
+
+            // run a query that uses the index
+            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+                            "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
+                            "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                    "select * from alltypes where sym in ('sy1','sy10')", "tstmp", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportIntoNonEmptyTableReturnsError() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab52 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("insert into tab52 select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab52", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                TestUtils.assertEquals("target table must be empty [table=tab52]", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportIsCancelled() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab43", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=boundary_check, msg=`Cancelled`]"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportNoRowsCsv() throws Exception {
+        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(
+                        "t",
+                        "test-quotes-header-only.csv",
+                        1,
+                        PartitionBy.MONTH,
+                        (byte) ',',
+                        "ts",
+                        "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
+                        true,
+                        null
+                );
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("No rows in input file to import."));
+            }
+        });
+    }
+
+    @Test
+    public void testImportTooSmallFileBufferURing() throws Exception {
+        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
+        testImportTooSmallFileBuffer0("tab32");
+    }
+
+    @Test
+    public void testImportTooSmallFileBufferVanilla() throws Exception {
+        ioURingFacade = new IOURingFacadeImpl() {
+            @Override
+            public boolean isAvailable() {
+                return false;
+            }
+        };
+        testImportTooSmallFileBuffer0("tab31");
+    }
+
+    @Test
+    public void testImportURingEnqueueFails() throws Exception {
+
+        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
+
+        class TestIOURing extends IOURingImpl {
+            private final Rnd rnd = new Rnd();
+
+            public TestIOURing(IOURingFacade facade, int capacity) {
+                super(facade, capacity);
+            }
+
+            @Override
+            public long enqueueRead(long fd, long offset, long bufAddr, int len) {
+                if (rnd.nextBoolean()) {
+                    return super.enqueueRead(fd, offset, bufAddr, len);
+                }
+                return -1;
+            }
+        }
+        ioURingFacade = new IOURingFacadeImpl() {
+            @Override
+            public IOURing newInstance(int capacity) {
+                return new TestIOURing(this, capacity);
+            }
+        };
+
+        executeWithPool(2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            final String tableName = "tab29";
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "io_uring error");
+            }
+        });
+    }
+
+    @Test
+    public void testImportURingReadFails() throws Exception {
+
+        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
+
+        class TestIOURing extends IOURingImpl {
+            private final Rnd rnd = new Rnd();
+
+            public TestIOURing(IOURingFacade facade, int capacity) {
+                super(facade, capacity);
+            }
+
+            @Override
+            public int getCqeRes() {
+                return rnd.nextBoolean() ? super.getCqeRes() : -1;
+            }
+        }
+        ioURingFacade = new IOURingFacadeImpl() {
+            @Override
+            public IOURing newInstance(int capacity) {
+                return new TestIOURing(this, capacity);
+            }
+        };
+
+        executeWithPool(2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            final String tableName = "tab30";
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not read from file");
+            }
+        });
+    }
+
+    @Test
+    public void testImportURingShuffleCqe() throws Exception {
+
+        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
+
+        class TestIOURing extends IOURingImpl {
+            private final LongList stuff = new LongList();
+            private final Rnd rnd = new Rnd();
+            private int stuffMax = 0;
+            private int stuffIndex = 0;
+
+            public TestIOURing(IOURingFacade facade, int capacity) {
+                super(facade, capacity);
+            }
+
+            @Override
+            public long getCqeId() {
+                int index = stuffIndex;
+                return stuff.getQuick(index * 2);
+            }
+
+            @Override
+            public int getCqeRes() {
+                int index = stuffIndex;
+                return (int) stuff.getQuick(index * 2 + 1);
+            }
+
+            @Override
+            public boolean nextCqe() {
+                if (++stuffIndex < stuffMax) {
+                    return true;
+                }
+
+                boolean next = super.nextCqe();
+                if (!next) {
+                    return false;
+                }
+
+                stuff.clear();
+
+                do {
+                    stuff.add(super.getCqeId(), super.getCqeRes());
+                } while (super.nextCqe());
+
+                stuff.shuffle(rnd, 1);
+
+                stuffIndex = 0;
+                stuffMax = stuff.size() / 2;
+
+                return true;
+            }
+        }
+        ioURingFacade = new IOURingFacadeImpl() {
+            @Override
+            public IOURing newInstance(int capacity) {
+                return new TestIOURing(this, capacity);
+            }
+        };
+
+        executeWithPool(2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            final String tableName = "tab28";
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(tableName, "test-quotes-big-reverseorder.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+            }
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10\n" +
+                            "line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9\n" +
+                            "line8\t1972-09-20T00:00:00.000000Z\t0.450854040396\tdesc 8\n" +
+                            "line7\t1972-09-21T00:00:00.000000Z\t0.207871778557\tdesc 7\n" +
+                            "line6\t1972-09-22T00:00:00.000000Z\t0.341597834365\tdesc 6\n" +
+                            "line5\t1972-09-23T00:00:00.000000Z\t0.5071712972\tdesc 5\n" +
+                            "line4\t1972-09-24T00:00:00.000000Z\t0.426072974125\tdesc 4\n" +
+                            "line3\t1972-09-25T00:00:00.000000Z\t0.525414887561\tdesc 3\n" +
+                            "line2\t1972-09-26T00:00:00.000000Z\t0.105484410855\tdesc 2\n" +
+                            "line1\t1972-09-27T00:00:00.000000Z\t0.490933692472\tdesc 1\n",
+                    "select * from " + tableName + " limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportWithSkipAllAtomicityFailsWhenNonTimestampColumnCantBeParsedAtDataImportPhase() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab ( ts timestamp, line string, description double, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ALL);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=partition_import, msg=`bad syntax"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportWithSkipAllAtomicityFailsWhenTimestampCantBeParsedAtIndexingPhase() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab22", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true, null, Atomicity.SKIP_ALL);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=indexing, msg=`could not parse timestamp [line=0, column=1]`]"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportWithSkipColumnAtomicityImportsAllRowsExceptOneFailingOnTimestamp() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table alltypes (\n" +
+                    "  bo boolean,\n" +
+                    "  by byte,\n" +
+                    "  sh short,\n" +
+                    "  ch char,\n" +
+                    "  in_ int,\n" +
+                    "  lo long,\n" +
+                    "  dat date, \n" +
+                    "  tstmp timestamp, \n" +
+                    "  ft float,\n" +
+                    "  db double,\n" +
+                    "  str string,\n" +
+                    "  sym symbol,\n" +
+                    "  l256 long256," +
+                    "  ge geohash(20b)" +
+                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("alltypes", "test-errors.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_COL);
+                importer.process();
+            }
+
+            assertQuery("cnt\n13\n",
+                    "select count(*) cnt from alltypes", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testImportWithSkipRowAtomicityImportsNoRowsWhenNonTimestampColumnCantBeParsed() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            // the StrSym should be 'symbol' and DoubleCol should be 'double'
+            // we intentionally create these columns with a wrong type so the ParallelCsvFileImporter fails to parse these columns
+            // the subsequent assert checks no row was imported - as the atomicity level is set to SKIP_ROW
+            compiler.compile("create table tab23 (StrSym int, Int symbol,Int_Col int, DoubleCol int,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab23", "test-import.csv", 1, PartitionBy.MONTH, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false, null, Atomicity.SKIP_ROW);
+                importer.process();
+            }
+
+            assertQuery("cnt\n0\n", "select count(*) cnt from tab23", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testImportWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table alltypes (\n" +
+                    "  bo boolean,\n" +
+                    "  by byte,\n" +
+                    "  sh short,\n" +
+                    "  ch char,\n" +
+                    "  in_ int,\n" +
+                    "  lo long,\n" +
+                    "  dat date, \n" +
+                    "  tstmp timestamp, \n" +
+                    "  ft float,\n" +
+                    "  db double,\n" +
+                    "  str string,\n" +
+                    "  sym symbol,\n" +
+                    "  l256 long256," +
+                    "  ge geohash(20b)" +
+                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("alltypes", "test-errors.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ROW);
+                importer.process();
+            }
+
+            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+                            "false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
+                            "false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" + //boolean parses anything other than true as false
+                            "false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" + //short overflow
+                            "false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" + //char adapter ignores anything after first character
+                            "true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n", //date format discovery is flawed
+                    //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values
+                    "select * cnt from alltypes", "tstmp", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportWithZeroLengthQueueReturnsError() throws Exception {
+        executeWithPool(2, 0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab16", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Parallel import queue size cannot be zero"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportWithZeroWorkersFails() throws Exception {
+        executeWithPool(0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            SqlExecutionContextStub context = new SqlExecutionContextStub(engine) {
+                @Override
+                public int getWorkerCount() {
+                    return 0;
+                }
+            };
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, context.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab15", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Invalid worker count set "));
+            }
+        });
     }
 
     @Test
@@ -678,567 +2105,76 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBacklogTableCleanup() throws Exception {
-        for (int i = 0; i < 6; i++) {
-            testStatusLogCleanup(i);
-        }
-    }
-
-    private void testStatusLogCleanup(int daysToKeep) throws SqlException, IOException {
-        String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        compiler.compile("create table " + backlogTableName + " as " +
-                "(" +
-                "select" +
-                " timestamp_sequence(0, 100000000000) ts," +
-                " rnd_symbol(5,4,4,3) table," +
-                " rnd_symbol(5,4,4,3) file," +
-                " rnd_symbol(5,4,4,3) phase," +
-                " rnd_symbol(5,4,4,3) status," +
-                " rnd_str(5,4,4,3) message," +
-                " rnd_long() rows_handled," +
-                " rnd_long() rows_imported," +
-                " rnd_long() errors" +
-                " from" +
-                " long_sequence(5)" +
-                ") timestamp(ts) partition by DAY", sqlExecutionContext);
-
-        parallelImportStatusLogKeepNDays = daysToKeep;
-        new TextImportRequestJob(engine, 1, null).close();
-        assertQuery("count\n" + daysToKeep + "\n",
-                "select count() from " + backlogTableName,
-                null,
-                false,
-                true
+    public void testIndexChunksInBigCsvByYear() throws Exception { //buffer = 93
+        assertIndexChunks(4, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", PartitionBy.YEAR, "test-quotes-big.csv",
+                chunk("1970/0_1", 86400000000L, 31L, 172800000000L, 94L, 259200000000L, 157L, 345600000000L, 220L, 432000000000L, 283L, 518400000000L, 346L, 604800000000L, 409L, 691200000000L, 472L, 777600000000L, 535L, 864000000000L, 598L, 950400000000L, 663L, 1036800000000L, 728L, 1123200000000L, 794L, 1209600000000L, 859L, 1296000000000L, 924L, 1382400000000L, 989L, 1468800000000L, 1054L, 1555200000000L, 1119L, 1641600000000L, 1184L, 1728000000000L, 1249L, 1814400000000L, 1315L, 1900800000000L, 1380L, 1987200000000L, 1445L, 2073600000000L, 1510L, 2160000000000L, 1575L, 2246400000000L, 1640L, 2332800000000L, 1705L, 2419200000000L, 1771L, 2505600000000L, 1836L, 2592000000000L, 1902L, 2678400000000L, 1972L, 2764800000000L, 2037L, 2851200000000L, 2102L, 2937600000000L, 2168L, 3024000000000L, 2233L, 3110400000000L, 2298L, 3196800000000L, 2363L, 3283200000000L, 2428L, 3369600000000L, 2493L, 3456000000000L, 2558L, 3542400000000L, 2623L, 3628800000000L, 2688L, 3715200000000L, 2753L, 3801600000000L, 2818L, 3888000000000L, 2883L, 3974400000000L, 2948L, 4060800000000L, 3013L, 4147200000000L, 3078L, 4233600000000L, 3143L, 4320000000000L, 3208L, 4406400000000L, 3274L, 4492800000000L, 3339L, 4579200000000L, 3404L, 4665600000000L, 3469L, 4752000000000L, 3534L, 4838400000000L, 3599L, 4924800000000L, 3664L, 5011200000000L, 3729L, 5097600000000L, 3794L, 5184000000000L, 3860L, 5270400000000L, 3925L, 5356800000000L, 3990L, 5443200000000L, 4055L, 5529600000000L, 4120L, 5616000000000L, 4185L, 5702400000000L, 4250L, 5788800000000L, 4315L, 5875200000000L, 4380L, 5961600000000L, 4445L, 6048000000000L, 4510L, 6134400000000L, 4575L, 6220800000000L, 4640L, 6307200000000L, 4705L, 6393600000000L, 4770L, 6480000000000L, 4835L, 6566400000000L, 4900L, 6652800000000L, 4965L, 6739200000000L, 5031L, 6825600000000L, 5096L, 6912000000000L, 5161L, 6998400000000L, 5226L, 7084800000000L, 5291L, 7171200000000L, 5356L, 7257600000000L, 5421L, 7344000000000L, 5486L, 7430400000000L, 5551L, 7516800000000L, 5616L, 7603200000000L, 5681L, 7689600000000L, 5746L, 7776000000000L, 5811L, 7862400000000L, 5876L, 7948800000000L, 5941L, 8035200000000L, 6006L, 8121600000000L, 6071L, 8208000000000L, 6136L, 8294400000000L, 6201L, 8380800000000L, 6266L, 8467200000000L, 6331L, 8553600000000L, 6396L, 8640000000000L, 6461L, 8726400000000L, 6528L, 8812800000000L, 6595L, 8899200000000L, 6662L, 8985600000000L, 6729L, 9072000000000L, 6796L, 9158400000000L, 6863L, 9244800000000L, 6930L, 9331200000000L, 6997L, 9417600000000L, 7064L, 9504000000000L, 7131L, 9590400000000L, 7198L, 9676800000000L, 7265L, 9763200000000L, 7332L, 9849600000000L, 7399L, 9936000000000L, 7466L, 10022400000000L, 7534L, 10108800000000L, 7601L, 10195200000000L, 7668L, 10281600000000L, 7735L, 10368000000000L, 7802L, 10454400000000L, 7869L, 10540800000000L, 7936L, 10627200000000L, 8003L, 10713600000000L, 8070L, 10800000000000L, 8137L, 10886400000000L, 8204L, 10972800000000L, 8271L, 11059200000000L, 8339L, 11145600000000L, 8406L, 11232000000000L, 8473L, 11318400000000L, 8540L, 11404800000000L, 8607L, 11491200000000L, 8674L, 11577600000000L, 8741L, 11664000000000L, 8808L, 11750400000000L, 8875L, 11836800000000L, 8942L, 11923200000000L, 9009L, 12009600000000L, 9076L, 12096000000000L, 9143L, 12182400000000L, 9210L, 12268800000000L, 9278L, 12355200000000L, 9345L, 12441600000000L, 9412L, 12528000000000L, 9480L, 12614400000000L, 9547L, 12700800000000L, 9614L, 12787200000000L, 9681L, 12873600000000L, 9748L, 12960000000000L, 9815L, 13046400000000L, 9882L, 13132800000000L, 9949L, 13219200000000L, 10017L, 13305600000000L, 10084L, 13392000000000L, 10151L, 13478400000000L, 10218L, 13564800000000L, 10287L, 13651200000000L, 10354L, 13737600000000L, 10421L, 13824000000000L, 10488L, 13910400000000L, 10555L, 13996800000000L, 10622L, 14083200000000L, 10689L, 14169600000000L, 10756L, 14256000000000L, 10823L, 14342400000000L, 10890L, 14428800000000L, 10957L, 14515200000000L, 11024L, 14601600000000L, 11091L, 14688000000000L, 11158L, 14774400000000L, 11226L, 14860800000000L, 11293L, 14947200000000L, 11360L, 15033600000000L, 11427L, 15120000000000L, 11494L, 15206400000000L, 11561L, 15292800000000L, 11628L, 15379200000000L, 11695L, 15465600000000L, 11762L, 15552000000000L, 11829L, 15638400000000L, 11896L, 15724800000000L, 11963L, 15811200000000L, 12030L, 15897600000000L, 12097L, 15984000000000L, 12164L, 16070400000000L, 12231L, 16156800000000L, 12299L, 16243200000000L, 12366L, 16329600000000L, 12434L, 16416000000000L, 12501L, 16502400000000L, 12568L, 16588800000000L, 12635L, 16675200000000L, 12702L, 16761600000000L, 12769L, 16848000000000L, 12836L, 16934400000000L, 12903L, 17020800000000L, 12970L, 17107200000000L, 13037L, 17193600000000L, 13104L, 17280000000000L, 13172L, 17366400000000L, 13240L, 17452800000000L, 13307L, 17539200000000L, 13374L, 17625600000000L, 13441L, 17712000000000L, 13508L, 17798400000000L, 13575L, 17884800000000L, 13642L, 17971200000000L, 13710L, 18057600000000L, 13777L, 18144000000000L, 13844L, 18230400000000L, 13911L, 18316800000000L, 13978L, 18403200000000L, 14045L, 18489600000000L, 14112L, 18576000000000L, 14179L, 18662400000000L, 14246L, 18748800000000L, 14313L, 18835200000000L, 14380L, 18921600000000L, 14447L, 19008000000000L, 14514L, 19094400000000L, 14581L, 19180800000000L, 14649L, 19267200000000L, 14716L, 19353600000000L, 14783L, 19440000000000L, 14851L, 19526400000000L, 14918L, 19612800000000L, 14985L, 19699200000000L, 15052L, 19785600000000L, 15120L, 19872000000000L, 15187L, 19958400000000L, 15254L, 20044800000000L, 15321L, 20131200000000L, 15388L, 20217600000000L, 15455L, 20304000000000L, 15523L, 20390400000000L, 15590L, 20476800000000L, 15657L, 20563200000000L, 15725L, 20649600000000L, 15792L, 20736000000000L, 15859L, 20822400000000L, 15926L, 20908800000000L, 15993L, 20995200000000L, 16060L, 21081600000000L, 16127L, 21168000000000L, 16194L, 21254400000000L, 16261L, 21340800000000L, 16328L, 21427200000000L, 16395L, 21513600000000L, 16462L, 21600000000000L, 16529L, 21686400000000L, 16596L, 21772800000000L, 16663L, 21859200000000L, 16730),
+                chunk("1970/1_1", 21945600000000L, 16797L, 22032000000000L, 16864L, 22118400000000L, 16931L, 22204800000000L, 16999L, 22291200000000L, 17066L, 22377600000000L, 17133L, 22464000000000L, 17200L, 22550400000000L, 17267L, 22636800000000L, 17334L, 22723200000000L, 17401L, 22809600000000L, 17468L, 22896000000000L, 17535L, 22982400000000L, 17602L, 23068800000000L, 17669L, 23155200000000L, 17736L, 23241600000000L, 17803L, 23328000000000L, 17870L, 23414400000000L, 17937L, 23500800000000L, 18004L, 23587200000000L, 18071L, 23673600000000L, 18138L, 23760000000000L, 18207L, 23846400000000L, 18274L, 23932800000000L, 18341L, 24019200000000L, 18408L, 24105600000000L, 18475L, 24192000000000L, 18542L, 24278400000000L, 18609L, 24364800000000L, 18676L, 24451200000000L, 18743L, 24537600000000L, 18810L, 24624000000000L, 18878L, 24710400000000L, 18945L, 24796800000000L, 19012L, 24883200000000L, 19079L, 24969600000000L, 19146L, 25056000000000L, 19213L, 25142400000000L, 19280L, 25228800000000L, 19347L, 25315200000000L, 19414L, 25401600000000L, 19481L, 25488000000000L, 19548L, 25574400000000L, 19615L, 25660800000000L, 19682L, 25747200000000L, 19749L, 25833600000000L, 19816L, 25920000000000L, 19883L, 26006400000000L, 19950L, 26092800000000L, 20017L, 26179200000000L, 20084L, 26265600000000L, 20151L, 26352000000000L, 20218L, 26438400000000L, 20285L, 26524800000000L, 20352L, 26611200000000L, 20420L, 26697600000000L, 20487L, 26784000000000L, 20554L, 26870400000000L, 20621L, 26956800000000L, 20688L, 27043200000000L, 20755L, 27129600000000L, 20822L, 27216000000000L, 20889L, 27302400000000L, 20956L, 27388800000000L, 21023L, 27475200000000L, 21090L, 27561600000000L, 21157L, 27648000000000L, 21224L, 27734400000000L, 21291L, 27820800000000L, 21358L, 27907200000000L, 21426L, 27993600000000L, 21493L, 28080000000000L, 21560L, 28166400000000L, 21629L, 28252800000000L, 21696L, 28339200000000L, 21763L, 28425600000000L, 21830L, 28512000000000L, 21897L, 28598400000000L, 21964L, 28684800000000L, 22031L, 28771200000000L, 22100L, 28857600000000L, 22167L, 28944000000000L, 22234L, 29030400000000L, 22301L, 29116800000000L, 22368L, 29203200000000L, 22435L, 29289600000000L, 22502L, 29376000000000L, 22569L, 29462400000000L, 22636L, 29548800000000L, 22703L, 29635200000000L, 22770L, 29721600000000L, 22837L, 29808000000000L, 22904L, 29894400000000L, 22971L, 29980800000000L, 23038L, 30067200000000L, 23105L, 30153600000000L, 23172L, 30240000000000L, 23240L, 30326400000000L, 23307L, 30412800000000L, 23374L, 30499200000000L, 23441L, 30585600000000L, 23508L, 30672000000000L, 23575L, 30758400000000L, 23643L, 30844800000000L, 23711L, 30931200000000L, 23778L, 31017600000000L, 23845L, 31104000000000L, 23913L, 31190400000000L, 23980L, 31276800000000L, 24047L, 31363200000000L, 24115L, 31449600000000L, 24182),
+                chunk("1971/1_1", 31536000000000L, 24249L, 31622400000000L, 24316L, 31708800000000L, 24383L, 31795200000000L, 24450L, 31881600000000L, 24517L, 31968000000000L, 24584L, 32054400000000L, 24651L, 32140800000000L, 24718L, 32227200000000L, 24786L, 32313600000000L, 24853L, 32400000000000L, 24920L, 32486400000000L, 24987L, 32572800000000L, 25054L, 32659200000000L, 25122L, 32745600000000L, 25189L, 32832000000000L, 25256L, 32918400000000L, 25323L, 33004800000000L, 25390L, 33091200000000L, 25457L, 33177600000000L, 25524L, 33264000000000L, 25591L, 33350400000000L, 25658L, 33436800000000L, 25725L, 33523200000000L, 25792L, 33609600000000L, 25859L, 33696000000000L, 25927L, 33782400000000L, 25994L, 33868800000000L, 26062L, 33955200000000L, 26129L, 34041600000000L, 26196L, 34128000000000L, 26263L, 34214400000000L, 26330L, 34300800000000L, 26397L, 34387200000000L, 26464L, 34473600000000L, 26531L, 34560000000000L, 26598L, 34646400000000L, 26665L, 34732800000000L, 26733L, 34819200000000L, 26800L, 34905600000000L, 26867L, 34992000000000L, 26934L, 35078400000000L, 27001L, 35164800000000L, 27069L, 35251200000000L, 27136L, 35337600000000L, 27203L, 35424000000000L, 27270L, 35510400000000L, 27337L, 35596800000000L, 27405L, 35683200000000L, 27472L, 35769600000000L, 27539L, 35856000000000L, 27607L, 35942400000000L, 27674L, 36028800000000L, 27741L, 36115200000000L, 27808L, 36201600000000L, 27875L, 36288000000000L, 27942L, 36374400000000L, 28009L, 36460800000000L, 28076L, 36547200000000L, 28143L, 36633600000000L, 28210L, 36720000000000L, 28278L, 36806400000000L, 28347L, 36892800000000L, 28414L, 36979200000000L, 28482L, 37065600000000L, 28549L, 37152000000000L, 28616L, 37238400000000L, 28683L, 37324800000000L, 28750L, 37411200000000L, 28817L, 37497600000000L, 28884L, 37584000000000L, 28951L, 37670400000000L, 29018L, 37756800000000L, 29085L, 37843200000000L, 29152L, 37929600000000L, 29219L, 38016000000000L, 29286L, 38102400000000L, 29353L, 38188800000000L, 29421L, 38275200000000L, 29488L, 38361600000000L, 29555L, 38448000000000L, 29622L, 38534400000000L, 29690L, 38620800000000L, 29758L, 38707200000000L, 29825L, 38793600000000L, 29892L, 38880000000000L, 29959L, 38966400000000L, 30026L, 39052800000000L, 30093L, 39139200000000L, 30160L, 39225600000000L, 30229L, 39312000000000L, 30296L, 39398400000000L, 30363L, 39484800000000L, 30430L, 39571200000000L, 30497L, 39657600000000L, 30564L, 39744000000000L, 30631L, 39830400000000L, 30698L, 39916800000000L, 30765L, 40003200000000L, 30832L, 40089600000000L, 30899L, 40176000000000L, 30966L, 40262400000000L, 31033L, 40348800000000L, 31100L, 40435200000000L, 31167L, 40521600000000L, 31234L, 40608000000000L, 31301L, 40694400000000L, 31368L, 40780800000000L, 31435L, 40867200000000L, 31502L, 40953600000000L, 31569L, 41040000000000L, 31636L, 41126400000000L, 31703L, 41212800000000L, 31770L, 41299200000000L, 31838L, 41385600000000L, 31905L, 41472000000000L, 31972L, 41558400000000L, 32039L, 41644800000000L, 32106L, 41731200000000L, 32173L, 41817600000000L, 32240L, 41904000000000L, 32307L, 41990400000000L, 32374L, 42076800000000L, 32441L, 42163200000000L, 32508L, 42249600000000L, 32575L, 42336000000000L, 32643L, 42422400000000L, 32710L, 42508800000000L, 32777L, 42595200000000L, 32844L, 42681600000000L, 32911L, 42768000000000L, 32978L, 42854400000000L, 33045L, 42940800000000L, 33112L, 43027200000000L, 33179L, 43113600000000L, 33246L, 43200000000000L, 33313L, 43286400000000L, 33380L, 43372800000000L, 33447),
+                chunk("1971/2_1", 43459200000000L, 33514L, 43545600000000L, 33581L, 43632000000000L, 33648L, 43718400000000L, 33715L, 43804800000000L, 33782L, 43891200000000L, 33849L, 43977600000000L, 33916L, 44064000000000L, 33983L, 44150400000000L, 34050L, 44236800000000L, 34117L, 44323200000000L, 34184L, 44409600000000L, 34251L, 44496000000000L, 34318L, 44582400000000L, 34385L, 44668800000000L, 34452L, 44755200000000L, 34519L, 44841600000000L, 34586L, 44928000000000L, 34653L, 45014400000000L, 34720L, 45100800000000L, 34787L, 45187200000000L, 34854L, 45273600000000L, 34921L, 45360000000000L, 34989L, 45446400000000L, 35056L, 45532800000000L, 35123L, 45619200000000L, 35190L, 45705600000000L, 35257L, 45792000000000L, 35324L, 45878400000000L, 35391L, 45964800000000L, 35458L, 46051200000000L, 35525L, 46137600000000L, 35592L, 46224000000000L, 35659L, 46310400000000L, 35726L, 46396800000000L, 35793L, 46483200000000L, 35860L, 46569600000000L, 35928L, 46656000000000L, 35995L, 46742400000000L, 36062L, 46828800000000L, 36129L, 46915200000000L, 36196L, 47001600000000L, 36263L, 47088000000000L, 36330L, 47174400000000L, 36397L, 47260800000000L, 36464L, 47347200000000L, 36531L, 47433600000000L, 36599L, 47520000000000L, 36666L, 47606400000000L, 36733L, 47692800000000L, 36801L, 47779200000000L, 36868L, 47865600000000L, 36935L, 47952000000000L, 37002L, 48038400000000L, 37069L, 48124800000000L, 37137L, 48211200000000L, 37205L, 48297600000000L, 37272L, 48384000000000L, 37339L, 48470400000000L, 37406L, 48556800000000L, 37473L, 48643200000000L, 37540L, 48729600000000L, 37607L, 48816000000000L, 37674L, 48902400000000L, 37741L, 48988800000000L, 37808L, 49075200000000L, 37875L, 49161600000000L, 37942L, 49248000000000L, 38009L, 49334400000000L, 38076L, 49420800000000L, 38143L, 49507200000000L, 38210L, 49593600000000L, 38277L, 49680000000000L, 38344L, 49766400000000L, 38411L, 49852800000000L, 38478L, 49939200000000L, 38545L, 50025600000000L, 38613L, 50112000000000L, 38680L, 50198400000000L, 38747L, 50284800000000L, 38814L, 50371200000000L, 38881L, 50457600000000L, 38948L, 50544000000000L, 39016L, 50630400000000L, 39083L, 50716800000000L, 39150L, 50803200000000L, 39217L, 50889600000000L, 39284L, 50976000000000L, 39351L, 51062400000000L, 39418L, 51148800000000L, 39485L, 51235200000000L, 39552L, 51321600000000L, 39619L, 51408000000000L, 39687L, 51494400000000L, 39754L, 51580800000000L, 39821L, 51667200000000L, 39888L, 51753600000000L, 39956L, 51840000000000L, 40023L, 51926400000000L, 40090L, 52012800000000L, 40157L, 52099200000000L, 40224L, 52185600000000L, 40291L, 52272000000000L, 40358L, 52358400000000L, 40425L, 52444800000000L, 40492L, 52531200000000L, 40559L, 52617600000000L, 40626L, 52704000000000L, 40693L, 52790400000000L, 40760L, 52876800000000L, 40827L, 52963200000000L, 40894L, 53049600000000L, 40962L, 53136000000000L, 41029L, 53222400000000L, 41096L, 53308800000000L, 41163L, 53395200000000L, 41230L, 53481600000000L, 41297L, 53568000000000L, 41364L, 53654400000000L, 41431L, 53740800000000L, 41498L, 53827200000000L, 41565L, 53913600000000L, 41632L, 54000000000000L, 41699L, 54086400000000L, 41767L, 54172800000000L, 41834L, 54259200000000L, 41901L, 54345600000000L, 41968L, 54432000000000L, 42035L, 54518400000000L, 42102L, 54604800000000L, 42169L, 54691200000000L, 42236L, 54777600000000L, 42303L, 54864000000000L, 42370L, 54950400000000L, 42437L, 55036800000000L, 42504L, 55123200000000L, 42571L, 55209600000000L, 42638L, 55296000000000L, 42705L, 55382400000000L, 42772L, 55468800000000L, 42839L, 55555200000000L, 42906L, 55641600000000L, 42973L, 55728000000000L, 43040L, 55814400000000L, 43107L, 55900800000000L, 43174L, 55987200000000L, 43241L, 56073600000000L, 43308L, 56160000000000L, 43375L, 56246400000000L, 43442L, 56332800000000L, 43509L, 56419200000000L, 43576L, 56505600000000L, 43643L, 56592000000000L, 43710L, 56678400000000L, 43777L, 56764800000000L, 43844L, 56851200000000L, 43911L, 56937600000000L, 43978L, 57024000000000L, 44046L, 57110400000000L, 44113L, 57196800000000L, 44180L, 57283200000000L, 44247L, 57369600000000L, 44314L, 57456000000000L, 44381L, 57542400000000L, 44448L, 57628800000000L, 44516L, 57715200000000L, 44583L, 57801600000000L, 44650L, 57888000000000L, 44717L, 57974400000000L, 44784L, 58060800000000L, 44851L, 58147200000000L, 44918L, 58233600000000L, 44985L, 58320000000000L, 45052L, 58406400000000L, 45119L, 58492800000000L, 45186L, 58579200000000L, 45253L, 58665600000000L, 45320L, 58752000000000L, 45387L, 58838400000000L, 45454L, 58924800000000L, 45521L, 59011200000000L, 45588L, 59097600000000L, 45655L, 59184000000000L, 45722L, 59270400000000L, 45789L, 59356800000000L, 45856L, 59443200000000L, 45923L, 59529600000000L, 45990L, 59616000000000L, 46058L, 59702400000000L, 46125L, 59788800000000L, 46192L, 59875200000000L, 46259L, 59961600000000L, 46326L, 60048000000000L, 46393L, 60134400000000L, 46460L, 60220800000000L, 46527L, 60307200000000L, 46594L, 60393600000000L, 46661L, 60480000000000L, 46728L, 60566400000000L, 46795L, 60652800000000L, 46862L, 60739200000000L, 46929L, 60825600000000L, 46996L, 60912000000000L, 47063L, 60998400000000L, 47130L, 61084800000000L, 47197L, 61171200000000L, 47264L, 61257600000000L, 47331L, 61344000000000L, 47398L, 61430400000000L, 47465L, 61516800000000L, 47532L, 61603200000000L, 47599L, 61689600000000L, 47666L, 61776000000000L, 47733L, 61862400000000L, 47800L, 61948800000000L, 47867L, 62035200000000L, 47934L, 62121600000000L, 48001L, 62208000000000L, 48068L, 62294400000000L, 48135L, 62380800000000L, 48202L, 62467200000000L, 48269L, 62553600000000L, 48336L, 62640000000000L, 48403L, 62726400000000L, 48470L, 62812800000000L, 48537L, 62899200000000L, 48604L, 62985600000000L, 48671),
+                chunk("1972/2_1", 63072000000000L, 48738L, 63158400000000L, 48806L, 63244800000000L, 48873L, 63331200000000L, 48940L, 63417600000000L, 49007L, 63504000000000L, 49074L, 63590400000000L, 49142L, 63676800000000L, 49209L, 63763200000000L, 49276L, 63849600000000L, 49344L, 63936000000000L, 49411L, 64022400000000L, 49478L, 64108800000000L, 49545L, 64195200000000L, 49612L, 64281600000000L, 49679L, 64368000000000L, 49746L, 64454400000000L, 49813L, 64540800000000L, 49881L, 64627200000000L, 49948L, 64713600000000L, 50015L, 64800000000000L, 50082L, 64886400000000L, 50149),
+                chunk("1972/3_1", 64972800000000L, 50216L, 65059200000000L, 50283L, 65145600000000L, 50350L, 65232000000000L, 50417L, 65318400000000L, 50484L, 65404800000000L, 50551L, 65491200000000L, 50618L, 65577600000000L, 50685L, 65664000000000L, 50752L, 65750400000000L, 50819L, 65836800000000L, 50886L, 65923200000000L, 50953L, 66009600000000L, 51020L, 66096000000000L, 51087L, 66182400000000L, 51154L, 66268800000000L, 51221L, 66355200000000L, 51288L, 66441600000000L, 51355L, 66528000000000L, 51422L, 66614400000000L, 51489L, 66700800000000L, 51556L, 66787200000000L, 51623L, 66873600000000L, 51691L, 66960000000000L, 51758L, 67046400000000L, 51825L, 67132800000000L, 51892L, 67219200000000L, 51959L, 67305600000000L, 52026L, 67392000000000L, 52093L, 67478400000000L, 52160L, 67564800000000L, 52227L, 67651200000000L, 52294L, 67737600000000L, 52361L, 67824000000000L, 52429L, 67910400000000L, 52497L, 67996800000000L, 52564L, 68083200000000L, 52631L, 68169600000000L, 52698L, 68256000000000L, 52765L, 68342400000000L, 52832L, 68428800000000L, 52899L, 68515200000000L, 52966L, 68601600000000L, 53033L, 68688000000000L, 53100L, 68774400000000L, 53167L, 68860800000000L, 53234L, 68947200000000L, 53301L, 69033600000000L, 53368L, 69120000000000L, 53435L, 69206400000000L, 53502L, 69292800000000L, 53569L, 69379200000000L, 53636L, 69465600000000L, 53703L, 69552000000000L, 53770L, 69638400000000L, 53837L, 69724800000000L, 53904L, 69811200000000L, 53972L, 69897600000000L, 54039L, 69984000000000L, 54106L, 70070400000000L, 54173L, 70156800000000L, 54240L, 70243200000000L, 54307L, 70329600000000L, 54374L, 70416000000000L, 54441L, 70502400000000L, 54508L, 70588800000000L, 54575L, 70675200000000L, 54642L, 70761600000000L, 54709L, 70848000000000L, 54776L, 70934400000000L, 54843L, 71020800000000L, 54910L, 71107200000000L, 54977L, 71193600000000L, 55044L, 71280000000000L, 55111L, 71366400000000L, 55178L, 71452800000000L, 55246L, 71539200000000L, 55313L, 71625600000000L, 55380L, 71712000000000L, 55447L, 71798400000000L, 55514L, 71884800000000L, 55581L, 71971200000000L, 55648L, 72057600000000L, 55715L, 72144000000000L, 55782L, 72230400000000L, 55849L, 72316800000000L, 55916L, 72403200000000L, 55983L, 72489600000000L, 56050L, 72576000000000L, 56117L, 72662400000000L, 56184L, 72748800000000L, 56251L, 72835200000000L, 56318L, 72921600000000L, 56385L, 73008000000000L, 56452L, 73094400000000L, 56519L, 73180800000000L, 56586L, 73267200000000L, 56653L, 73353600000000L, 56720L, 73440000000000L, 56787L, 73526400000000L, 56854L, 73612800000000L, 56921L, 73699200000000L, 56988L, 73785600000000L, 57055L, 73872000000000L, 57122L, 73958400000000L, 57189L, 74044800000000L, 57256L, 74131200000000L, 57323L, 74217600000000L, 57390L, 74304000000000L, 57457L, 74390400000000L, 57524L, 74476800000000L, 57591L, 74563200000000L, 57658L, 74649600000000L, 57725L, 74736000000000L, 57792L, 74822400000000L, 57859L, 74908800000000L, 57926L, 74995200000000L, 57993L, 75081600000000L, 58060L, 75168000000000L, 58127L, 75254400000000L, 58194L, 75340800000000L, 58261L, 75427200000000L, 58328L, 75513600000000L, 58395L, 75600000000000L, 58462L, 75686400000000L, 58529L, 75772800000000L, 58596L, 75859200000000L, 58663L, 75945600000000L, 58731L, 76032000000000L, 58798L, 76118400000000L, 58865L, 76204800000000L, 58933L, 76291200000000L, 59000L, 76377600000000L, 59068L, 76464000000000L, 59135L, 76550400000000L, 59202L, 76636800000000L, 59269L, 76723200000000L, 59336L, 76809600000000L, 59403L, 76896000000000L, 59470L, 76982400000000L, 59537L, 77068800000000L, 59604L, 77155200000000L, 59671L, 77241600000000L, 59738L, 77328000000000L, 59805L, 77414400000000L, 59872L, 77500800000000L, 59939L, 77587200000000L, 60007L, 77673600000000L, 60074L, 77760000000000L, 60142L, 77846400000000L, 60209L, 77932800000000L, 60276L, 78019200000000L, 60343L, 78105600000000L, 60410L, 78192000000000L, 60477L, 78278400000000L, 60544L, 78364800000000L, 60611L, 78451200000000L, 60678L, 78537600000000L, 60745L, 78624000000000L, 60812L, 78710400000000L, 60879L, 78796800000000L, 60946L, 78883200000000L, 61013L, 78969600000000L, 61080L, 79056000000000L, 61147L, 79142400000000L, 61215L, 79228800000000L, 61282L, 79315200000000L, 61349L, 79401600000000L, 61416L, 79488000000000L, 61483L, 79574400000000L, 61550L, 79660800000000L, 61617L, 79747200000000L, 61684L, 79833600000000L, 61751L, 79920000000000L, 61818L, 80006400000000L, 61885L, 80092800000000L, 61952L, 80179200000000L, 62019L, 80265600000000L, 62086L, 80352000000000L, 62153L, 80438400000000L, 62220L, 80524800000000L, 62287L, 80611200000000L, 62354L, 80697600000000L, 62421L, 80784000000000L, 62489L, 80870400000000L, 62556L, 80956800000000L, 62625L, 81043200000000L, 62692L, 81129600000000L, 62759L, 81216000000000L, 62826L, 81302400000000L, 62893L, 81388800000000L, 62960L, 81475200000000L, 63027L, 81561600000000L, 63094L, 81648000000000L, 63161L, 81734400000000L, 63228L, 81820800000000L, 63295L, 81907200000000L, 63362L, 81993600000000L, 63429L, 82080000000000L, 63496L, 82166400000000L, 63563L, 82252800000000L, 63630L, 82339200000000L, 63699L, 82425600000000L, 63766L, 82512000000000L, 63833L, 82598400000000L, 63900L, 82684800000000L, 63967L, 82771200000000L, 64034L, 82857600000000L, 64101L, 82944000000000L, 64168L, 83030400000000L, 64236L, 83116800000000L, 64303L, 83203200000000L, 64371L, 83289600000000L, 64438L, 83376000000000L, 64505L, 83462400000000L, 64572L, 83548800000000L, 64639L, 83635200000000L, 64706L, 83721600000000L, 64774L, 83808000000000L, 64841L, 83894400000000L, 64908L, 83980800000000L, 64975L, 84067200000000L, 65042L, 84153600000000L, 65109L, 84240000000000L, 65176L, 84326400000000L, 65244L, 84412800000000L, 65311L, 84499200000000L, 65378L, 84585600000000L, 65445L, 84672000000000L, 65512L, 84758400000000L, 65579L, 84844800000000L, 65646L, 84931200000000L, 65714L, 85017600000000L, 65781L, 85104000000000L, 65848L, 85190400000000L, 65915L, 85276800000000L, 65982L, 85363200000000L, 66049L, 85449600000000L, 66116L, 85536000000000L, 66183L, 85622400000000L, 66250L, 85708800000000L, 66317L, 85795200000000L, 66384L, 85881600000000L, 66452L, 85968000000000L, 66519L, 86054400000000L, 66586L, 86140800000000L, 66653L, 86227200000000L, 66720L, 86313600000000L, 66787L, 86400000000000L, 66854)
         );
-        compiler.compile("drop table " + backlogTableName, sqlExecutionContext);
-    }
-
-    private void assertIndexChunks(int workerCount, String fileName, IndexChunk... expectedChunks) throws Exception {
-        assertIndexChunks(workerCount, "yyyy-MM-ddTHH:mm:ss.SSSZ", PartitionBy.DAY, fileName, expectedChunks);
-    }
-
-    private void assertIndexChunks(int workerCount, String dateFormat, int partitionBy, String fileName, IndexChunk... expectedChunks) throws Exception {
-        executeWithPool(workerCount, 8,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertIndexChunksFor(sqlExecutionContext, dateFormat, partitionBy, fileName, expectedChunks));
-    }
-
-    static IndexChunk chunk(String path, long... data) {
-        return new IndexChunk(path, data);
-    }
-
-    static class IndexChunk {
-        String path;
-        long[] data; // timestamp+offset pairs
-
-        IndexChunk(String path, long... data) {
-            this.path = path;
-            this.data = data;
-        }
-
-        @Override
-        public String toString() {
-            return "{" +
-                    "path='" + path + '\'' +
-                    ", data=" + Arrays.toString(data) +
-                    '}';
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            IndexChunk that = (IndexChunk) o;
-            return path.equals(that.path) && Arrays.equals(data, that.data);
-        }
-
-        @Override
-        public int hashCode() {
-            int result = Objects.hash(path);
-            result = 31 * result + Arrays.hashCode(data);
-            return result;
-        }
     }
 
     @Test
-    public void testImportEmptyCsv() throws Exception {
-        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of(
-                        "t",
-                        "test-quotes-empty.csv",
-                        1,
-                        PartitionBy.MONTH,
-                        (byte) ',',
-                        "ts",
-                        "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
-                        true,
-                        null
-                );
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("ignored empty input file [file='"));
-            }
-        });
+    public void testIndexChunksInReverseOrderBigCsvByYear() throws Exception {
+        assertIndexChunks(4, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", PartitionBy.YEAR, "test-quotes-big-reverseorder.csv",
+                chunk("1970/2_1", 21600000000000L, 50149, 21686400000000L, 50082, 21772800000000L, 50015, 21859200000000L, 49948, 21945600000000L, 49881, 22032000000000L, 49813, 22118400000000L, 49746, 22204800000000L, 49679, 22291200000000L, 49612, 22377600000000L, 49545, 22464000000000L, 49478, 22550400000000L, 49411, 22636800000000L, 49344, 22723200000000L, 49276, 22809600000000L, 49209, 22896000000000L, 49142, 22982400000000L, 49074, 23068800000000L, 49007, 23155200000000L, 48940, 23241600000000L, 48873, 23328000000000L, 48806, 23414400000000L, 48738, 23500800000000L, 48671, 23587200000000L, 48604, 23673600000000L, 48537, 23760000000000L, 48470, 23846400000000L, 48403, 23932800000000L, 48336, 24019200000000L, 48269, 24105600000000L, 48202, 24192000000000L, 48135, 24278400000000L, 48068, 24364800000000L, 48001, 24451200000000L, 47934, 24537600000000L, 47867, 24624000000000L, 47800, 24710400000000L, 47733, 24796800000000L, 47666, 24883200000000L, 47599, 24969600000000L, 47532, 25056000000000L, 47465, 25142400000000L, 47398, 25228800000000L, 47331, 25315200000000L, 47264, 25401600000000L, 47197, 25488000000000L, 47130, 25574400000000L, 47063, 25660800000000L, 46996, 25747200000000L, 46929, 25833600000000L, 46862, 25920000000000L, 46795, 26006400000000L, 46728, 26092800000000L, 46661, 26179200000000L, 46594, 26265600000000L, 46527, 26352000000000L, 46460, 26438400000000L, 46393, 26524800000000L, 46326, 26611200000000L, 46259, 26697600000000L, 46192, 26784000000000L, 46125, 26870400000000L, 46058, 26956800000000L, 45990, 27043200000000L, 45923, 27129600000000L, 45856, 27216000000000L, 45789, 27302400000000L, 45722, 27388800000000L, 45655, 27475200000000L, 45588, 27561600000000L, 45521, 27648000000000L, 45454, 27734400000000L, 45387, 27820800000000L, 45320, 27907200000000L, 45253, 27993600000000L, 45186, 28080000000000L, 45119, 28166400000000L, 45052, 28252800000000L, 44985, 28339200000000L, 44918, 28425600000000L, 44851, 28512000000000L, 44784, 28598400000000L, 44717, 28684800000000L, 44650, 28771200000000L, 44583, 28857600000000L, 44516, 28944000000000L, 44448, 29030400000000L, 44381, 29116800000000L, 44314, 29203200000000L, 44247, 29289600000000L, 44180, 29376000000000L, 44113, 29462400000000L, 44046, 29548800000000L, 43978, 29635200000000L, 43911, 29721600000000L, 43844, 29808000000000L, 43777, 29894400000000L, 43710, 29980800000000L, 43643, 30067200000000L, 43576, 30153600000000L, 43509, 30240000000000L, 43442, 30326400000000L, 43375, 30412800000000L, 43308, 30499200000000L, 43241, 30585600000000L, 43174, 30672000000000L, 43107, 30758400000000L, 43040, 30844800000000L, 42973, 30931200000000L, 42906, 31017600000000L, 42839, 31104000000000L, 42772, 31190400000000L, 42705, 31276800000000L, 42638, 31363200000000L, 42571, 31449600000000L, 42504),
+                chunk("1970/3_1", 86400000000L, 66854, 172800000000L, 66787, 259200000000L, 66720, 345600000000L, 66653, 432000000000L, 66586, 518400000000L, 66519, 604800000000L, 66452, 691200000000L, 66384, 777600000000L, 66317, 864000000000L, 66250, 950400000000L, 66183, 1036800000000L, 66116, 1123200000000L, 66049, 1209600000000L, 65982, 1296000000000L, 65915, 1382400000000L, 65848, 1468800000000L, 65781, 1555200000000L, 65714, 1641600000000L, 65646, 1728000000000L, 65579, 1814400000000L, 65512, 1900800000000L, 65445, 1987200000000L, 65378, 2073600000000L, 65311, 2160000000000L, 65244, 2246400000000L, 65176, 2332800000000L, 65109, 2419200000000L, 65042, 2505600000000L, 64975, 2592000000000L, 64908, 2678400000000L, 64841, 2764800000000L, 64774, 2851200000000L, 64706, 2937600000000L, 64639, 3024000000000L, 64572, 3110400000000L, 64505, 3196800000000L, 64438, 3283200000000L, 64371, 3369600000000L, 64303, 3456000000000L, 64236, 3542400000000L, 64168, 3628800000000L, 64101, 3715200000000L, 64034, 3801600000000L, 63967, 3888000000000L, 63900, 3974400000000L, 63833, 4060800000000L, 63766, 4147200000000L, 63699, 4233600000000L, 63630, 4320000000000L, 63563, 4406400000000L, 63496, 4492800000000L, 63429, 4579200000000L, 63362, 4665600000000L, 63295, 4752000000000L, 63228, 4838400000000L, 63161, 4924800000000L, 63094, 5011200000000L, 63027, 5097600000000L, 62960, 5184000000000L, 62893, 5270400000000L, 62826, 5356800000000L, 62759, 5443200000000L, 62692, 5529600000000L, 62625, 5616000000000L, 62556, 5702400000000L, 62489, 5788800000000L, 62421, 5875200000000L, 62354, 5961600000000L, 62287, 6048000000000L, 62220, 6134400000000L, 62153, 6220800000000L, 62086, 6307200000000L, 62019, 6393600000000L, 61952, 6480000000000L, 61885, 6566400000000L, 61818, 6652800000000L, 61751, 6739200000000L, 61684, 6825600000000L, 61617, 6912000000000L, 61550, 6998400000000L, 61483, 7084800000000L, 61416, 7171200000000L, 61349, 7257600000000L, 61282, 7344000000000L, 61215, 7430400000000L, 61147, 7516800000000L, 61080, 7603200000000L, 61013, 7689600000000L, 60946, 7776000000000L, 60879, 7862400000000L, 60812, 7948800000000L, 60745, 8035200000000L, 60678, 8121600000000L, 60611, 8208000000000L, 60544, 8294400000000L, 60477, 8380800000000L, 60410, 8467200000000L, 60343, 8553600000000L, 60276, 8640000000000L, 60209, 8726400000000L, 60142, 8812800000000L, 60074, 8899200000000L, 60007, 8985600000000L, 59939, 9072000000000L, 59872, 9158400000000L, 59805, 9244800000000L, 59738, 9331200000000L, 59671, 9417600000000L, 59604, 9504000000000L, 59537, 9590400000000L, 59470, 9676800000000L, 59403, 9763200000000L, 59336, 9849600000000L, 59269, 9936000000000L, 59202, 10022400000000L, 59135, 10108800000000L, 59068, 10195200000000L, 59000L, 10281600000000L, 58933, 10368000000000L, 58865, 10454400000000L, 58798, 10540800000000L, 58731, 10627200000000L, 58663, 10713600000000L, 58596, 10800000000000L, 58529, 10886400000000L, 58462, 10972800000000L, 58395, 11059200000000L, 58328, 11145600000000L, 58261, 11232000000000L, 58194, 11318400000000L, 58127, 11404800000000L, 58060, 11491200000000L, 57993, 11577600000000L, 57926, 11664000000000L, 57859, 11750400000000L, 57792, 11836800000000L, 57725, 11923200000000L, 57658, 12009600000000L, 57591, 12096000000000L, 57524, 12182400000000L, 57457, 12268800000000L, 57390, 12355200000000L, 57323, 12441600000000L, 57256, 12528000000000L, 57189, 12614400000000L, 57122, 12700800000000L, 57055, 12787200000000L, 56988, 12873600000000L, 56921, 12960000000000L, 56854, 13046400000000L, 56787, 13132800000000L, 56720, 13219200000000L, 56653, 13305600000000L, 56586, 13392000000000L, 56519, 13478400000000L, 56452, 13564800000000L, 56385, 13651200000000L, 56318, 13737600000000L, 56251, 13824000000000L, 56184, 13910400000000L, 56117, 13996800000000L, 56050, 14083200000000L, 55983, 14169600000000L, 55916, 14256000000000L, 55849, 14342400000000L, 55782, 14428800000000L, 55715, 14515200000000L, 55648, 14601600000000L, 55581, 14688000000000L, 55514, 14774400000000L, 55447, 14860800000000L, 55380, 14947200000000L, 55313, 15033600000000L, 55246, 15120000000000L, 55178, 15206400000000L, 55111, 15292800000000L, 55044, 15379200000000L, 54977, 15465600000000L, 54910, 15552000000000L, 54843, 15638400000000L, 54776, 15724800000000L, 54709, 15811200000000L, 54642, 15897600000000L, 54575, 15984000000000L, 54508, 16070400000000L, 54441, 16156800000000L, 54374, 16243200000000L, 54307, 16329600000000L, 54240, 16416000000000L, 54173, 16502400000000L, 54106, 16588800000000L, 54039, 16675200000000L, 53972, 16761600000000L, 53904, 16848000000000L, 53837, 16934400000000L, 53770, 17020800000000L, 53703, 17107200000000L, 53636, 17193600000000L, 53569, 17280000000000L, 53502, 17366400000000L, 53435, 17452800000000L, 53368, 17539200000000L, 53301, 17625600000000L, 53234, 17712000000000L, 53167, 17798400000000L, 53100, 17884800000000L, 53033, 17971200000000L, 52966, 18057600000000L, 52899, 18144000000000L, 52832, 18230400000000L, 52765, 18316800000000L, 52698, 18403200000000L, 52631, 18489600000000L, 52564, 18576000000000L, 52497, 18662400000000L, 52429, 18748800000000L, 52361, 18835200000000L, 52294, 18921600000000L, 52227, 19008000000000L, 52160, 19094400000000L, 52093, 19180800000000L, 52026, 19267200000000L, 51959, 19353600000000L, 51892, 19440000000000L, 51825, 19526400000000L, 51758, 19612800000000L, 51691, 19699200000000L, 51623, 19785600000000L, 51556, 19872000000000L, 51489, 19958400000000L, 51422, 20044800000000L, 51355, 20131200000000L, 51288, 20217600000000L, 51221, 20304000000000L, 51154, 20390400000000L, 51087, 20476800000000L, 51020, 20563200000000L, 50953, 20649600000000L, 50886, 20736000000000L, 50819, 20822400000000L, 50752, 20908800000000L, 50685, 20995200000000L, 50618, 21081600000000L, 50551, 21168000000000L, 50484, 21254400000000L, 50417, 21340800000000L, 50350, 21427200000000L, 50283, 21513600000000L, 50216),
+                chunk("1971/1_1", 43113600000000L, 33447, 43200000000000L, 33380, 43286400000000L, 33313, 43372800000000L, 33246, 43459200000000L, 33179, 43545600000000L, 33112, 43632000000000L, 33045, 43718400000000L, 32978, 43804800000000L, 32911, 43891200000000L, 32844, 43977600000000L, 32777, 44064000000000L, 32710, 44150400000000L, 32643, 44236800000000L, 32575, 44323200000000L, 32508, 44409600000000L, 32441, 44496000000000L, 32374, 44582400000000L, 32307, 44668800000000L, 32240, 44755200000000L, 32173, 44841600000000L, 32106, 44928000000000L, 32039, 45014400000000L, 31972, 45100800000000L, 31905, 45187200000000L, 31838, 45273600000000L, 31770, 45360000000000L, 31703, 45446400000000L, 31636, 45532800000000L, 31569, 45619200000000L, 31502, 45705600000000L, 31435, 45792000000000L, 31368, 45878400000000L, 31301, 45964800000000L, 31234, 46051200000000L, 31167, 46137600000000L, 31100, 46224000000000L, 31033, 46310400000000L, 30966, 46396800000000L, 30899, 46483200000000L, 30832, 46569600000000L, 30765, 46656000000000L, 30698, 46742400000000L, 30631, 46828800000000L, 30564, 46915200000000L, 30497, 47001600000000L, 30430, 47088000000000L, 30363, 47174400000000L, 30296, 47260800000000L, 30229, 47347200000000L, 30160, 47433600000000L, 30093, 47520000000000L, 30026, 47606400000000L, 29959, 47692800000000L, 29892, 47779200000000L, 29825, 47865600000000L, 29758, 47952000000000L, 29690, 48038400000000L, 29622, 48124800000000L, 29555, 48211200000000L, 29488, 48297600000000L, 29421, 48384000000000L, 29353, 48470400000000L, 29286, 48556800000000L, 29219, 48643200000000L, 29152, 48729600000000L, 29085, 48816000000000L, 29018, 48902400000000L, 28951, 48988800000000L, 28884, 49075200000000L, 28817, 49161600000000L, 28750, 49248000000000L, 28683, 49334400000000L, 28616, 49420800000000L, 28549, 49507200000000L, 28482, 49593600000000L, 28414, 49680000000000L, 28347, 49766400000000L, 28278, 49852800000000L, 28210, 49939200000000L, 28143, 50025600000000L, 28076, 50112000000000L, 28009, 50198400000000L, 27942, 50284800000000L, 27875, 50371200000000L, 27808, 50457600000000L, 27741, 50544000000000L, 27674, 50630400000000L, 27607, 50716800000000L, 27539, 50803200000000L, 27472, 50889600000000L, 27405, 50976000000000L, 27337, 51062400000000L, 27270, 51148800000000L, 27203, 51235200000000L, 27136, 51321600000000L, 27069, 51408000000000L, 27001, 51494400000000L, 26934, 51580800000000L, 26867, 51667200000000L, 26800, 51753600000000L, 26733, 51840000000000L, 26665, 51926400000000L, 26598, 52012800000000L, 26531, 52099200000000L, 26464, 52185600000000L, 26397, 52272000000000L, 26330, 52358400000000L, 26263, 52444800000000L, 26196, 52531200000000L, 26129, 52617600000000L, 26062, 52704000000000L, 25994, 52790400000000L, 25927, 52876800000000L, 25859, 52963200000000L, 25792, 53049600000000L, 25725, 53136000000000L, 25658, 53222400000000L, 25591, 53308800000000L, 25524, 53395200000000L, 25457, 53481600000000L, 25390, 53568000000000L, 25323, 53654400000000L, 25256, 53740800000000L, 25189, 53827200000000L, 25122, 53913600000000L, 25054, 54000000000000L, 24987, 54086400000000L, 24920, 54172800000000L, 24853, 54259200000000L, 24786, 54345600000000L, 24718, 54432000000000L, 24651, 54518400000000L, 24584, 54604800000000L, 24517, 54691200000000L, 24450, 54777600000000L, 24383, 54864000000000L, 24316, 54950400000000L, 24249, 55036800000000L, 24182, 55123200000000L, 24115, 55209600000000L, 24047, 55296000000000L, 23980, 55382400000000L, 23913, 55468800000000L, 23845, 55555200000000L, 23778, 55641600000000L, 23711, 55728000000000L, 23643, 55814400000000L, 23575, 55900800000000L, 23508, 55987200000000L, 23441, 56073600000000L, 23374, 56160000000000L, 23307, 56246400000000L, 23240, 56332800000000L, 23172, 56419200000000L, 23105, 56505600000000L, 23038, 56592000000000L, 22971, 56678400000000L, 22904, 56764800000000L, 22837, 56851200000000L, 22770, 56937600000000L, 22703, 57024000000000L, 22636, 57110400000000L, 22569, 57196800000000L, 22502, 57283200000000L, 22435, 57369600000000L, 22368, 57456000000000L, 22301, 57542400000000L, 22234, 57628800000000L, 22167, 57715200000000L, 22100, 57801600000000L, 22031, 57888000000000L, 21964, 57974400000000L, 21897, 58060800000000L, 21830, 58147200000000L, 21763, 58233600000000L, 21696, 58320000000000L, 21629, 58406400000000L, 21560, 58492800000000L, 21493, 58579200000000L, 21426, 58665600000000L, 21358, 58752000000000L, 21291, 58838400000000L, 21224, 58924800000000L, 21157, 59011200000000L, 21090, 59097600000000L, 21023, 59184000000000L, 20956, 59270400000000L, 20889, 59356800000000L, 20822, 59443200000000L, 20755, 59529600000000L, 20688, 59616000000000L, 20621, 59702400000000L, 20554, 59788800000000L, 20487, 59875200000000L, 20420, 59961600000000L, 20352, 60048000000000L, 20285, 60134400000000L, 20218, 60220800000000L, 20151, 60307200000000L, 20084, 60393600000000L, 20017, 60480000000000L, 19950, 60566400000000L, 19883, 60652800000000L, 19816, 60739200000000L, 19749, 60825600000000L, 19682, 60912000000000L, 19615, 60998400000000L, 19548, 61084800000000L, 19481, 61171200000000L, 19414, 61257600000000L, 19347, 61344000000000L, 19280, 61430400000000L, 19213, 61516800000000L, 19146, 61603200000000L, 19079, 61689600000000L, 19012, 61776000000000L, 18945, 61862400000000L, 18878, 61948800000000L, 18810, 62035200000000L, 18743, 62121600000000L, 18676, 62208000000000L, 18609, 62294400000000L, 18542, 62380800000000L, 18475, 62467200000000L, 18408, 62553600000000L, 18341, 62640000000000L, 18274, 62726400000000L, 18207, 62812800000000L, 18138, 62899200000000L, 18071, 62985600000000L, 18004),
+                chunk("1971/2_1", 31536000000000L, 42437, 31622400000000L, 42370, 31708800000000L, 42303, 31795200000000L, 42236, 31881600000000L, 42169, 31968000000000L, 42102, 32054400000000L, 42035, 32140800000000L, 41968, 32227200000000L, 41901, 32313600000000L, 41834, 32400000000000L, 41767, 32486400000000L, 41699, 32572800000000L, 41632, 32659200000000L, 41565, 32745600000000L, 41498, 32832000000000L, 41431, 32918400000000L, 41364, 33004800000000L, 41297, 33091200000000L, 41230, 33177600000000L, 41163, 33264000000000L, 41096, 33350400000000L, 41029, 33436800000000L, 40962, 33523200000000L, 40894, 33609600000000L, 40827, 33696000000000L, 40760, 33782400000000L, 40693, 33868800000000L, 40626, 33955200000000L, 40559, 34041600000000L, 40492, 34128000000000L, 40425, 34214400000000L, 40358, 34300800000000L, 40291, 34387200000000L, 40224, 34473600000000L, 40157, 34560000000000L, 40090, 34646400000000L, 40023, 34732800000000L, 39956, 34819200000000L, 39888, 34905600000000L, 39821, 34992000000000L, 39754, 35078400000000L, 39687, 35164800000000L, 39619, 35251200000000L, 39552, 35337600000000L, 39485, 35424000000000L, 39418, 35510400000000L, 39351, 35596800000000L, 39284, 35683200000000L, 39217, 35769600000000L, 39150, 35856000000000L, 39083, 35942400000000L, 39016, 36028800000000L, 38948, 36115200000000L, 38881, 36201600000000L, 38814, 36288000000000L, 38747, 36374400000000L, 38680, 36460800000000L, 38613, 36547200000000L, 38545, 36633600000000L, 38478, 36720000000000L, 38411, 36806400000000L, 38344, 36892800000000L, 38277, 36979200000000L, 38210, 37065600000000L, 38143, 37152000000000L, 38076, 37238400000000L, 38009, 37324800000000L, 37942, 37411200000000L, 37875, 37497600000000L, 37808, 37584000000000L, 37741, 37670400000000L, 37674, 37756800000000L, 37607, 37843200000000L, 37540, 37929600000000L, 37473, 38016000000000L, 37406, 38102400000000L, 37339, 38188800000000L, 37272, 38275200000000L, 37205, 38361600000000L, 37137, 38448000000000L, 37069, 38534400000000L, 37002, 38620800000000L, 36935, 38707200000000L, 36868, 38793600000000L, 36801, 38880000000000L, 36733, 38966400000000L, 36666, 39052800000000L, 36599, 39139200000000L, 36531, 39225600000000L, 36464, 39312000000000L, 36397, 39398400000000L, 36330, 39484800000000L, 36263, 39571200000000L, 36196, 39657600000000L, 36129, 39744000000000L, 36062, 39830400000000L, 35995, 39916800000000L, 35928, 40003200000000L, 35860, 40089600000000L, 35793, 40176000000000L, 35726, 40262400000000L, 35659, 40348800000000L, 35592, 40435200000000L, 35525, 40521600000000L, 35458, 40608000000000L, 35391, 40694400000000L, 35324, 40780800000000L, 35257, 40867200000000L, 35190, 40953600000000L, 35123, 41040000000000L, 35056, 41126400000000L, 34989, 41212800000000L, 34921, 41299200000000L, 34854, 41385600000000L, 34787, 41472000000000L, 34720, 41558400000000L, 34653, 41644800000000L, 34586, 41731200000000L, 34519, 41817600000000L, 34452, 41904000000000L, 34385, 41990400000000L, 34318, 42076800000000L, 34251, 42163200000000L, 34184, 42249600000000L, 34117, 42336000000000L, 34050, 42422400000000L, 33983, 42508800000000L, 33916, 42595200000000L, 33849, 42681600000000L, 33782, 42768000000000L, 33715, 42854400000000L, 33648, 42940800000000L, 33581, 43027200000000L, 33514),
+                chunk("1972/0_1", 64627200000000L, 16730, 64713600000000L, 16663, 64800000000000L, 16596, 64886400000000L, 16529, 64972800000000L, 16462, 65059200000000L, 16395, 65145600000000L, 16328, 65232000000000L, 16261, 65318400000000L, 16194, 65404800000000L, 16127, 65491200000000L, 16060, 65577600000000L, 15993, 65664000000000L, 15926, 65750400000000L, 15859, 65836800000000L, 15792, 65923200000000L, 15725, 66009600000000L, 15657, 66096000000000L, 15590, 66182400000000L, 15523, 66268800000000L, 15455, 66355200000000L, 15388, 66441600000000L, 15321, 66528000000000L, 15254, 66614400000000L, 15187, 66700800000000L, 15120, 66787200000000L, 15052, 66873600000000L, 14985, 66960000000000L, 14918, 67046400000000L, 14851, 67132800000000L, 14783, 67219200000000L, 14716, 67305600000000L, 14649, 67392000000000L, 14581, 67478400000000L, 14514, 67564800000000L, 14447, 67651200000000L, 14380, 67737600000000L, 14313, 67824000000000L, 14246, 67910400000000L, 14179, 67996800000000L, 14112, 68083200000000L, 14045, 68169600000000L, 13978, 68256000000000L, 13911, 68342400000000L, 13844, 68428800000000L, 13777, 68515200000000L, 13710, 68601600000000L, 13642, 68688000000000L, 13575, 68774400000000L, 13508, 68860800000000L, 13441, 68947200000000L, 13374, 69033600000000L, 13307, 69120000000000L, 13240, 69206400000000L, 13172, 69292800000000L, 13104, 69379200000000L, 13037, 69465600000000L, 12970, 69552000000000L, 12903, 69638400000000L, 12836, 69724800000000L, 12769, 69811200000000L, 12702, 69897600000000L, 12635, 69984000000000L, 12568, 70070400000000L, 12501, 70156800000000L, 12434, 70243200000000L, 12366, 70329600000000L, 12299, 70416000000000L, 12231, 70502400000000L, 12164, 70588800000000L, 12097, 70675200000000L, 12030, 70761600000000L, 11963, 70848000000000L, 11896, 70934400000000L, 11829, 71020800000000L, 11762, 71107200000000L, 11695, 71193600000000L, 11628, 71280000000000L, 11561, 71366400000000L, 11494, 71452800000000L, 11427, 71539200000000L, 11360, 71625600000000L, 11293, 71712000000000L, 11226, 71798400000000L, 11158, 71884800000000L, 11091, 71971200000000L, 11024, 72057600000000L, 10957, 72144000000000L, 10890, 72230400000000L, 10823, 72316800000000L, 10756, 72403200000000L, 10689, 72489600000000L, 10622, 72576000000000L, 10555, 72662400000000L, 10488, 72748800000000L, 10421, 72835200000000L, 10354, 72921600000000L, 10287, 73008000000000L, 10218, 73094400000000L, 10151, 73180800000000L, 10084, 73267200000000L, 10017, 73353600000000L, 9949, 73440000000000L, 9882, 73526400000000L, 9815, 73612800000000L, 9748, 73699200000000L, 9681, 73785600000000L, 9614, 73872000000000L, 9547, 73958400000000L, 9480, 74044800000000L, 9412, 74131200000000L, 9345, 74217600000000L, 9278, 74304000000000L, 9210, 74390400000000L, 9143, 74476800000000L, 9076, 74563200000000L, 9009, 74649600000000L, 8942, 74736000000000L, 8875, 74822400000000L, 8808, 74908800000000L, 8741, 74995200000000L, 8674, 75081600000000L, 8607, 75168000000000L, 8540, 75254400000000L, 8473, 75340800000000L, 8406, 75427200000000L, 8339, 75513600000000L, 8271, 75600000000000L, 8204, 75686400000000L, 8137, 75772800000000L, 8070, 75859200000000L, 8003, 75945600000000L, 7936, 76032000000000L, 7869, 76118400000000L, 7802, 76204800000000L, 7735, 76291200000000L, 7668, 76377600000000L, 7601, 76464000000000L, 7534, 76550400000000L, 7466, 76636800000000L, 7399, 76723200000000L, 7332, 76809600000000L, 7265, 76896000000000L, 7198, 76982400000000L, 7131, 77068800000000L, 7064, 77155200000000L, 6997, 77241600000000L, 6930, 77328000000000L, 6863, 77414400000000L, 6796, 77500800000000L, 6729, 77587200000000L, 6662, 77673600000000L, 6595, 77760000000000L, 6528, 77846400000000L, 6461, 77932800000000L, 6396, 78019200000000L, 6331, 78105600000000L, 6266, 78192000000000L, 6201, 78278400000000L, 6136, 78364800000000L, 6071, 78451200000000L, 6006, 78537600000000L, 5941, 78624000000000L, 5876, 78710400000000L, 5811, 78796800000000L, 5746, 78883200000000L, 5681, 78969600000000L, 5616, 79056000000000L, 5551, 79142400000000L, 5486, 79228800000000L, 5421, 79315200000000L, 5356, 79401600000000L, 5291, 79488000000000L, 5226, 79574400000000L, 5161, 79660800000000L, 5096, 79747200000000L, 5031, 79833600000000L, 4965, 79920000000000L, 4900, 80006400000000L, 4835, 80092800000000L, 4770, 80179200000000L, 4705, 80265600000000L, 4640, 80352000000000L, 4575, 80438400000000L, 4510, 80524800000000L, 4445, 80611200000000L, 4380, 80697600000000L, 4315, 80784000000000L, 4250, 80870400000000L, 4185, 80956800000000L, 4120, 81043200000000L, 4055, 81129600000000L, 3990, 81216000000000L, 3925, 81302400000000L, 3860, 81388800000000L, 3794, 81475200000000L, 3729, 81561600000000L, 3664, 81648000000000L, 3599, 81734400000000L, 3534, 81820800000000L, 3469, 81907200000000L, 3404, 81993600000000L, 3339, 82080000000000L, 3274, 82166400000000L, 3208, 82252800000000L, 3143, 82339200000000L, 3078, 82425600000000L, 3013, 82512000000000L, 2948, 82598400000000L, 2883, 82684800000000L, 2818, 82771200000000L, 2753, 82857600000000L, 2688, 82944000000000L, 2623, 83030400000000L, 2558, 83116800000000L, 2493, 83203200000000L, 2428, 83289600000000L, 2363, 83376000000000L, 2298, 83462400000000L, 2233, 83548800000000L, 2168, 83635200000000L, 2102, 83721600000000L, 2037, 83808000000000L, 1972, 83894400000000L, 1902, 83980800000000L, 1836, 84067200000000L, 1771, 84153600000000L, 1705, 84240000000000L, 1640, 84326400000000L, 1575, 84412800000000L, 1510, 84499200000000L, 1445, 84585600000000L, 1380, 84672000000000L, 1315, 84758400000000L, 1249, 84844800000000L, 1184, 84931200000000L, 1119, 85017600000000L, 1054, 85104000000000L, 989, 85190400000000L, 924, 85276800000000L, 859, 85363200000000L, 794, 85449600000000L, 728, 85536000000000L, 663, 85622400000000L, 598, 85708800000000L, 535, 85795200000000L, 472, 85881600000000L, 409, 85968000000000L, 346, 86054400000000L, 283, 86140800000000L, 220, 86227200000000L, 157, 86313600000000L, 94, 86400000000000L, 31),
+                chunk("1972/1_1", 63072000000000L, 17937, 63158400000000L, 17870, 63244800000000L, 17803, 63331200000000L, 17736, 63417600000000L, 17669, 63504000000000L, 17602, 63590400000000L, 17535, 63676800000000L, 17468, 63763200000000L, 17401, 63849600000000L, 17334, 63936000000000L, 17267, 64022400000000L, 17200, 64108800000000L, 17133, 64195200000000L, 17066, 64281600000000L, 16999, 64368000000000L, 16931, 64454400000000L, 16864, 64540800000000L, 16797)
+        );
     }
 
     @Test
-    public void testImportNoRowsCsv() throws Exception {
-        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of(
-                        "t",
-                        "test-quotes-header-only.csv",
-                        1,
-                        PartitionBy.MONTH,
-                        (byte) ',',
-                        "ts",
-                        "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
-                        true,
-                        null
-                );
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("No rows in input file to import."));
-            }
-        });
+    public void testIndexChunksInSingleLineCsvWithPool() throws Exception {
+        assertIndexChunks(4, "test-quotes-oneline.csv",
+                chunk("2022-05-14/0_1", 1652529121000000L, 18L));
     }
 
     @Test
-    public void testImportCsvIntoExistingTableWithColumnReorder() throws Exception {
-        executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table t ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of("t", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null);
-                importer.process();
-            }
-            assertQuery("line\tts\td\tdescription\n" +
-                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
-                    "select line, ts, d, description from t limit -10",
-                    "ts", true, false, true);
-        });
+    public void testIndexChunksInSmallCsvWith1Worker() throws Exception {
+        assertIndexChunks(1, "test-quotes-small.csv",
+                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L, 1652269920001000L, 185L));
     }
 
     @Test
-    public void testImportAllTypesWithGaps() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, null);
-                importer.process();
-            }
-
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                            "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                            "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
-                            "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
-                            "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
-                            "false\t123\t8110\tE\tNaN\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
-                            "false\t98\t25729\tM\t6\tNaN\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1000\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
-                            "false\t44\t-19823\tU\t7\tNaN\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1000\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
-                            "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
-                            "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1000\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
-                            "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
-                    "select * from alltypes", "tstmp", true, false, true);
-        });
+    public void testIndexChunksInSmallCsvWith2Workers() throws Exception {
+        assertIndexChunks(2, "test-quotes-small.csv",
+                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L),
+                chunk("2022-05-11/1_1", 1652269920001000L, 185L));
     }
 
     @Test
-    public void testImportAllTypesWithGapsIndexed() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol index capacity 64,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-            }
-
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                            "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                            "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
-                            "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
-                            "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
-                            "false\t123\t8110\tE\tNaN\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
-                            "false\t98\t25729\tM\t6\tNaN\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1000\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
-                            "false\t44\t-19823\tU\t7\tNaN\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1000\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
-                            "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
-                            "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1000\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
-                            "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
-                    "select * from alltypes", "tstmp", true, false, true);
-        });
+    public void testIndexChunksInSmallCsvWith3Workers() throws Exception {
+        assertIndexChunks(3, "test-quotes-small.csv",
+                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
+                chunk("2022-05-11/1_1", 1652269920000000L, 90L),
+                chunk("2022-05-11/2_1", 1652269920001000L, 185L));
     }
 
     @Test
-    public void testImportCsvIntoExistingTableWithSymbol() throws Exception {
-        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab1 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of("tab1", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-            }
-            assertQuery("line\tts\td\tdescription\n" +
-                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
-                    "select line, ts, d, description from tab1 limit -10",
-                    "ts", true, false, true);
-        });
+    public void testIndexChunksInSmallCsvWith4Workers() throws Exception {
+        assertIndexChunks(4, "test-quotes-small.csv",
+                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
+                chunk("2022-05-11/1_1", 1652269920000000L, 90L),
+                chunk("2022-05-11/2_1", 1652269920001000L, 185L));
     }
 
     @Test
-    //missing symbols column is filled with nulls
-    public void testImportCsvWithMissingAndReorderedSymbolColumns() throws Exception {
-        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab2 (other symbol, txt symbol, line symbol, ts timestamp, d symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab2", "test-quotes-small.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
-                importer.process();
-            }
-            assertQuery("other\ttxt\tline\tts\td\n" +
-                            "\tsome text\r\nspanning two lines\tline1\t2022-05-10T11:52:00.000000Z\t111.11\n" +
-                            "\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\tline2\t2022-05-11T11:52:00.000000Z\t222.22\n" +
-                            "\tsingle line text without quotes\tline3\t2022-05-11T11:52:00.001000Z\t333.33\n",
-                    "select * from tab2 limit -10",
-                    "ts", true, false, true);
-        });
-    }
-
-    @Test
-    //all rows in the file fail on timestamp parsing so indexing phase will return empty result
-    public void testImportCsvWithTimestampNotMatchingInputFormatFails() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab3", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                Assert.assertEquals("All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportCsvFailsOnStructureParsingIO() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                return -1L;
-            }
-        };
-
-        executeWithPool(4, 8, ff, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab4", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("could not read from file"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFailsOnBoundaryScanningIO() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (offset > 30000) {
-                    return -1L;
-                } else {
-                    return super.read(fd, buf, len, offset);
-                }
-            }
-        };
-
-        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab5", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
+    public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
+        executeWithPool(1, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try {
+                executeCopy(compiler, sqlExecutionContext);
+                engine.getTextImportExecutionContext().resetActiveImportId();
+                executeCopy(compiler, sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=boundary_check, msg=`could not read import file"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFailsOnSourceFileIndexingIO() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (offset == 0 && len == 16797) {
-                    return -1;
-                }
-
-                return super.read(fd, buf, len, offset);
-            }
-        };
-
-        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab6", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=indexing, msg=`could not read file"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFailsOnDataImportIO() throws Exception {
-
-        // this is testing vanilla data copy method, ensure that io uring is disabled
-        ioURingFacade = new IOURingFacadeImpl() {
-            @Override
-            public boolean isAvailable() {
-                return false;
-            }
-        };
-
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (offset == 31 && len == 1940) {
-                    return -1;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        };
-
-        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab7", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=partition_import, msg=`could not read from file"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFailsOnFileOpenInBoundaryCheckPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            int count = 0;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "test-quotes-big.csv")) {
-                    if (count++ > 1) {
-                        return -1;
-                    }
-                }
-                return super.openRO(name);
-            }
-        };
-
-        assertImportFailsInPhase("tab8", brokenFf, "boundary_check");
-    }
-
-    @Test
-    public void testImportFailsOnFileOpenInIndexingPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-        };
-
-        assertImportFailsInPhase("tab9", brokenFf, "indexing");
-    }
-
-    @Test
-    public void testImportFailsOnFileSortingInIndexingPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (Arrays.stream(new Exception().getStackTrace())
-                        .anyMatch(ste -> ste.getClassName().endsWith("CsvFileIndexer") && ste.getMethodName().equals("sort"))) {
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-        };
-
-        assertImportFailsInPhase("tab10", brokenFf, "indexing");
-    }
-
-    @Test
-    //"[5] Can't remove import directory path='C:\Users\bolo\AppData\Local\Temp\junit2458364502615821703\imports1181738016629600\tab\1972\2_1' errno=5"
-    public void testImportFailsOnFileOpenInDataImportPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "3_1")) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-        };
-
-        assertImportFailsInPhase("tab11", brokenFf, "partition_import");
-    }
-
-    @Test
-    public void testImportFailsOnFileOpenInSymbolMergePhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "line.c")) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-        };
-
-        assertImportFailsInPhase("tab12", brokenFf, "symbol_table_merge");
-    }
-
-    @Test
-    public void testImportFailsOnFileOpenInSymbolKeysUpdatePhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
-                    return -1;
-                }
-
-                return super.openRW(name, opts);
-            }
-        };
-
-        assertImportFailsInPhase("tab13", brokenFf, "update_symbol_keys");
-    }
-
-    @Test
-    public void testImportFailsOnFileOpenInBuildSymbolIndexPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
-                    return -1;
-                }
-
-                return super.openRW(name, opts);
-            }
-        };
-
-        assertImportFailsInPhase("tab14", brokenFf, "build_symbol_index");
-    }
-
-    private void assertImportFailsInPhase(String tableName, FilesFacade brokenFf, String phase) throws Exception {
-        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table " + tableName + " ( line symbol index, ts timestamp, d double, description string) timestamp(ts) partition by YEAR;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=" + phase));
-            }
-        });
-    }
-
-    private static boolean stackContains(String klass) {
-        return Arrays.stream(new Exception().getStackTrace())
-                .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
-    }
-
-    @Test
-    public void testImportWithZeroWorkersFails() throws Exception {
-        executeWithPool(0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            SqlExecutionContextStub context = new SqlExecutionContextStub(engine) {
-                @Override
-                public int getWorkerCount() {
-                    return 0;
-                }
-            };
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, context.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab15", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Invalid worker count set "));
-            }
-        });
-    }
-
-    @Test
-    public void testImportWithZeroLengthQueueReturnsError() throws Exception {
-        executeWithPool(2, 0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab16", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Parallel import queue size cannot be zero"));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. Another import request may be in progress."));
             }
         });
     }
@@ -1314,139 +2250,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         }
     }
 
-    private void importAndCleanupTable(
-            ParallelCsvFileImporter importer,
-            SqlExecutionContext context,
-            SqlCompiler compiler,
-            CharSequence tableName,
-            CharSequence inputFileName,
-            int partitionBy,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
-            boolean forceHeader,
-            int expectedCount
-    ) throws Exception {
-        importer.of(
-                tableName,
-                inputFileName,
-                1,
-                partitionBy,
-                (byte) ',',
-                timestampColumn,
-                timestampFormat,
-                forceHeader,
-                null,
-                Atomicity.SKIP_COL
-        );
-        importer.process();
-        importer.clear();
-        assertQuery(
-                compiler,
-                "cnt\n" + expectedCount + "\n",
-                "select count(*) cnt from " + tableName,
-                null,
-                false,
-                context,
-                true
-        );
-        compiler.compile("drop table " + tableName, context);
-    }
-
-    @Test
-    public void testWhenImportFailsWhileMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, "1972-09" + File.separator)) {
-                    return Files.FILES_RENAME_ERR_OTHER;
-                }
-                return super.rename(from, to);
-            }
-
-            @Override
-            public int copy(LPSZ from, LPSZ to) {
-                return -1;
-            }
-        };
-
-        assertImportFailsWith("tab18", brokenFf, "could not copy partition fil");
-    }
-
-    @Test
-    public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
-        String tab41 = "tab41";
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                return Files.FILES_RENAME_ERR_EXDEV;
-            }
-
-            @Override
-            public int mkdirs(Path path, int mode) {
-                String systemTableName = Chars.toString(engine.getSystemTableName(tab41));
-                if (Chars.contains(path, File.separator + systemTableName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
-                    return -1;
-                }
-                return super.mkdirs(path, mode);
-            }
-        };
-
-        testImportThrowsException(ff, tab41, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create partition directory");
-    }
-
-    private void assertImportFailsWith(String tableName, FilesFacade brokenFf, String expectedError) throws Exception {
-        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString(expectedError));
-            }
-
-            try {
-                compiler.compile("select count(*) from " + tableName + ";", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("table does not exist"));
-            }
-        });
-    }
-
-    @Test
-    public void testWhenImportFailsWhenMovingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, "1972-09" + File.separator)) {
-                    return Files.FILES_RENAME_ERR_OTHER;
-                }
-                return super.rename(from, to);
-            }
-
-            @Override
-            public int copy(LPSZ from, LPSZ to) {
-                return -1;
-            }
-        };
-
-        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab20 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(1);
-                importer.of("tab20", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("could not copy partition file"));
-            }
-
-            assertQuery("cnt\n0\n", "select count(*) cnt from tab20", null, false, false, true);
-        });
-    }
-
     @Test
     public void testWhenImportFailsWhenAttachingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
@@ -1476,408 +2279,95 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportWithSkipAllAtomicityFailsWhenTimestampCantBeParsedAtIndexingPhase() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab22", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true, null, Atomicity.SKIP_ALL);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=indexing, msg=`could not parse timestamp [line=0, column=1]`]"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportWithSkipRowAtomicityImportsNoRowsWhenNonTimestampColumnCantBeParsed() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            // the StrSym should be 'symbol' and DoubleCol should be 'double'
-            // we intentionally create these columns with a wrong type so the ParallelCsvFileImporter fails to parse these columns
-            // the subsequent assert checks no row was imported - as the atomicity level is set to SKIP_ROW
-            compiler.compile("create table tab23 (StrSym int, Int symbol,Int_Col int, DoubleCol int,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by MONTH;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab23", "test-import.csv", 1, PartitionBy.MONTH, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false, null, Atomicity.SKIP_ROW);
-                importer.process();
-            }
-
-            assertQuery("cnt\n0\n", "select count(*) cnt from tab23", null, false, false, true);
-        });
-    }
-
-    @Test
-    public void testImportWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("alltypes", "test-errors.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ROW);
-                importer.process();
-            }
-
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                            "false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                            "false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" + //boolean parses anything other than true as false
-                            "false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" + //short overflow
-                            "false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" + //char adapter ignores anything after first character
-                            "true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n", //date format discovery is flawed
-                    //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values
-                    "select * cnt from alltypes", "tstmp", true, false, true);
-        });
-    }
-
-    @Test
-    public void testImportWithSkipColumnAtomicityImportsAllRowsExceptOneFailingOnTimestamp() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("alltypes", "test-errors.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_COL);
-                importer.process();
-            }
-
-            assertQuery("cnt\n13\n",
-                    "select count(*) cnt from alltypes", null, false, false, true);
-        });
-    }
-
-    @Test
-    public void testImportCsvFromFileWithBadColumnNamesInHeaderIntoNewTableFiltersOutBadCharacters() throws Exception {
-        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of("tab24", "test-badheadernames.csv", 1, PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-            }
-            assertQuery("Line\tTs\tD\tDescRipTION\n" +
-                            "line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1\n" +
-                            "line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2\n",
-                    "select * from tab24", "ts", true, false, true);
-        });
-    }
-
-    @Test
-    public void testImportCsvIntoNewTable() throws Exception {
-        testImportCsvIntoNewTable0("tab25");
-    }
-
-    @Test
-    public void testImportCsvSmallerFileBuffer() throws Exception {
-        // the buffer is enough to fit only a few lines
-        sqlCopyBufferSize = 256;
-        testImportCsvIntoNewTable0("tab26");
-    }
-
-    private void testImportCsvIntoNewTable0(String tableName) throws Exception {
-        executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-            }
-            assertQuery("cnt\n" +
-                            "1000\n",
-                    "select count(*) cnt from " + tableName,
-                    null, false, true);
-            assertQuery("line\tts\td\tdescription\n" +
-                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
-                    "select * from " + tableName + " limit -10",
-                    "ts", true, false, true);
-        });
-    }
-
-    @Test
-    public void testImportCsvIntoNewTableVanilla() throws Exception {
-        // this does not use io_uring even on Linux
-        ioURingFacade = new IOURingFacadeImpl() {
+    public void testWhenImportFailsWhenMovingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public boolean isAvailable() {
-                return false;
-            }
-        };
-
-        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            final String tableName = "tab27";
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-            }
-            assertQuery("cnt\n" +
-                            "1000\n",
-                    "select count(*) cnt from " + tableName,
-                    null, false, true);
-            assertQuery("line\tts\td\tdescription\n" +
-                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
-                    "select * from " + tableName + " limit -10",
-                    "ts", true, false, true);
-        });
-    }
-
-    @Test
-    public void testImportURingShuffleCqe() throws Exception {
-
-        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
-
-        class TestIOURing extends IOURingImpl {
-            private final LongList stuff = new LongList();
-            private int stuffMax = 0;
-            private int stuffIndex = 0;
-            private final Rnd rnd = new Rnd();
-
-            public TestIOURing(IOURingFacade facade, int capacity) {
-                super(facade, capacity);
-            }
-
-            @Override
-            public boolean nextCqe() {
-                if (++stuffIndex < stuffMax) {
-                    return true;
-                }
-
-                boolean next = super.nextCqe();
-                if (!next) {
-                    return false;
-                }
-
-                stuff.clear();
-
-                do {
-                    stuff.add(super.getCqeId(), super.getCqeRes());
-                } while (super.nextCqe());
-
-                stuff.shuffle(rnd, 1);
-
-                stuffIndex = 0;
-                stuffMax = stuff.size() / 2;
-
-                return true;
-            }
-
-            @Override
-            public long getCqeId() {
-                int index = stuffIndex;
-                return stuff.getQuick(index * 2);
-            }
-
-            @Override
-            public int getCqeRes() {
-                int index = stuffIndex;
-                return (int) stuff.getQuick(index * 2 + 1);
-            }
-        }
-        ioURingFacade = new IOURingFacadeImpl() {
-            @Override
-            public IOURing newInstance(int capacity) {
-                return new TestIOURing(this, capacity);
-            }
-        };
-
-        executeWithPool(2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            final String tableName = "tab28";
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of(tableName, "test-quotes-big-reverseorder.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-            }
-            assertQuery("line\tts\td\tdescription\n" +
-                            "line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10\n" +
-                            "line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9\n" +
-                            "line8\t1972-09-20T00:00:00.000000Z\t0.450854040396\tdesc 8\n" +
-                            "line7\t1972-09-21T00:00:00.000000Z\t0.207871778557\tdesc 7\n" +
-                            "line6\t1972-09-22T00:00:00.000000Z\t0.341597834365\tdesc 6\n" +
-                            "line5\t1972-09-23T00:00:00.000000Z\t0.5071712972\tdesc 5\n" +
-                            "line4\t1972-09-24T00:00:00.000000Z\t0.426072974125\tdesc 4\n" +
-                            "line3\t1972-09-25T00:00:00.000000Z\t0.525414887561\tdesc 3\n" +
-                            "line2\t1972-09-26T00:00:00.000000Z\t0.105484410855\tdesc 2\n" +
-                            "line1\t1972-09-27T00:00:00.000000Z\t0.490933692472\tdesc 1\n",
-                    "select * from " + tableName + " limit -10",
-                    "ts", true, false, true);
-        });
-    }
-
-    @Test
-    public void testImportURingEnqueueFails() throws Exception {
-
-        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
-
-        class TestIOURing extends IOURingImpl {
-            private final Rnd rnd = new Rnd();
-
-            public TestIOURing(IOURingFacade facade, int capacity) {
-                super(facade, capacity);
-            }
-
-            @Override
-            public long enqueueRead(long fd, long offset, long bufAddr, int len) {
-                if (rnd.nextBoolean()) {
-                    return super.enqueueRead(fd, offset, bufAddr, len);
-                }
+            public int copy(LPSZ from, LPSZ to) {
                 return -1;
             }
-        }
-        ioURingFacade = new IOURingFacadeImpl() {
-            @Override
-            public IOURing newInstance(int capacity) {
-                return new TestIOURing(this, capacity);
-            }
-        };
-
-        executeWithPool(2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            final String tableName = "tab29";
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "io_uring error");
-            }
-        });
-    }
-
-    @Test
-    public void testImportURingReadFails() throws Exception {
-
-        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
-
-        class TestIOURing extends IOURingImpl {
-            private final Rnd rnd = new Rnd();
-
-            public TestIOURing(IOURingFacade facade, int capacity) {
-                super(facade, capacity);
-            }
 
             @Override
-            public int getCqeRes() {
-                return rnd.nextBoolean() ? super.getCqeRes() : -1;
-            }
-        }
-        ioURingFacade = new IOURingFacadeImpl() {
-            @Override
-            public IOURing newInstance(int capacity) {
-                return new TestIOURing(this, capacity);
-            }
-        };
-
-        executeWithPool(2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            final String tableName = "tab30";
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not read from file");
-            }
-        });
-    }
-
-    @Test
-    public void testImportTooSmallFileBufferVanilla() throws Exception {
-        ioURingFacade = new IOURingFacadeImpl() {
-            @Override
-            public boolean isAvailable() {
-                return false;
-            }
-        };
-        testImportTooSmallFileBuffer0("tab31");
-    }
-
-    @Test
-    public void testImportTooSmallFileBufferURing() throws Exception {
-        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
-        testImportTooSmallFileBuffer0("tab32");
-    }
-
-    private void testImportTooSmallFileBuffer0(String tableName) throws Exception {
-        sqlCopyBufferSize = 50;
-        executeWithPool(
-                2,
-                2,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                        importer.setMinChunkSize(10);
-                        importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                        importer.process();
-                        Assert.fail();
-                    } catch (TextImportException e) {
-                        TestUtils.assertContains(e.getMessage(), "buffer overflow");
-                    }
+            public int rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "1972-09" + File.separator)) {
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
-        );
+                return super.rename(from, to);
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab20 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of("tab20", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("could not copy partition file"));
+            }
+
+            assertQuery("cnt\n0\n", "select count(*) cnt from tab20", null, false, false, true);
+        });
     }
 
-    private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy,
-                                      String fileName, IndexChunk... expectedChunks) {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        inputRoot = TestUtils.getCsvRoot();
-
-        try (Path path = new Path().of(inputRoot).concat(fileName).$();
-             ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-            importer.setMinChunkSize(1);
-            importer.of("tableName", fileName, 1, partitionBy, (byte) ',', "ts", format, false);
-
-            long fd = TableUtils.openRO(ff, path, LOG);
-            try (TableWriter ignored = importer.parseStructure(fd)) {
-                long length = ff.length(fd);
-                importer.phaseBoundaryCheck(length);
-                importer.phaseIndexing();
-            } finally {
-                ff.close(fd);
+    @Test
+    public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
+                    return -1;
+                }
+                return super.openRO(path);
             }
-        }
-        CharSequence systemTableName = engine.getSystemTableName("tableName");
-        ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot, Chars.toString(systemTableName)));
-        Assert.assertEquals(list(expectedChunks), actualChunks);
+        };
+
+        assertImportFailsWith("tab19", brokenFf, "could not attach [partition='1972-09'");
+    }
+
+    @Test
+    public void testWhenImportFailsWhileMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                return -1;
+            }
+
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "1972-09" + File.separator)) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertImportFailsWith("tab18", brokenFf, "could not copy partition fil");
+    }
+
+    @Test
+    public void testWhenRenameBreaksBecauseTempFilesAreOnDifferentFSThanDbDirThenImportStillWorks() throws Exception {
+        AtomicInteger counter = new AtomicInteger(0);
+        FilesFacade brokenRename = new FilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (counter.incrementAndGet() < 11) {
+                    return Files.FILES_RENAME_ERR_EXDEV;
+                }
+                return super.rename(from, to);
+            }
+        };
+        executeWithPool(4, 8, brokenRename, this::importAllIntoNew);
+    }
+
+    static IndexChunk chunk(String path, long... data) {
+        return new IndexChunk(path, data);
+    }
+
+    private static boolean stackContains(String klass) {
+        return Arrays.stream(new Exception().getStackTrace())
+                .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
     }
 
     static ObjList<IndexChunk> readIndexChunks(File root) {
@@ -1932,499 +2422,60 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         return result;
     }
 
-    @Test
-    public void testImportFileWithoutHeader() throws Exception {
-        testImportThrowsException("tabex1", "test-quotes-oneline.csv", PartitionBy.MONTH, "ts", null, "column is not a timestamp [no=1, name='ts']");
-    }
-
-    @Test
-    public void testImportFileWithHeaderButMissingTimestampColumn() throws Exception {
-        testImportThrowsException("tabex2", "test-quotes-big.csv", PartitionBy.DAY, "ts1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "timestamp column 'ts1' not found in file header");
-    }
-
-    @Test
-    public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
-        String tabex3 = "tabex3";
-        CharSequence systemTableName = engine.getSystemTableName(tabex3);
-        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(systemTableName).slash$()) {
-            FilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
+    static ObjList<IndexChunk> list(IndexChunk... chunks) {
+        ObjList<IndexChunk> result = new ObjList<>(chunks.length);
+        for (IndexChunk chunk : chunks) {
+            result.add(chunk);
         }
-
-        testImportThrowsException(tabex3, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "name is reserved [table="+tabex3+"]");
+        return result;
     }
 
-    @Test
-    public void testImportFileFailsWhenIntermediateTableDirectoryIsMangled() throws Exception {
-        String tab33 = "tab33";
-        CharSequence systemTableName = engine.getSystemTableName(tab33);
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, TableUtils.fsTableName(systemTableName + "_0"))) {
-                    return true;
+    protected static void execute(
+            @Nullable WorkerPool pool,
+            TextImportRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool == null ? 1 : pool.getWorkerCount();
+        try (final CairoEngine engine = new CairoEngine(configuration);
+             final SqlCompiler compiler = new SqlCompiler(engine)) {
+
+            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
+                try {
+                    if (pool != null) {
+                        TextImportJob.assignToPool(engine.getMessageBus(), pool);
+                        pool.start(LOG);
+                    }
+
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+                } finally {
+                    if (pool != null) {
+                        pool.halt();
+                    }
                 }
-                return super.exists(path);
             }
-        };
-
-        testImportThrowsException(ff, tab33, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`name is reserved [tableName=" + systemTableName +"_0]`]");
+        }
     }
 
-    @Test
-    public void testImportFileFailsWhenIntermediateTableDirectoryExistAndCantBeDeleted() throws Exception {
-        String tab34 = "tab34";
-        CharSequence systemTableName = engine.getSystemTableName(tab34);
-        String tab34_0 = Chars.toString(engine.getSystemTableName(systemTableName + "_0"));
-        FilesFacade ff = new FilesFacadeImpl() {
+    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextImportException {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
+             ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+            importer.setMinChunkSize(1);
+            importer.of("table", fileName, 1, PartitionBy.DAY, (byte) ',', "unknown", null, false);
 
-            @Override
-            public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, tab34_0)) {
-                    return true;
-                } else if (Chars.endsWith(path, tab34_0 + File.separator + "_txn")) {
-                    return true;
-                }
-                return super.exists(path);
+            long fd = ff.openRO(path);
+            long length = ff.length(fd);
+            Assert.assertTrue(fd > -1);
+
+            try {
+                LongList actualBoundaries = importer.phaseBoundaryCheck(length);
+                Assert.assertEquals(expectedBoundaries, actualBoundaries);
+            } finally {
+                ff.close(fd);
             }
-
-            @Override
-            public int rmdir(Path name) {
-                if (Chars.endsWith(name, tab34_0)) {
-                    return -1;
-                }
-                return super.rmdir(name);
-            }
-        };
-
-        testImportThrowsException(ff, tab34, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`[-1] Table remove failed [tableName=" + TableUtils.FsToUserTableName(tab34_0) + "]`]");
-    }
-
-    @Test
-    public void testImportFileFailsWhenWorkDirectoryDoesNotExistAndCantBeCreated() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            final String tempDir = inputWorkRoot + File.separator;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                if (Chars.equals(path, tempDir)) {
-                    return false;
-                }
-                return super.exists(path);
-            }
-
-            @Override
-            public int rmdir(Path name) {
-                if (Chars.equals(name, tempDir)) {
-                    return -1;
-                }
-                return super.rmdir(name);
-            }
-        };
-
-        testImportThrowsException(ff, "tab35", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create import work root directory");
-    }
-
-    @Test
-    public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
-        String tab35 = "tab35";
-        CharSequence systemTableName = engine.getSystemTableName(tab35);
-        FilesFacade ff = new FilesFacadeImpl() {
-            final String tempDir = inputWorkRoot + File.separator + systemTableName;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                if (Chars.equals(path, tempDir)) {
-                    return true;
-                }
-                return super.exists(path);
-            }
-
-            @Override
-            public int rmdir(Path name) {
-                if (Chars.equals(name, tempDir)) {
-                    return -1;
-                }
-                return super.rmdir(name);
-            }
-        };
-
-        testImportThrowsException(ff, tab35, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove import work directory");
-    }
-
-    @Test
-    public void testImportFileFailsWhenImportingTextIntoBinaryColumn() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab36 ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab36", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
-                importer.process();
-            } catch (Exception e) {
-                assertThat(e.getMessage(), containsString("cannot import text into BINARY column [index=3]"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileFailsWhenTimestampColumnIsMissingInInputFile() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab37 ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab37", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
-                importer.process();
-            } catch (Exception e) {
-                assertThat(e.getMessage(), containsString("invalid timestamp column [name='ts']"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileSetsDateColumnToNullIfCsvStructureCheckCantDetectACommonFormat() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab38 ( line string, ts timestamp, d date, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab38", "test-quotes-small.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
-                importer.process();
-            }
-
-            assertQuery("line\tts\td\ttxt\n" +
-                            "line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r\nspanning two lines\n" +
-                            "line2\t2022-05-11T11:52:00.000000Z\t\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\n" +
-                            "line3\t2022-05-11T11:52:00.001000Z\t\tsingle line text without quotes\n",
-                    "select * from tab38", null, "ts", true, true, true);
-        });
-    }
-
-    @Test
-    public void testImportFileFailsWhenTargetTableNameIsInvalid() throws Exception {
-        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "invalid table name [table=../t]");
-    }
-
-    @Test
-    public void testImportFileFailsWhenWorkDirCantBeCreated() throws Exception {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
-            @Override
-            public int mkdir(Path path, int mode) {
-                if (Chars.contains(path, "tab39")) {
-                    return -1;
-                }
-                return super.mkdir(path, mode);
-            }
-        };
-
-        testImportThrowsException(ff, "tab39", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create temporary import work directory");
-    }
-
-    @Test
-    public void testImportFileFailsWhenIntermediateFilesCantBeMovedToTargetDirForUnexpectedReason() throws Exception {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                return Files.FILES_RENAME_ERR_OTHER;
-            }
-        };
-
-        testImportThrowsException(ff, "tab40", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not copy partition file");
-    }
-
-    @Test
-    public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ path) {
-                if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
-                    return -1;
-                }
-                return super.openRO(path);
-            }
-        };
-
-        assertImportFailsWith("tab19", brokenFf, "could not attach [partition='1972-09'");
-    }
-
-    @Test
-    public void testImportFileFailsWhenIntermediateFilesCantBeMovedOrCopied() throws Exception {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                return Files.FILES_RENAME_ERR_EXDEV;
-            }
-
-            @Override
-            public int copy(LPSZ from, LPSZ to) {
-                if (Chars.contains(from, "tab42")) {
-                    return -1;
-                }
-                return super.copy(from, to);
-            }
-        };
-
-        testImportThrowsException(ff, "tab42", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not copy partition file");
-    }
-
-    @Test
-    public void testImportIsCancelled() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab43", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true, () -> true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=boundary_check, msg=`Cancelled`]"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderButWrongTypeOfTimestampColumn() throws Exception {
-        testImportThrowsException("test44", "test-quotes-big.csv", PartitionBy.MONTH, "d", null, "column is not a timestamp [no=2, name='d']");
-    }
-
-    @Test
-    public void testImportFileWithHeaderButMissingTimestampColumnName() throws Exception {
-        testImportThrowsException("test44", "test-quotes-big.csv", PartitionBy.MONTH, null, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "timestamp column must be set when importing to new table");
-    }
-
-    private void testImportThrowsException(String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
-        testImportThrowsException(FilesFacadeImpl.INSTANCE, tableName, fileName, partitionBy, tsCol, tsFormat, expectedError);
-    }
-
-    private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
-        executeWithPool(4, 8, ff, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine1, sqlExecutionContext1.getWorkerCount())) {
-                importer.of(tableName, fileName, 1, partitionBy, (byte) ',', tsCol, tsFormat, true);
-                importer.process();
-                Assert.fail("exception expected");
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString(expectedError));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderButInputPartitionByNotMatchingTargetTables() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab45 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab45", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                Assert.assertEquals("declared partition by unit doesn't match table's", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableIsNotPartitioned() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab46 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab46", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                Assert.assertEquals("target table is not partitioned", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderButTargetTableIsNotPartitioned2() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab47 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab47", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                Assert.assertEquals("target table is not partitioned", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderButPartitionBySetToNone() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab48", "test-quotes-big.csv", 1, PartitionBy.NONE, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("partition strategy for parallel import cannot be NONE"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableDoesntExist() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab49", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                Assert.assertEquals("partition by unit must be set when importing to new table", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderWhenTargetTableDoesntExistSuccess() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab50", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-
-                assertQuery("count\n1000\n",
-                        "select count(*) from tab50", null, false, false, true);
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderButDifferentColumnOrderWhenTargetTableDoesExistSuccess() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab51 ( ts timestamp, line string, d double, description string ) timestamp(ts) partition by month;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab51", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", null, true);
-                importer.process();
-            }
-
-            assertQuery("count\n1000\n",
-                    "select count(*) from tab51", null, false, false, true);
-        });
-    }
-
-    @Test
-    public void testImportIntoNonEmptyTableReturnsError() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab52 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
-            compiler.compile("insert into tab52 select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab52", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                TestUtils.assertEquals("target table must be empty [table=tab52]", e.getFlyweightMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithNoHeaderIntoExistingTableFailsBecauseTsPositionInTableIsDifferentFromFile() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab53 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab53", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', null, null, false);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                Assert.assertEquals("column is not a timestamp [no=0, name='']", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithNoHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab54", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                Assert.assertEquals("timestamp column 'ts' not found in file header", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    //when there is no header and header is not forced then target tabel columns get following names : f0, f1, ..., fN
-    public void testImportFileWithNoHeaderIntoNewTableSucceedsBecauseSyntheticColumnNameIsUsed() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab55", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
-                importer.process();
-            }
-            assertQuery("count\n3\n", "select count(*) from tab55", null, false, false, true);
-        });
-    }
-
-    @Test//it fails even though ts column name and format are specified
-    public void testImportFileWithHeaderIntoNewTableFailsBecauseTsColCantBeFoundInFileHeader() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab56", "test-quotes-oneline.csv", 1, PartitionBy.DAY, (byte) ',', "ts2", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                Assert.assertEquals("timestamp column 'ts2' not found in file header", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithNoHeaderIntoExistingTableSucceedsBecauseTsPositionInTableIsSameAsInFile() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab57 ( s string, ts timestamp, d double, s2 string ) timestamp(ts) partition by day;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab57", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', null, null, false);
-                importer.process();
-            }
-            assertQuery("count\n3\n", "select count(*) from tab57", null, false, false, true);
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderIntoExistingTableWhenInputColumnCountIsSmallerThanTablesSucceedsAndInsertsNullIntoMissingColumns() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab58 ( line string, ts timestamp, d double, description string, i int, l long ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab58", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-            }
-
-            assertQuery("count\ticount\tlcount\n1000\t1000\t1000\n",
-                    "select count(*), sum( case when i is null then 1 else 0 end) icount, sum( case when l is null then 1 else 0 end) lcount from tab58", null, false, false, true);
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderIntoExistingTableFailsBecauseInputColumnCountIsLargerThanTables() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab59 ( line string, ts timestamp, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab59", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-                Assert.fail("exception expected");
-            } catch (Exception e) {
-                Assert.assertEquals("column count mismatch [textColumnCount=4, tableColumnCount=3, table=tab59]", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testImportFileWithHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
-        assertColumnNameException("test-header-dupvalues.csv", true, "duplicate column name found [no=4,name=e]");
-    }
-
-    @Test
-    public void testImportFileWithHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
-        assertColumnNameException("test-header-dupvalues.csv", false, "duplicate column name found [no=4,name=e]");
-    }
-
-    @Test
-    public void testImportFileWithoutHeaderWithForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
-        assertColumnNameException("test-noheader-dupvalues.csv", true, "duplicate column name found [no=3,name=_100i]");
-    }
-
-    @Test
-    public void testImportFileWithoutHeaderWithoutForceHeaderIntoNewTableFailsBecauseColumnNamesRepeat() throws Exception {
-        assertColumnNameException("test-noheader-dupvalues.csv", false, "duplicate column name found [no=3,name=_100i]");
+        }
     }
 
     private void assertColumnNameException(String fileName, boolean forceHeader, String message) throws Exception {
@@ -2439,43 +2490,251 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTable() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+    private void assertImportFailsInPhase(String tableName, FilesFacade brokenFf, String phase) throws Exception {
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table " + tableName + " ( line symbol index, ts timestamp, d double, description string) timestamp(ts) partition by YEAR;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab61", "test-header-missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                importer.setMinChunkSize(1);
+                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
-
-                assertQuery("ts\tf3\tf3_\tf3__\tf4\n" +
-                        "1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1\n" +
-                        "1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2\n", "select * from tab61", "ts", true, false, true);
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=" + phase));
             }
         });
     }
 
-    @Test
-    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTableFailesOnUniqueColumnNameGeneration() throws Exception {
-        assertColumnNameException("test-header-missing-long.csv", true, "Failed to generate unique name for column [no=22]");
-    }
-
-    @Test
-    public void testImportAllTypesIntoNewTable() throws Exception {
-        executeWithPool(4, 8, this::importAllIntoNew);
-    }
-
-    @Test
-    public void testWhenRenameBreaksBecauseTempFilesAreOnDifferentFSThanDbDirThenImportStillWorks() throws Exception {
-        AtomicInteger counter = new AtomicInteger(0);
-        FilesFacade brokenRename = new FilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (counter.incrementAndGet() < 11) {
-                    return Files.FILES_RENAME_ERR_EXDEV;
-                }
-                return super.rename(from, to);
+    private void assertImportFailsWith(String tableName, FilesFacade brokenFf, String expectedError) throws Exception {
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(1);
+                importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString(expectedError));
             }
-        };
-        executeWithPool(4, 8, brokenRename, this::importAllIntoNew);
+
+            try {
+                compiler.compile("select count(*) from " + tableName + ";", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("table does not exist"));
+            }
+        });
+    }
+
+    private void assertIndexChunks(int workerCount, String fileName, IndexChunk... expectedChunks) throws Exception {
+        assertIndexChunks(workerCount, "yyyy-MM-ddTHH:mm:ss.SSSZ", PartitionBy.DAY, fileName, expectedChunks);
+    }
+
+    private void assertIndexChunks(int workerCount, String dateFormat, int partitionBy, String fileName, IndexChunk... expectedChunks) throws Exception {
+        executeWithPool(workerCount, 8,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+                        assertIndexChunksFor(sqlExecutionContext, dateFormat, partitionBy, fileName, expectedChunks));
+    }
+
+    private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy,
+                                      String fileName, IndexChunk... expectedChunks) {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        inputRoot = TestUtils.getCsvRoot();
+
+        try (Path path = new Path().of(inputRoot).concat(fileName).$();
+             ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+            importer.setMinChunkSize(1);
+            importer.of("tableName", fileName, 1, partitionBy, (byte) ',', "ts", format, false);
+
+            long fd = TableUtils.openRO(ff, path, LOG);
+            try (TableWriter ignored = importer.parseStructure(fd)) {
+                long length = ff.length(fd);
+                importer.phaseBoundaryCheck(length);
+                importer.phaseIndexing();
+            } finally {
+                ff.close(fd);
+            }
+        }
+        CharSequence systemTableName = engine.getSystemTableName("tableName");
+        ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot, Chars.toString(systemTableName)));
+        Assert.assertEquals(list(expectedChunks), actualChunks);
+    }
+
+    protected void assertQueryCompiledQuery(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expected,
+            String query,
+            String expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean expectSize,
+            boolean sizeCanBeVariable
+    ) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                expectSize,
+                sizeCanBeVariable);
+    }
+
+    protected void assertQueryCompiledQuery(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expected,
+            String query,
+            String expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean expectSize
+    ) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                expectSize);
+    }
+
+    private void executeCopy(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(
+                "copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
+                sqlExecutionContext
+        );
+        try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+        }
+    }
+
+    protected void executeWithPool(
+            int workerCount,
+            int queueCapacity,
+            TextImportRunnable runnable
+    ) throws Exception {
+        executeWithPool(workerCount, queueCapacity, FilesFacadeImpl.INSTANCE, runnable);
+    }
+
+    protected void executeWithPool(
+            int workerCount,
+            int queueCapacity,
+            FilesFacade ff,
+            TextImportRunnable runnable
+    ) throws Exception {
+        // we need to create entire engine
+        assertMemoryLeak(() -> {
+            if (workerCount > 0) {
+                WorkerPool pool = new WorkerPool(() -> workerCount);
+
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public IOURingFacade getIOURingFacade() {
+                        return ioURingFacade;
+                    }
+
+                    @Override
+                    public int getSqlCopyQueueCapacity() {
+                        return queueCapacity;
+                    }
+
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return ParallelCsvFileImporterTest.inputRoot;
+                    }
+
+                    @Override
+                    public CharSequence getSqlCopyInputWorkRoot() {
+                        return ParallelCsvFileImporterTest.inputWorkRoot;
+                    }
+
+                    @Override
+                    public boolean mangleTableSystemNames() {
+                        return AbstractGriffinTest.configuration.mangleTableSystemNames();
+                    }
+
+                    @Override
+                    public int getSqlCopyBufferSize() {
+                        return sqlCopyBufferSize;
+                    }
+                };
+
+                execute(pool, runnable, configuration1);
+            } else {
+                // we need to create entire engine
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public IOURingFacade getIOURingFacade() {
+                        return ioURingFacade;
+                    }
+
+                    @Override
+                    public int getSqlCopyQueueCapacity() {
+                        return queueCapacity;
+                    }
+
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+
+                    @Override
+                    public boolean mangleTableSystemNames() {
+                        return AbstractGriffinTest.configuration.mangleTableSystemNames();
+                    }
+
+                    @Override
+                    public int getSqlCopyBufferSize() {
+                        return sqlCopyBufferSize;
+                    }
+                };
+                execute(null, runnable, configuration1);
+            }
+        });
+    }
+
+    private void importAllIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
+        compiler.compile("create table alltypes (\n" +
+                "  bo boolean,\n" +
+                "  by byte,\n" +
+                "  sh short,\n" +
+                "  ch char,\n" +
+                "  in_ int,\n" +
+                "  lo long,\n" +
+                "  dat date, \n" +
+                "  tstmp timestamp, \n" +
+                "  ft float,\n" +
+                "  db double,\n" +
+                "  str string,\n" +
+                "  sym symbol,\n" +
+                "  l256 long256," +
+                "  ge geohash(20b)" +
+                ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+            importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+            importer.process();
+        }
+
+        assertQueryCompiledQuery(compiler, sqlExecutionContext,
+                "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
+                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
+                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
+                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
+                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
+                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1000\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
+                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1000\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
+                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
+                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1000\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
+                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                "select * from alltypes", "tstmp", true, false, true);
     }
 
     private void importAllIntoNew(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
@@ -2514,161 +2773,70 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 "ge\tSTRING\tfalse\t256\tfalse\t0\tfalse\n", "show columns from alltypes", null, false, sqlExecutionContext, false, false);
     }
 
-    @Test
-    public void testImportAllTypesIntoExistingTable() throws Exception {
-        executeWithPool(4, 8, this::importAllIntoExisting);
+    private void importAndCleanupTable(
+            ParallelCsvFileImporter importer,
+            SqlExecutionContext context,
+            SqlCompiler compiler,
+            CharSequence tableName,
+            CharSequence inputFileName,
+            int partitionBy,
+            CharSequence timestampColumn,
+            CharSequence timestampFormat,
+            boolean forceHeader,
+            int expectedCount
+    ) throws Exception {
+        importer.of(
+                tableName,
+                inputFileName,
+                1,
+                partitionBy,
+                (byte) ',',
+                timestampColumn,
+                timestampFormat,
+                forceHeader,
+                null,
+                Atomicity.SKIP_COL
+        );
+        importer.process();
+        importer.clear();
+        assertQuery(
+                compiler,
+                "cnt\n" + expectedCount + "\n",
+                "select count(*) cnt from " + tableName,
+                null,
+                false,
+                context,
+                true
+        );
+        compiler.compile("drop table " + tableName, context);
     }
 
-    @Test
-    public void testImportAllTypesIntoExistingTableBrokenRename() throws Exception {
-        AtomicInteger counter = new AtomicInteger(0);
-        FilesFacade brokenRename = new FilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (counter.incrementAndGet() < 11) {
-                    return Files.FILES_RENAME_ERR_EXDEV;
-                }
-                return super.rename(from, to);
-            }
-        };
-        executeWithPool(4, 8, brokenRename, this::importAllIntoExisting);
-    }
-
-    private void importAllIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
-        compiler.compile("create table alltypes (\n" +
-                "  bo boolean,\n" +
-                "  by byte,\n" +
-                "  sh short,\n" +
-                "  ch char,\n" +
-                "  in_ int,\n" +
-                "  lo long,\n" +
-                "  dat date, \n" +
-                "  tstmp timestamp, \n" +
-                "  ft float,\n" +
-                "  db double,\n" +
-                "  str string,\n" +
-                "  sym symbol,\n" +
-                "  l256 long256," +
-                "  ge geohash(20b)" +
-                ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
-        try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-            importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-            importer.process();
+    private LongList list(long... values) {
+        LongList result = new LongList();
+        for (long l : values) {
+            result.add(l);
         }
-
-        assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
-                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
-                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
-                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
-                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1000\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
-                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1000\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
-                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
-                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1000\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
-                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
-                "select * from alltypes", "tstmp", true, false, true);
+        return result;
     }
 
-    @Test
-    @Ignore("the cursor returns more rows than expected")
-    public void testImportIntoExistingTableWithIndex() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol index,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                importer.process();
-            }
-
-            // verify that the index is present
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "alltypes")) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                int columnIndex = metadata.getColumnIndex("sym");
-                Assert.assertTrue("Column sym must exist", columnIndex >= 0);
-
-                BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD);
-                Assert.assertNotNull(indexReader);
-                Assert.assertTrue(indexReader.getKeyCount() > 0);
-                Assert.assertTrue(indexReader.getValueMemorySize() > 0);
-
-                // expect only the very first row in zero partition to have 'sy1' symbol value
-                StaticSymbolTable symbolTable = reader.getSymbolTable(columnIndex);
-                RowCursor ic = indexReader.getCursor(true, TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
-                Assert.assertTrue(ic.hasNext());
-                Assert.assertEquals(0, ic.next());
-                Assert.assertFalse(ic.hasNext());
-            }
-
-            // run a query that uses the index
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                            "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                            "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
-                    "select * from alltypes where sym in ('sy1','sy10')", "tstmp", true, false, true);
-        });
-    }
-
-    @Test
-    public void testImportCleansUpAllTemporaryFiles() throws Exception {
-        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table t ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of("t", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                importer.process();
-
-                assertQuery("count\n1000\n", "select count(*) from t",
-                        null, false, false, true);
-
-                String[] foundFiles = new File(inputWorkRoot).list();
-                MatcherAssert.assertThat(foundFiles, equalTo(new String[0]));
-            }
-        });
-    }
-
-    @Test
-    public void testImportWithSkipAllAtomicityFailsWhenNonTimestampColumnCantBeParsedAtDataImportPhase() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab ( ts timestamp, line string, description double, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.of("tab", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ALL);
-                importer.process();
-                Assert.fail();
-            } catch (TextImportException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=partition_import, msg=`bad syntax"));
-            }
-        });
-    }
-
-    @Test
-    public void testImportCsvIntoExistingTableWithSymbolsReordered() throws Exception {
-        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-
-            final String tableName = "tableName";
-            compiler.compile("create table " + tableName + " ( ts timestamp, line symbol, d double, description symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-
+    private void testImportCsvIntoNewTable0(String tableName) throws Exception {
+        executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.setMinChunkSize(10);
                 importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
-            assertQuery("line\tts\td\tdescription\n" +
+            assertQueryCompiledQuery(
+                    compiler,
+                    sqlExecutionContext,
+                    "cnt\n" +
+                            "1000\n",
+                    "select count(*) cnt from " + tableName,
+                    null, false, true);
+            assertQueryCompiledQuery(
+                    compiler,
+                    sqlExecutionContext,
+                    "line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
                             "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
@@ -2679,210 +2847,109 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
                             "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
                             "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
-                    "select line, ts, d, description from " + tableName + " limit -10",
+                    "select * from " + tableName + " limit -10",
                     "ts", true, false, true);
         });
     }
 
-    @Test
-    public void testImportFileSkipsLinesLongerThan65kChars() throws Exception {
-        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab ( ts timestamp, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+    private void testImportThrowsException(String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
+        testImportThrowsException(FilesFacadeImpl.INSTANCE, tableName, fileName, partitionBy, tsCol, tsFormat, expectedError);
+    }
 
-            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                importer.setMinChunkSize(10);
-                importer.of("tab", "test-row-over-65k.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
+    private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
+        executeWithPool(4, 8, ff, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine1, sqlExecutionContext1.getWorkerCount())) {
+                importer.of(tableName, fileName, 1, partitionBy, (byte) ',', tsCol, tsFormat, true);
                 importer.process();
-            }
-            assertQuery("ts\tdescription\n" +
-                            "2022-05-11T11:52:00.000000Z\tb\n",
-                    "select * from tab",
-                    "ts", true, false, true);
-        });
-    }
-
-    @Test
-    public void testAssignPartitionsToWorkers() {
-        ObjList<PartitionInfo> partitions = new ObjList<>();
-
-        partitions.add(new PartitionInfo(1, "A", 10));
-        partitions.add(new PartitionInfo(2, "B", 70));
-        partitions.add(new PartitionInfo(3, "C", 50));
-        partitions.add(new PartitionInfo(4, "D", 100));
-        partitions.add(new PartitionInfo(5, "E", 5));
-
-        int tasks = ParallelCsvFileImporter.assignPartitions(partitions, 2);
-
-        MatcherAssert.assertThat(partitions, equalTo(new ObjList<PartitionInfo>(new PartitionInfo(1, "A", 10, 0),
-                new PartitionInfo(4, "D", 100, 0),
-                new PartitionInfo(5, "E", 5, 0),
-                new PartitionInfo(2, "B", 70, 1),
-                new PartitionInfo(3, "C", 50, 1))));
-        MatcherAssert.assertThat(tasks, equalTo(2));
-    }
-
-    @Test
-    public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
-        executeWithPool(1, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try {
-                executeCopy(compiler, sqlExecutionContext);
-                engine.getTextImportExecutionContext().resetActiveImportId();
-                executeCopy(compiler, sqlExecutionContext);
-                Assert.fail();
+                Assert.fail("exception expected");
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. Another import request may be in progress."));
+                MatcherAssert.assertThat(e.getMessage(), containsString(expectedError));
             }
         });
     }
 
-    static ObjList<IndexChunk> list(IndexChunk... chunks) {
-        ObjList<IndexChunk> result = new ObjList<>(chunks.length);
-        for (IndexChunk chunk : chunks) {
-            result.add(chunk);
-        }
-        return result;
-    }
-
-    private void executeCopy(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cq = compiler.compile(
-                "copy xy from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
-                sqlExecutionContext
-        );
-        try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
-            Assert.assertTrue(cursor.hasNext());
-        }
-    }
-
-    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextImportException {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
-             ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-            importer.setMinChunkSize(1);
-            importer.of("table", fileName, 1, PartitionBy.DAY, (byte) ',', "unknown", null, false);
-
-            long fd = ff.openRO(path);
-            long length = ff.length(fd);
-            Assert.assertTrue(fd > -1);
-
-            try {
-                LongList actualBoundaries = importer.phaseBoundaryCheck(length);
-                Assert.assertEquals(expectedBoundaries, actualBoundaries);
-            } finally {
-                ff.close(fd);
-            }
-        }
-    }
-
-    protected void executeWithPool(
-            int workerCount,
-            int queueCapacity,
-            TextImportRunnable runnable
-    ) throws Exception {
-        executeWithPool(workerCount, queueCapacity, FilesFacadeImpl.INSTANCE, runnable);
-    }
-
-    protected void executeWithPool(
-            int workerCount,
-            int queueCapacity,
-            FilesFacade ff,
-            TextImportRunnable runnable
-    ) throws Exception {
-        // we need to create entire engine
-        assertMemoryLeak(() -> {
-            if (workerCount > 0) {
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-
-                    @Override
-                    public int getSqlCopyQueueCapacity() {
-                        return queueCapacity;
-                    }
-
-                    @Override
-                    public CharSequence getSqlCopyInputWorkRoot() {
-                        return ParallelCsvFileImporterTest.inputWorkRoot;
-                    }
-
-                    @Override
-                    public CharSequence getSqlCopyInputRoot() {
-                        return ParallelCsvFileImporterTest.inputRoot;
-                    }
-
-                    @Override
-                    public int getSqlCopyBufferSize() {
-                        return sqlCopyBufferSize;
-                    }
-
-                    @Override
-                    public IOURingFacade getIOURingFacade() {
-                        return ioURingFacade;
-                    }
-                };
-
-                execute(pool, runnable, configuration1);
-            } else {
-                // we need to create entire engine
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-
-                    @Override
-                    public int getSqlCopyQueueCapacity() {
-                        return queueCapacity;
-                    }
-
-                    @Override
-                    public int getSqlCopyBufferSize() {
-                        return sqlCopyBufferSize;
-                    }
-
-                    @Override
-                    public IOURingFacade getIOURingFacade() {
-                        return ioURingFacade;
-                    }
-                };
-                execute(null, runnable, configuration1);
-            }
-        });
-    }
-
-    protected static void execute(
-            @Nullable WorkerPool pool,
-            TextImportRunnable runnable,
-            CairoConfiguration configuration
-    ) throws Exception {
-        final int workerCount = pool == null ? 1 : pool.getWorkerCount();
-        try (final CairoEngine engine = new CairoEngine(configuration);
-             final SqlCompiler compiler = new SqlCompiler(engine)) {
-
-            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
-                try {
-                    if (pool != null) {
-                        TextImportJob.assignToPool(engine.getMessageBus(), pool);
-                        pool.start(LOG);
-                    }
-
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
-                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
-                } finally {
-                    if (pool != null) {
-                        pool.halt();
+    private void testImportTooSmallFileBuffer0(String tableName) throws Exception {
+        sqlCopyBufferSize = 50;
+        executeWithPool(
+                2,
+                2,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                        importer.setMinChunkSize(10);
+                        importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                        importer.process();
+                        Assert.fail();
+                    } catch (TextImportException e) {
+                        TestUtils.assertContains(e.getMessage(), "buffer overflow");
                     }
                 }
-            }
-        }
+        );
+    }
+
+    private void testStatusLogCleanup(int daysToKeep) throws SqlException, IOException {
+        String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
+        compiler.compile("create table " + backlogTableName + " as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) ts," +
+                " rnd_symbol(5,4,4,3) table," +
+                " rnd_symbol(5,4,4,3) file," +
+                " rnd_symbol(5,4,4,3) phase," +
+                " rnd_symbol(5,4,4,3) status," +
+                " rnd_str(5,4,4,3) message," +
+                " rnd_long() rows_handled," +
+                " rnd_long() rows_imported," +
+                " rnd_long() errors" +
+                " from" +
+                " long_sequence(5)" +
+                ") timestamp(ts) partition by DAY", sqlExecutionContext);
+
+        parallelImportStatusLogKeepNDays = daysToKeep;
+        new TextImportRequestJob(engine, 1, null).close();
+        assertQuery("count\n" + daysToKeep + "\n",
+                "select count() from " + backlogTableName,
+                null,
+                false,
+                true
+        );
+        compiler.compile("drop table " + backlogTableName, sqlExecutionContext);
     }
 
     @FunctionalInterface
     interface TextImportRunnable {
         void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
+    }
+
+    static class IndexChunk {
+        String path;
+        long[] data; // timestamp+offset pairs
+
+        IndexChunk(String path, long... data) {
+            this.path = path;
+            this.data = data;
+        }
+
+        @Override
+        public int hashCode() {
+            int result = Objects.hash(path);
+            result = 31 * result + Arrays.hashCode(data);
+            return result;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            IndexChunk that = (IndexChunk) o;
+            return path.equals(that.path) && Arrays.equals(data, that.data);
+        }
+
+        @Override
+        public String toString() {
+            return "{" +
+                    "path='" + path + '\'' +
+                    ", data=" + Arrays.toString(data) +
+                    '}';
+        }
     }
 }

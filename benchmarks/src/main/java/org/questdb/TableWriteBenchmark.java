@@ -79,9 +79,9 @@ public class TableWriteBenchmark {
 
         LogFactory.haltInstance();
 
-        writer = new TableWriter(configuration, "test1", Metrics.disabled());
-        writer2 = new TableWriter(configuration, "test2", Metrics.disabled());
-        writer3 = new TableWriter(configuration, "test3", Metrics.disabled());
+        writer = new TableWriter(configuration, "test1", "test1", Metrics.disabled());
+        writer2 = new TableWriter(configuration, "test2", "test1", Metrics.disabled());
+        writer3 = new TableWriter(configuration, "test3", "test1", Metrics.disabled());
         rnd.reset();
     }
 

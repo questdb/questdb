@@ -149,8 +149,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         }
                     }
                     if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                        CharSequence tableName = TableUtils.FsToUserTableName(sink);
-                        if (record.open(tableName, sink)) {
+                        if (record.open(sink)) {
                             return true;
                         }
                     }
@@ -205,7 +204,8 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return TableUtils.FsToUserTableName(sink);
+                        TableUtils.convertSystemToTableName(sink);
+                        return sink;
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);
@@ -236,9 +236,11 @@ public class TableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean open(CharSequence tableName, CharSequence systemTableName) {
+                public boolean open(CharSequence systemTableName) {
 
-                    if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, sysTablePrefix))) {
+                    if (hideTelemetryTables && (TableUtils.isSystemNameSameAsTableName(systemTableName, TelemetryJob.tableName)
+                            || TableUtils.isSystemNameSameAsTableName(systemTableName, TelemetryJob.configTableName)
+                            || Chars.startsWith(systemTableName, sysTablePrefix))) {
                         return false;
                     }
 
@@ -256,7 +258,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         // perhaps this folder is not a table
                         // remove it from the result set
                         LOG.info()
-                                .$("cannot query table metadata [table=").$(tableName)
+                                .$("cannot query table metadata [table=").$(systemTableName)
                                 .$(", error=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();

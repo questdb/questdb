@@ -563,10 +563,26 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    protected static CharSequence fsTableName(CharSequence tableName) {
+        return engine.getSystemTableName(tableName);
+    }
+
     protected static void dumpMemoryUsage() {
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
             LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
         }
+    }
+
+    protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), metrics);
+    }
+
+    protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
+        return new TableReader(configuration, tableName, engine.getSystemTableName(tableName));
+    }
+
+    protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
+        return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), messageBus, metrics);
     }
 
     @TestOnly

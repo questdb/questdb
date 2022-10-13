@@ -57,27 +57,39 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         testAddColumnInteger(ColumnType.BYTE, "0");
     }
 
-    private void testAddColumnInteger(short colType, String nullValue) throws Exception {
-        final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
-                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
-                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
+    @Test
+    public void testBusyTable() throws Exception {
+        final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n";
 
-        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
 
-        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("double", ColumnType.DOUBLE)
+                .col("int", ColumnType.INT)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("sym1", ColumnType.SYMBOL)
+                .col("sym2", ColumnType.SYMBOL)
+                .col("str", ColumnType.STRING)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public short getDefaultColumnTypeForInteger() {
-                return colType;
+            public MicrosecondClock getMicrosecondClock() {
+                try {
+                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
+                } catch (NumericException e) {
+                    throw new RuntimeException(e);
+                }
             }
-        });
+        };
 
-        try (TableReader reader = new TableReader(configuration, "tab")) {
-            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
+        // open writer so that pool cannot have it
+        try (TableWriter ignored = newTableWriter(configuration, "x", metrics)) {
+            assertThat(expected, lines, "x", configuration);
         }
     }
 
@@ -99,21 +111,9 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n");
     }
 
-    private void testAddColumnFloat(short colType, String expected) throws Exception {
-        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
-
-        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
-            @Override
-            public short getDefaultColumnTypeForFloat() {
-                return colType;
-            }
-        });
-
-        try (TableReader reader = new TableReader(configuration, "tab")) {
-            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
+    private void assertTable(CharSequence expected, CharSequence tableName) {
+        try (TableReader reader = newTableReader(configuration, tableName)) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
 
@@ -455,39 +455,21 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertMultiTable(expected1, expected2, lines);
     }
 
-    @Test
-    public void testBusyTable() throws Exception {
-        final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n";
+    private void testAddColumnFloat(short colType, String expected) throws Exception {
+        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
 
-
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("double", ColumnType.DOUBLE)
-                .col("int", ColumnType.INT)
-                .col("bool", ColumnType.BOOLEAN)
-                .col("sym1", ColumnType.SYMBOL)
-                .col("sym2", ColumnType.SYMBOL)
-                .col("str", ColumnType.STRING)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
-
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
-                try {
-                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
-                } catch (NumericException e) {
-                    throw new RuntimeException(e);
-                }
+            public short getDefaultColumnTypeForFloat() {
+                return colType;
             }
-        };
+        });
 
-        // open writer so that pool cannot have it
-        try (TableWriter ignored = new TableWriter(configuration, "x", metrics)) {
-            assertThat(expected, lines, "x", configuration);
+        try (TableReader reader = newTableReader(configuration, "tab")) {
+            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }
     }
 
@@ -958,9 +940,27 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertTable(expected2, "y");
     }
 
-    private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+    private void testAddColumnInteger(short colType, String nullValue) throws Exception {
+        final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
+                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
+                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
+
+        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
+
+        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public short getDefaultColumnTypeForInteger() {
+                return colType;
+            }
+        });
+
+        try (TableReader reader = newTableReader(configuration, "tab")) {
+            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }
     }
 

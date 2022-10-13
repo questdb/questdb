@@ -62,7 +62,7 @@ public class LineTcpConnectionContextInvalidSymbolTest extends BaseLineTcpContex
                 // The very last measurement should be included if we tolerate invalid measurements.
                 expected += "192.168.0.1\t42.0\t2016-06-13T17:43:50.100500Z\n";
             }
-            try (TableReader reader = new TableReader(configuration, table)) {
+            try (TableReader reader = newTableReader(configuration, table)) {
                 TableReaderMetadata meta = reader.getMetadata();
                 assertCursorTwoPass(expected, reader.getCursor(), meta);
                 Assert.assertEquals(3, meta.getColumnCount());
