@@ -657,7 +657,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropActivePartitionFailsBecauseWeCannotReadPrevMaxPartition() throws Exception {
 
-        FilesFacade myFf = new FilesFacadeImpl(){
+        FilesFacade myFf = new FilesFacadeImpl() {
             @Override
             public long readULong(long fd, long offset) {
                 return -1L;
@@ -678,7 +678,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
-                    } catch (CairoException | SqlException ex ) { // the later is due to an assertion in SqlException.position
+                    } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. cannot read min, max timestamp from the column");
                         TestUtils.assertContains(ex.getFlyweightMessage(), "/2023-10-12/timestamp.d, partitionSizeRows=2, errno=2]");
                         Misc.free(workerPool);
@@ -690,7 +690,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropActivePartitionFailsBecausePrevMaxPartitionIsIncorrect() throws Exception {
 
-        FilesFacade myFf = new FilesFacadeImpl(){
+        FilesFacade myFf = new FilesFacadeImpl() {
             @Override
             public long readULong(long fd, long offset) {
                 return 17;
@@ -711,7 +711,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
-                    } catch (CairoException | SqlException ex ) { // the later is due to an assertion in SqlException.position
+                    } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. invalid timestamp column data in detached partition");
                         TestUtils.assertContains(ex.getFlyweightMessage(), "/2023-10-12/timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
                         Misc.free(workerPool);
