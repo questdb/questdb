@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -52,6 +53,16 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
     public CharSequence getStr(final Record rec) {
         trim(type, getArg().getStr(rec), sink1);
         return sink1;
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        int len = arg.getStrLen(rec);
+        if (len == TableUtils.NULL_LEN) {
+            return TableUtils.NULL_LEN;
+        }
+        trim(type, getArg().getStr(rec), sink1);
+        return sink1.length();
     }
 
     @Override
