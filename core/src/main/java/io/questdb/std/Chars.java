@@ -729,9 +729,7 @@ public final class Chars {
         }
         sink.clear();
         if (startIdx != endIdx) {
-            while (startIdx <= endIdx) {
-                sink.put(str.charAt(startIdx++));
-            }
+            sink.put(str, startIdx, endIdx+1);
         }
     }
 
