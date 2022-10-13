@@ -111,6 +111,7 @@ public class ServerMain implements Closeable {
                     }
 
                     final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                    walPurgeJob.delayByHalfInterval();
                     sharedPool.assign(walPurgeJob);
                     sharedPool.freeOnExit(walPurgeJob);
 

@@ -31,13 +31,13 @@ import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.FindVisitor;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -127,14 +127,14 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                     "4\t2022-02-24T00:00:03.000000Z\n" +
                     "5\t2022-02-24T00:00:04.000000Z\n");
 
-            purgeWalSegments();
+            runWalPurgeJob();
 
             assertSegmentExistence(true, tableName, 1, 0);
             assertWalExistence(true, tableName, 1);
 
             engine.releaseInactive();
 
-            purgeWalSegments();
+            runWalPurgeJob();
 
             assertSegmentExistence(false, tableName, 1, 0);
             assertWalExistence(false, tableName, 1);
@@ -169,7 +169,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             assertSegmentExistence(true, tableName, 1, 1);
 
             // Purging does nothing as the WAL has not been drained yet.
-            purgeWalSegments();
+            runWalPurgeJob();
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -188,7 +188,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             assertSegmentExistence(true, tableName, 1, 1);
 
             // Purging will now clean up the inactive segmentId==0, but leave segmentId==1
-            purgeWalSegments();
+            runWalPurgeJob();
             assertWalExistence(true, tableName, 1);
             assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
@@ -198,7 +198,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
 
             // Releasing inactive writers and purging will also delete the wal directory.
             engine.releaseInactive();
-            purgeWalSegments();
+            runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
             assertWalLockExistence(false, tableName, 1);
         });
@@ -225,7 +225,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             // Released before committing anything to the sequencer.
             engine.releaseInactive();
 
-            purgeWalSegments();
+            runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
             assertWalLockExistence(false, tableName, 1);
         });
@@ -258,14 +258,14 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             assertSegmentLockEngagement(false, tableName, 1, 1);
 
             // The segments are not going to be cleaned up despite being both unlocked.
-            purgeWalSegments();
+            runWalPurgeJob();
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
 
             // Idempotency check
             for (int count = 0; count < 1000; ++count) {
-                purgeWalSegments();
+                runWalPurgeJob();
                 assertWalExistence(true, tableName, 1);
                 assertSegmentExistence(true, tableName, 1, 0);
                 assertSegmentExistence(true, tableName, 1, 1);
@@ -276,7 +276,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             assertSql(tableName, "x\tts\ts1\n" +
                     "1\t2022-02-24T00:00:00.000000Z\t\n" +
                     "2\t2022-02-24T00:00:01.000000Z\tx\n");
-            purgeWalSegments();
+            runWalPurgeJob();
             assertWalExistence(false, tableName, 1);
             assertWalLockExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
@@ -307,12 +307,12 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 Assert.assertEquals(path.toString(), true, ff.exists(path));
 
                 // Purging will not delete waldo: Wal name not matched.
-                purgeWalSegments();
+                runWalPurgeJob();
                 Assert.assertEquals(path.toString(), true, ff.exists(path));
 
                 // idempotency check.
                 for (int count = 0; count < 1000; ++count) {
-                    purgeWalSegments();
+                    runWalPurgeJob();
                     Assert.assertEquals(path.toString(), true, ff.exists(path));
                 }
 
@@ -321,7 +321,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 Assert.assertEquals(path.toString(), true, ff.exists(path));
 
                 // Purging will delete wal1000: Wal name matched and the WAL has no lock.
-                purgeWalSegments();
+                runWalPurgeJob();
                 Assert.assertEquals(path.toString(), false, ff.exists(path));
             }
         });
@@ -362,7 +362,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 ff.mkdir(path, configuration.getMkDirMode());
                 Assert.assertEquals(path.toString(), true, ff.exists(path));
 
-                purgeWalSegments();
+                runWalPurgeJob();
                 assertSegmentLockExistence(false, tableName, 1, 0);
 
                 // "stuff" is untouched.
@@ -371,7 +371,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 // After draining, releasing and purging, it's all deleted.
                 drainWalQueue();
                 engine.releaseInactive();
-                purgeWalSegments();
+                runWalPurgeJob();
 
                 Assert.assertEquals(path.toString(), false, ff.exists(path));
                 assertWalExistence(false, tableName, 1);
@@ -385,6 +385,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
         writer.applyAlter(addColumnC.build(), true);
     }
 
+    /*
     @Test
     public void testDirectorySequencerRace() throws Exception {
         // We need to enter a state where `tableName`:
@@ -404,6 +405,9 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 + "ts timestamp"
                 + ") timestamp(ts) partition by DAY WAL");
 
+        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+        assertWalExistence(true, tableName, 1);
+
         // Test a race condition where a WAL is created whilst the purge job is running.
         FilesFacade testFF = new FilesFacadeImpl() {
             // private final FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -421,11 +425,59 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
 //            }
         };
 
-        try (AlterOperation alterOperation = new AlterOperation()) {
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-//                addColumn(walWriter1, "i1", ColumnType.INT);
-//
-//                alterOperation.of(AlterOperation.ADD_COLUMN, tableName, tableId, 100);  // TODO [amunra]: 100?
+        try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            // Assert we've obtained a writer to wal1 and we're not already on wal2.
+            assertWalExistence(true, tableName, 1);
+            assertWalExistence(false, tableName, 2);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(false, tableName, 1, 1);
+            assertSegmentLockEngagement(true, tableName, 1, 0);
+
+            addColumn(walWriter1, "i1", ColumnType.INT);
+            TableWriter.Row row2 = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+            row2.putLong(0, 2);
+            row2.putInt(2, 2);
+            row2.append();
+
+            // We assert that we've created a new segment.
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+            assertSegmentLockEngagement(false, tableName, 1, 0);
+            assertSegmentLockEngagement(true, tableName, 1, 1);
+
+            // We commit the segment to the sequencer.
+            walWriter1.commit();
+
+            try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                assertWalExistence(true, tableName, 1);
+                assertWalExistence(true, tableName, 2);
+                assertSegmentExistence(true, tableName, 2, 0);
+                assertSegmentExistence(false, tableName, 2, 1);
+
+                TableWriter.Row row3 = walWriter2.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-26"));
+                row3.putLong(0, 3);
+                row3.putInt(2, 3);
+                walWriter2.commit();
+
+                addColumn(walWriter2, "i2", ColumnType.INT);
+                TableWriter.Row row4 = walWriter2.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-27"));
+                row4.putLong(0, 4);
+                row4.putInt(2, 4);
+                row4.putInt(3, 4);
+
+                assertSegmentExistence(true, tableName, 2, 0);
+                assertSegmentExistence(true, tableName, 2, 1);
+                assertSegmentLockEngagement(false, tableName, 2, 0);
+                assertSegmentLockEngagement(true, tableName, 2, 1);
+
+                walWriter2.commit();
+            }
+
+//            row.putTimestamp(1, SqlUtil.implicitCastStrAsTimestamp("2000-01-01T00:00:00"));
+//            row.putInt(2, 1);
+//            row.append();
+//            walWriter1.commit();
+
 //                assertWalExistence(true, tableName, 1);
 //                TableWriter.Row row = walWriter1.newRow();
 //                row.putLong(0, 1);
@@ -440,19 +492,47 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
 //
 //
 //                }
-            }
+
+//            drainWalQueue();
+//            assertSql(tableName, "x\tts\ts1\n" +
+//                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
+//                    "2\t2022-02-24T00:00:01.000000Z\tx\n");
+
         }
     }
+    */
 
     @Test
     public void testRollback() throws Exception {
-//        create table1 ... partition by day wal
-//        insert .... into table1
-//        alter table1 add c1 string
-//        insert .... => rollback  (TableWriter.Row = walWriter.newRow(); ... walWriter.rollback());
-//        drainWalQueue()
-//        engine.releaseInactive()
-//        purgeWalJob()
-//        // assert it's all gone.
+        String tableName = testName.getMethodName();
+        compile("create table " + tableName + "("
+                + "x long,"
+                + "ts timestamp"
+                + ") timestamp(ts) partition by DAY WAL");
+
+        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+
+        try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            // Alter is committed.
+            addColumn(walWriter1, "i1", ColumnType.INT);
+
+            // Row insert is rolled back.
+            TableWriter.Row row = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+            row.putLong(0, 2);
+            row.putLong(2, 2);
+            row.append();
+            walWriter1.rollback();
+        }
+
+        assertWalExistence(true, tableName, 1);
+        assertSegmentExistence(true, tableName, 1, 0);
+        assertWalExistence(false, tableName, 2);
+
+        drainWalQueue();
+        engine.releaseInactive();
+        runWalPurgeJob();
+        assertSql(tableName, "x\tts\ti1\n" +
+                "1\t2022-02-24T00:00:00.000000Z\tNaN\n");
+        assertWalExistence(false, tableName, 1);
     }
 }

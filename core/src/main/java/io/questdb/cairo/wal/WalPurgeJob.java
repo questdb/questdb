@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -58,11 +59,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    // TODO [amunra]: Sprinkle some logging to track what got deleted and why.
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
-
     private CairoEngine engine;
     private FilesFacade ff;
+    private final MicrosecondClock clock;
+    private final long checkInterval;
+    private long last = 0;
     private TxReader txReader;
     private Path path = new Path();
     private NativeLPSZ tableName = new NativeLPSZ();
@@ -80,7 +82,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     public WalPurgeJob(CairoEngine engine, FilesFacade ff) {
         this.engine = engine;
         this.ff = ff;
+        this.clock = engine.getConfiguration().getMicrosecondClock();
+        this.checkInterval = engine.getConfiguration().getWalPurgeInterval() * 1000;
         this.txReader = new TxReader(ff);
+    }
+
+    /**
+     * Delay the first run of this job by half a configured interval to
+     * spread its work more evenly across other timer-based jobs with
+     * similar cadences.
+     */
+    public void delayByHalfInterval() {
+        this.last = clock.getTicks() - (checkInterval / 2);
     }
 
     public WalPurgeJob(CairoEngine engine) {
@@ -212,10 +225,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void recursiveDelete(Path path) {
         final int errno = ff.rmdir(path);
-        // 2 == ENOENT
         if ((errno != 0) && ((errno != 2)))  {
             LOG.error().$("Could not delete directory [path=").$(path)
                     .$(", errno=").$(errno).$(']').$();
+        }
+    }
+
+    private void deleteFile(Path path) {
+        if (!ff.remove(path)) {
+            final int errno = ff.errno();
+            if (errno != 2) {
+                LOG.error().$("Could not delete file [path=").$(path)
+                        .$(", errno=").$(errno).$(']').$();
+            }
         }
     }
 
@@ -231,7 +253,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         LOG.info().$("deleting WAL directory [table=").$(tableName)
                 .$(", walId=").$(walId).$(']').$();
         recursiveDelete(setWalPath(tableName, walId));
-        ff.remove(setWalLockPath(tableName, walId));  // TODO [amunra]: Error handling.
+        deleteFile(setWalLockPath(tableName, walId));
     }
 
     private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
@@ -240,7 +262,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
         recursiveDelete(setSegmentPath(tableName, walId, segmentId));
-        ff.remove(setSegmentLockPath(tableName, walId, segmentId));  // TODO [amunra]: Error handling.
+        deleteFile(setSegmentLockPath(tableName, walId, segmentId));
     }
 
     private void deleteClosedSegmentsIter(long pUtf8NameZ, int type) {
@@ -372,9 +394,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
-        // TODO [amunra]: Only run this on a periodic schedule.
-        // See: io.questdb.cairo.CairoEngine.EngineMaintenanceJob.runSerially
-        broadSweep();
+        long t = clock.getTicks();
+        if (last + checkInterval < t) {
+            last = t;
+            broadSweep();
+        }
         return false;
     }
 

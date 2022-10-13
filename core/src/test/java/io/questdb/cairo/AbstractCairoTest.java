@@ -655,7 +655,7 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void purgeWalSegments(FilesFacade ff) {
+    protected static void runWalPurgeJob(FilesFacade ff) {
         WalPurgeJob job = new WalPurgeJob(engine, ff);
         while (job.run(0)) {
             // run until empty
@@ -663,8 +663,8 @@ public abstract class AbstractCairoTest {
         job.close();
     }
 
-    protected static void purgeWalSegments() {
-        purgeWalSegments(engine.getConfiguration().getFilesFacade());
+    protected static void runWalPurgeJob() {
+        runWalPurgeJob(engine.getConfiguration().getFilesFacade());
     }
 
     static {
