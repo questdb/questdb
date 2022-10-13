@@ -130,6 +130,8 @@ public final class Files {
         return lpsz != null && exists0(lpsz.address());
     }
 
+    public static native long noop();
+
     public static void fadvise(long fd, long offset, long len, int advise) {
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             fadvise0(fd, offset, len, advise);
