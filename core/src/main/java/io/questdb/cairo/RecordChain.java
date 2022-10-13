@@ -42,6 +42,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private final MemoryARW mem;
     private final RecordChainRecord recordA = new RecordChainRecord();
     private final RecordChainRecord recordB = new RecordChainRecord();
+    private final RecordChainRecord clone = new RecordChainRecord();
     private final long varOffset;
     private final long fixOffset;
     private final RecordSink recordSink;
@@ -112,7 +113,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     public Record cloneRecord(long recordOffset) {
-        RecordChainRecord clone = new RecordChainRecord();
         clone.of(rowToDataOffset(recordOffset));
         return clone;
     }
