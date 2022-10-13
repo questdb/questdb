@@ -258,16 +258,17 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         row.putInt(0, 100);
                         row.append();
 
-                        // TODO: this row is lost as it is out of order and the table is truncated, it may be an edge case.
-                        //  the following test (testDropLastPartitionWithUncommittedRowsNoReaders) sends these rows in order
-                        //  and the result is different
-                        row = writer.newRow(o3Ts); // will not survive,
+                        row = writer.newRow(o3Ts); // will survive
                         row.putInt(0, 300);
                         row.append();
 
                         writer.removePartition(lastTs);
                     }
-                    assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
+                    assertTableX(tableName, TableHeader +
+                                    "300\t2023-10-14T23:59:59.999999Z\n",
+                            MinMaxCountHeader +
+                                    "2023-10-14T23:59:59.999999Z\t2023-10-14T23:59:59.999999Z\t1\n"
+                    );
                 }
         );
     }
@@ -721,7 +722,6 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     }
 
     private WorkerPool workerPool;
-    private O3PartitionPurgeJob partitionPurgeJob;
     private int txn;
 
     private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
@@ -735,14 +735,14 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         assertSql(tableName, expected);
 
         workerPool = new TestWorkerPool(1);
-        partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
+        O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
         workerPool.assign(partitionPurgeJob);
         workerPool.freeOnExit(partitionPurgeJob);
         workerPool.start(); // closed by assertTableX
     }
 
     private void insert(String stmt) throws SqlException {
-        compiler.compile(stmt, sqlExecutionContext).execute(null).await();
+        compile(stmt, sqlExecutionContext);
         txn++;
     }
 

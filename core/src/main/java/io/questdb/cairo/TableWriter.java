@@ -1442,6 +1442,9 @@ public class TableWriter implements Closeable {
             return false;
         }
 
+        // commit changes, there may be uncommitted rows of any partition
+        commit();
+
         final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
 
@@ -1456,9 +1459,6 @@ public class TableWriter implements Closeable {
             LOG.error().$("partition is already removed [path=").$(path).I$();
             return false;
         }
-
-        // commit changes, there may be uncommitted rows of any partition
-        commit();
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
 

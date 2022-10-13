@@ -87,7 +87,6 @@ public class ColumnPurgeOperator implements Closeable {
         }
         closePurgeLogCompleteFile();
         Misc.free(path);
-        txReader = Misc.free(txReader);
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
