@@ -241,7 +241,7 @@ public final class Unsafe {
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
-                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=",
+                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d",
                     MEM_USED.get(), size, memoryTag);
             throw oom;
         }
@@ -255,7 +255,7 @@ public final class Unsafe {
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
-                    "Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=",
+                    "Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=%d",
                     MEM_USED.get(), oldSize, newSize, memoryTag);
             throw oom;
         }
