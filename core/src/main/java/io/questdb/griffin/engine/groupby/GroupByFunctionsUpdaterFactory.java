@@ -88,10 +88,10 @@ public class GroupByFunctionsUpdaterFactory {
      * Here we simply unroll the function list and call computeNext on each of them.
      * The end bytecode equals to the following:
      * <code>
-     *   getGroupByFunctions().getQuick(0).computeNext(value, record);
-     *   getGroupByFunctions().getQuick(1).computeNext(value, record);
+     *   groupByFunctions.getQuick(0).computeNext(value, record);
+     *   groupByFunctions.getQuick(1).computeNext(value, record);
      *   // ...
-     *   getGroupByFunctions().getQuick(n).computeNext(value, record);
+     *   groupByFunctions.getQuick(n).computeNext(value, record);
      * </code>
      * <p>
      * Other generated methods look similar.
