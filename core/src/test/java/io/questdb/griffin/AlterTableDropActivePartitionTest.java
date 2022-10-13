@@ -641,6 +641,18 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testDropAllPartitionsButThereAreNoPartitions() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+                    createTableX(tableName, TableHeader); // empty table
+                    Assert.assertEquals(ALTER,
+                            compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
+                    assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
+                }
+        );
+    }
+
     private WorkerPool workerPool;
     private O3PartitionPurgeJob partitionPurgeJob;
     private int txn;

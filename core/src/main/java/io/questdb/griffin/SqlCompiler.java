@@ -337,18 +337,21 @@ public class SqlCompiler implements Closeable {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
         final int partitionCount = reader.getPartitionCount();
-        for (int i = partitionCount - 2; i > -1; i--) {
-            long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+        if (partitionCount > 0) { // table may be empty
+            for (int i = partitionCount - 2; i > -1; i--) {
+                long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+                partitionFunctionRec.setTimestamp(partitionTimestamp);
+                if (function.getBool(partitionFunctionRec)) {
+                    changePartitionStatement.ofPartition(partitionTimestamp);
+                }
+            }
+
+            // remove last partition
+            long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
                 changePartitionStatement.ofPartition(partitionTimestamp);
             }
-        }
-        // remove last partition
-        long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
-        partitionFunctionRec.setTimestamp(partitionTimestamp);
-        if (function.getBool(partitionFunctionRec)) {
-            changePartitionStatement.ofPartition(partitionTimestamp);
         }
     }
 
