@@ -258,8 +258,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         row.putInt(0, 100);
                         row.append();
 
-                        // TODO: this row is lost as it is out of order, it may be an edge case.
-                        //  the next test sends these rows in order and the result is different
+                        // TODO: this row is lost as it is out of order and the table is truncated, it may be an edge case.
+                        //  the following test (testDropLastPartitionWithUncommittedRowsNoReaders) sends these rows in order
+                        //  and the result is different
                         row = writer.newRow(o3Ts); // will not survive,
                         row.putInt(0, 300);
                         row.append();
@@ -649,6 +650,72 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     Assert.assertEquals(ALTER,
                             compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
+                }
+        );
+    }
+
+    @Test
+    public void testDropActivePartitionFailsBecauseWeCannotReadPrevMaxPartition() throws Exception {
+
+        FilesFacade myFf = new FilesFacadeImpl(){
+            @Override
+            public long readULong(long fd, long offset) {
+                return -1L;
+            }
+        };
+
+        assertMemoryLeak(myFf, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    createTableX(tableName,
+                            TableHeader +
+                                    "3\t2023-10-12T00:00:01.000000Z\n" +
+                                    "5\t2023-10-12T00:00:02.000000Z\n" +
+                                    "8\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-12T00:00:02.000000Z')",
+                            "insert into " + tableName + " values(8, '2023-10-15T00:00:00.000000Z')");
+
+                    try {
+                        dropPartition(tableName, LastPartitionTs);
+                    } catch (CairoException | SqlException ex ) { // the later is due to an assertion in SqlException.position
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. cannot read min, max timestamp from the column");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "/2023-10-12/timestamp.d, partitionSizeRows=2, errno=2]");
+                        Misc.free(workerPool);
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testDropActivePartitionFailsBecausePrevMaxPartitionIsIncorrect() throws Exception {
+
+        FilesFacade myFf = new FilesFacadeImpl(){
+            @Override
+            public long readULong(long fd, long offset) {
+                return 17;
+            }
+        };
+
+        assertMemoryLeak(myFf, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    createTableX(tableName,
+                            TableHeader +
+                                    "3\t2023-10-12T00:00:01.000000Z\n" +
+                                    "5\t2023-10-12T00:00:02.000000Z\n" +
+                                    "8\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-12T00:00:02.000000Z')",
+                            "insert into " + tableName + " values(8, '2023-10-15T00:00:00.000000Z')");
+
+                    try {
+                        dropPartition(tableName, LastPartitionTs);
+                    } catch (CairoException | SqlException ex ) { // the later is due to an assertion in SqlException.position
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. invalid timestamp column data in detached partition");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "/2023-10-12/timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
+                        Misc.free(workerPool);
+                    }
                 }
         );
     }

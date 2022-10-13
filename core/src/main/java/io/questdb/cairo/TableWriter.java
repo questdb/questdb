@@ -1442,8 +1442,8 @@ public class TableWriter implements Closeable {
             return false;
         }
 
-        final long minTimestamp = txWriter.getMinTimestamp();
-        final long maxTimestamp = txWriter.getMaxTimestamp();
+        final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
+        final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
 
         timestamp = getPartitionLo(timestamp);
         if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
@@ -1462,15 +1462,15 @@ public class TableWriter implements Closeable {
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
 
-            // deleting active partition
+            // removing active partition
 
             if (index == 0) {
-                // removing the only partition is equivalent to truncating the table
+                // removing the very last partition is equivalent to truncating the table
                 truncate();
                 return true;
             }
 
-            // calculate **new** partition boundaries
+            // calculate new transient row count, new min and max timestamp
             final int prevIndex = index - 1;
             final long prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
             final long newTransientRowCount = txWriter.getPartitionSize(prevIndex);
@@ -1478,7 +1478,8 @@ public class TableWriter implements Closeable {
                 setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, false);
                 TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
                 readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
-            } finally {
+            }
+            finally {
                 path.trimTo(rootLen);
             }
 
