@@ -25,9 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -260,45 +258,6 @@ public class GroupByUtils {
         }
     }
 
-    public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        // Try to avoid megamorphic calls and force inlining for the <=4 functions case.
-        switch (n) {
-            default:
-                for (int i = n - 1; i >= 4; i--) {
-                    groupByFunctions.getQuick(i).computeNext(value, record);
-                }
-                // fall through
-            case 4:
-                groupByFunctions.getQuick(3).computeNext(value, record);
-                // fall through
-            case 3:
-                groupByFunctions.getQuick(2).computeNext(value, record);
-                // fall through
-            case 2:
-                groupByFunctions.getQuick(1).computeNext(value, record);
-                // fall through
-            case 1:
-                groupByFunctions.getQuick(0).computeNext(value, record);
-                break;
-            case 0:
-                break;
-        }
-    }
-
-    public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        // We iterate in the same order as in updateExisting() for the sake of consistency.
-        for (int i = n - 1; i >= 0; i--) {
-            groupByFunctions.getQuick(i).computeFirst(value, record);
-        }
-    }
-
-    public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
-        // We iterate in the same order as in updateExisting() for the sake of consistency.
-        for (int i = n - 1; i >= 0; i--) {
-            groupByFunctions.getQuick(i).setEmpty(value);
-        }
-    }
-
     public static void validateGroupByColumns(@NotNull QueryModel model, int inferredKeyColumnCount) throws SqlException {
         final ObjList<ExpressionNode> groupByColumns = model.getGroupBy();
         int explicitKeyColumnCount = groupByColumns.size();
@@ -376,21 +335,11 @@ public class GroupByUtils {
                     break;
                 default:
                     throw SqlException.$(key.position, "unsupported type of expression");
-
             }
         }
 
-
         if (explicitKeyColumnCount < inferredKeyColumnCount) {
             throw SqlException.$(model.getModelPosition(), "not enough columns in group by");
-        }
-    }
-
-    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        if (value.isNew()) {
-            updateNew(groupByFunctions, n, value, record);
-        } else {
-            updateExisting(groupByFunctions, n, value, record);
         }
     }
 }
