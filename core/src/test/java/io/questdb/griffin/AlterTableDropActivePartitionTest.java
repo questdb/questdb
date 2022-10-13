@@ -545,7 +545,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
                     dropPartition(tableName, LastPartitionTs);
-                    insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
+                    insert("insert into " + tableName + " values(5, '2023-10-15T00:00:02.000000Z')");
                     dropPartition(tableName, "2023-10-12");
                     dropPartition(tableName, LastPartitionTs);
                     assertSql(tableName, TableHeader +
@@ -555,10 +555,11 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
 
                     try {
-                        dropPartition(tableName, LastPartitionTs);
+                        dropPartition(tableName, LastPartitionTs); // because it does not exist
                     } catch (SqlException ex) {
                         TestUtils.assertContains("[26] could not remove partition '2023-10-15'", ex.getFlyweightMessage());
                     }
+
                     assertTableX(tableName, TableHeader +
                                     "1\t2023-10-10T00:00:00.000000Z\n" +
                                     "2\t2023-10-11T00:00:00.000000Z\n" +
@@ -566,6 +567,14 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                                     "1\t2023-10-16T00:00:00.000000Z\n",
                             MinMaxCountHeader +
                                     "2023-10-10T00:00:00.000000Z\t2023-10-16T00:00:00.000000Z\t4\n");
+
+                    dropPartition(tableName, "2023-10-16"); // remove active partition
+                    assertTableX(tableName, TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "5\t2023-10-12T00:00:00.000000Z\n",
+                            MinMaxCountHeader +
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-12T00:00:00.000000Z\t3\n");
                 }
         );
     }
@@ -681,7 +690,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         dropPartition(tableName, LastPartitionTs);
                     } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. cannot read min, max timestamp from the column");
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "/2023-10-12/timestamp.d, partitionSizeRows=2, errno=2]");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "timestamp.d, partitionSizeRows=2, errno=2]");
                         Misc.free(workerPool);
                     }
                 }
@@ -714,7 +723,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         dropPartition(tableName, LastPartitionTs);
                     } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. invalid timestamp column data in detached partition");
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "/2023-10-12/timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
                         Misc.free(workerPool);
                     }
                 }
