@@ -92,12 +92,12 @@ public class DefaultTextConfiguration implements TextConfiguration {
 
     @Override
     public int getRollBufferLimit() {
-        return 4096;
+        return 16 * 1024;
     }
 
     @Override
     public int getRollBufferSize() {
-        return 1024;
+        return 4 * 1024;
     }
 
     @Override
