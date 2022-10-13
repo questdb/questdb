@@ -297,14 +297,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setMaxTimestamp(long timestamp) {
-        recordStructureVersion++;
-        maxTimestamp = timestamp;
-        if (prevMaxTimestamp == Long.MIN_VALUE) {
-            prevMaxTimestamp = maxTimestamp;
-        }
-    }
-
     public void switchPartitions(long timestamp) {
         recordStructureVersion++;
         fixedRowCount += transientRowCount;

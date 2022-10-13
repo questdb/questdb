@@ -1470,7 +1470,7 @@ public class TableWriter implements Closeable {
                 return true;
             }
 
-            // calculate new transient row count, new min and max timestamp
+            // calculate new transient row count and max timestamp
             final int prevIndex = index - 1;
             final long prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
             final long newTransientRowCount = txWriter.getPartitionSize(prevIndex);
@@ -1486,8 +1486,8 @@ public class TableWriter implements Closeable {
             columnVersionWriter.removePartition(timestamp);
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
-            txWriter.setMaxTimestamp(attachMaxTimestamp);
-            txWriter.finishPartitionSizeUpdate(attachMinTimestamp, attachMaxTimestamp);
+            // max is updated upon finishing the transaction, the value was loaded by readPartitionMinMax
+            txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), attachMaxTimestamp);
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();
