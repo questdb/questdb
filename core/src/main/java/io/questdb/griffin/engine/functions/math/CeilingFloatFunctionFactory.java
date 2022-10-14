@@ -23,18 +23,8 @@
  ******************************************************************************/
 
 package io.questdb.griffin.engine.functions.math;
-
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.FloatFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
 /**
- * Postgres-compatibility ceiling(),an alias for the ceil() function.
+ * Postgres-compatibility ceiling() alias for the ceil() function.
  */
 public class CeilingFloatFunctionFactory extends CeilFloatFunctionFactory {
     @Override
