@@ -215,15 +215,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
         txReader.ofRO(path, PartitionBy.NONE);
-        final long lastAppliedTxn = txReader.unsafeReadVersion();
+        try (txReader) {
+            final long lastAppliedTxn = txReader.unsafeReadVersion();
 
-        TableRegistry tableRegistry = engine.getTableRegistry();
-        try (SequencerCursor sequencerCursor = tableRegistry.getCursor(tableName, lastAppliedTxn)) {
-            while (sequencerCursor.hasNext() && (discoveredWalIds.size() > 0)) {
-                final int walId = sequencerCursor.getWalId();
-                if (discoveredWalIds.contains(walId)) {
-                    walInfoDataFrame.add(walId, sequencerCursor.getSegmentId());
-                    discoveredWalIds.remove(walId);
+            TableRegistry tableRegistry = engine.getTableRegistry();
+            try (SequencerCursor sequencerCursor = tableRegistry.getCursor(tableName, lastAppliedTxn)) {
+                while (sequencerCursor.hasNext() && (discoveredWalIds.size() > 0)) {
+                    final int walId = sequencerCursor.getWalId();
+                    if (discoveredWalIds.contains(walId)) {
+                        walInfoDataFrame.add(walId, sequencerCursor.getSegmentId());
+                        discoveredWalIds.remove(walId);
+                    }
                 }
             }
         }
