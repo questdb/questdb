@@ -59,25 +59,29 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
+    private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
+    private final FindVisitor deleteUnreachableSegmentsIterFunc = this::deleteUnreachableSegmentsIter;
+    private final FindVisitor broadSweepIterFunc = this::broadSweepIter;
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
-    private CairoEngine engine;
-    private FilesFacade ff;
+    private final CairoEngine engine;
+    private final FilesFacade ff;
     private final MicrosecondClock clock;
     private final long checkInterval;
     private long last = 0;
-    private TxReader txReader;
-    private Path path = new Path();
-    private NativeLPSZ tableName = new NativeLPSZ();
-    private NativeLPSZ walName = new NativeLPSZ();
-    private NativeLPSZ segmentName = new NativeLPSZ();
+    private final TxReader txReader;
+    private final Path path = new Path();
+    private final NativeLPSZ tableName = new NativeLPSZ();
+    private final NativeLPSZ walName = new NativeLPSZ();
+    private final NativeLPSZ segmentName = new NativeLPSZ();
     private final IntHashSet discoveredWalIds = new IntHashSet();
     private final IntHashSet walsInUse = new IntHashSet();
-    private WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
+    private final WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
 
     private int walId;
     private int walsLatestSegmentId;
 
-    private StringSink debugBuffer = new StringSink();
+    private final StringSink debugBuffer = new StringSink();
 
     public WalPurgeJob(CairoEngine engine, FilesFacade ff) {
         this.engine = engine;
@@ -85,6 +89,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         this.clock = engine.getConfiguration().getMicrosecondClock();
         this.checkInterval = engine.getConfiguration().getWalPurgeInterval() * 1000;
         this.txReader = new TxReader(ff);
+
+        assert WalUtils.WAL_NAME_BASE.equals("wal");
     }
 
     /**
@@ -103,7 +109,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     /** Validate equivalent of "^wal\d+$" regex. */
     private static boolean matchesWalNamePattern(CharSequence name) {
         final int len = name.length();
-        if (len < 4) {
+        if (len < (WalUtils.WAL_NAME_BASE.length() + 1)) {
             return false;
         }
 
@@ -151,24 +157,24 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private Path setWalPath(CharSequence tableName, int walId) {
         return path.of(engine.getConfiguration().getRoot())
-                .concat(tableName).concat("wal").put(walId).$();
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
     }
 
     private Path setWalLockPath(CharSequence tableName, int walId) {
         path.of(engine.getConfiguration().getRoot())
-                .concat(tableName).concat("wal").put(walId);
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
         TableUtils.lockName(path);
         return path;
     }
 
     private Path setSegmentPath(CharSequence tableName, int walId, int segmentId) {
         return path.of(engine.getConfiguration().getRoot())
-                .concat(tableName).concat("wal").put(walId).slash().put(segmentId).$();
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).$();
     }
 
     private Path setSegmentLockPath(CharSequence tableName, int walId, int segmentId) {
         path.of(engine.getConfiguration().getRoot())
-                .concat(tableName).concat("wal").put(walId).slash().put(segmentId);
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
         TableUtils.lockName(path);
         return path;
     }
@@ -192,7 +198,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             int walId = 0;
             try {
                 walId = Numbers.parseInt(walName, 3, walName.length());
-            } catch (NumericException _ne) {
+            } catch (NumericException ne) {
                 return;  // Ignore non-wal directory
             }
             discoveredWalIds.add(walId);
@@ -203,7 +209,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void discoverWalDirectories() {
-        ff.iterateDir(setTablePath(tableName), this::discoverWalDirectoriesIter);
+        ff.iterateDir(setTablePath(tableName), discoverWalDirectoriesIterFunc);
     }
 
     private void populateWalInfoDataFrame() {
@@ -281,7 +287,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteClosedSegments() {
         setWalPath(tableName, walId);
-        ff.iterateDir(path, this::deleteClosedSegmentsIter);
+        ff.iterateDir(path, deleteClosedSegmentsIterFunc);
     }
 
     private void deleteOutstandingWalDirectories() {
@@ -319,7 +325,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         for (int index = 0; index < walInfoDataFrame.size(); ++index) {
             walId = walInfoDataFrame.walIds.get(index);
             walsLatestSegmentId = walInfoDataFrame.segmentIds.get(index);
-            ff.iterateDir(setWalPath(tableName, walId), this::deleteUnreachableSegmentsIter);
+            ff.iterateDir(setWalPath(tableName, walId), deleteUnreachableSegmentsIterFunc);
         }
     }
 
@@ -362,6 +368,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             walInfoDataFrame.clear();
             
             discoverWalDirectories();
+            if (discoveredWalIds.size() == 0) {
+                return;
+            }
+
             populateWalInfoDataFrame();
             accumDebugState();
 
@@ -382,7 +392,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     private void broadSweep() {
         path.of(engine.getConfiguration().getRoot()).slash$();
-        ff.iterateDir(path, this::broadSweepIter);
+        ff.iterateDir(path, broadSweepIterFunc);
     }
 
     @Override
