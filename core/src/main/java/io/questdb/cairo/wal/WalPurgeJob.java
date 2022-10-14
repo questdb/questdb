@@ -319,14 +319,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         for (int index = 0; index < walInfoDataFrame.size(); ++index) {
             walId = walInfoDataFrame.walIds.get(index);
             walsLatestSegmentId = walInfoDataFrame.segmentIds.get(index);
-//            anySegmentsKept = false;
             ff.iterateDir(setWalPath(tableName, walId), this::deleteUnreachableSegmentsIter);
-
-//            // If all known segments were deleted, then this whole WAL directory is candidate for deletion.
-//            // We add it for clean-up by `deleteOutstandingWalDirectories`.
-//            if (!anySegmentsKept) {
-//                discoveredWalIds.add(walId);
-//            }
         }
     }
 

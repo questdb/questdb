@@ -228,6 +228,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWalPurgeInterval() {return conf.getWalPurgeInterval(); }
+
+    @Override
     public int getWalTxnNotificationQueueCapacity() {
         return conf.getWalTxnNotificationQueueCapacity();
     }

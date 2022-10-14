@@ -589,17 +589,17 @@ public final class TableUtils {
         return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
     }
 
-    public static long lock(FilesFacade ff, Path path, boolean log) {
+    public static long lock(FilesFacade ff, Path path, boolean logOnError) {
         long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
-            if (log) {
+            if (logOnError) {
                 LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             }
             return -1L;
         }
 
         if (ff.lock(fd) != 0) {
-            if (log) {
+            if (logOnError) {
                 LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             }
             ff.close(fd);
