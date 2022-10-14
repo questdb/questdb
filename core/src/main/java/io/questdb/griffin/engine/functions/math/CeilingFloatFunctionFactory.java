@@ -33,34 +33,12 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-
-public class CeilingFloatFunctionFactory implements FunctionFactory {
+/**
+ * Postgres-compatibility ceiling(),an alias for the ceil() function.
+ */
+public class CeilingFloatFunctionFactory extends CeilFloatFunctionFactory {
     @Override
     public String getSignature() {
         return "ceiling(F)";
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CeilingFunction(args.getQuick(0));
-    }
-
-    private static class CeilingFunction extends FloatFunction implements UnaryFunction {
-        private final Function function;
-
-        public CeilingFunction(Function function) {
-            this.function = function;
-        }
-
-        @Override
-        public Function getArg() {
-            return function;
-        }
-
-        @Override
-        public float getFloat(Record rec) {
-            float value = function.getFloat(rec);
-            return (float) Math.ceil(value);
-        }
     }
 }
