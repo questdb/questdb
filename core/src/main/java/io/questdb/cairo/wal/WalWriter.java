@@ -819,6 +819,7 @@ public class WalWriter implements TableWriterFrontend {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
+        path.trimTo(segmentPathLen);
         return segmentPathLen;
     }
 

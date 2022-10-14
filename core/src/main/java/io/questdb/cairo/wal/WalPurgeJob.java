@@ -365,26 +365,32 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void broadSweepIter(long pUtf8NameZ, int type) {
         if ((type == Files.DT_DIR) && isWalTable(tableName.of(pUtf8NameZ))) {
-            discoveredWalIds.clear();
-            walsInUse.clear();
-            walInfoDataFrame.clear();
-            
-            discoverWalDirectories();
-            if (discoveredWalIds.size() == 0) {
-                return;
+            try {
+                discoveredWalIds.clear();
+                walsInUse.clear();
+                walInfoDataFrame.clear();
+
+                discoverWalDirectories();
+                if (discoveredWalIds.size() == 0) {
+                    return;
+                }
+
+                populateWalInfoDataFrame();
+                accumDebugState();
+
+                deleteUnreachableSegments();
+
+                // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
+                // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
+                // pending segments that are yet to be applied to the table.
+                // Note that this also handles cases where a wal directory was created shortly before a crash and thus
+                // never recorded and tracked by the sequencer for that table.
+                deleteOutstandingWalDirectories();
+            } catch (CairoException ce) {
+                LOG.error().$("broad sweep failed [table=").$(tableName)
+                        .$(", msg=").$((Throwable) ce)
+                        .$(", errno=").$(ff.errno()).$(']').$();
             }
-
-            populateWalInfoDataFrame();
-            accumDebugState();
-
-            deleteUnreachableSegments();
-
-            // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
-            // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
-            // pending segments that are yet to be applied to the table.
-            // Note that this also handles cases where a wal directory was created shortly before a crash and thus
-            // never recorded and tracked by the sequencer for that table.
-            deleteOutstandingWalDirectories();
         }
     }
 
