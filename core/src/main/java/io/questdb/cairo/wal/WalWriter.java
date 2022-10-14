@@ -68,7 +68,6 @@ public class WalWriter implements TableWriterFrontend {
     private final FilesFacade ff;
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
     private final int mkDirMode;
-    private final String tableName;
     private final String systemTableName;
     private final String walName;
     private final int walId;
@@ -80,6 +79,7 @@ public class WalWriter implements TableWriterFrontend {
     private final RowImpl row = new RowImpl();
     private final TableWriterBackend walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final AlterOperationValidationBackend alterOperationValidationBackend = new AlterOperationValidationBackend();
+    private final String tableName;
     private long lockFd = -1;
     private int columnCount;
     private long currentTxnStartRowNum = -1;
@@ -99,16 +99,16 @@ public class WalWriter implements TableWriterFrontend {
     private TxReader txReader;
     private ColumnVersionReader columnVersionReader;
 
-    public WalWriter(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
-        LOG.info().$("open '").utf8(tableName).$('\'').$();
+    public WalWriter(String systemTableName, String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
+        this.tableName = tableName;
+        LOG.info().$("open '").utf8(systemTableName).$('\'').$();
         this.tableRegistry = tableRegistry;
         this.configuration = configuration;
         this.millisecondClock = configuration.getMillisecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
-        this.tableName = tableName;
-        this.systemTableName = Chars.toString(tableRegistry.getSystemTableNameOrDefault(tableName));
-        final int walId = tableRegistry.getNextWalId(tableName);
+        this.systemTableName = systemTableName;
+        final int walId = tableRegistry.getNextWalId(systemTableName);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(systemTableName).concat(walName);
@@ -119,7 +119,7 @@ public class WalWriter implements TableWriterFrontend {
             lock();
 
             metadata = new SequencerMetadata(ff);
-            tableRegistry.copyMetadataTo(tableName, metadata);
+            tableRegistry.copyMetadataTo(systemTableName, metadata);
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -140,7 +140,8 @@ public class WalWriter implements TableWriterFrontend {
     @Override
     public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (inTransaction()) {
-            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
+            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=")
+                    .put(tableName).put(']');
         }
         if (operation.isStructureChange()) {
             long txn;
@@ -164,7 +165,7 @@ public class WalWriter implements TableWriterFrontend {
                     }
                 }
 
-                txn = tableRegistry.nextStructureTxn(tableName, getStructureVersion(), operation);
+                txn = tableRegistry.nextStructureTxn(systemTableName, getStructureVersion(), operation);
                 if (txn == NO_TXN) {
                     applyStructureChanges(Long.MAX_VALUE);
                 }
@@ -219,7 +220,7 @@ public class WalWriter implements TableWriterFrontend {
 
     @Override
     public void dropTable() {
-        tableRegistry.deregisterTableName(tableName);
+        tableRegistry.deregisterTableName(systemTableName);
     }
 
     @Override
@@ -269,8 +270,12 @@ public class WalWriter implements TableWriterFrontend {
         return metadata.getStructureVersion();
     }
 
-    public CharSequence getTableName() {
+    public String getTableName() {
         return tableName;
+    }
+
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     public TableWriter.Row newRow() {
@@ -556,7 +561,7 @@ public class WalWriter implements TableWriterFrontend {
 
     private void applyStructureChanges(long maxStructureVersion) {
         try {
-            structureChangeCursor = tableRegistry.getStructureChangeCursor(tableName, structureChangeCursor, getStructureVersion());
+            structureChangeCursor = tableRegistry.getStructureChangeCursor(systemTableName, structureChangeCursor, getStructureVersion());
             if (structureChangeCursor == null) {
                 // nothing to do
                 return;
@@ -867,7 +872,7 @@ public class WalWriter implements TableWriterFrontend {
     private long getTableTxn() {
         long txn;
         do {
-            txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            txn = tableRegistry.nextTxn(systemTableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
             if (txn == NO_TXN) {
                 applyStructureChanges(Long.MAX_VALUE);
             }
@@ -1445,7 +1450,7 @@ public class WalWriter implements TableWriterFrontend {
 
         @Override
         public CharSequence getTableName() {
-            return tableName;
+            return systemTableName;
         }
 
         @Override
@@ -1558,7 +1563,7 @@ public class WalWriter implements TableWriterFrontend {
 
         @Override
         public CharSequence getTableName() {
-            return tableName;
+            return systemTableName;
         }
 
         @Override

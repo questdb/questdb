@@ -34,17 +34,16 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.convertSystemToTableName;
 import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
 
 public class TableRegistry extends AbstractPool {
@@ -53,8 +52,8 @@ public class TableRegistry extends AbstractPool {
     private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
-    private final ConcurrentHashMap<CharSequence> tableNameRegistry = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<CharSequence> reverseTableNameRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String> tableNameRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String> reverseTableNameRegistry = new ConcurrentHashMap<>();
 
     private final boolean mangleTableSystemNames;
 
@@ -70,8 +69,30 @@ public class TableRegistry extends AbstractPool {
     public void close() {
         super.close();
         tableNameRegistry.clear();
+        reverseTableNameRegistry.clear();
         tableNameMemory.close(true);
     }
+
+    public void deregisterTableName(final CharSequence tableName) {
+        removeEntry(tableName);
+        CharSequence systemTableName = tableNameRegistry.remove(tableName);
+        reverseTableNameRegistry.remove(systemTableName);
+
+        //todo: fix open close !!!
+        //todo: fix thread safety !!!
+        try (Sequencer seq = seqRegistry.remove(tableName)) {
+            if (seq != null) {
+                seq.nextTxn(0, TxnCatalog.DROP_TABLE_WALID, 0, 0);
+            }
+        }
+
+        final WalWriterPool pool = walRegistry.get(tableName);
+        if (pool != null) {
+            pool.releaseAll(Long.MAX_VALUE);
+            walRegistry.remove(tableName);
+        }
+    }
+
 
     public void forAllWalTables(final RegisteredTable callback) {
         final CharSequence root = getConfiguration().getRoot();
@@ -84,7 +105,6 @@ public class TableRegistry extends AbstractPool {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
                     if (isWalTable(nameSink, path, ff)) {
-                        convertSystemToTableName(nameSink);
                         try (SequencerImpl sequencer = openSequencer(nameSink)) {
                             callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
                         }
@@ -98,52 +118,12 @@ public class TableRegistry extends AbstractPool {
         return tableNameRegistry.get(tableName);
     }
 
-    private void populateCache() {
-        tableNameRegistry.clear();
-        CairoConfiguration configuration = engine.getConfiguration();
-        final FilesFacade ff = configuration.getFilesFacade();
-
-        try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat("tables.d").$()) {
-            tableNameMemory.wholeFile(ff, path, MemoryTag.MMAP_DEFAULT);
-
-            long entryCount = tableNameMemory.getLong(0);
-            long validCount = entryCount;
-            long compactOffset = Long.BYTES;
-            long currentOffset = compactOffset;
-
-            for (int i = 0; i < entryCount; i++) {
-                long tableId = tableNameMemory.getLong(currentOffset);
-                int tableNameLength = tableNameMemory.getStrLen(currentOffset + Long.BYTES);
-                int entrySize = Long.BYTES + Integer.BYTES + 2 * tableNameLength;
-
-                if (tableId < 0) {
-                    // skip removed record
-                    currentOffset += entrySize;
-                    validCount -= 1;
-                    continue;
-                }
-                CharSequence tableName = tableNameMemory.getStr(currentOffset + Long.BYTES);
-                String tableNameStr = Chars.toString(tableName);
-
-                CharSequence str = tableNameRegistry.get(tableNameStr);
-                if (str != null) {
-                    continue;
-                }
-
-                str = tableNameRegistry.computeIfAbsent(tableNameStr, (key) -> tableNameStr + "#" + tableId);
-
-                if (currentOffset != compactOffset) {
-                    tableNameMemory.putLong(compactOffset, tableId);
-                    tableNameMemory.putStr(compactOffset + Long.BYTES, tableName);
-                }
-
-                compactOffset += entrySize;
-                currentOffset += entrySize;
-            }
-
-            tableNameMemory.jumpTo(currentOffset);
-            tableNameMemory.putLong(0, validCount);
+    @NotNull
+    public CharSequence getDefaultTableName(CharSequence tableName) {
+        if (!mangleTableSystemNames) {
+            return tableName;
         }
+        return tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
     }
 
     public void removeEntry(final CharSequence tableName) {
@@ -168,55 +148,64 @@ public class TableRegistry extends AbstractPool {
         tableNameMemory.putLong(0, entryCount + 1);
     }
 
-    public CharSequence registerTableName(final CharSequence tableName, int tableId) {
-        CharSequence str = tableNameRegistry.get(tableName);
-        if (str != null) {
-            return str;
-        }
-
-        String tableNameStr = Chars.toString(tableName);
-        CharSink sink = new StringSink();
-        str = tableNameRegistry.computeIfAbsent(tableNameStr, (key) -> {
-            appendEntry(tableNameStr, tableId);
-            sink.put(tableId);
-            return tableNameStr + "#" + sink;
-        });
-        return str;
-    }
-
-    public void deregisterTableName(final CharSequence tableName) {
-        removeEntry(tableName);
-        tableNameRegistry.remove(tableName);
-        //todo: fix open close !!!
-        //todo: fix thread safety !!!
-        try (Sequencer seq = seqRegistry.remove(tableName)) {
-            if (seq != null) {
-                seq.nextTxn(0, TxnCatalog.DROP_TABLE_WALID, 0, 0);
-            }
-        }
-
-        final WalWriterPool pool = walRegistry.get(tableName);
-        if (pool != null) {
-            pool.releaseAll(Long.MAX_VALUE);
-            walRegistry.remove(tableName);
-        }
-    }
-
-    public long lastTxn(final CharSequence tableName) {
-        try (SequencerImpl sequencer = openSequencer(tableName)) {
-            return sequencer.lastTxn();
-        }
-    }
-
     public CharSequence getSystemTableNameOrDefault(final CharSequence tableName) {
         final CharSequence systemName = tableNameRegistry.get(tableName);
         if (systemName != null) {
             return systemName;
-        } else if (!mangleTableSystemNames) {
-            return tableName;
         }
 
-        return tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        return getDefaultTableName(tableName);
+    }
+
+    public boolean hasSequencer(final CharSequence systemTableName) {
+        Sequencer sequencer = seqRegistry.get(systemTableName);
+        if (sequencer != null) {
+            return true;
+        }
+        return isWalTable(systemTableName, getConfiguration().getRoot(), getConfiguration().getFilesFacade());
+    }
+
+    public long lastTxn(final CharSequence systemTableName) {
+        try (SequencerImpl sequencer = openSequencer(systemTableName)) {
+            return sequencer.lastTxn();
+        }
+    }
+
+    public CharSequence registerTable(int tableId, final TableStructure tableStructure) {
+        CharSequence tableSystemName = registerTableName(tableStructure.getTableName(), tableId);
+        if (tableSystemName != null) {
+            //noinspection EmptyTryBlock
+            try (SequencerImpl ignore = createSequencer(tableId, tableStructure, tableSystemName)) {
+            }
+        }
+        return tableSystemName;
+    }
+
+    @Nullable
+    public CharSequence registerTableName(final CharSequence tableName, int tableId) {
+        String tableNameStr = Chars.toString(tableName);
+        String tableSystemNameStr = tableNameStr + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + tableId;
+        CharSequence str = tableNameRegistry.get(tableName);
+        if (str != null) {
+            if (str.equals(tableSystemNameStr)) {
+                return str;
+            } else {
+                return null;
+            }
+        }
+
+        str = tableNameRegistry.computeIfAbsent(tableNameStr, (key) -> {
+            appendEntry(tableNameStr, tableId);
+            return tableSystemNameStr;
+        });
+
+        if (str.equals(tableSystemNameStr)) {
+            reverseTableNameRegistry.put(tableSystemNameStr, tableNameStr);
+            return str;
+        } else {
+            return null;
+        }
+
     }
 
     @FunctionalInterface
@@ -246,12 +235,11 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public boolean hasSequencer(final CharSequence tableName) {
-        Sequencer sequencer = seqRegistry.get(tableName);
-        if (sequencer != null) {
-            return true;
+    @TestOnly
+    public void reopen() {
+        if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, 1, 0)) {
+            populateCache();
         }
-        return isWalTable(tableName, getConfiguration().getRoot(), getConfiguration().getFilesFacade());
     }
 
     public long nextStructureTxn(final CharSequence tableName, long structureVersion, AlterOperation operation) {
@@ -266,11 +254,18 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public void registerTable(int tableId, final TableStructure tableStructure) {
-        //noinspection EmptyTryBlock
-        registerTableName(tableStructure.getTableName(), tableId);
-        try (SequencerImpl ignore = createSequencer(tableId, tableStructure)) {
-        }
+    private @NotNull SequencerImpl createSequencer(int tableId, final TableStructure tableStructure, CharSequence tableSystemName) {
+        throwIfClosed();
+        String systemNameStr = Chars.toString(tableSystemName);
+        return seqRegistry.compute(tableSystemName, (key, value) -> {
+            SequencerEntry sequencer = new SequencerEntry(this, this.engine, systemNameStr);
+            sequencer.create(tableId, tableStructure);
+            sequencer.open();
+            if (value != null) {
+                value.close();
+            }
+            return sequencer;
+        });
     }
 
     public int getNextWalId(final CharSequence tableName) {
@@ -283,11 +278,8 @@ public class TableRegistry extends AbstractPool {
         return getWalPool(tableName).get();
     }
 
-    // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
-    private boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
-        Path path = Path.getThreadLocal2(root);
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
-        return isWalTable(systemTableName, path, ff);
+    private String getTableNameBySystemName(String systemTableName) {
+        return reverseTableNameRegistry.get(systemTableName);
     }
 
     private boolean isWalTable(final CharSequence systemTableName, final Path root, final FilesFacade ff) {
@@ -295,23 +287,15 @@ public class TableRegistry extends AbstractPool {
         return ff.exists(root.$());
     }
 
-    private @NotNull SequencerImpl createSequencer(int tableId, final TableStructure tableStructure) {
-        throwIfClosed();
-        final String tableName = Chars.toString(tableStructure.getTableName());
-        return seqRegistry.compute(tableName, (key, value) -> {
-            SequencerEntry sequencer = new SequencerEntry(this, this.engine, tableName);
-            sequencer.create(tableId, tableStructure);
-            sequencer.open();
-            if (value != null) {
-                value.close();
-            }
-            return sequencer;
-        });
+    // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
+    private boolean isWalTable(final CharSequence systemTableName, final CharSequence root, final FilesFacade ff) {
+        Path path = Path.getThreadLocal2(root);
+        return isWalTable(systemTableName, path, ff);
     }
 
-    private @NotNull SequencerImpl openSequencer(final CharSequence tableName) {
+    private @NotNull SequencerImpl openSequencer(final CharSequence systemTableName) {
         throwIfClosed();
-        final String tableNameStr = Chars.toString(tableName);
+        final String tableNameStr = Chars.toString(systemTableName);
 
         SequencerEntry entry = seqRegistry.get(tableNameStr);
         if (entry != null && !entry.isDistressed()) {
@@ -436,16 +420,66 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
+    private void populateCache() {
+        tableNameRegistry.clear();
+        reverseTableNameRegistry.clear();
+        CairoConfiguration configuration = engine.getConfiguration();
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat("tables.d").$()) {
+            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_WRITER);
+
+            long entryCount = tableNameMemory.getLong(0);
+            long validCount = entryCount;
+            long compactOffset = Long.BYTES;
+            long currentOffset = compactOffset;
+
+            for (int i = 0; i < entryCount; i++) {
+                long tableId = tableNameMemory.getLong(currentOffset);
+                int tableNameLength = tableNameMemory.getStrLen(currentOffset + Long.BYTES);
+                int entrySize = Long.BYTES + Integer.BYTES + 2 * tableNameLength;
+
+                if (tableId < 0) {
+                    // skip removed record
+                    currentOffset += entrySize;
+                    validCount -= 1;
+                    continue;
+                }
+                CharSequence tableName = tableNameMemory.getStr(currentOffset + Long.BYTES);
+                String tableNameStr = Chars.toString(tableName);
+
+                CharSequence str = tableNameRegistry.get(tableNameStr);
+                if (str != null) {
+                    continue;
+                }
+
+                String systemTableNameStr = tableNameRegistry.computeIfAbsent(tableNameStr, (key) -> tableNameStr + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + tableId);
+                reverseTableNameRegistry.put(tableNameStr, systemTableNameStr);
+
+                if (currentOffset != compactOffset) {
+                    tableNameMemory.putLong(compactOffset, tableId);
+                    tableNameMemory.putStr(compactOffset + Long.BYTES, tableName);
+                }
+
+                compactOffset += entrySize;
+                currentOffset += entrySize;
+            }
+
+            tableNameMemory.putLong(0, validCount);
+            tableNameMemory.jumpTo(currentOffset);
+        }
+    }
+
     public static class WalWriterPool {
         private final ReentrantLock lock = new ReentrantLock();
         private final ArrayDeque<Entry> cache = new ArrayDeque<>();
-        private final String tableName;
+        private final String systemTableName;
         private final TableRegistry tableRegistry;
         private final CairoConfiguration configuration;
         private volatile boolean closed;
 
-        public WalWriterPool(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
-            this.tableName = tableName;
+        public WalWriterPool(String systemTableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
+            this.systemTableName = systemTableName;
             this.tableRegistry = tableRegistry;
             this.configuration = configuration;
         }
@@ -458,7 +492,7 @@ public class TableRegistry extends AbstractPool {
                     obj = cache.poll();
 
                     if (obj == null) {
-                        obj = new Entry(tableName, tableRegistry, configuration, this);
+                        obj = new Entry(systemTableName, tableRegistry, configuration, this);
                     } else {
                         if (!obj.goActive()) {
                             obj = Misc.free(obj);
@@ -535,8 +569,8 @@ public class TableRegistry extends AbstractPool {
             private WalWriterPool pool;
             private volatile long releaseTime = Long.MAX_VALUE;
 
-            public Entry(String tableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
-                super(tableName, tableRegistry, configuration);
+            public Entry(String systemTableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
+                super(systemTableName, tableRegistry.getTableNameBySystemName(systemTableName), tableRegistry, configuration);
                 this.pool = pool;
             }
 
@@ -556,9 +590,5 @@ public class TableRegistry extends AbstractPool {
                 }
             }
         }
-    }
-
-    public static class SequencerPool {
-
     }
 }

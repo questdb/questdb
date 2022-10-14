@@ -25,7 +25,7 @@
 package io.questdb.tasks;
 
 public class WalTxnNotificationTask {
-    private String tableName;
+    private String systemTableName;
     private int tableId;
     private long txn;
 
@@ -33,16 +33,16 @@ public class WalTxnNotificationTask {
         return tableId;
     }
 
-    public String getTableName() {
-        return tableName;
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     public long getTxn() {
         return txn;
     }
 
-    public void of(String tableName, int tableId, long txn) {
-        this.tableName = tableName;
+    public void of(String systemTableName, int tableId, long txn) {
+        this.systemTableName = systemTableName;
         this.tableId = tableId;
         this.txn = txn;
     }

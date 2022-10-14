@@ -578,7 +578,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(configuration, tableName, engine.getSystemTableName(tableName));
+        return new TableReader(configuration, engine.getSystemTableName(tableName));
     }
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {

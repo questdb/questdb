@@ -30,7 +30,10 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -286,7 +289,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
-                    engine.createTable(securityContext, ddlMem, path, tsa);
+                    engine.createTable(securityContext, ddlMem, path, tsa, false);
                 }
 
                 final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);

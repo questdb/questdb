@@ -1361,8 +1361,8 @@ public class SqlCompiler implements Closeable {
             CairoSecurityContext securityContext, CharSequence tableName, boolean isWalEnabled, RecordCursor cursor,
             RecordMetadata cursorMetadata
     ) throws SqlException {
-        TableWriter writer = null;
         final TableWriterFrontend writerFrontend;
+        TableWriter writer = null;
         if (!isWalEnabled) {
             CharSequence systemTableName = engine.getSystemTableName(tableName);
             writerFrontend = writer = new TableWriter(
@@ -1378,6 +1378,7 @@ public class SqlCompiler implements Closeable {
         } else {
             writerFrontend = engine.getWalWriter(securityContext, tableName);
         }
+
         try {
             RecordMetadata writerMetadata = writerFrontend.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
@@ -1393,15 +1394,12 @@ public class SqlCompiler implements Closeable {
                             entityColumnFilter
                     )
             );
-            return writer;
-        } catch (Throwable e) {
-            Misc.free(writer);
-            throw e;
         } finally {
-            if (isWalEnabled) {
-                writerFrontend.close();
+            if (writer == null) {
+                Misc.free(writerFrontend);
             }
         }
+        return writer;
     }
 
     /*
@@ -1440,66 +1438,16 @@ public class SqlCompiler implements Closeable {
         return rowCount;
     }
 
-    private CompiledQuery createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws
-            SqlException {
-        final CreateTableModel createTableModel = (CreateTableModel) model;
-        final ExpressionNode name = createTableModel.getName();
-
-        // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        if (createTableModel.isIgnoreIfExists() && engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
-            return compiledQuery.ofCreateTable();
-        }
-
-        this.insertCount = -1;
-
-        // Slow path with lock attempt
-        CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable");
-        if (null == lockedReason) {
-            TableWriter tableWriter = null;
-            boolean newTable = false;
-            try {
-                if (engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
-                    if (createTableModel.isIgnoreIfExists()) {
-                        return compiledQuery.ofCreateTable();
-                    }
-                    throw SqlException.$(name.position, "table already exists");
-                }
-                try {
-                    if (createTableModel.getQueryModel() == null) {
-                        if (createTableModel.getLikeTableName() != null) {
-                            copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
-                        }
-                        engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
-                        newTable = true;
-                    } else {
-                        tableWriter = createTableFromCursor(createTableModel, executionContext);
-                    }
-                } catch (CairoException e) {
-                    LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
-                    throw SqlException.$(name.position, "Could not create table. See log for details.");
-                }
-            } finally {
-                engine.unlock(executionContext.getCairoSecurityContext(), name.token, tableWriter, newTable);
-            }
-        } else {
-            throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
-        }
-
-        if (createTableModel.getQueryModel() == null) {
-            return compiledQuery.ofCreateTable();
-        } else {
-            return compiledQuery.ofCreateTableAsSelect(insertCount);
-        }
-    }
-
     private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
         ExpressionNode likeTableName = model.getLikeTableName();
         CharSequence likeTableNameToken = likeTableName.token;
         tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
+
         try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
             model.setCommitLag(rdr.getCommitLag());
             model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
             TableReaderMetadata rdrMetadata = rdr.getMetadata();
+
             for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
                 int columnType = rdrMetadata.getColumnType(i);
                 boolean isSymbol = ColumnType.isSymbol(columnType);
@@ -1511,6 +1459,7 @@ public class SqlCompiler implements Closeable {
                 model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
             }
             model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
+
             if (rdrMetadata.getTimestampIndex() != -1) {
                 model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
             }
@@ -1519,8 +1468,46 @@ public class SqlCompiler implements Closeable {
         model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
     }
 
-    @Nullable
-    private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws
+    private CompiledQuery createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws
+            SqlException {
+        final CreateTableModel createTableModel = (CreateTableModel) model;
+        final ExpressionNode name = createTableModel.getName();
+
+        // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
+        if (createTableModel.isIgnoreIfExists() && engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
+            return compiledQuery.ofCreateTable();
+        }
+
+        this.insertCount = -1;
+        if (engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
+            if (createTableModel.isIgnoreIfExists()) {
+                return compiledQuery.ofCreateTable();
+            }
+            throw SqlException.$(name.position, "table already exists");
+        }
+        try {
+            if (createTableModel.getQueryModel() == null) {
+                if (createTableModel.getLikeTableName() != null) {
+                    copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
+                }
+                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel, false);
+            } else {
+                createTableFromCursor(createTableModel, executionContext);
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+            throw SqlException.$(name.position, "Could not create table. See log for details.");
+        }
+
+
+        if (createTableModel.getQueryModel() == null) {
+            return compiledQuery.ofCreateTable();
+        } else {
+            return compiledQuery.ofCreateTableAsSelect(insertCount);
+        }
+    }
+
+    private void createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws
             SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
@@ -1529,24 +1516,29 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
-            engine.createTableUnsafe(
+            boolean keepLock = !model.isWalEnabled();
+
+            engine.createTable(
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,
-                    tableStructureAdapter.of(model, metadata, typeCast)
+                    tableStructureAdapter.of(model, metadata, typeCast),
+                    keepLock
             );
 
-            final boolean walEnabled = model.isWalEnabled();
-            // TODO: if it's WAL enabled, table unlock can happen here, before the data is written
-
+            TableWriter writer = null;
             try {
-                return copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, walEnabled, cursor, metadata);
+                writer = copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, model.isWalEnabled(), cursor, metadata);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
                 if (removeTableDirectory(model)) {
                     throw e;
                 }
                 throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
+            } finally {
+                if (keepLock) {
+                    engine.unlock(executionContext.getCairoSecurityContext(), model.getName().token, writer, writer == null);
+                }
             }
         }
     }
@@ -1607,19 +1599,7 @@ public class SqlCompiler implements Closeable {
             }
             throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
-
-        if (engine.isWalTable(tableName)) {
-            engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
-//            TableWriterFrontend writer = engine.getTableWriterFrontEnd(
-//                    executionContext.getCairoSecurityContext(),
-//                    tableName,
-//                    "removeTable"
-//            );
-//
-//            writer.dropTable();
-        } else {
-            engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
-        }
+        engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
 
         return compiledQuery.ofDrop();
     }

@@ -48,13 +48,13 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableRegistry().forAllWalTables(this::checkNotifyOutstandingTxnInWal);
     }
 
-    public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
+    public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence systemTableName, long txn) {
         Path rootPath = Path.PATH.get().of(dbRoot);
-        rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+        rootPath.concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader2 = txReader.ofRO(rootPath, PartitionBy.NONE)) {
             if (txReader2.unsafeReadTxn() < txn) {
                 // table name should be immutable when in the notification message
-                String tableNameStr = Chars.toString(tableName);
+                String tableNameStr = Chars.toString(systemTableName);
                 engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);
             }
         }

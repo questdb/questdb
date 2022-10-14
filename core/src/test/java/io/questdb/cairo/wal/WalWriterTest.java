@@ -39,6 +39,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.junit.After;
 import org.junit.Assert;
@@ -160,7 +161,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 Assert.fail();
             } catch (CairoError e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" + tableName + "`]"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" +
+                        engine.getSystemTableName(tableName) + "`]"));
             }
         });
     }
@@ -569,7 +571,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 fail("Exception expected");
             } catch(Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
-                assertTrue(e.getMessage().endsWith("cannot alter table with uncommitted inserts [table=testAlterTableRejectedIfTransactionPending]"));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.endsWith("cannot alter table with uncommitted inserts [table=testAlterTableRejectedIfTransactionPending]"));
             }
         });
     }
@@ -3036,11 +3038,12 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     static void createTable(TableModel model) {
-        engine.createTableUnsafe(
+        engine.createTable(
                 AllowAllCairoSecurityContext.INSTANCE,
                 model.getMem(),
                 model.getPath(),
-                model
+                model,
+                false
         );
     }
 

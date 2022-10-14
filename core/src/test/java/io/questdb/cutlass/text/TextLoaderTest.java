@@ -36,10 +36,6 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
-
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -49,6 +45,9 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 
 public class TextLoaderTest extends AbstractGriffinTest {
 
@@ -947,6 +946,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
+
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractGriffinTest.configuration.mangleTableSystemNames();
+                }
             };
 
             try (
@@ -1220,6 +1224,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractGriffinTest.configuration.mangleTableSystemNames();
+            }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
@@ -1327,6 +1336,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractGriffinTest.configuration.mangleTableSystemNames();
+            }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
@@ -1387,6 +1401,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
+            }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -1476,6 +1495,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 @Override
                 public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
+                }
+
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractGriffinTest.configuration.mangleTableSystemNames();
                 }
             };
 
@@ -2073,6 +2097,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
+            }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
 
@@ -3094,6 +3123,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractGriffinTest.configuration.mangleTableSystemNames();
+            }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
 
@@ -3274,6 +3308,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
             @Override
             public long getCommitLag() {
                 return commitLag;
+            }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {

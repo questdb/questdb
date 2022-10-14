@@ -114,17 +114,16 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLockBusyReader() throws Exception {
-
-        createX();
-
+    public void testDuplicateTableCreation() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
-                    Assert.assertNotNull(reader);
-                    Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
-                    assertReader(engine, "x");
-                    assertWriter(engine, "x");
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+                try {
+                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model, false);
+                    fail("duplicated tables should not be permitted!");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
                 }
             }
         });
@@ -458,16 +457,17 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDuplicateTableCreation() throws Exception {
+    public void testLockBusyReader() throws Exception {
+
+        createX();
+
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
-                try {
-                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
-                    fail("duplicated tables should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    Assert.assertNotNull(reader);
+                    Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, engine.getSystemTableName("x"), "testing"));
+                    assertReader(engine, "x");
+                    assertWriter(engine, "x");
                 }
             }
         });

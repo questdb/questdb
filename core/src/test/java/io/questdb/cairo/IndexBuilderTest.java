@@ -416,8 +416,10 @@ public class IndexBuilderTest extends AbstractCairoTest {
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
-                    if (Chars.contains(name, "sym2.k") && count.incrementAndGet() == 29) {
-                        return -1;
+                    if (Chars.contains(name, "sym2.k")) {
+                        if (count.incrementAndGet() == 29) {
+                            return -1;
+                        }
                     }
                     return Files.openRW(name, opts);
                 }

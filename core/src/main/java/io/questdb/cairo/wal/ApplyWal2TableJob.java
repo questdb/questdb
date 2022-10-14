@@ -54,7 +54,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     public static long processWalTxnNotification(
-            CharSequence tableName,
+            CharSequence systemTableName,
             int tableId,
             CairoEngine engine,
             SqlToOperation sqlToOperation
@@ -65,28 +65,28 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         do {
             // This is work steeling, security context is checked on writing to the WAL
             // and can be ignored here
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
+            try (TableWriter writer = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, systemTableName, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getId() == tableId;
-                cursor = applyOutstandingWalTransactions(writer, engine, sqlToOperation, cursor);
+                cursor = applyOutstandingWalTransactions(systemTableName, writer, engine, sqlToOperation, cursor);
                 lastCommittedTxn = writer.getTxn();
             } catch (EntryUnavailableException tableBusy) {
                 // This is all good, someone else will apply the data
                 if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
                     // Oh, no, rogue writer
-                    LOG.critical().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(tableName)
+                    LOG.critical().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(systemTableName)
                             .$(", lock_reason=").$(tableBusy.getReason()).I$();
                 }
                 break;
             } catch (CairoException ex) {
                 engine.notifyWalTxnFailed();
-                LOG.critical().$("failed to apply WAL data to table [table=").$(tableName)
+                LOG.critical().$("failed to apply WAL data to table [table=").$(systemTableName)
                         .$(", error=").$(ex.getMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 break;
             }
 
-            lastTxn = engine.getTableRegistry().lastTxn(tableName);
+            lastTxn = engine.getTableRegistry().lastTxn(systemTableName);
         } while (lastCommittedTxn < lastTxn);
 
         reusableStructureChangeCursor.set(cursor);
@@ -109,35 +109,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return useful;
     }
 
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        CharSequence tableName;
-        int tableId;
-        long txn;
-
-        try {
-            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
-            tableId = walTxnNotificationTask.getTableId();
-            tableName = walTxnNotificationTask.getTableName();
-            txn = walTxnNotificationTask.getTxn();
-        } finally {
-            // Don't hold the queue until the all the transactions applied to the table
-            subSeq.done(cursor);
-        }
-
-        if (localCommittedTransactions.get(tableId) < txn) {
-            // Check, maybe we already processed this table to higher txn.
-            long committedTxn = processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
-            if (committedTxn > -1) {
-                localCommittedTransactions.put(tableId, committedTxn);
-            }
-        } else {
-            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableName).$(", txn=").$(txn).I$();
-        }
-        return true;
-    }
-
     private static SequencerStructureChangeCursor applyOutstandingWalTransactions(
+            CharSequence systemTableName,
             TableWriter writer,
             CairoEngine engine,
             SqlToOperation sqlToOperation,
@@ -146,7 +119,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TableRegistry tableRegistry = engine.getTableRegistry();
         long lastCommitted = writer.getTxn();
 
-        try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
+        try (SequencerCursor sequencerCursor = tableRegistry.getCursor(systemTableName, lastCommitted)) {
             Path tempPath = Path.PATH.get();
 
             while (sequencerCursor.hasNext()) {
@@ -160,8 +133,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 // Always set full path when using thread static path
-                CharSequence tableName = engine.getSystemTableName(writer.getTableName());
-                tempPath.of(engine.getConfiguration().getRoot()).concat(tableName).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                tempPath.of(engine.getConfiguration().getRoot()).concat(systemTableName).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                 switch (walId) {
                     case TxnCatalog.METADATA_WALID:
                         // This is metadata change
@@ -176,7 +148,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
                         boolean hasNext;
                         if (reusableStructureChangeCursor == null || !(hasNext = reusableStructureChangeCursor.hasNext())) {
-                            reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
+                            reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(systemTableName, reusableStructureChangeCursor, newStructureVersion - 1);
                             hasNext = reusableStructureChangeCursor != null && reusableStructureChangeCursor.hasNext();
                         }
 
@@ -200,11 +172,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
                         break;
                     case TxnCatalog.DROP_TABLE_WALID:
-                        if (engine.lockReaders(writer.getTableName())) {
+                        if (engine.lockReaders(systemTableName)) {
                             try {
                                 writer.truncate(); // release fs space now. delete this table later
                             } finally {
-                                engine.unlockReaders(writer.getTableName());
+                                engine.unlockReaders(systemTableName);
                             }
                         }
                         break;
@@ -220,5 +192,33 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
         }
         return reusableStructureChangeCursor;
+    }
+
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        CharSequence systemTableName;
+        int tableId;
+        long txn;
+
+        try {
+            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
+            tableId = walTxnNotificationTask.getTableId();
+            systemTableName = walTxnNotificationTask.getSystemTableName();
+            txn = walTxnNotificationTask.getTxn();
+        } finally {
+            // Don't hold the queue until the all the transactions applied to the table
+            subSeq.done(cursor);
+        }
+
+        if (localCommittedTransactions.get(tableId) < txn) {
+            // Check, maybe we already processed this table to higher txn.
+            long committedTxn = processWalTxnNotification(systemTableName, tableId, engine, sqlToOperation);
+            if (committedTxn > -1) {
+                localCommittedTransactions.put(tableId, committedTxn);
+            }
+        } else {
+            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(systemTableName).$(", txn=").$(txn).I$();
+        }
+        return true;
     }
 }

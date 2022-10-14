@@ -278,7 +278,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 cairoSecurityContext,
                 ddlMem,
                 path,
-                tableStructureAdapter.of(cache)
+                tableStructureAdapter.of(cache),
+                false
         );
         appendFirstRowAndCacheWriter(cache);
     }

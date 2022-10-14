@@ -98,8 +98,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                                     .$("open '").utf8(name)
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .$(']').$();
-                            CharSequence systemTableName = engine.getSystemTableName(name);
-                            r = new R(this, e, i, name, systemTableName, messageBus);
+                            r = new R(this, e, i, name, messageBus);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -317,7 +316,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     }
 
     private boolean returnToPool(R reader) {
-        CharSequence name = reader.getTableName();
+        CharSequence name = reader.getSystemTableName();
 
         long thread = Thread.currentThread().getId();
 
@@ -388,8 +387,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         private ReaderPool pool;
         private Entry entry;
 
-        public R(ReaderPool pool, Entry entry, int index, CharSequence name, CharSequence systemTableName, MessageBus messageBus) {
-            super(pool.getConfiguration(), name, systemTableName, messageBus);
+        public R(ReaderPool pool, Entry entry, int index, CharSequence systemTableName, MessageBus messageBus) {
+            super(pool.getConfiguration(), systemTableName, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

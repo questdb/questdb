@@ -6864,7 +6864,7 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
 
-        try (TableReader reader = new TableReader(configuration, "telemetry", "telemetry")) {
+        try (TableReader reader = new TableReader(configuration, "telemetry")) {
             final StringSink sink = new StringSink();
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
@@ -6883,7 +6883,7 @@ public class IODispatcherTest {
                                        String expectedData) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
-        try (TableReader reader = new TableReader(configuration, tableName, tableName)) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
             Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());

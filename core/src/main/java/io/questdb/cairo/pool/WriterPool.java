@@ -38,6 +38,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -228,12 +229,12 @@ public class WriterPool extends AbstractPool {
         unlock(name, null, false);
     }
 
-    public void unlock(CharSequence name, @Nullable TableWriter writer, boolean newTable) {
+    public void unlock(CharSequence systemTableName, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().getId();
 
-        Entry e = entries.get(name);
+        Entry e = entries.get(systemTableName);
         if (e == null) {
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
+            notifyListener(thread, systemTableName, PoolListener.EV_NOT_LOCKED);
             return;
         }
 
@@ -242,19 +243,18 @@ public class WriterPool extends AbstractPool {
                 // When entry is locked, writer must be null, however if writer is not null,
                 // calling thread must be trying to unlock writer that hasn't been locked.
                 // This qualifies for "illegal state".
-                notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
-                throw CairoException.critical(0).put("Writer ").put(name).put(" is not locked");
+                notifyListener(thread, systemTableName, PoolListener.EV_NOT_LOCKED);
+                throw CairoException.critical(0).put("Writer ").put(systemTableName).put(" is not locked");
             }
 
-            CharSequence systemTableName = engine.getSystemTableName(name);
             if (newTable) {
                 // Note that the TableUtils.createTable method will create files, but on some OS's these files
                 // will not immediately become visible on all threads, only in this thread will they definitely
                 // be visible. To prevent spurious file system errors (or even allowing the same table to be
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
-                LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, name, systemTableName, messageBus, null, false, e, root, metrics);
+                LOG.info().$("created [table=`").utf8(systemTableName).$("`, thread=").$(thread).$(']').$();
+                writer = new TableWriter(configuration, systemTableName, systemTableName, messageBus, null, false, e, root, metrics);
             }
 
             if (writer == null) {
@@ -269,7 +269,7 @@ public class WriterPool extends AbstractPool {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
                 }
-                entries.remove(name);
+                entries.remove(systemTableName);
             } else {
                 e.writer = writer;
                 writer.setLifecycleManager(e);
@@ -279,11 +279,11 @@ public class WriterPool extends AbstractPool {
                 Unsafe.getUnsafe().storeFence();
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
-            notifyListener(thread, name, PoolListener.EV_UNLOCKED);
-            LOG.debug().$("unlocked [table=`").utf8(name).$("`, thread=").$(thread).I$();
+            notifyListener(thread, systemTableName, PoolListener.EV_UNLOCKED);
+            LOG.debug().$("unlocked [table=`").utf8(systemTableName).$("`, thread=").$(thread).I$();
         } else {
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.critical(0).put("Not lock owner of ").put(name);
+            notifyListener(thread, systemTableName, PoolListener.EV_NOT_LOCK_OWNER);
+            throw CairoException.critical(0).put("Not lock owner of ").put(systemTableName);
         }
     }
 
@@ -428,17 +428,20 @@ public class WriterPool extends AbstractPool {
         return count;
     }
 
-    private TableWriter createWriter(CharSequence name, Entry e, long thread, String lockReason) {
+    private TableWriter createWriter(CharSequence systemTableName, Entry e, long thread, String lockReason) {
+        StringSink tableName = Misc.getThreadLocalBuilder();
+        tableName.put(systemTableName);
+        TableUtils.convertSystemToTableName(tableName);
+
         try {
             checkClosed();
-            LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            CharSequence systemTableName = engine.getSystemTableName(name);
-            e.writer = new TableWriter(configuration, name, systemTableName, messageBus, null, true, e, root, metrics);
+            LOG.info().$("open [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
+            e.writer = new TableWriter(configuration, tableName, systemTableName, messageBus, null, true, e, root, metrics);
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LOG.critical()
-                    .$("could not open [table=`").utf8(name)
+                    .$("could not open [table=`").utf8(systemTableName)
                     .$("`, thread=").$(e.owner)
                     .$(", ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
@@ -446,7 +449,7 @@ public class WriterPool extends AbstractPool {
             e.ex = ex;
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
-            notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
+            notifyListener(e.owner, tableName, PoolListener.EV_CREATE_EX);
             throw ex;
         }
     }
@@ -520,20 +523,20 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, String lockReason) {
+    private boolean lockAndNotify(long thread, Entry e, CharSequence systemTableName, String lockReason) {
         assertLockReasonIsNone(lockReason);
         path.trimTo(rootLen);
-        path.concat(engine.getSystemTableName(tableName));
+        path.concat(systemTableName);
         TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
-            LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
+            LOG.error().$("could not lock [table=`").utf8(systemTableName).$("`, thread=").$(thread).$(']').$();
             e.ownershipReason = OWNERSHIP_REASON_MISSING;
             e.owner = UNALLOCATED;
             return false;
         }
-        LOG.debug().$("locked [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
-        notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
+        LOG.debug().$("locked [table=`").utf8(systemTableName).$("`, thread=").$(thread).$(']').$();
+        notifyListener(thread, systemTableName, PoolListener.EV_LOCK_SUCCESS);
         e.ownershipReason = lockReason;
         return true;
     }

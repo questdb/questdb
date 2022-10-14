@@ -1054,6 +1054,14 @@ public final class TableUtils {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
+    public static String toTableNameFromSystemName(String systemTableName) {
+        int suffixIndex = Chars.indexOf(systemTableName, SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex != -1) {
+            return systemTableName.substring(0, suffixIndex);
+        }
+        return systemTableName;
+    }
+
     public static void txnPartition(CharSink path, long txn) {
         path.put('.').put(txn);
     }
