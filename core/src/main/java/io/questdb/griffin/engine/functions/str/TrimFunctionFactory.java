@@ -43,7 +43,7 @@ public class TrimFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            if (arg.getStrLen(null) < 0) {
+            if (arg.getStr(null) == null) {
                 return StrConstant.NULL;
             } else {
                 return new TrimConstFunction(args.getQuick(0), TrimType.TRIM);

@@ -50,7 +50,7 @@ public class TrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call("").andAssert("");
         call(" ").andAssert("");
         call("    ").andAssert("");
-        call(null, null).andAssert(null);
+        call((Object) null).andAssert(null);
     }
 
     @Override
