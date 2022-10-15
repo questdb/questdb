@@ -332,7 +332,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private void reopenPurgeLogPartition(int partitionIndex, long partitionTimestamp) {
         path.trimTo(pathRootLen);
-        path.concat(engine.getSystemTableName(purgeLogWriter.getTableName()));
+        path.concat(purgeLogWriter.getSystemTableName());
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
         TableUtils.setPathForPartition(
                 path,
@@ -388,7 +388,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private void setTablePath(String tableName) {
-        path.trimTo(pathRootLen).concat(engine.getSystemTableName(tableName));
+        path.trimTo(pathRootLen).concat(tableName);
         pathTableLen = path.length();
     }
 

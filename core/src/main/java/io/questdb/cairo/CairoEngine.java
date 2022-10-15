@@ -161,6 +161,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
+        securityContext.checkWritePermission();
         // Helps to not create objects down the line
         String tableName = Chars.toString(struct.getTableName());
         checkTableName(tableName);
@@ -220,6 +221,15 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public CharSequence getSystemTableName(final CharSequence tableName) {
         return getTableRegistry().getSystemTableNameOrDefault(tableName);
+    }
+
+    public String getTableNameBySystemName(CharSequence systemTableName) {
+        String tableName = tableRegistry.getTableNameBySystemName(systemTableName);
+        if (tableName != null) {
+            return tableName;
+        }
+
+        return TableUtils.toTableNameFromSystemName(Chars.toString(systemTableName));
     }
 
     public boolean isWalTable(final CharSequence tableName) {
@@ -543,13 +553,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public boolean lockReaders(CharSequence tableName) {
         checkTableName(tableName);
-        return readerPool.lock(tableName);
+        return readerPool.lock(getSystemTableName(tableName));
     }
 
     public CharSequence lockWriter(CairoSecurityContext securityContext, CharSequence tableName, String lockReason) {
         securityContext.checkWritePermission();
         checkTableName(tableName);
-        return writerPool.lock(tableName, lockReason);
+        return writerPool.lock(getSystemTableName(tableName), lockReason);
     }
 
     @TestOnly
@@ -646,13 +656,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public void unlockReaders(CharSequence tableName) {
         checkTableName(tableName);
-        readerPool.unlock(tableName);
+        readerPool.unlock(getSystemTableName(tableName));
     }
 
     public void unlockWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
         checkTableName(tableName);
-        writerPool.unlock(tableName);
+        writerPool.unlock(getSystemTableName(tableName));
     }
 
     public TextImportExecutionContext getTextImportExecutionContext() {

@@ -125,7 +125,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (name.equals(tableName)) {
+                    if (Chars.startsWith(name, tableName)
+                            && name.equals(engine.getSystemTableName(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -360,7 +361,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (name.equals(tableName)) {
+                    if (Chars.startsWith(name, tableName)
+                            && name.equals(engine.getSystemTableName(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -448,7 +450,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // One engine hook for all writers
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    tableIndex.get(name).countDown();
+                    tableIndex.get(engine.getTableNameBySystemName(name)).countDown();
                 }
             });
 
@@ -1083,7 +1085,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (tables.contains(name)) {
+                    if (tables.contains(engine.getTableNameBySystemName(name))) {
                         tablesCreated.countDown();
                     }
                 }

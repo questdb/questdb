@@ -24,11 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.O3Utils;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -243,7 +239,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equals(tableName, name)) {
+                    if (Chars.startsWith(name, tableName) && name.equals(engine.getSystemTableName(tableName))) {
                         if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t)) {
                             releaseLatch.countDown();
                         }

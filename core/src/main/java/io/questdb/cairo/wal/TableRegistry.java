@@ -278,7 +278,7 @@ public class TableRegistry extends AbstractPool {
         return getWalPool(tableName).get();
     }
 
-    private String getTableNameBySystemName(String systemTableName) {
+    public String getTableNameBySystemName(CharSequence systemTableName) {
         return reverseTableNameRegistry.get(systemTableName);
     }
 

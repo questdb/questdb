@@ -73,7 +73,6 @@ public class VacuumColumnVersions implements Closeable {
 
     public void run(SqlExecutionContext executionContext, TableReader reader) {
         executionContext.getCairoSecurityContext().checkWritePermission();
-        CharSequence tableName = reader.getTableName();
         LOG.info().$("processing [table=").$(reader.getTableName()).I$();
         fileNameSink = new StringSink();
 

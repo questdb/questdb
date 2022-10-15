@@ -86,7 +86,8 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration, metrics, 2)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
+                    if (event == PoolListener.EV_RETURN && Chars.startsWith(name, tableName)
+                            && name.equals(engine.getTableNameBySystemName(tableName))) {
                         waitForData.countDown();
                     }
                 });

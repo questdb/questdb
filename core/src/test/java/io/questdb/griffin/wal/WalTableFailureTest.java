@@ -395,7 +395,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
                             "applying structure change to WAL table failed " +
-                                    "[table=testDodgyAddColumDoesNotChangeMetadata, oldVersion: 0, newVersion: 0]");
+                                    "[table=testDodgyAddColumDoesNotChangeMetadata:1, oldVersion: 0, newVersion: 0]");
                 }
             }
 

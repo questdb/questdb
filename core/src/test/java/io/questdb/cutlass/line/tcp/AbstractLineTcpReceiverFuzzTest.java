@@ -353,10 +353,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
-                handleWriterUnlockEvent(name);
+                handleWriterUnlockEvent(engine.getTableNameBySystemName(name));
             }
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                handleWriterReturnEvent(name);
+                handleWriterReturnEvent(engine.getTableNameBySystemName(name));
             }
         }, 250);
     }

@@ -37,6 +37,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
 import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -305,7 +307,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
+                MatcherAssert.assertThat(ex.toString(), CoreMatchers.containsString("permission denied"));
             }
             try {
                 assertQuery("count\n1\n", "select count() from balances", null);

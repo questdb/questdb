@@ -254,7 +254,8 @@ public class WriterPool extends AbstractPool {
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(systemTableName).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, systemTableName, systemTableName, messageBus, null, false, e, root, metrics);
+                String tableName = engine.getTableNameBySystemName(systemTableName);
+                writer = new TableWriter(configuration, tableName, systemTableName, messageBus, null, false, e, root, metrics);
             }
 
             if (writer == null) {
@@ -405,7 +406,7 @@ public class WriterPool extends AbstractPool {
     private void closeWriter(long thread, Entry e, short ev, int reason) {
         TableWriter w = e.writer;
         if (w != null) {
-            CharSequence name = e.writer.getTableName();
+            CharSequence name = e.writer.getSystemTableName();
             w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
             e.writer = null;
@@ -543,7 +544,7 @@ public class WriterPool extends AbstractPool {
 
     private TableWriter logAndReturn(Entry e, short event) {
         LOG.info().$(">> [table=`").utf8(e.writer.getTableName()).$("`, thread=").$(e.owner).$(']').$();
-        notifyListener(e.owner, e.writer.getTableName(), event);
+        notifyListener(e.owner, e.writer.getSystemTableName(), event);
         return e.writer;
     }
 
@@ -558,7 +559,7 @@ public class WriterPool extends AbstractPool {
 
     private boolean returnToPool(Entry e) {
         final long thread = Thread.currentThread().getId();
-        final CharSequence name = e.writer.getTableName();
+        final CharSequence name = e.writer.getSystemTableName();
         try {
             e.writer.rollback();
 

@@ -133,7 +133,7 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
 
         runTest((factoryType, thread, name, event, segment, position) -> {
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
-                handleWriterUnlockEvent(name);
+                handleWriterUnlockEvent(engine.getTableNameBySystemName(name));
             }
         }, minIdleMsBeforeWriterRelease);
     }

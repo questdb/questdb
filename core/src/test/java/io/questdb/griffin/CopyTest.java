@@ -828,25 +828,6 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenWorkIsTheSameAsDataDirThenParallelCopyThrowsException() throws Exception {
-        String inputWorkRootTmp = inputWorkRoot;
-        inputWorkRoot = temp.getRoot().getAbsolutePath();
-
-        CopyRunnable stmt = () -> runAndFetchImportId("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
-
-        CopyRunnable test = () -> assertQuery("message\ncould not remove import work directory because it points to one of main directories\n",
-                "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
-                null,
-                true
-        );
-
-        testCopy(stmt, test);
-
-        inputWorkRoot = inputWorkRootTmp;
-    }
-
-    @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
         // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
         sqlCopyBufferSize = 1024;
@@ -1032,7 +1013,7 @@ public class CopyTest extends AbstractGriffinTest {
         }
     }
 
-    private Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
+    private static Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
         return new Thread(() -> {
             try {
                 while (latch.getCount() > 0) {
@@ -1047,7 +1028,7 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
-    private String runAndFetchImportId(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    protected static String runAndFetchImportId(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CompiledQuery cq = compiler.compile(copySql, sqlExecutionContext);
         try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
             Assert.assertTrue(cursor.hasNext());
@@ -1055,11 +1036,11 @@ public class CopyTest extends AbstractGriffinTest {
         }
     }
 
-    private void testCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
+    protected static void testCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
-            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "text_import_log" , sqlExecutionContext);
+            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "text_import_log", sqlExecutionContext);
             try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
 
                 Thread processingThread = createJobThread(processingJob, processed);

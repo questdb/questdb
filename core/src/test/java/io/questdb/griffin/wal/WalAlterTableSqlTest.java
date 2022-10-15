@@ -29,7 +29,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -47,12 +46,16 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            executeOperation("drop table " + tableName, CompiledQuery.DROP);
+            assertSql(
+                    "select name from tables()",
+                    "name\n" + tableName + "\n");
 
+            executeOperation("drop table " + tableName, CompiledQuery.DROP);
             drainWalQueue();
+
             assertSql(
                     "select commitLag from tables() where name = '" + tableName + "'",
-                    "commitLag\n117000000\n");
+                    "commitLag\n");
         });
     }
 

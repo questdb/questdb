@@ -1357,29 +1357,34 @@ public class SqlCompiler implements Closeable {
     /**
      * Sets insertCount to number of copied rows.
      */
-    private TableWriter copyTableData(
-            CairoSecurityContext securityContext, CharSequence tableName, boolean isWalEnabled, RecordCursor cursor,
-            RecordMetadata cursorMetadata
+    private void copyTableDataAndUnlock(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            boolean isWalEnabled,
+            RecordCursor cursor,
+            RecordMetadata cursorMetadata,
+            int position
     ) throws SqlException {
-        final TableWriterFrontend writerFrontend;
+        TableWriterFrontend writerFrontend = null;
         TableWriter writer = null;
-        if (!isWalEnabled) {
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
-            writerFrontend = writer = new TableWriter(
-                    configuration,
-                    tableName,
-                    systemTableName,
-                    messageBus,
-                    null,
-                    false,
-                    DefaultLifecycleManager.INSTANCE,
-                    configuration.getRoot(),
-                    engine.getMetrics());
-        } else {
-            writerFrontend = engine.getWalWriter(securityContext, tableName);
-        }
 
         try {
+            if (!isWalEnabled) {
+                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                writerFrontend = writer = new TableWriter(
+                        configuration,
+                        tableName,
+                        systemTableName,
+                        messageBus,
+                        null,
+                        false,
+                        DefaultLifecycleManager.INSTANCE,
+                        configuration.getRoot(),
+                        engine.getMetrics());
+            } else {
+                writerFrontend = engine.getWalWriter(securityContext, tableName);
+            }
+
             RecordMetadata writerMetadata = writerFrontend.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
             this.insertCount = copyTableData(
@@ -1394,12 +1399,16 @@ public class SqlCompiler implements Closeable {
                             entityColumnFilter
                     )
             );
+        } catch (CairoException e) {
+            LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+            throw SqlException.$(position, "Could not create table. See log for details.");
         } finally {
-            if (writer == null) {
+            if (isWalEnabled) {
                 Misc.free(writerFrontend);
+            } else {
+                engine.unlock(securityContext, tableName, writer, false);
             }
         }
-        return writer;
     }
 
     /*
@@ -1485,20 +1494,20 @@ public class SqlCompiler implements Closeable {
             }
             throw SqlException.$(name.position, "table already exists");
         }
-        try {
-            if (createTableModel.getQueryModel() == null) {
+
+        if (createTableModel.getQueryModel() == null) {
+            try {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
-                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel, false);
-            } else {
-                createTableFromCursor(createTableModel, executionContext);
+            } catch (CairoException e) {
+                LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+                throw SqlException.$(name.position, "Could not create table. See log for details.");
             }
-        } catch (CairoException e) {
-            LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
-            throw SqlException.$(name.position, "Could not create table. See log for details.");
+            engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel, false);
+        } else {
+            createTableFromCursor(createTableModel, executionContext, name.position);
         }
-
 
         if (createTableModel.getQueryModel() == null) {
             return compiledQuery.ofCreateTable();
@@ -1507,7 +1516,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws
+    private void createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext, int position) throws
             SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
@@ -1526,19 +1535,14 @@ public class SqlCompiler implements Closeable {
                     keepLock
             );
 
-            TableWriter writer = null;
             try {
-                writer = copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, model.isWalEnabled(), cursor, metadata);
+                copyTableDataAndUnlock(executionContext.getCairoSecurityContext(), model.getName().token, model.isWalEnabled(), cursor, metadata, position);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
                 if (removeTableDirectory(model)) {
                     throw e;
                 }
                 throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
-            } finally {
-                if (keepLock) {
-                    engine.unlock(executionContext.getCairoSecurityContext(), model.getName().token, writer, writer == null);
-                }
             }
         }
     }
@@ -2425,7 +2429,7 @@ public class SqlCompiler implements Closeable {
                 try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
-                        if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableName(), partitionBy)) {
+                        if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getSystemTableName(), partitionBy)) {
                             throw SqlException.$(
                                     tableNamePos,
                                     "cannot schedule vacuum action, queue is full, please retry " +
