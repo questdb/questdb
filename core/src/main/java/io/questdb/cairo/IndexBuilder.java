@@ -47,6 +47,7 @@ public class IndexBuilder extends RebuildColumnBase {
     public IndexBuilder() {
         super();
         unsupportedColumnMessage = "Column is not indexed";
+        unsupportedTableMessage = "Table does not have any indexes";
     }
 
     @Override
@@ -68,7 +69,17 @@ public class IndexBuilder extends RebuildColumnBase {
     protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
         return metadata.isColumnIndexed(columnIndex);
     }
-
+//    @Override
+//    protected boolean isSupportedTable(RecordMetadata metadata) {
+//        boolean isIndexed=false;
+//        for (int i = 0, n = metadata.getColumnCount(); i < n; i++){
+//            if(isSupportedColumn(metadata,i)){
+//                isIndexed=true;
+//                break;
+//            }
+//        }
+//        return isIndexed;
+//    }
     protected void doReindex(
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,

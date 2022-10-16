@@ -46,6 +46,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected CairoConfiguration configuration;
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
+    protected String unsupportedTableMessage = "Wrong Table type";
     protected FilesFacade ff;
     private long lockFd;
     private MillisecondClock clock;
@@ -147,7 +148,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     );
 
     protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);
-
+    //protected abstract boolean isSupportedTable(RecordMetadata metadata);
     private void lock(FilesFacade ff) {
         try {
             path.trimTo(rootLen);
@@ -264,37 +265,49 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionTimestamp,
             long partitionSize
     ) {
+        boolean isIndexed=false;
         tempStringSink.clear();
         partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);
 
-        if (columnIndex == REBUILD_ALL_COLUMNS) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (isSupportedColumn(metadata, i)) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++){
+            if(isSupportedColumn(metadata,i)){
+                isIndexed=true;
+                break;
+            }
+        }
+
+        if(isIndexed) {
+            if (columnIndex == REBUILD_ALL_COLUMNS) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    if (isSupportedColumn(metadata, i)) {
+                        reindexColumn(
+                                columnVersionReader,
+                                metadata,
+                                i,
+                                tempStringSink,
+                                partitionNameTxn,
+                                partitionTimestamp,
+                                partitionSize
+                        );
+                    }
+                }
+            } else {
+                if (isSupportedColumn(metadata, columnIndex)) {
                     reindexColumn(
                             columnVersionReader,
                             metadata,
-                            i,
+                            columnIndex,
                             tempStringSink,
                             partitionNameTxn,
                             partitionTimestamp,
                             partitionSize
                     );
+                } else {
+                    throw CairoException.nonCritical().put(unsupportedColumnMessage);
                 }
             }
-        } else {
-            if (isSupportedColumn(metadata, columnIndex)) {
-                reindexColumn(
-                        columnVersionReader,
-                        metadata,
-                        columnIndex,
-                        tempStringSink,
-                        partitionNameTxn,
-                        partitionTimestamp,
-                        partitionSize
-                );
-            } else {
-                throw CairoException.nonCritical().put(unsupportedColumnMessage);
-            }
+        }else{
+            throw CairoException.nonCritical().put(unsupportedTableMessage);
         }
     }
 
