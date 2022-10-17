@@ -313,25 +313,6 @@ public class LogFactory implements Closeable {
         this.recordLength = recordLength;
     }
 
-    private static void updatePropertiesFromEnv(Properties properties) {
-        if (envEnabled) {
-            Map<String, String> env = System.getenv();
-            Iterator<String> keySetIterator = env.keySet().iterator();
-            while (keySetIterator.hasNext()) {
-                final String envVar = keySetIterator.next();
-                if (envVar.startsWith("QDB_LOG_")) {
-                    final String key = envVar.replaceFirst("QDB_LOG_", "").replace('_', '.').toLowerCase();
-                    final String val = env.get(envVar);
-                    if (val != "") {
-                        properties.setProperty(key, val);
-                        System.err.printf("Reading log setting '%s=%s' from environment%n", key, val);
-                    }
-
-                }
-            }
-        }
-    }
-
     @TestOnly
     static void configureFromSystemProperties(LogFactory logFactory) {
         configureFromSystemProperties(logFactory, null, false);
@@ -364,7 +345,6 @@ public class LogFactory implements Closeable {
                 try (FileInputStream fis = new FileInputStream(logPath)) {
                     Properties properties = new Properties();
                     properties.load(fis);
-                    updatePropertiesFromEnv(properties);
                     logFactory.configureFromProperties(properties, logDir);
                     initialized = true;
                 } catch (IOException e) {
@@ -379,7 +359,6 @@ public class LogFactory implements Closeable {
                 if (is != null) {
                     Properties properties = new Properties();
                     properties.load(is);
-                    updatePropertiesFromEnv(properties);
                     logFactory.configureFromProperties(properties, logDir);
                     System.err.println("Log configuration loaded from default internal file.");
                 } else {
@@ -388,7 +367,6 @@ public class LogFactory implements Closeable {
                         try (FileInputStream fis = new FileInputStream(f)) {
                             Properties properties = new Properties();
                             properties.load(fis);
-                            updatePropertiesFromEnv(properties);
                             logFactory.configureFromProperties(properties, logDir);
                             System.err.printf("Log configuration loaded from: %s%n", conf);
                         }
@@ -426,7 +404,6 @@ public class LogFactory implements Closeable {
         properties.setProperty("w.stdout.level", level);
         properties.setProperty("w.stdout.class", "io.questdb.log.LogConsoleWriter");
 
-        updatePropertiesFromEnv(properties);
         configureFromProperties(properties, logDir);
 
     }
@@ -450,7 +427,28 @@ public class LogFactory implements Closeable {
         return scopeConfigMap.get(k);
     }
 
+    private static void updatePropertiesFromEnv(Properties properties) {
+        if (envEnabled) {
+            Map<String, String> env = System.getenv();
+            Iterator<String> keySetIterator = env.keySet().iterator();
+            while (keySetIterator.hasNext()) {
+                final String envVar = keySetIterator.next();
+                if (envVar.startsWith("QDB_LOG_")) {
+                    final String key = envVar.replaceFirst("QDB_LOG_", "").replace('_', '.').toLowerCase();
+                    final String val = env.get(envVar);
+                    if (val != "") {
+                        properties.setProperty(key, val);
+                        System.err.printf("Reading log setting '%s=%s' from environment%n", key, val);
+                    }
+
+                }
+            }
+        }
+    }
+
     private void configureFromProperties(Properties properties, String logDir) {
+        updatePropertiesFromEnv(properties);
+
         String writers = properties.getProperty("writers");
 
         if (writers == null) {
