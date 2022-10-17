@@ -40,9 +40,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
 
 import static org.hamcrest.CoreMatchers.is;
 
@@ -660,6 +663,61 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "test-log.conf");
 
         testCustomLogIsCreated(false);
+    }
+
+    @Test
+    public void testEnvVarPriorityOverConfigFileSettings() throws IOException {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "recordLength=4096\n" +
+                "queueDepth=1024\n" +
+                "w.file.class=io.questdb.log.LogFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.bufferSize=4M");
+
+        Map<String, String> env = new HashMap<>();
+        // First configure a LogFactory using the above config file and an empty env
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            LogFactory.configureFromSystemProperties(factory, null, env, false);
+
+            Log logger = factory.create("xyz");
+            assertDisabled(logger.debug());
+            assertEnabled(logger.info());
+            assertEnabled(logger.error());
+            assertEnabled(logger.advisory());
+        }
+
+        // Now override a setting in the environment and retest
+        // todo: Figure out why setting to DEBUG only enables DEBUG and disables all
+        // other levels
+        env.put("QDB_LOG_W_FILE_LEVEL", "DEBUG");
+
+        try (LogFactory factory = new LogFactory()) {
+            LogFactory.configureFromSystemProperties(factory, null, env, true);
+
+            Log logger = factory.create("xyz");
+            assertEnabled(logger.debug());
+            assertDisabled(logger.info());
+            assertDisabled(logger.error());
+            assertDisabled(logger.advisory());
+        }
+
+        env.put("QDB_LOG_W_FILE_LEVEL", "DEBUG,INFO");
+
+        try (LogFactory factory = new LogFactory()) {
+            LogFactory.configureFromSystemProperties(factory, null, env, true);
+
+            Log logger = factory.create("xyz");
+            assertEnabled(logger.debug());
+            assertEnabled(logger.info());
+            assertEnabled(logger.error());
+            assertEnabled(logger.advisory());
+        }
+
     }
 
     private static void assertEnabled(LogRecord r) {
