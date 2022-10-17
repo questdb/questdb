@@ -693,7 +693,7 @@ public class LogFactoryTest {
                 props.store(stream, "");
             }
 
-            LogFactory.configureFromSystemProperties(factory, temp.getRoot().getPath(), false);
+            LogFactory.configureFromSystemProperties(factory, temp.getRoot().getPath(), System.getenv(), false);
 
             File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
             MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
