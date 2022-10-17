@@ -327,20 +327,20 @@ public class LineTcpParser {
     private boolean completeEntity(byte endOfEntityByte, long bufHi) {
         switch (entityHandler) {
             case ENTITY_HANDLER_TABLE:
-                return expectTableName(endOfEntityByte, bufHi);
+                return expectTableName(endOfEntityByte);
             case ENTITY_HANDLER_NAME:
                 return expectEntityName(endOfEntityByte, bufHi);
             case ENTITY_HANDLER_VALUE:
-                return expectEntityValue(endOfEntityByte, bufHi);
+                return expectEntityValue(endOfEntityByte);
             case ENTITY_HANDLER_TIMESTAMP:
-                return expectTimestamp(endOfEntityByte, bufHi);
+                return expectTimestamp(endOfEntityByte);
             case ENTITY_HANDLER_NEW_LINE:
-                return expectEndOfLine(endOfEntityByte, bufHi);
+                return expectEndOfLine(endOfEntityByte);
         }
         return false;
     }
 
-    private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
+    private boolean expectEndOfLine(byte endOfEntityByte) {
         assert endOfEntityByte == '\n';
         return true;
     }
@@ -400,7 +400,7 @@ public class LineTcpParser {
             if (currentEntity != null && currentEntity.getType() == ENTITY_TYPE_TAG) {
                 // One token after last tag, and no fields
                 // This must be the timestamp
-                return expectTimestamp(endOfEntityByte, bufHi);
+                return expectTimestamp(endOfEntityByte);
             }
         }
 
@@ -412,7 +412,7 @@ public class LineTcpParser {
         return false;
     }
 
-    private boolean expectEntityValue(byte endOfEntityByte, long bufHi) {
+    private boolean expectEntityValue(byte endOfEntityByte) {
         boolean endOfSet = endOfEntityByte == (byte) ' ';
         if (endOfSet || endOfEntityByte == (byte) ',' || endOfEntityByte == (byte) '\n') {
             if (currentEntity.setValue()) {
@@ -437,7 +437,7 @@ public class LineTcpParser {
         return false;
     }
 
-    private boolean expectTableName(byte endOfEntityByte, long bufHi) {
+    private boolean expectTableName(byte endOfEntityByte) {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             long hi = bufAt - nEscapedChars;
@@ -454,7 +454,7 @@ public class LineTcpParser {
         return false;
     }
 
-    private boolean expectTimestamp(byte endOfEntityByte, long bufHi) {
+    private boolean expectTimestamp(byte endOfEntityByte) {
         try {
             if (endOfEntityByte == (byte) '\n') {
                 if (entityLo < bufAt - nEscapedChars) {
