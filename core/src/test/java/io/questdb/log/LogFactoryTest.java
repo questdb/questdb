@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.ServerMain;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.*;
 import io.questdb.std.*;
@@ -36,9 +37,7 @@ import org.hamcrest.MatcherAssert;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
@@ -716,6 +715,26 @@ public class LogFactoryTest {
             assertEnabled(logger.info());
             assertEnabled(logger.error());
             assertEnabled(logger.advisory());
+        }
+
+    }
+
+    @Test
+    public void testDefaultPropServerConfigMatchesDefaultLogConfig() throws Exception {
+        // Tests an edge-case scenario: User sets -Dout on first run to a place where
+        // the file doesn't exist
+
+        File outLogConfResource = new File(temp.newFolder(), "logConfResource.log");
+
+        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/conf/log.conf")) {
+            Assert.assertNotNull(is);
+            try (OutputStream outStream = new FileOutputStream(outLogConfResource)) {
+                outStream.write(is.readAllBytes());
+            }
+        }
+
+        try (LogFactory factory = new LogFactory()) {
+            // todo: finish figuring out what exactly to test here...
         }
 
     }
