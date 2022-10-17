@@ -161,7 +161,7 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public long nextTxn(long expectedSchemaVersion, int walId, long segmentId, long segmentTxn) {
+    public long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn) {
         // Writing to Sequencer can happen from multiple threads, so we need to protect against concurrent writes.
         schemaLock.writeLock().lock();
         long txn;
@@ -282,7 +282,7 @@ public class SequencerImpl implements Sequencer {
         Misc.free(path);
     }
 
-    private long nextTxn(int walId, long segmentId, long segmentTxn) {
+    private long nextTxn(int walId, int segmentId, long segmentTxn) {
         return catalog.addEntry(walId, segmentId, segmentTxn);
     }
 }
