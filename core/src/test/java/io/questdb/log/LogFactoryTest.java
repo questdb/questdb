@@ -726,10 +726,10 @@ public class LogFactoryTest {
 
         File outLogConfResource = new File(temp.newFolder(), "logConfResource.log");
 
-        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/conf/log.conf")) {
-            Assert.assertNotNull(is);
+        try (InputStream str = ServerMain.class.getResourceAsStream("/io/questdb/site/conf/log.conf")) {
+            Assert.assertNotNull(str);
             try (OutputStream outStream = new FileOutputStream(outLogConfResource)) {
-                outStream.write(is.readAllBytes());
+                outStream.write(str.readAllBytes());
             }
         }
 
