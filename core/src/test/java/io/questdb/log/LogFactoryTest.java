@@ -719,26 +719,6 @@ public class LogFactoryTest {
 
     }
 
-    @Test
-    public void testDefaultPropServerConfigMatchesDefaultLogConfig() throws Exception {
-        // Tests an edge-case scenario: User sets -Dout on first run to a place where
-        // the file doesn't exist
-
-        File outLogConfResource = new File(temp.newFolder(), "logConfResource.log");
-
-        try (InputStream str = ServerMain.class.getResourceAsStream("/io/questdb/site/conf/log.conf")) {
-            Assert.assertNotNull(str);
-            try (OutputStream outStream = new FileOutputStream(outLogConfResource)) {
-                outStream.write(str.readAllBytes());
-            }
-        }
-
-        try (LogFactory factory = new LogFactory()) {
-            // todo: finish figuring out what exactly to test here...
-        }
-
-    }
-
     private static void assertEnabled(LogRecord r) {
         Assert.assertTrue(r.isEnabled());
         r.$();
