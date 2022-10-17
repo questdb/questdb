@@ -25,9 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -41,6 +39,9 @@ public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTes
         assertQuery("col\ntrue\n", "select starts_with('ABCDEFGH', 'ABC') col");
         assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH', 'XYZ') col");
         assertQuery("col\nfalse\n", "select starts_with('ABCDEFGH', 'ABCDEFGHIJK') col");
+        assertQuery("col\ntrue\n", "select starts_with('cAsEsEnsItIvE', 'cAsE') col");
+        assertQuery("col\nfalse\n", "select starts_with('smallcase', 'SMALL') col");
+        assertQuery("col\nfalse\n", "select starts_with('smallcase', 'smaLL') col");
     }
 
     @Test
@@ -61,14 +62,5 @@ public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTes
         call("", "test").andAssert(false);
         call("test", "").andAssert(true);
         call("", "").andAssert(true);
-    }
-
-    @Test
-    public void testForNonStringType() throws Exception {
-        try {
-            assertQuery("col\n\false\n", "select starts_with(1, 2) col");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "expected args: (STRING,STRING)");
-        }
     }
 }

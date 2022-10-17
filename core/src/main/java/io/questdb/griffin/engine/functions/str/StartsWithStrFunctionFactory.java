@@ -63,8 +63,9 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             CharSequence str = strFunc.getStr(rec);
             CharSequence prefix = prefixFunc.getStr(rec);
-            if (str == null || prefix == null)
+            if (str == null || prefix == null) {
                 return false;
+            }
 
             return Chars.startsWith(str, prefix);
         }
