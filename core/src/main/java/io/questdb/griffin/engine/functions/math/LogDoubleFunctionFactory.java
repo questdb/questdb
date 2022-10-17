@@ -34,10 +34,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class Log10DoubleFunctionFactory implements FunctionFactory {
+public class LogDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "log10(D)";
+        return "log(D)";
     }
 
     @Override

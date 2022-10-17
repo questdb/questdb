@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class Log10DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class LogDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testPositive() throws SqlException {
@@ -48,6 +48,6 @@ public class Log10DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new Log10DoubleFunctionFactory();
+        return new LogDoubleFunctionFactory();
     }
 }
