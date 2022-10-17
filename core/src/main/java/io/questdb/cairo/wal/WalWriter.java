@@ -57,6 +57,7 @@ public class WalWriter implements TableWriterFrontend {
     };
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
+    private static final int SEGMENT_ROLLOVER_SIZE_WATERMARK = 8 * 1024 * 1024;  // 8MiB
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final IntList initialSymbolCounts = new IntList();
@@ -1078,6 +1079,13 @@ public class WalWriter implements TableWriterFrontend {
         }
 
         rowCount++;
+        if (segmentSize() >= SEGMENT_ROLLOVER_SIZE_WATERMARK) {
+            rollSegmentOnNextRow = true;
+        }
+    }
+
+    private long segmentSize() {
+        return rowCount * rowSize;
     }
 
     private void setAppendPosition(final long segmentRowCount) {
