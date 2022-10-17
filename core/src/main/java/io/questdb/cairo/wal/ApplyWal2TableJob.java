@@ -60,15 +60,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             SqlToOperation sqlToOperation
     ) {
         SequencerStructureChangeCursor cursor = reusableStructureChangeCursor.get();
-        long lastTxn;
-        long lastCommittedTxn = -1;
+        long lastSeqTxn = -1;
+        long lastCommittedSeqTxn = -1;
         do {
             // This is work steeling, security context is checked on writing to the WAL
             // and can be ignored here
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getId() == tableId;
                 cursor = applyOutstandingWalTransactions(writer, engine, sqlToOperation, cursor);
-                lastCommittedTxn = writer.getTxn();
+                lastCommittedSeqTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 // This is all good, someone else will apply the data
                 if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
@@ -86,11 +86,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 break;
             }
 
-            lastTxn = engine.getTableRegistry().lastTxn(tableName);
-        } while (lastCommittedTxn < lastTxn);
+            lastSeqTxn = engine.getTableRegistry().lastTxn(tableName);
+        } while (lastCommittedSeqTxn < lastSeqTxn);
+        assert lastCommittedSeqTxn == lastSeqTxn;
 
         reusableStructureChangeCursor.set(cursor);
-        return lastCommittedTxn;
+        return lastCommittedSeqTxn;
     }
 
     @Override
@@ -143,24 +144,24 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             SqlToOperation sqlToOperation,
             @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
     ) {
-        TableRegistry tableRegistry = engine.getTableRegistry();
-        long lastCommitted = writer.getTxn();
-
-        try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), lastCommitted)) {
-            Path tempPath = Path.PATH.get();
+        final TableRegistry tableRegistry = engine.getTableRegistry();
+        try (SequencerCursor sequencerCursor = tableRegistry.getCursor(writer.getTableName(), writer.getSeqTxn())) {
+            final Path tempPath = Path.PATH.get();
 
             while (sequencerCursor.hasNext()) {
-                int walId = sequencerCursor.getWalId();
-                int segmentId = sequencerCursor.getSegmentId();
-                long segmentTxn = sequencerCursor.getSegmentTxn();
-                long nextTableTxn = sequencerCursor.getTxn();
+                final int walId = sequencerCursor.getWalId();
+                final int segmentId = sequencerCursor.getSegmentId();
+                final long segmentTxn = sequencerCursor.getSegmentTxn();
+                final long seqTxn = sequencerCursor.getTxn();
 
-                if (nextTableTxn != writer.getTxn() + 1) {
-                    throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
+                if (seqTxn != writer.getSeqTxn() + 1) {
+                    throw CairoException.critical(0).put("Unexpected sequencer transaction ").put(seqTxn).put(", expected ").put((writer.getSeqTxn() + 1));
                 }
 
                 // Always set full path when using thread static path
                 tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName()).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+
+                writer.setSeqTxn(seqTxn);
                 if (walId != TxnCatalog.METADATA_WALID) {
                     writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
                 } else {
@@ -175,6 +176,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                 .put(']');
                     }
+
                     boolean hasNext;
                     if (reusableStructureChangeCursor == null || !(hasNext = reusableStructureChangeCursor.hasNext())) {
                         reusableStructureChangeCursor = tableRegistry.getStructureChangeCursor(writer.getTableName(), reusableStructureChangeCursor, newStructureVersion - 1);
@@ -190,10 +192,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     .put(e.getFlyweightMessage()).put(']');
                         }
                     } else {
-                        // Something messed up in sequencer.
+                        // Something is messed up in sequencer.
                         // There is a transaction in WAL but no structure change record.
-                        // TODO: make sequencer distressed and try to reconcile on sequencer opening
-                        //  or skip the transaction?
+                        // TODO: make sequencer distressed and try to reconcile on sequencer opening or skip the transaction?
                         throw CairoException.critical(0)
                                 .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                 .put(newStructureVersion)

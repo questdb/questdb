@@ -32,6 +32,7 @@ import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
 class TxFileStruct {
     public long TX_OFFSET_COLUMN_VERSION;
     public long TX_OFFSET_TXN;
+    public long TX_OFFSET_SEQ_TXN;
     public long TX_OFFSET_TRANSIENT_ROW_COUNT;
     public long TX_OFFSET_FIXED_ROW_COUNT;
     public long TX_OFFSET_MIN_TIMESTAMP;

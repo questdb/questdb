@@ -138,12 +138,12 @@ public class TxnCatalog implements Closeable {
         return maxTxn;
     }
 
-    SequencerCursor getCursor(long txnLo) {
+    SequencerCursor getCursor(long seqTxn) {
         final Path path = Path.PATH.get().of(rootPath);
         final int rootLen = path.length();
         path.concat(CATALOG_FILE_NAME).$();
         try {
-            return new SequencerCursorImpl(ff, txnLo, path); //todo: dup fd
+            return new SequencerCursorImpl(ff, seqTxn, path); //todo: dup fd
         } finally {
             path.trimTo(rootLen);
         }
@@ -193,15 +193,15 @@ public class TxnCatalog implements Closeable {
         private long address;
         private long txn;
 
-        public SequencerCursorImpl(FilesFacade ff, long txnLo, final Path path) {
+        public SequencerCursorImpl(FilesFacade ff, long seqTxn, final Path path) {
             this.ff = ff;
             this.fd = openFileRO(ff, path, CATALOG_FILE_NAME);
             this.txnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MEMORY_TAG);
-                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
+                this.txnOffset = HEADER_SIZE + (seqTxn - 1) * RECORD_SIZE;
             }
-            txn = txnLo;
+            txn = seqTxn;
         }
 
         @Override
@@ -214,25 +214,18 @@ public class TxnCatalog implements Closeable {
 
         @Override
         public boolean hasNext() {
-            if (this.txnOffset + 2 * RECORD_SIZE <= getMappedLen()) {
-                this.txnOffset += RECORD_SIZE;
-                this.txn++;
+            if (hasNext(getMappedLen())) {
                 return true;
             }
 
-            long newTxnCount = ff.readULong(fd, MAX_TXN_OFFSET);
+            final long newTxnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
-                long oldSize = getMappedLen();
-                this.txnCount = newTxnCount;
-                long newSize = getMappedLen();
-                this.address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MEMORY_TAG);
+                final long oldSize = getMappedLen();
+                txnCount = newTxnCount;
+                final long newSize = getMappedLen();
+                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MEMORY_TAG);
 
-                if (this.txnOffset + 2 * RECORD_SIZE <= newSize) {
-                    this.txnOffset += RECORD_SIZE;
-                    this.txn++;
-                    return true;
-                }
-                return false;
+                return hasNext(newSize);
             }
             return false;
         }
@@ -255,6 +248,15 @@ public class TxnCatalog implements Closeable {
         @Override
         public int getWalId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + WAL_ID_OFFSET);
+        }
+
+        private boolean hasNext(long mappedLen) {
+            if (txnOffset + 2 * RECORD_SIZE <= mappedLen) {
+                txnOffset += RECORD_SIZE;
+                txn++;
+                return true;
+            }
+            return false;
         }
 
         private long getMappedLen() {

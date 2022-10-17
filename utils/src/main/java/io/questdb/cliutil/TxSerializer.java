@@ -27,7 +27,6 @@ package io.questdb.cliutil;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -47,7 +46,8 @@ import java.util.ArrayList;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxSerializer {
-    static long TX_OFFSET_TXN = TableUtils.TX_OFFSET_TXN_64;
+    static long TX_OFFSET_TXN = TX_OFFSET_TXN_64;
+    static long TX_OFFSET_SEQ_TXN = TX_OFFSET_SEQ_TXN_64;
     static long TX_OFFSET_DATA_VERSION = TX_OFFSET_DATA_VERSION_64;
     static long TX_OFFSET_PARTITION_TABLE_VERSION = TX_OFFSET_PARTITION_TABLE_VERSION_64;
     static long TX_OFFSET_MAP_WRITER_COUNT = TX_OFFSET_MAP_WRITER_COUNT_32;
@@ -123,6 +123,7 @@ public class TxSerializer {
 
                 rwTxMem.setTruncateSize(fileSize);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_TXN, tx.TX_OFFSET_TXN);
+                rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN, tx.TX_OFFSET_SEQ_TXN);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT, tx.TX_OFFSET_FIXED_ROW_COUNT);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP, tx.TX_OFFSET_MIN_TIMESTAMP);
@@ -176,6 +177,7 @@ public class TxSerializer {
                 boolean isA = (version & 1L) == 0L;
                 long baseOffset = isA ? roTxMem.getInt(TX_BASE_OFFSET_A_32) : roTxMem.getInt(TX_BASE_OFFSET_B_32);
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN);
+                tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN);
                 tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT);
                 tx.TX_OFFSET_FIXED_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT);
                 tx.TX_OFFSET_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP);

@@ -180,11 +180,11 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public SequencerCursor getCursor(long lastCommittedTxn) {
+    public SequencerCursor getCursor(long seqTxn) {
         schemaLock.writeLock().lock();
         try {
             checkDistressed();
-            return catalog.getCursor(lastCommittedTxn);
+            return catalog.getCursor(seqTxn);
         } finally {
             schemaLock.writeLock().unlock();
         }

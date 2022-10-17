@@ -210,7 +210,7 @@ public class WalWriter implements TableWriterFrontend {
     public long truncate() {
         try {
             lastSegmentTxn = events.truncate();
-            return getTableTxn();
+            return getSequencerTxn();
         } catch (Throwable th) {
             rollback();
             throw th;
@@ -228,16 +228,16 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    // Returns table transaction number.
+    // Returns sequencer transaction number
     public long commit() {
         checkDistressed();
         try {
             if (inTransaction()) {
                 LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(rowCount).I$();
                 lastSegmentTxn = events.data(currentTxnStartRowNum, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-                final long tableTxn = getTableTxn();
+                final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
-                return tableTxn;
+                return seqTxn;
             }
         } catch (Throwable th) {
             if (!isDistressed()) {
@@ -543,7 +543,7 @@ public class WalWriter implements TableWriterFrontend {
         }
         try {
             lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
-            return getTableTxn();
+            return getSequencerTxn();
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
@@ -862,15 +862,15 @@ public class WalWriter implements TableWriterFrontend {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
-    private long getTableTxn() {
-        long txn;
+    private long getSequencerTxn() {
+        long seqTxn;
         do {
-            txn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
-            if (txn == NO_TXN) {
+            seqTxn = tableRegistry.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            if (seqTxn == NO_TXN) {
                 applyStructureChanges(Long.MAX_VALUE);
             }
-        } while (txn == NO_TXN);
-        return txn;
+        } while (seqTxn == NO_TXN);
+        return seqTxn;
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {

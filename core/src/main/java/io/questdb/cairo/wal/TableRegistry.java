@@ -96,9 +96,9 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public @NotNull SequencerCursor getCursor(final CharSequence tableName, long lastCommittedTxn) {
+    public @NotNull SequencerCursor getCursor(final CharSequence tableName, long seqTxn) {
         try (Sequencer sequencer = openSequencer(tableName)) {
-            return sequencer.getCursor(lastCommittedTxn);
+            return sequencer.getCursor(seqTxn);
         }
     }
 

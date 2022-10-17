@@ -165,6 +165,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // In this case all to be changed is TX_OFFSET_MAX_TIMESTAMP_64 and TX_OFFSET_TRANSIENT_ROW_COUNT_64
             writeBaseOffset = prevRecordBaseOffset;
             putLong(TX_OFFSET_TXN_64, ++txn);
+            putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
             putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
             putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
 
@@ -285,6 +286,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void setSeqTxn(long seqTxn) {
+        this.seqTxn = seqTxn;
+    }
+
     public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
         this.extensionListener = extensionListener;
     }
@@ -332,8 +337,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
 
         writeAreaSize = calculateWriteSize();
-        writeBaseOffset = calculateWriteOffset();
-        resetTxn(txMemBase, writeBaseOffset, getSymbolColumnCount(), ++txn, ++dataVersion, ++partitionTableVersion, structureVersion, columnVersion, ++truncateVersion);
+        writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        resetTxn(txMemBase, writeBaseOffset, getSymbolColumnCount(), ++txn, seqTxn, ++dataVersion, ++partitionTableVersion, structureVersion, columnVersion, ++truncateVersion);
         finishABHeader(writeBaseOffset, symbolColumnCount * 8, 0, CommitMode.NOSYNC);
     }
 
@@ -362,8 +367,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         partitionTableVersion++;
     }
 
-    private int calculateWriteOffset() {
-        int areaSize = calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
+    private int calculateWriteOffset(int areaSize) {
         boolean currentIsA = (baseVersion & 1L) == 0L;
         int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
         if (TX_BASE_HEADER_SIZE + areaSize <= currentOffset) {
@@ -387,8 +391,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         symbolColumnCount = symbolCountProviders.size();
 
         writeAreaSize = calculateWriteSize();
-        writeBaseOffset = calculateWriteOffset();
+        writeBaseOffset = calculateWriteOffset(writeAreaSize);
         putLong(TX_OFFSET_TXN_64, ++txn);
+        putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
         putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
         putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);

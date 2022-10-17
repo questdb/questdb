@@ -1128,6 +1128,14 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         return txWriter.getTxn();
     }
 
+    public long getSeqTxn() {
+        return txWriter.getSeqTxn();
+    }
+
+    public void setSeqTxn(long seqTxn) {
+        txWriter.setSeqTxn(seqTxn);
+    }
+
     public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
     }

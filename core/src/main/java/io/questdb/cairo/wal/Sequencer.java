@@ -51,7 +51,7 @@ public interface Sequencer extends Closeable {
     long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn);
 
     // return txn cursor to apply transaction from given point
-    SequencerCursor getCursor(long lastCommittedTxn);
+    SequencerCursor getCursor(long seqTxn);
 
     @Override
     void close();
