@@ -1124,7 +1124,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         return symbolMapWriters.getQuick(columnIndex);
     }
 
-    public CharSequence getSystemTableName() {
+    public String getSystemTableName() {
         return systemTableName;
     }
 

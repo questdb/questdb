@@ -461,6 +461,7 @@ public abstract class AbstractCairoTest {
         TestUtils.createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.getTableRegistry().reopen();
         SharedRandom.RANDOM.set(new Rnd());
         memoryUsage = -1;
         walTxnNotificationQueueCapacity = -1;

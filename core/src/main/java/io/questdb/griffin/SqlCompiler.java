@@ -1496,15 +1496,16 @@ public class SqlCompiler implements Closeable {
         }
 
         if (createTableModel.getQueryModel() == null) {
+            executionContext.getCairoSecurityContext().checkWritePermission();
             try {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
+                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel, false);
             } catch (CairoException e) {
                 LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
                 throw SqlException.$(name.position, "Could not create table. See log for details.");
             }
-            engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel, false);
         } else {
             createTableFromCursor(createTableModel, executionContext, name.position);
         }

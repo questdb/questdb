@@ -58,13 +58,14 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBusyTable() throws Exception {
-        final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n";
-
+    public void testAppendExistingTable() throws Exception {
+        final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n" +
+                "1.6\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000000Z\n" +
+                "1.3\t11\tfalse\tabc\t\tstring2\t2017-10-03T10:00:00.010000Z\n";
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("double", ColumnType.DOUBLE)
-                .col("int", ColumnType.INT)
+                .col("int", ColumnType.LONG)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("sym1", ColumnType.SYMBOL)
                 .col("sym2", ColumnType.SYMBOL)
@@ -85,12 +86,14 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                     throw new RuntimeException(e);
                 }
             }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractCairoTest.configuration.mangleTableSystemNames();
+            }
         };
 
-        // open writer so that pool cannot have it
-        try (TableWriter ignored = newTableWriter(configuration, "x", metrics)) {
-            assertThat(expected, lines, "x", configuration);
-        }
+        assertThat(expected, lines, "x", configuration);
     }
 
     @Test
@@ -136,14 +139,36 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAppendExistingTable() throws Exception {
-        final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n" +
-                "1.6\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000000Z\n" +
-                "1.3\t11\tfalse\tabc\t\tstring2\t2017-10-03T10:00:00.010000Z\n";
+    public void testBinary() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("bin", ColumnType.BINARY)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("bin\ttimestamp\n",
+                "x bin=b10101010101\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+
+                    @Override
+                    public boolean mangleTableSystemNames() {
+                        return AbstractCairoTest.configuration.mangleTableSystemNames();
+                    }
+                });
+    }
+
+    @Test
+    public void testBusyTable() throws Exception {
+        final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n";
+
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("double", ColumnType.DOUBLE)
-                .col("int", ColumnType.LONG)
+                .col("int", ColumnType.INT)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("sym1", ColumnType.SYMBOL)
                 .col("sym2", ColumnType.SYMBOL)
@@ -164,45 +189,97 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                     throw new RuntimeException(e);
                 }
             }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractCairoTest.configuration.mangleTableSystemNames();
+            }
         };
 
-        assertThat(expected, lines, "x", configuration);
+        // open writer so that pool cannot have it
+        try (TableWriter ignored = newTableWriter(configuration, "x", metrics)) {
+            assertThat(expected, lines, "x", configuration);
+        }
     }
 
     @Test
-    public void testCharSingleChar() throws Exception {
+    public void testCannotCreateTable() throws Exception {
+        TestFilesFacade ff = new TestFilesFacade() {
+            boolean called = false;
+
+            @Override
+            public int mkdirs(Path path, int mode) {
+                CharSequence systemTableName = engine.getSystemTableName("x");
+                if (Chars.endsWith(path, Chars.toString(systemTableName) + Files.SEPARATOR)) {
+                    called = true;
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return called;
+            }
+        };
+
+        final String expected = "sym\tdouble\tint\tbool\tstr\ttimestamp\n" +
+                "zzz\t1.3\t11\tfalse\tnice\t2017-10-03T10:00:00.000000Z\n";
+
+        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
+                "y,sym=zzz double=1.3,int=11i,bool=false,str=\"nice\"\n";
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                try {
+                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
+                } catch (NumericException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractCairoTest.configuration.mangleTableSystemNames();
+            }
+        };
+
+        assertThat(expected, lines, "y", configuration);
+
+        Assert.assertTrue(ff.wasCalled());
+
+        try (Path path = new Path()) {
+            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(ff, path, root, "all"));
+        }
+    }
+
+    @Test
+    public void testCharMissing() throws Exception {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("char", ColumnType.CHAR)
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
         assertThat("char\ttimestamp\n" +
-                        "c\t1970-01-01T00:00:00.000000Z\n",
-                "x char=\"c\"\n",
+                        "\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\n",
                 "x",
                 new DefaultCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
-                });
-    }
 
-    @Test
-    public void testCharStringIsProvided() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("char", ColumnType.CHAR)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("char\ttimestamp\n" +
-                        "c\t1970-01-01T00:00:00.000000Z\n",
-                "x char=\"coconut\"\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
+                    public boolean mangleTableSystemNames() {
+                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -223,24 +300,34 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
+
+                    @Override
+                    public boolean mangleTableSystemNames() {
+                        return AbstractCairoTest.configuration.mangleTableSystemNames();
+                    }
                 });
     }
 
     @Test
-    public void testCharMissing() throws Exception {
+    public void testCharSingleChar() throws Exception {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("char", ColumnType.CHAR)
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
         assertThat("char\ttimestamp\n" +
-                        "\t1970-01-01T00:00:00.000000Z\n",
-                "x char=\n",
+                        "c\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"c\"\n",
                 "x",
                 new DefaultCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
+                    }
+
+                    @Override
+                    public boolean mangleTableSystemNames() {
+                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -260,23 +347,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
                     }
-                });
-    }
 
-    @Test
-    public void testBinary() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("bin", ColumnType.BINARY)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("bin\ttimestamp\n",
-                "x bin=b10101010101\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
+                    public boolean mangleTableSystemNames() {
+                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -474,56 +548,27 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCannotCreateTable() throws Exception {
-        TestFilesFacade ff = new TestFilesFacade() {
-            boolean called = false;
-
-            @Override
-            public int mkdirs(Path path, int mode) {
-                CharSequence systemTableName = engine.getSystemTableName("x");
-                if (Chars.endsWith(path, Chars.toString(systemTableName) + Files.SEPARATOR)) {
-                    called = true;
-                    return -1;
-                }
-                return super.mkdirs(path, mode);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return called;
-            }
-        };
-
-        final String expected = "sym\tdouble\tint\tbool\tstr\ttimestamp\n" +
-                "zzz\t1.3\t11\tfalse\tnice\t2017-10-03T10:00:00.000000Z\n";
-
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
-                "y,sym=zzz double=1.3,int=11i,bool=false,str=\"nice\"\n";
-
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                try {
-                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
-                } catch (NumericException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        };
-
-        assertThat(expected, lines, "y", configuration);
-
-        Assert.assertTrue(ff.wasCalled());
-
-        try (Path path = new Path()) {
-            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(ff, path, root, "all"));
+    public void testCharStringIsProvided() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
         }
+        assertThat("char\ttimestamp\n" +
+                        "c\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"coconut\"\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+
+                    @Override
+                    public boolean mangleTableSystemNames() {
+                        return AbstractCairoTest.configuration.mangleTableSystemNames();
+                    }
+                });
     }
 
     @Test
@@ -587,6 +632,11 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
+            }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 
@@ -933,6 +983,11 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 } catch (NumericException e) {
                     throw CairoException.critical(0).put("numeric");
                 }
+            }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 

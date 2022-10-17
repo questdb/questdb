@@ -280,7 +280,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && Chars.startsWith(name, tableName)
-                            && name.equals(engine.getTableNameBySystemName(tableName))) {
+                            && name.equals(engine.getSystemTableName(tableName))) {
                         waitForData.countDown();
                     }
                 });

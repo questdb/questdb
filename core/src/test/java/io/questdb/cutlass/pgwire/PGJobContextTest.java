@@ -66,14 +66,10 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.GregorianCalendar;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Properties;
-import java.util.TimeZone;
+import java.util.*;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -8288,9 +8284,8 @@ create table tab as (
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), simple, true)
-                ) {
+                try (final Connection connection = getConnection(server.getPort(), simple, true)) {
+
                     PreparedStatement statement = connection.prepareStatement("create table x (a int)");
                     statement.execute();
 

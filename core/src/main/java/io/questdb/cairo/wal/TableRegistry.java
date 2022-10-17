@@ -157,14 +157,6 @@ public class TableRegistry extends AbstractPool {
         return getDefaultTableName(tableName);
     }
 
-    public boolean hasSequencer(final CharSequence systemTableName) {
-        Sequencer sequencer = seqRegistry.get(systemTableName);
-        if (sequencer != null) {
-            return true;
-        }
-        return isWalTable(systemTableName, getConfiguration().getRoot(), getConfiguration().getFilesFacade());
-    }
-
     public long lastTxn(final CharSequence systemTableName) {
         try (SequencerImpl sequencer = openSequencer(systemTableName)) {
             return sequencer.lastTxn();
@@ -237,9 +229,8 @@ public class TableRegistry extends AbstractPool {
 
     @TestOnly
     public void reopen() {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, 1, 0)) {
-            populateCache();
-        }
+        populateCache();
+        Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, 1, 0);
     }
 
     public long nextStructureTxn(final CharSequence tableName, long structureVersion, AlterOperation operation) {
