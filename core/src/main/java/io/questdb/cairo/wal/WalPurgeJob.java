@@ -215,7 +215,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
         txReader.ofRO(path, PartitionBy.NONE);
-        try (txReader) {
+        try {
             final long lastAppliedTxn = txReader.unsafeReadVersion();
 
             TableRegistry tableRegistry = engine.getTableRegistry();
@@ -228,6 +228,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                 }
             }
+        }
+        finally {
+            txReader.close();
         }
     }
 
