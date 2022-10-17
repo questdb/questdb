@@ -36,7 +36,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 class WalWriterEvents implements Closeable {

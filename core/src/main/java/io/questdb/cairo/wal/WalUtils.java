@@ -28,6 +28,10 @@ public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
+    public static final String EVENT_FILE_NAME = "_event";
+    public static final String CATALOG_FILE_NAME = "_catalog.txn";
+    public static final String CATALOG_FILE_NAME_META_VAR = "_catalog.meta.d";
+    public static final String CATALOG_FILE_NAME_META_INX = "_catalog.meta.i";
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
     public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;

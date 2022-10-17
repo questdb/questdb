@@ -172,9 +172,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
                         break;
                     case TxnCatalog.DROP_TABLE_WALID:
-                        if (engine.lockReaders(systemTableName)) {
+                        if (engine.lockReadersBySystemName(systemTableName)) {
                             try {
-                                writer.truncate(); // release fs space now. delete this table later
+                                writer.dropAllData(); // release fs space now. delete this table later
                             } finally {
                                 engine.unlockReaders(systemTableName);
                             }

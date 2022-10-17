@@ -219,11 +219,6 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     @Override
-    public void dropTable() {
-        tableRegistry.deregisterTableName(systemTableName);
-    }
-
-    @Override
     public void close() {
         if (isOpen()) {
             try {

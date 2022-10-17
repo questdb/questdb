@@ -30,7 +30,15 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.str.Path;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.Matchers;
 import org.junit.Test;
+
+import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class WalTableSqlTest extends AbstractGriffinTest {
     @Test
@@ -223,11 +231,9 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
                 insertMethod.execute();
                 insertMethod.commit();
-//                drainWalQueue();
                 compile("alter table " + tableName + " add column jjj int");
             }
 
-//            drainWalQueue();
             executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234)");
 
             drainWalQueue();
@@ -235,6 +241,51 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n");
 
+        });
+    }
+
+    @Test
+    public void testCreateDropCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            compile("drop table " + tableName);
+
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            String sysTableName2 = Chars.toString(engine.getSystemTableName(tableName));
+            MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
+
+            engine.releaseAllReaders();
+            drainWalQueue();
+
+            Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(TXN_FILE_NAME);
+            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+            sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(COLUMN_VERSION_FILE_NAME);
+            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+            sysPath.of(configuration.getRoot()).concat(sysTableName1).concat("sym.c");
+            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+            sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat("2022-02-24").concat("x.d");
+            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n");
         });
     }
 

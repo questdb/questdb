@@ -40,8 +40,6 @@ public interface TableWriterFrontend extends Closeable {
 
     long truncate();
 
-    void dropTable();
-
     @Override
     void close();
 

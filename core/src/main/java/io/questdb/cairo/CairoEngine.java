@@ -205,7 +205,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             }
         } catch (Throwable th) {
             if (struct.isWalEnabled()) {
-                tableRegistry.deregisterTableName(tableName);
+                tableRegistry.dropTable(tableName, Chars.toString(systemTableName));
             }
             throw th;
         }
@@ -505,32 +505,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     }
 
-    public String lockTableToCreate(
-            CairoSecurityContext securityContext,
-            CharSequence tableName,
-            String lockReason,
-            boolean isWalTable
-    ) {
-        assert null != lockReason;
-        securityContext.checkWritePermission();
-
-        checkTableName(tableName);
-
-        CharSequence systemTableName = getSystemTableName(tableName);
-        String lockedReason = writerPool.lock(systemTableName, lockReason);
-        if (lockedReason == OWNERSHIP_REASON_NONE) {
-            boolean locked = readerPool.lock(systemTableName);
-            if (locked) {
-                LOG.info().$("locked [table=`").utf8(systemTableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
-                return null;
-            }
-            writerPool.unlock(systemTableName);
-            return BUSY_READER;
-        }
-        return lockedReason;
-
-    }
-
     public void notifyWalTxnCommitted(int tableId, String systemTableName, long txn) {
         Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
@@ -554,6 +528,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public boolean lockReaders(CharSequence tableName) {
         checkTableName(tableName);
         return readerPool.lock(getSystemTableName(tableName));
+    }
+
+    public boolean lockReadersBySystemName(CharSequence systemTableName) {
+        return readerPool.lock(systemTableName);
     }
 
     public CharSequence lockWriter(CairoSecurityContext securityContext, CharSequence tableName, String lockReason) {
@@ -592,21 +570,26 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         checkTableName(tableName);
         CharSequence systemTableName = getSystemTableName(tableName);
-        CharSequence lockedReason = lock(securityContext, systemTableName, "removeTable");
-        if (null == lockedReason) {
-            try {
-                path.of(configuration.getRoot()).concat(getSystemTableName(tableName)).$();
-                int errno;
-                if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                    LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
-                    throw CairoException.critical(errno).put("Table remove failed");
+
+        if (isWalTable(tableName)) {
+            tableRegistry.dropTable(Chars.toString(tableName), Chars.toString(systemTableName));
+        } else {
+            CharSequence lockedReason = lock(securityContext, systemTableName, "removeTable");
+            if (null == lockedReason) {
+                try {
+                    path.of(configuration.getRoot()).concat(getSystemTableName(tableName)).$();
+                    int errno;
+                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
+                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
+                        throw CairoException.critical(errno).put("Table remove failed");
+                    }
+                    return;
+                } finally {
+                    unlock(securityContext, tableName, null, false);
                 }
-                return;
-            } finally {
-                unlock(securityContext, tableName, null, false);
             }
+            throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
         }
-        throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {

@@ -37,8 +37,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TxnCatalog implements Closeable {
     public final static int HEADER_RESERVED = 8 * Long.BYTES;

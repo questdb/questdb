@@ -35,7 +35,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -73,45 +72,29 @@ public class TableRegistry extends AbstractPool {
         tableNameMemory.close(true);
     }
 
-    public void deregisterTableName(final CharSequence tableName) {
-        removeEntry(tableName);
-        CharSequence systemTableName = tableNameRegistry.remove(tableName);
-        reverseTableNameRegistry.remove(systemTableName);
+    public void dropTable(String tableName, String systemTableName) {
+        if (tableNameRegistry.remove(tableName, systemTableName)) {
+            removeEntry(tableName);
+            reverseTableNameRegistry.remove(systemTableName);
 
-        //todo: fix open close !!!
-        //todo: fix thread safety !!!
-        try (Sequencer seq = seqRegistry.remove(tableName)) {
-            if (seq != null) {
+            try (Sequencer seq = seqRegistry.get(systemTableName)) {
                 seq.nextTxn(0, TxnCatalog.DROP_TABLE_WALID, 0, 0);
             }
-        }
 
-        final WalWriterPool pool = walRegistry.get(tableName);
-        if (pool != null) {
-            pool.releaseAll(Long.MAX_VALUE);
-            walRegistry.remove(tableName);
+            final WalWriterPool pool = walRegistry.get(systemTableName);
+            if (pool != null) {
+                pool.releaseAll(Long.MAX_VALUE);
+                walRegistry.remove(systemTableName);
+            }
         }
     }
 
-
     public void forAllWalTables(final RegisteredTable callback) {
-        final CharSequence root = getConfiguration().getRoot();
-        final FilesFacade ff = getConfiguration().getFilesFacade();
-
-        try (Path path = new Path().of(root).slash$()) {
-            final StringSink nameSink = new StringSink();
-            int rootLen = path.length();
-            ff.iterateDir(path, (name, type) -> {
-                if (Files.isDir(name, type, nameSink)) {
-                    path.trimTo(rootLen);
-                    if (isWalTable(nameSink, path, ff)) {
-                        try (SequencerImpl sequencer = openSequencer(nameSink)) {
-                            callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
-                        }
-                    }
-                }
-            });
-        }
+        tableNameRegistry.forEach((tableName, systemTableName) -> {
+            try (SequencerImpl sequencer = openSequencer(systemTableName)) {
+                callback.onTable(sequencer.getTableId(), systemTableName, sequencer.lastTxn());
+            }
+        });
     }
 
     public CharSequence getSystemTableName(final CharSequence tableName) {
@@ -126,22 +109,16 @@ public class TableRegistry extends AbstractPool {
         return tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
     }
 
-    public void removeEntry(final CharSequence tableName) {
-        long entryCount = tableNameMemory.getLong(0);
-        long offset = Long.BYTES;
-        for (int i = 0; i < entryCount; i++) {
-            long tableId = tableNameMemory.getLong(offset);
-            int tableNameLength = tableNameMemory.getStrLen(offset + Long.BYTES);
-            int entrySize = Long.BYTES + Integer.BYTES + 2 * tableNameLength;
-            CharSequence currentTableName = tableNameMemory.getStr(offset + Long.BYTES);
-            if (Chars.equals(tableName, currentTableName)) {
-                tableNameMemory.putLong(offset, -tableId);
+    public void registerTable(int tableId, final TableStructure tableStructure) {
+        CharSequence tableSystemName = registerTableName(tableStructure.getTableName(), tableId);
+        if (tableSystemName != null) {
+            //noinspection EmptyTryBlock
+            try (SequencerImpl ignore = createSequencer(tableId, tableStructure, tableSystemName)) {
             }
-            offset += entrySize;
         }
     }
 
-    public void appendEntry(final CharSequence tableName, int tableId) {
+    private void appendEntry(final CharSequence tableName, int tableId) {
         long entryCount = tableNameMemory.getLong(0);
         tableNameMemory.putLong(tableId);
         tableNameMemory.putStr(tableName);
@@ -163,14 +140,19 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public CharSequence registerTable(int tableId, final TableStructure tableStructure) {
-        CharSequence tableSystemName = registerTableName(tableStructure.getTableName(), tableId);
-        if (tableSystemName != null) {
-            //noinspection EmptyTryBlock
-            try (SequencerImpl ignore = createSequencer(tableId, tableStructure, tableSystemName)) {
+    private void removeEntry(final CharSequence tableName) {
+        long entryCount = tableNameMemory.getLong(0);
+        long offset = Long.BYTES;
+        for (int i = 0; i < entryCount; i++) {
+            long tableId = tableNameMemory.getLong(offset);
+            int tableNameLength = tableNameMemory.getStrLen(offset + Long.BYTES);
+            int entrySize = Long.BYTES + Integer.BYTES + 2 * tableNameLength;
+            CharSequence currentTableName = tableNameMemory.getStr(offset + Long.BYTES);
+            if (Chars.equals(tableName, currentTableName)) {
+                tableNameMemory.putLong(offset, -tableId);
             }
+            offset += entrySize;
         }
-        return tableSystemName;
     }
 
     @Nullable

@@ -55,10 +55,7 @@ public final class TableUtils {
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
-    public static final String EVENT_FILE_NAME = "_event";
-    public static final String CATALOG_FILE_NAME = "_catalog.txn";
-    public static final String CATALOG_FILE_NAME_META_VAR = "_catalog.meta.d";
-    public static final String CATALOG_FILE_NAME_META_INX = "_catalog.meta.i";
+
     public static final String TXN_FILE_NAME = "_txn";
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
