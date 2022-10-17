@@ -323,7 +323,7 @@ public class WalWriter implements TableWriterFrontend {
         releaseSegmentLock();
 
         try {
-            releaseWalLock(!truncate);
+            releaseWalLock();
         } finally {
             Misc.free(path);
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -1000,19 +1000,10 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void releaseWalLock(boolean keepLockFile) {
+    private void releaseWalLock() {
         if (walLockFd != -1L) {
             ff.close(walLockFd);
-            if (keepLockFile) {
-                return;
-            }
-
-            try {
-                lockName(path);
-                removeOrException(ff, path);
-            } finally {
-                path.trimTo(rootLen);
-            }
+            walLockFd = -1;
         }
     }
 
