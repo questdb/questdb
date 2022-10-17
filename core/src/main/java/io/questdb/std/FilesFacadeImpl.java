@@ -169,6 +169,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int softLink(LPSZ src, LPSZ softLink) {
+        return Files.softLink(src, softLink);
+    }
+
+    @Override
     public boolean isCrossDeviceCopyError(int errno) {
         return Os.isPosix() && errno == 18;
     }

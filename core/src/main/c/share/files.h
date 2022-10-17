@@ -240,6 +240,15 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
         (JNIEnv *, jclass, jlong, jlong);
 
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    softLink
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
+        (JNIEnv *, jclass, jlong, jlong);
+
 /*
  * Class:     com_questdb_std_Files
  * Method:    mkdir

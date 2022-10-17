@@ -255,7 +255,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
                 }
             }
         });
@@ -275,7 +275,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
                 }
             }
         });
@@ -922,7 +922,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2022-08-09': "+ ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
+                    Assert.assertEquals("[25] failed to attach partition '2022-08-09': " + ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
                 }
             }
         });
@@ -1086,6 +1086,61 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                                 dstReader.getMetadata(),
                                 true);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAttachPartitionFromSoftLinkedLocation() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    TableModel src = new TableModel(configuration, "src48", PartitionBy.DAY);
+                    TableModel dst = new TableModel(configuration, "dst48", PartitionBy.DAY)
+            ) {
+
+                createPopulateTable(
+                        1,
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        "2022-10-17",
+                        2);
+
+                compile("ALTER TABLE " + src.getName() + " DETACH PARTITION LIST '2022-10-17'", sqlExecutionContext);
+
+                // copy the .detached folder to a different location and create a soft link .attachable
+                // in preparation for reattaching the partition
+                final CharSequence s3Buckets = temp.newFolder("S3").getAbsolutePath();
+                try {
+                    String partitionName = "2022-10-17" + TableUtils.DETACHED_DIR_MARKER;
+                    path.of(configuration.getRoot())
+                            .concat(src.getName())
+                            .concat(partitionName)
+                            .slash$();
+                    other.of(s3Buckets)
+                            .concat(src.getName())
+                            .concat(partitionName)
+                            .slash$();
+                    TestUtils.copyDirectory(path, other, DIR_MODE);
+
+
+                } finally {
+                    TestUtils.removeTestPath(s3Buckets);
+                }
+
+
+
+
+
+                copyPartitionToAttachable(src.getName(), "2020-01-01", dst.getName(), "COCONUTS");
+
+                try {
+                    compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': " + ATTACH_ERR_MISSING_PARTITION.name());
                 }
             }
         });

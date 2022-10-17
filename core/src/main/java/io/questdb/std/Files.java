@@ -201,6 +201,12 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
+    public static native int softLink(long lpszSrc, long lpszSoftLink);
+
+    public static int softLink(LPSZ src, LPSZ softLink) {
+        return softLink(src.address(), softLink.address());
+    }
+
     public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
         if (type == DT_DIR) {
             nameSink.clear();

@@ -271,6 +271,29 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
     return -1;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, jlong lpszSrc, jlong lpszSoftLink) {
+
+    size_t lenSrc = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, NULL, 0);
+    if (lenSrc < 1) {
+        return -1;
+    }
+    wchar_t bufSrc[lenSrc];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
+
+    size_t lenSoftLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
+    if (lenSoftLink < 1) {
+        return -1;
+    }
+    wchar_t bufSoftLink[lenSoftLink];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, bufSoftLink, (int) lenSoftLink);
+
+    if (CreateSymbolicLinkW(bufSoftLink, bufSrc, NULL)) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_noop
 (JNIEnv *e, jclass cl) {

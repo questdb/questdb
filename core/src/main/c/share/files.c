@@ -192,6 +192,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
     return link((const char *) pcharSrc, (const char *) pcharHardLink);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
+        (JNIEnv *e, jclass cl, jlong pcharSrc, jlong pcharSoftLink) {
+    return symlink((const char *) pcharSrc, (const char *) pcharSoftLink);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir
         (JNIEnv *e, jclass cl, jlong pchar, jint mode) {
     return mkdir((const char *) pchar, (mode_t) mode);
