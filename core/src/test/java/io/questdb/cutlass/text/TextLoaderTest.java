@@ -36,6 +36,10 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.*;
+
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -548,6 +552,42 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     4,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testDuplicateValueInFileWithForcedHeader() throws Exception {
+        assertDuplicateColumnError(true);
+    }
+
+    @Test
+    public void testDuplicateValueInFileWithoutForcedHeader() throws Exception {
+        assertDuplicateColumnError(false);
+    }
+
+    private void assertDuplicateColumnError(boolean forceHeader) throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "ts,100i,i0,100i\r\n" +
+                    "1972-09-29T00:00:00.000000Z,100.0,i1,1\r\n" +
+                    "1972-09-30T00:00:00.000000Z,25.47,j1,2\r\n";
+
+            configureLoaderDefaults(textLoader, (byte) ',');
+            textLoader.setForceHeaders(forceHeader);
+
+            try {
+                playText(
+                        textLoader,
+                        csv,
+                        200,
+                        "",
+                        "",
+                        -1,
+                        -1
+                );
+                Assert.fail("TextException should be thrown!");
+            } catch (TextException e) {
+                assertThat(e.getMessage(), containsString("duplicate column name found"));
+            }
         });
     }
 

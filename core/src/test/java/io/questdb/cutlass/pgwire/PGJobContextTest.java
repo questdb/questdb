@@ -34,7 +34,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -47,7 +49,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2134,8 +2135,7 @@ if __name__ == "__main__":
                     tbl.execute();
 
                     PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
-
-                    connection.setNetworkTimeout(Runnable::run, 5);
+                    connection.setNetworkTimeout(Runnable::run, 1);
                     int testSize = 100000;
                     stmt.setFetchSize(testSize);
                     assertEquals(testSize, stmt.getFetchSize());
@@ -2148,9 +2148,7 @@ if __name__ == "__main__":
                         Assert.assertNotNull(ex);
                     }
                 }
-                Thread.sleep(100); // Give connection some time to close before closing the server.
             }
-            // Assertion that no open readers left will be performed in assertMemoryLeak
         });
     }
 
@@ -5436,8 +5434,8 @@ nodejs code:
                     try (ResultSet rs = metaData.getColumns("qdb", null, "test", null)) {
                         assertResultSet(
                                 "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],COLUMN_NAME[VARCHAR],DATA_TYPE[SMALLINT],TYPE_NAME[VARCHAR],COLUMN_SIZE[INTEGER],BUFFER_LENGTH[VARCHAR],DECIMAL_DIGITS[INTEGER],NUM_PREC_RADIX[INTEGER],NULLABLE[INTEGER],REMARKS[VARCHAR],COLUMN_DEF[VARCHAR],SQL_DATA_TYPE[INTEGER],SQL_DATETIME_SUB[INTEGER],CHAR_OCTET_LENGTH[VARCHAR],ORDINAL_POSITION[INTEGER],IS_NULLABLE[VARCHAR],SCOPE_CATALOG[VARCHAR],SCOPE_SCHEMA[VARCHAR],SCOPE_TABLE[VARCHAR],SOURCE_DATA_TYPE[SMALLINT],IS_AUTOINCREMENT[VARCHAR],IS_GENERATEDCOLUMN[VARCHAR]\n" +
-                                        "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,0,YES,null,null,null,0,NO,NO\n" +
-                                        "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,1,YES,null,null,null,0,NO,NO\n",
+                                        "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,1,YES,null,null,null,0,NO,NO\n" +
+                                        "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,2,YES,null,null,null,0,NO,NO\n",
                                 sink,
                                 rs
                         );
@@ -8204,7 +8202,7 @@ create table tab as (
             ) {
                 assertResultSet(
                         "nspname[VARCHAR],relname[VARCHAR],attname[VARCHAR],atttypid[INTEGER],attnotnull[BIT],atttypmod[INTEGER],attlen[SMALLINT],typtypmod[INTEGER],attnum[BIGINT],attidentity[CHAR],attgenerated[VARCHAR],adsrc[VARCHAR],description[VARCHAR],typbasetype[INTEGER],typtype[CHAR]\n" +
-                                "public,test,x,20,false,0,8,0,0,null,null,null,null,0,b\n",
+                                "public,test,x,20,false,0,8,0,1,null,null,null,null,0,b\n",
                         sink,
                         rs
                 );
