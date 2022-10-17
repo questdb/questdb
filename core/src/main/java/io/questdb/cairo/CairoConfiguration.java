@@ -378,6 +378,8 @@ public interface CairoConfiguration {
 
     boolean getWalEnabledDefault();
 
+    long getWalPurgeInterval();
+
     int getWalTxnNotificationQueueCapacity();
 
     int getWithClauseModelPoolCapacity();

@@ -31,6 +31,7 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
@@ -652,6 +653,18 @@ public abstract class AbstractCairoTest {
                 // Do not go in re-try loop in tests. Try to re-process once
             }
         }
+    }
+
+    protected static void runWalPurgeJob(FilesFacade ff) {
+        WalPurgeJob job = new WalPurgeJob(engine, ff);
+        while (job.run(0)) {
+            // run until empty
+        }
+        job.close();
+    }
+
+    protected static void runWalPurgeJob() {
+        runWalPurgeJob(engine.getConfiguration().getFilesFacade());
     }
 
     static {
