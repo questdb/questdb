@@ -38,6 +38,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.AttachDetachStatus.*;
@@ -1094,11 +1095,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkedLocation() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    TableModel src = new TableModel(configuration, "src48", PartitionBy.DAY);
-                    TableModel dst = new TableModel(configuration, "dst48", PartitionBy.DAY)
-            ) {
-
+            try (TableModel src = new TableModel(configuration, "src48", PartitionBy.DAY)) {
                 createPopulateTable(
                         1,
                         src.col("l", ColumnType.LONG)
@@ -1113,34 +1110,29 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 // copy the .detached folder to a different location and create a soft link .attachable
                 // in preparation for reattaching the partition
                 final CharSequence s3Buckets = temp.newFolder("S3").getAbsolutePath();
-                try {
+                try (Path link = new Path()) {
                     String partitionName = "2022-10-17" + TableUtils.DETACHED_DIR_MARKER;
                     path.of(configuration.getRoot())
                             .concat(src.getName())
                             .concat(partitionName)
-                            .slash$();
+                            .$();
                     other.of(s3Buckets)
                             .concat(src.getName())
                             .concat(partitionName)
-                            .slash$();
+                            .$();
                     TestUtils.copyDirectory(path, other, DIR_MODE);
 
+                    link.of(configuration.getRoot())
+                            .concat(src.getName())
+                            .concat("2022-10-17")
+                            .put(configuration.getAttachPartitionSuffix())
+                            .$();
 
-                } finally {
-                    TestUtils.removeTestPath(s3Buckets);
-                }
+                    // TODO: this has to be recursive, implement missing methods in Files.java
+                    Assert.assertEquals(0, Files.softLink(other, link));
+                    Assert.assertTrue(new File(link.toString()).exists());
 
-
-
-
-
-                copyPartitionToAttachable(src.getName(), "2020-01-01", dst.getName(), "COCONUTS");
-
-                try {
-                    compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': " + ATTACH_ERR_MISSING_PARTITION.name());
+                    compile("ALTER TABLE " + src.getName() + " ATTACH PARTITION LIST '2022-10-17'", sqlExecutionContext);
                 }
             }
         });
