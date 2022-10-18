@@ -27,12 +27,9 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.std.Numbers;
 import org.junit.Test;
 
 public class WidthBucketFunctionFactoryTest extends AbstractFunctionFactoryTest {
-
-
 
     @Test
     public void testFloatPositive() throws SqlException {
