@@ -190,22 +190,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
-    public static void restoreWhereClause(final QueryModel model) {
+    public static void restoreWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
             if (current.unionModel != null) {
-                restoreWhereClause(current.unionModel);
+                restoreWhereClause(pool, current.unionModel);
             }
             if (current.updateTableModel != null) {
-                restoreWhereClause(current.updateTableModel);
+                restoreWhereClause(pool, current.updateTableModel);
             }
             for (int i = 0, n = current.joinModels.size(); i < n; i++) {
                 final QueryModel m = current.joinModels.get(i);
                 if (m != null && current != m) {
-                    restoreWhereClause(m);
+                    restoreWhereClause(pool, m);
                 }
             }
-            current.whereClause = current.backupWhereClause;
+            current.whereClause = ExpressionNode.deepClone(pool, current.backupWhereClause);
             current = current.nestedModel;
         }
     }

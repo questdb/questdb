@@ -80,11 +80,12 @@ public class WalWriter implements TableWriterFrontend {
     private final TableWriterBackend walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final AlterOperationValidationBackend alterOperationValidationBackend = new AlterOperationValidationBackend();
     private final String tableName;
-    private long lockFd = -1;
+    private long walLockFd = -1;
+    private long segmentLockFd = -1;
     private int columnCount;
     private long currentTxnStartRowNum = -1;
     private long rowCount = -1;
-    private long segmentId = -1;
+    private int segmentId = -1;
     private long segmentStartMillis;
     private boolean txnOutOfOrder = false;
     private long txnMinTimestamp = Long.MAX_VALUE;
@@ -116,7 +117,8 @@ public class WalWriter implements TableWriterFrontend {
         this.open = true;
 
         try {
-            lock();
+            lockWal();
+            mkWalDir();
 
             metadata = new SequencerMetadata(ff);
             tableRegistry.copyMetadataTo(systemTableName, metadata);
@@ -325,15 +327,17 @@ public class WalWriter implements TableWriterFrontend {
         Misc.free(symbolMapMem);
         freeColumns(truncate);
 
+        releaseSegmentLock();
+
         try {
-            releaseLock(!truncate);
+            releaseWalLock();
         } finally {
             Misc.free(path);
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
     }
 
-    public long getSegmentId() {
+    public int getSegmentId() {
         return segmentId;
     }
 
@@ -398,7 +402,7 @@ public class WalWriter implements TableWriterFrontend {
 
     public void rollUncommittedToNewSegment() {
         final long uncommittedRows = rowCount - currentTxnStartRowNum;
-        final long newSegmentId = segmentId + 1;
+        final int newSegmentId = segmentId + 1;
 
         path.trimTo(rootLen);
 
@@ -814,10 +818,11 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private int createSegmentDir(long segmentId) {
+    private int createSegmentDir(int segmentId) {
         path.trimTo(rootLen);
         path.slash().put(segmentId);
         final int segmentPathLen = path.length();
+        rolloverSegmentLock();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
@@ -885,16 +890,38 @@ public class WalWriter implements TableWriterFrontend {
         return false;
     }
 
-    private void lock() {
+    private void lockWal() {
         try {
             lockName(path);
-            lockFd = TableUtils.lock(ff, path);
+            walLockFd = TableUtils.lock(ff, path);
         } finally {
             path.trimTo(rootLen);
         }
 
-        if (lockFd == -1L) {
+        if (walLockFd == -1L) {
             throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
+        }
+    }
+
+    private void releaseSegmentLock() {
+        if (segmentLockFd != -1L) {
+            ff.close(segmentLockFd);
+            segmentLockFd = -1L;
+        }
+    }
+
+    private void rolloverSegmentLock() {
+        releaseSegmentLock();
+        final int segmentPathLen = path.length();
+        try {
+            lockName(path);
+            segmentLockFd = TableUtils.lock(ff, path);
+            if (segmentLockFd == -1L) {
+                path.trimTo(segmentPathLen);
+                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
+            }
+        } finally {
+            path.trimTo(segmentPathLen);
         }
     }
 
@@ -937,6 +964,14 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
+    private void mkWalDir() {
+        final int walDirLength = path.length();
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
+        }
+        path.trimTo(walDirLength);
+    }
+
     private void openNewSegment() {
         try {
             segmentId++;
@@ -972,19 +1007,10 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void releaseLock(boolean keepLockFile) {
-        if (lockFd != -1L) {
-            ff.close(lockFd);
-            if (keepLockFile) {
-                return;
-            }
-
-            try {
-                lockName(path);
-                removeOrException(ff, path);
-            } finally {
-                path.trimTo(rootLen);
-            }
+    private void releaseWalLock() {
+        if (walLockFd != -1L) {
+            ff.close(walLockFd);
+            walLockFd = -1;
         }
     }
 
@@ -1024,7 +1050,7 @@ public class WalWriter implements TableWriterFrontend {
         events.startTxn();
     }
 
-    private void rollLastWalEventRecord(long newSegmentId, long uncommittedRows) {
+    private void rollLastWalEventRecord(int newSegmentId, long uncommittedRows) {
         events.rollback();
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.length());

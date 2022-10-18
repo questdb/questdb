@@ -22,32 +22,47 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package org.questdb;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-public class LogDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+import java.util.concurrent.TimeUnit;
 
-    @Test
-    public void testPositive() throws SqlException {
-        call(2.0).andAssert(0.3010299956639812, 0.0000000001);
+@State(Scope.Thread)
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+public class JNIBenchmark {
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(JNIBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(5)
+                .addProfiler("gc")
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
     }
 
-    @Test
-    public void testNegative() throws SqlException {
-        call(-2.0).andAssert(Double.NaN, 0.000001);
+    @Setup(Level.Iteration)
+    public void reset() {
+        Os.init();
     }
 
-    @Test
-    public void testSimple() throws SqlException {
-        call(1000).andAssert(3, 0.000001);
+    @Benchmark
+    public long testJNINoop() {
+        return Files.noop();
     }
 
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new LogDoubleFunctionFactory();
+    @Benchmark
+    public long testBaseline() {
+        return 0;
     }
 }

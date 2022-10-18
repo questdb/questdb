@@ -274,6 +274,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalPurgeInterval() {
+        return 300000;
+    }
+
+    @Override
     public int getWalTxnNotificationQueueCapacity() {
         return 4096;
     }

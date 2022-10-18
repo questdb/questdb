@@ -271,14 +271,14 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
-                MatcherAssert.assertThat(walWriter1.getSegmentId(), is(0L));
+                MatcherAssert.assertThat(walWriter1.getSegmentId(), is(0));
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
                 // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
 
                 try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                     MatcherAssert.assertThat(walWriter2.getWalId(), is(4));
-                    MatcherAssert.assertThat(walWriter1.getSegmentId(), is(0L));
+                    MatcherAssert.assertThat(walWriter1.getSegmentId(), is(0));
                 }
             }
         });

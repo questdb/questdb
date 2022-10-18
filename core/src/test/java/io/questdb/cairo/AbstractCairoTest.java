@@ -31,6 +31,7 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
@@ -51,7 +52,9 @@ import org.jetbrains.annotations.TestOnly;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
+import org.junit.runner.Description;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -62,10 +65,14 @@ public abstract class AbstractCairoTest {
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     private static final MicrosecondClock defaultMicrosecondClock = new X();
+    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
+    public static long spinLockTimeout = -1;
+    public static long dataAppendPageSize = -1;
+    public static int walTxnNotificationQueueCapacity = -1;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
@@ -104,10 +111,6 @@ public abstract class AbstractCairoTest {
     protected static Boolean ioURingEnabled = null;
     protected static String stackFailureClass;
     protected static String stackFailureMethod;
-
-    @Rule
-    public TestName testName = new TestName();
-    public static long spinLockTimeout = -1;
     protected static boolean hideTelemetryTable = false;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
@@ -118,31 +121,88 @@ public abstract class AbstractCairoTest {
     protected static Boolean copyPartitionOnAttach = null;
     protected static String attachableDirSuffix = null;
     protected static int isO3QuickSortEnabled = 0;
-
+    static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static TelemetryConfiguration telemetryConfiguration;
+    private static long memoryUsage = -1;
+    @Rule
+    public final TestWatcher flushLogsOnFailure = new TestWatcher() {
+        @Override
+        protected void failed(Throwable e, Description description) {
+            LogFactory.getInstance().flushJobs();
+        }
+    };
+    public static boolean mangleTableSystemName = true;
 
+    @Rule
+    public TestName testName = new TestName();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
 
-    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
-    private static long memoryUsage = -1;
+    //ignores:
+    // o3, mmap - because they're usually linked with table readers that are kept in pool
+    // join map memory - because it's usually a small and can't really be released until factory is closed
+    // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
+    @TestOnly
+    public static long getMemUsedByFactories() {
+        long memUsed = 0;
 
-    static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
-    public static long dataAppendPageSize = -1;
-    public static int walTxnNotificationQueueCapacity = -1;
-    public static boolean mangleTableSystemName = true;
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (FACTORY_TAGS[i]) {
+                memUsed += Unsafe.getMemUsedByTag(i);
+            }
+        }
 
-    protected static void assertFactoryMemoryUsage() {
-        if (memoryUsage > -1) {
-            long memAfterCursorClose = getMemUsedByFactories();
-            long limit = memoryUsage + 50 * 1024;
-            if (memAfterCursorClose > limit) {
-                dumpMemoryUsage();
-                printFactoryMemoryUsageDiff();
-                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+        return memUsed;
+    }
+
+    @TestOnly
+    public static long getMemUsedExcept(long tagsToIgnore) {
+        long memUsed = 0;
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if ((tagsToIgnore & 1L << i) == 0) {
+                memUsed += Unsafe.getMemUsedByTag(i);
+            }
+        }
+
+        return memUsed;
+    }
+
+    @TestOnly
+    public static void printFactoryMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                continue;
+            }
+
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.out.println(MemoryTag.nameOf(i) + ":" + value);
+            }
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            System.err.print(MemoryTag.nameOf(i));
+            System.err.print(":");
+            System.err.println(Unsafe.getMemUsedByTag(i));
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(value);
             }
         }
     }
@@ -169,18 +229,13 @@ public abstract class AbstractCairoTest {
 
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public CharSequence getRoot() {
-                if (stackFailureClass != null) {
-                    try {
-                        throw new RuntimeException("Test failure");
-                    } catch (Exception e) {
-                        final StackTraceElement[] stackTrace = e.getStackTrace();
-                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
-                            throw e;
-                        }
-                    }
-                }
-                return root;
+            public boolean attachPartitionCopy() {
+                return copyPartitionOnAttach == null ? super.attachPartitionCopy() : copyPartitionOnAttach;
+            }
+
+            @Override
+            public String getAttachPartitionSuffix() {
+                return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
             }
 
             @Override
@@ -205,8 +260,23 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public int getColumnPurgeQueueCapacity() {
+                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
+            }
+
+            @Override
+            public int getColumnPurgeTaskPoolCapacity() {
+                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
+            }
+
+            @Override
             public double getColumnPurgeRetryDelayMultiplier() {
                 return columnPurgeRetryDelayMultiplier > 0 ? columnPurgeRetryDelayMultiplier : 2.0;
+            }
+
+            @Override
+            public long getCommitLag() {
+                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
             }
 
             @Override
@@ -233,11 +303,31 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public long getDataAppendPageSize() {
+                return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+            }
+
+            @Override
             public CharSequence getDefaultMapType() {
                 if (defaultMapType == null) {
                     return super.getDefaultMapType();
                 }
                 return defaultMapType;
+            }
+
+            @Override
+            public int getMetadataPoolCapacity() {
+                return 1;
+            }
+
+            @Override
+            public boolean getWalEnabledDefault() {
+                return defaultTableWriteMode < 0 ? super.getWalEnabledDefault() : defaultTableWriteMode == 1;
+            }
+
+            @Override
+            public int getWalTxnNotificationQueueCapacity() {
+                return walTxnNotificationQueueCapacity > 0 ? walTxnNotificationQueueCapacity : 256;
             }
 
             @Override
@@ -259,19 +349,6 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
-            public long getCommitLag() {
-                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
-            }
-
-            @Override
-            public long getSpinLockTimeout() {
-                if (spinLockTimeout > -1) {
-                    return spinLockTimeout;
-                }
-                return 5_000;
-            }
-
-            @Override
             public int getMaxUncommittedRows() {
                 if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
                 return super.getMaxUncommittedRows();
@@ -288,10 +365,50 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public boolean isSqlParallelFilterEnabled() {
+                return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
+            }
+
+            @Override
+            public boolean isSqlParallelFilterPreTouchEnabled() {
+                return enableColumnPreTouch != null ? enableColumnPreTouch : super.isSqlParallelFilterPreTouchEnabled();
+            }
+
+            @Override
+            public int getSqlCopyLogRetentionDays() {
+                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
+            }
+
+            @Override
+            public int getPageFrameReduceQueueCapacity() {
+                return pageFrameReduceQueueCapacity < 0 ? super.getPageFrameReduceQueueCapacity() : pageFrameReduceQueueCapacity;
+            }
+
+            @Override
+            public int getPageFrameReduceShardCount() {
+                return pageFrameReduceShardCount < 0 ? super.getPageFrameReduceShardCount() : pageFrameReduceShardCount;
+            }
+
+            @Override
             public int getPartitionPurgeListCapacity() {
                 // Bump it to high number so that test doesn't fail with memory leak if LongList
                 // re-allocates
                 return 512;
+            }
+
+            @Override
+            public CharSequence getRoot() {
+                if (stackFailureClass != null) {
+                    try {
+                        throw new RuntimeException("Test failure");
+                    } catch (Exception e) {
+                        final StackTraceElement[] stackTrace = e.getStackTrace();
+                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
+                            throw e;
+                        }
+                    }
+                }
+                return root;
             }
 
             @Override
@@ -307,6 +424,19 @@ public abstract class AbstractCairoTest {
             @Override
             public int getRndFunctionMemoryMaxPages() {
                 return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
+            }
+
+            @Override
+            public long getSpinLockTimeout() {
+                if (spinLockTimeout > -1) {
+                    return spinLockTimeout;
+                }
+                return 5_000;
+            }
+
+            @Override
+            public int getSqlCopyBufferSize() {
+                return sqlCopyBufferSize;
             }
 
             @Override
@@ -345,58 +475,13 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public boolean isO3QuickSortEnabled() {
+                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
+            }
+
+            @Override
             public int getQueryCacheEventQueueCapacity() {
                 return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
-            }
-
-            @Override
-            public int getPageFrameReduceShardCount() {
-                return pageFrameReduceShardCount < 0 ? super.getPageFrameReduceShardCount() : pageFrameReduceShardCount;
-            }
-
-            @Override
-            public int getPageFrameReduceQueueCapacity() {
-                return pageFrameReduceQueueCapacity < 0 ? super.getPageFrameReduceQueueCapacity() : pageFrameReduceQueueCapacity;
-            }
-
-            @Override
-            public long getDataAppendPageSize() {
-                return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
-            }
-
-            @Override
-            public int getColumnPurgeQueueCapacity() {
-                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
-            }
-
-            @Override
-            public boolean isSqlParallelFilterEnabled() {
-                return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
-            }
-
-            @Override
-            public boolean isSqlParallelFilterPreTouchEnabled() {
-                return enableColumnPreTouch != null ? enableColumnPreTouch : super.isSqlParallelFilterPreTouchEnabled();
-            }
-
-            @Override
-            public int getColumnPurgeTaskPoolCapacity() {
-                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
-            }
-
-            @Override
-            public int getSqlCopyLogRetentionDays() {
-                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
-            }
-
-            @Override
-            public RostiAllocFacade getRostiAllocFacade() {
-                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
-            }
-
-            @Override
-            public boolean getWalEnabledDefault() {
-                return defaultTableWriteMode < 0 ? super.getWalEnabledDefault() : defaultTableWriteMode == 1;
             }
 
             @Override
@@ -405,44 +490,28 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
-            public int getSqlCopyBufferSize() {
-                return sqlCopyBufferSize;
-            }
-
-            @Override
-            public int getMetadataPoolCapacity() {
-                return 1;
-            }
-
-            @Override
-            public boolean attachPartitionCopy() {
-                return copyPartitionOnAttach == null ? super.attachPartitionCopy() : copyPartitionOnAttach;
-            }
-
-            @Override
-            public String getAttachPartitionSuffix() {
-                return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
-            }
-
-            @Override
-            public int getWalTxnNotificationQueueCapacity() {
-                return walTxnNotificationQueueCapacity > 0 ? walTxnNotificationQueueCapacity : 256;
+            public RostiAllocFacade getRostiAllocFacade() {
+                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
             }
 
             @Override
             public boolean mangleTableSystemNames() {
                 return mangleTableSystemName;
             }
-
-            @Override
-            public boolean isO3QuickSortEnabled() {
-                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
-            }
         };
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics, 2);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
+    }
+
+    @TestOnly
+    public static void snapshotMemoryUsage() {
+        memoryUsage = getMemUsedByFactories();
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
+        }
     }
 
     @AfterClass
@@ -518,6 +587,18 @@ public abstract class AbstractCairoTest {
         memoryUsage = -1;
         dataAppendPageSize = -1;
         isO3QuickSortEnabled = 0;
+    }
+
+    protected static void assertFactoryMemoryUsage() {
+        if (memoryUsage > -1) {
+            long memAfterCursorClose = getMemUsedByFactories();
+            long limit = memoryUsage + 50 * 1024;
+            if (memAfterCursorClose > limit) {
+                dumpMemoryUsage();
+                printFactoryMemoryUsageDiff();
+                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+            }
+        }
     }
 
     protected static void configureForBackups() throws IOException {
@@ -674,6 +755,35 @@ public abstract class AbstractCairoTest {
                 }
                 // Do not go in re-try loop in tests. Try to re-process once
             }
+        }
+    }
+
+    protected static void runWalPurgeJob(FilesFacade ff) {
+        WalPurgeJob job = new WalPurgeJob(engine, ff);
+        while (job.run(0)) {
+            // run until empty
+        }
+        job.close();
+    }
+
+    protected static void runWalPurgeJob() {
+        runWalPurgeJob(engine.getConfiguration().getFilesFacade());
+    }
+
+    protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
+        TestUtils.assertCursor(expected, cursor, metadata, header, sink);
+    }
+
+    protected void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
+        assertCursor(expected, cursor, metadata, true);
+        cursor.toTop();
+        assertCursor(expected, cursor, metadata, true);
+    }
+
+    private static class X implements MicrosecondClock {
+        @Override
+        public long getTicks() {
+            return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
         }
     }
 

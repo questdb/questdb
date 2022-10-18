@@ -24,35 +24,24 @@
 
 package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class LogFunctionFactoryTest extends AbstractGriffinTest {
+public class LnDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testLogDouble() throws Exception {
-        assertLog("select log(9989.2233)", "9.209262120872339\n");
+    public void testPositive() throws SqlException {
+        call(2.0).andAssert(0.6931471805599453, 0.0000000001);
     }
 
     @Test
-    public void testLogDoubleNull() throws Exception {
-        assertLog("select log(NaN)", "NaN\n");
+    public void testNegative() throws SqlException {
+        call(-2.0).andAssert(Double.NaN, 0.000001);
     }
 
-    @Test
-    public void testLogInt() throws Exception {
-        assertLog("select log(8965)", "9.101083386039234\n");
-    }
-
-    private void assertLog(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                sql,
-                sink,
-                "log\n" +
-                        expected
-        ));
+    @Override
+    protected FunctionFactory getFunctionFactory() { return new LnDoubleFunctionFactory();
     }
 }

@@ -46,7 +46,7 @@ public class CopySegmentFileJob {
             MemoryMA primaryColumn,
             MemoryMA secondaryColumn,
             @Transient Path walPath,
-            long newSegment,
+            int newSegment,
             CharSequence columnName,
             int columnType,
             long rowOffset,

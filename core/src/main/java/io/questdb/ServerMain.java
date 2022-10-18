@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
@@ -108,6 +109,11 @@ public class ServerMain implements Closeable {
                         sharedPool.assign(applyWal2TableJob);
                         sharedPool.freeOnExit(applyWal2TableJob);
                     }
+
+                    final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                    walPurgeJob.delayByHalfInterval();
+                    sharedPool.assign(walPurgeJob);
+                    sharedPool.freeOnExit(walPurgeJob);
 
                     // text import
                     TextImportJob.assignToPool(messageBus, sharedPool);
