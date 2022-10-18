@@ -83,6 +83,7 @@ public class DirectByteCharSequenceIntHashMapTest {
 
                 Object v = hashMap.get(s);
                 int k = ourMap.get(dbcs);
+                Assert.assertEquals(k, ourMap.get(s));
 
                 if (v == null) {
                     Assert.assertEquals(-1, k);
