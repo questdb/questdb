@@ -319,7 +319,7 @@ public class LogFactory implements Closeable {
 
     @TestOnly
     public void flushJobs() {
-        haltThread();
+        pauseThread();
         for (int i = 0, n = jobs.size(); i < n; i++) {
             LogWriter job = jobs.get(i);
             if (job != null) {
@@ -335,6 +335,13 @@ public class LogFactory implements Closeable {
             }
         }
         startThread();
+    }
+
+    @TestOnly
+    private void pauseThread() {
+        if (running.compareAndSet(true, false)) {
+            workerPool.pause();
+        }
     }
 
     static synchronized void configureFromSystemProperties(
