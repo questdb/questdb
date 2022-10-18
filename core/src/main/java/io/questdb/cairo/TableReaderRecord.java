@@ -277,8 +277,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     public static int ifOffsetNegThen0ElseValue(long offset, int value) {
-        final int sign = (int) (~(offset >>> 63) & 0x01);
-        return ((value) >>> (31 + sign));
+        return offset < 0 ? 0 : value;
     }
 
     private long getAdjustedRecordIndex(int col) {
