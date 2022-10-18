@@ -47,36 +47,36 @@ public class WidthBucketFunctionFactoryTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
-	public void testBelowRange() throws SqlException {
-		call(0.235, 0.893, 0.926, 4).andAssert(0);
-	}
+    public void testBelowRange() throws SqlException {
+        call(0.235, 0.893, 0.926, 4).andAssert(0);
+    }
 
-	@Test
-	public void testLowerRange() throws SqlException {
-		call(3.2456, 3.2456, 5.7344, 3).andAssert(1);
-	}
+    @Test
+    public void testLowerRange() throws SqlException {
+        call(3.2456, 3.2456, 5.7344, 3).andAssert(1);
+    }
 
-	@Test
-	public void testInRangeEdge() throws SqlException {
-		call(86.432, 61.572, 111.292, 4).andAssert(3);
-	}
+    @Test
+    public void testInRangeEdge() throws SqlException {
+        call(86.432, 61.572, 111.292, 4).andAssert(3);
+    }
 
-	@Test
-	public void testInRangeCenter() throws SqlException {
-		call(88.599, 66.367, 109.551, 7).andAssert(4);
-	}
+    @Test
+    public void testInRangeCenter() throws SqlException {
+        call(88.599, 66.367, 109.551, 7).andAssert(4);
+    }
 
-	@Test
-	public void testUpperRange() throws SqlException {
-		call(39.068, 13.763, 39.068, 5).andAssert(6);
-	}
+    @Test
+    public void testUpperRange() throws SqlException {
+        call(39.068, 13.763, 39.068, 5).andAssert(6);
+    }
 
-	@Test
-	public void testAboveRange() throws SqlException {
-		call(108.233, 53.169, 91.209, 8).andAssert(9);
-	}
+    @Test
+    public void testAboveRange() throws SqlException {
+        call(108.233, 53.169, 91.209, 8).andAssert(9);
+    }
 
-	@Override
+    @Override
     protected FunctionFactory getFunctionFactory() {
         return new WidthBucketFunctionFactory();
     }

@@ -47,49 +47,49 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
 
     private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
         private final Function leftEnd;
-		private final Function centerLeft;
-		private final Function centerRight;
-		private final Function rightEnd;
+        private final Function centerLeft;
+        private final Function centerRight;
+        private final Function rightEnd;
 
         public WidthBucketFunction(Function leftEnd, Function centerLeft, Function centerRight, Function rightEnd) {
             this.leftEnd = leftEnd;
-			this.centerLeft = centerLeft;
-			this.centerRight = centerRight;
-			this.rightEnd = rightEnd;
+            this.centerLeft = centerLeft;
+            this.centerRight = centerRight;
+            this.rightEnd = rightEnd;
         }
 
-		@Override
-		public Function getLeftEnd() {
-			return leftEnd;
-		}
+        @Override
+        public Function getLeftEnd() {
+            return leftEnd;
+        }
 
-		@Override
-		public Function getCenterLeft() {
-			return centerLeft;
-		}
+        @Override
+        public Function getCenterLeft() {
+            return centerLeft;
+        }
 
-		@Override
-		public Function getCenterRight() {
-			return centerRight;
-		}
+        @Override
+        public Function getCenterRight() {
+            return centerRight;
+        }
 
-		@Override
-		public Function getRightEnd() {
-			return rightEnd;
-		}
+        @Override
+        public Function getRightEnd() {
+            return rightEnd;
+        }
 
-		@Override
-		public int getInt(Record rec) {
-			double operand = leftEnd.getDouble(rec);
-			double low = centerLeft.getDouble(rec);
-			double high = centerRight.getDouble(rec);
-			int count = rightEnd.getInt(rec);
-			if (operand < low)
-				return 0;
-			else if (operand > high)
-				return (count + 1);
-			else
-				return (int) ((operand - low) / (high - low) * count) + 1;
-		}
+        @Override
+        public int getInt(Record rec) {
+            double operand = leftEnd.getDouble(rec);
+            double low = centerLeft.getDouble(rec);
+            double high = centerRight.getDouble(rec);
+            int count = rightEnd.getInt(rec);
+            if (operand < low)
+                return 0;
+            else if (operand > high)
+                return (count + 1);
+            else
+                return (int) ((operand - low) / (high - low) * count) + 1;
+        }
     }
 }

@@ -35,7 +35,7 @@ public interface QuarternaryFunction extends Function {
     default void close() {
         getLeftEnd().close();
         getCenterLeft().close();
-		getCenterRight().close();
+        getCenterRight().close();
         getRightEnd().close();
     }
 
@@ -43,7 +43,7 @@ public interface QuarternaryFunction extends Function {
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeftEnd().init(symbolTableSource, executionContext);
         getCenterLeft().init(symbolTableSource, executionContext);
-		getCenterRight().init(symbolTableSource, executionContext);
+        getCenterRight().init(symbolTableSource, executionContext);
         getRightEnd().init(symbolTableSource, executionContext);
     }
 
@@ -56,12 +56,12 @@ public interface QuarternaryFunction extends Function {
     default boolean isRuntimeConstant() {
         boolean arc = getLeftEnd().isRuntimeConstant();
         boolean brc = getCenterLeft().isRuntimeConstant();
-		boolean crc = getCenterRight().isRuntimeConstant();
+        boolean crc = getCenterRight().isRuntimeConstant();
         boolean drc = getRightEnd().isRuntimeConstant();
 
         boolean ac = getLeftEnd().isConstant();
         boolean bc = getCenterLeft().isConstant();
-		boolean cc = getCenterRight().isConstant();
+        boolean cc = getCenterRight().isConstant();
         boolean dc = getRightEnd().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (dc || drc) && (arc || brc || crc || drc);
@@ -76,7 +76,7 @@ public interface QuarternaryFunction extends Function {
     default void toTop() {
         getLeftEnd().toTop();
         getCenterLeft().toTop();
-		getCenterRight().toTop();
+        getCenterRight().toTop();
         getRightEnd().toTop();
     }
 
@@ -84,7 +84,7 @@ public interface QuarternaryFunction extends Function {
 
     Function getCenterLeft();
 
-	Function getCenterRight();
+    Function getCenterRight();
 
     Function getRightEnd();
 }
