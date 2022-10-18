@@ -30,6 +30,10 @@ import io.questdb.network.NetworkFacade;
 
 public interface LineUdpReceiverConfiguration {
 
+    boolean getAutoCreateNewColumns();
+
+    boolean getAutoCreateNewTables();
+
     int getCommitMode();
 
     int getBindIPv4Address();
@@ -37,6 +41,8 @@ public interface LineUdpReceiverConfiguration {
     int getCommitRate();
 
     int getGroupIPv4Address();
+
+    int getMaxFileNameLength();
 
     int getMsgBufferSize();
 

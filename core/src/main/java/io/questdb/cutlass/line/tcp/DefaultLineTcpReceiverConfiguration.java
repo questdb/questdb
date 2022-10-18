@@ -24,13 +24,13 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -104,13 +104,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
-        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
+        return SHARED_CONFIGURATION;
     }
 
     @Override
-    public WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration() {
-        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+        return SHARED_CONFIGURATION;
     }
 
     @Override
@@ -129,8 +129,23 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public int getMaxFileNameLength() {
+        return 127;
+    }
+
+    @Override
     public String getAuthDbPath() {
         return null;
+    }
+
+    @Override
+    public boolean getAutoCreateNewColumns() {
+        return true;
+    }
+
+    @Override
+    public boolean getAutoCreateNewTables() {
+        return true;
     }
 
     @Override
@@ -172,4 +187,16 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public short getDefaultColumnTypeForInteger() {
         return ColumnType.LONG;
     }
+
+    private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "ilptcp";
+        }
+    };
 }

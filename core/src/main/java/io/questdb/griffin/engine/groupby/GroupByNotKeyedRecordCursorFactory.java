@@ -24,22 +24,23 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
+public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
-    private final RecordMetadata metadata;
     private final SimpleMapValue simpleMapValue;
     private final VirtualRecord virtualRecordA;
 
@@ -50,9 +51,9 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             ObjList<Function> recordFunctions,
             int valueCount
     ) {
+        super(groupByMetadata);
         this.simpleMapValue = new SimpleMapValue(valueCount);
         this.base = base;
-        this.metadata = groupByMetadata;
         this.groupByFunctions = groupByFunctions;
         this.virtualRecordA = new VirtualRecordNoRowid(recordFunctions);
         this.virtualRecordA.of(simpleMapValue);
@@ -60,7 +61,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(groupByFunctions);
         Misc.free(base);
     }
@@ -77,11 +78,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
@@ -89,6 +85,14 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupByNotKeyed");
+        sink.meta("vectorized").val(false);
+        sink.attr("groupByFunctions").val(groupByFunctions);
+        sink.child(base);
     }
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
@@ -101,11 +105,17 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void close() {
             this.baseCursor = Misc.free(baseCursor);
+            Misc.clearObjList(groupByFunctions);
         }
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return (SymbolTable) groupByFunctions.getQuick(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return ((SymbolFunction) groupByFunctions.getQuick(columnIndex)).newSymbolTable();
         }
 
         @Override
@@ -136,7 +146,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.test();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
                 }
             } else {

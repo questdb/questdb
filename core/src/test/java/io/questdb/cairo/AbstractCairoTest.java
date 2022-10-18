@@ -31,19 +31,21 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
@@ -54,52 +56,90 @@ import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
 
+    protected static final PlanSink planSink = new PlanSink();
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
-    protected final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    private static final MicrosecondClock defaultMicrosecondClock = new X();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+    public static long writerAsyncCommandBusyWaitTimeout = -1;
+    public static long writerAsyncCommandMaxTimeout = -1;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
     protected static long currentMicros = -1;
-    protected final static MicrosecondClock testMicrosClock =
-            () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
+    protected static String inputWorkRoot = null;
+    protected static int sqlCopyBufferSize = 1024 * 1024;
+    protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static FilesFacade ff;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
     protected static long configOverrideCommitLagMicros = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
-    protected static Metrics metrics = Metrics.enabled();
+    protected static Metrics metrics;
     protected static int capacity = -1;
     protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
-    protected static int pageFrameMaxSize = -1;
+    protected static int pageFrameMaxRows = -1;
+    protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     protected static int rndFunctionMemoryPageSize = -1;
     protected static int rndFunctionMemoryMaxPages = -1;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
+    protected static Boolean enableParallelFilter = null;
+    protected static Boolean enableColumnPreTouch = null;
     protected static int queryCacheEventQueueCapacity = -1;
+    protected static int pageFrameReduceShardCount = -1;
+    protected static int pageFrameReduceQueueCapacity = -1;
+    protected static int columnVersionTaskPoolCapacity = -1;
+    protected static RostiAllocFacade rostiAllocFacade = null;
+    protected static int parallelImportStatusLogKeepNDays = -1;
+    protected static Boolean ioURingEnabled = null;
 
     @Rule
     public TestName testName = new TestName();
-    public static long writerAsyncCommandBusyWaitTimeout = -1;
-    public static long writerAsyncCommandMaxTimeout = -1;
-    public static long spinLockTimeoutUs = -1;
+    public static long spinLockTimeout = -1;
     protected static boolean hideTelemetryTable = false;
-    private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
+    protected static double columnPurgeRetryDelayMultiplier = -1;
+    protected static long columnPurgeRetryDelay = -1;
+    protected static int columnVersionPurgeQueueCapacity = -1;
+    protected static int defaultTableWriteMode = -1;
+    protected static Boolean copyPartitionOnAttach = null;
+    protected static String attachableDirSuffix = null;
+
+    private static TelemetryConfiguration telemetryConfiguration;
 
     @Rule
     public Timeout timeout = Timeout.builder()
-            .withTimeout(300000, TimeUnit.MILLISECONDS)
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
+    private static long memoryUsage = -1;
+
+    static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+
+    static {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            FACTORY_TAGS[i] = !Chars.startsWith(MemoryTag.nameOf(i), "MMAP");
+        }
+
+        FACTORY_TAGS[MemoryTag.NATIVE_O3] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_JOIN_MAP] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
+    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -123,11 +163,11 @@ public class AbstractCairoTest {
 
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
-                if (ff != null) {
-                    return ff;
+            public DateFormat getBackupDirTimestampFormat() {
+                if (backupDirTimestampFormat != null) {
+                    return backupDirTimestampFormat;
                 }
-                return super.getFilesFacade();
+                return super.getBackupDirTimestampFormat();
             }
 
             @Override
@@ -139,107 +179,18 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public DateFormat getBackupDirTimestampFormat() {
-                if (backupDirTimestampFormat != null) {
-                    return backupDirTimestampFormat;
-                }
-                return super.getBackupDirTimestampFormat();
-            }
-
-            @Override
-            public int getCopyPoolCapacity() {
-                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return testMicrosClock;
-            }
-
-            @Override
-            public CharSequence getInputRoot() {
-                return inputRoot;
-            }
-
-            @Override
-            public long getCommitLag() {
-                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
-            }
-
-            @Override
-            public long getSpinLockTimeoutUs() {
-                if (spinLockTimeoutUs > -1) {
-                    return spinLockTimeoutUs;
-                }
-                return 5_000_000;
-            }
-
-            @Override
-            public int getMaxUncommittedRows() {
-                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
-                return super.getMaxUncommittedRows();
-            }
-
-            @Override
-            public int getSampleByIndexSearchPageSize() {
-                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
-            }
-
-            @Override
             public int getBinaryEncodingMaxLength() {
                 return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
             }
 
             @Override
-            public CharSequence getDefaultMapType() {
-                if (defaultMapType == null) {
-                    return super.getDefaultMapType();
-                }
-                return defaultMapType;
+            public double getColumnPurgeRetryDelayMultiplier() {
+                return columnPurgeRetryDelayMultiplier > 0 ? columnPurgeRetryDelayMultiplier : 2.0;
             }
 
             @Override
-            public long getWriterAsyncCommandBusyWaitTimeout() {
-                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
-            }
-
-            @Override
-            public long getWriterAsyncCommandMaxTimeout() {
-                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
-            }
-
-            @Override
-            public boolean enableDevelopmentUpdates() {
-                return true;
-            }
-
-            @Override
-            public int getSqlJitMode() {
-                // JIT compiler is a beta feature and thus is disabled by default,
-                // but we want to have it enabled in tests.
-                return SqlJitMode.JIT_MODE_ENABLED;
-            }
-
-            @Override
-            public int getSqlPageFrameMaxSize() {
-                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
-            }
-
-            @Override
-            public int getPartitionPurgeListCapacity() {
-                // Bump it to high number so that test don't fail with memory leak if LongList
-                // re-allocates
-                return 512;
-            }
-
-            @Override
-            public int getRndFunctionMemoryPageSize() {
-                return rndFunctionMemoryPageSize < 0 ? super.getRndFunctionMemoryPageSize() : rndFunctionMemoryPageSize;
-            }
-
-            @Override
-            public int getRndFunctionMemoryMaxPages() {
-                return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
+            public long getColumnPurgeRetryDelay() {
+                return columnPurgeRetryDelay > 0 ? columnPurgeRetryDelay : 10;
             }
 
             @Override
@@ -256,8 +207,110 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public int getCopyPoolCapacity() {
+                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
+            }
+
+            @Override
+            public CharSequence getDefaultMapType() {
+                if (defaultMapType == null) {
+                    return super.getDefaultMapType();
+                }
+                return defaultMapType;
+            }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                if (ff != null) {
+                    return ff;
+                }
+                return super.getFilesFacade();
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return inputRoot;
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputWorkRoot() {
+                return inputWorkRoot;
+            }
+
+            @Override
+            public long getCommitLag() {
+                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
+            }
+
+            @Override
+            public long getSpinLockTimeout() {
+                if (spinLockTimeout > -1) {
+                    return spinLockTimeout;
+                }
+                return 5_000;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
+                return super.getMaxUncommittedRows();
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return testMicrosClock;
+            }
+
+            @Override
+            public MillisecondClock getMillisecondClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
+            }
+
+            @Override
+            public int getPartitionPurgeListCapacity() {
+                // Bump it to high number so that test doesn't fail with memory leak if LongList
+                // re-allocates
+                return 512;
+            }
+
+            @Override
+            public int getSampleByIndexSearchPageSize() {
+                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
+            }
+
+            @Override
+            public int getRndFunctionMemoryPageSize() {
+                return rndFunctionMemoryPageSize < 0 ? super.getRndFunctionMemoryPageSize() : rndFunctionMemoryPageSize;
+            }
+
+            @Override
+            public int getRndFunctionMemoryMaxPages() {
+                return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
+            }
+
+            @Override
+            public int getSqlJitMode() {
+                return jitMode;
+            }
+
+            @Override
+            public int getSqlPageFrameMaxRows() {
+                return pageFrameMaxRows < 0 ? super.getSqlPageFrameMaxRows() : pageFrameMaxRows;
+            }
+
+            @Override
             public TelemetryConfiguration getTelemetryConfiguration() {
                 return telemetryConfiguration;
+            }
+
+            @Override
+            public long getWriterAsyncCommandBusyWaitTimeout() {
+                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
+            }
+
+            @Override
+            public long getWriterAsyncCommandMaxTimeout() {
+                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
             }
 
             @Override
@@ -274,7 +327,73 @@ public class AbstractCairoTest {
             public int getQueryCacheEventQueueCapacity() {
                 return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
             }
+
+            @Override
+            public int getPageFrameReduceShardCount() {
+                return pageFrameReduceShardCount < 0 ? super.getPageFrameReduceShardCount() : pageFrameReduceShardCount;
+            }
+
+            @Override
+            public int getPageFrameReduceQueueCapacity() {
+                return pageFrameReduceQueueCapacity < 0 ? super.getPageFrameReduceQueueCapacity() : pageFrameReduceQueueCapacity;
+            }
+
+            @Override
+            public int getColumnPurgeQueueCapacity() {
+                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
+            }
+
+            @Override
+            public boolean isSqlParallelFilterEnabled() {
+                return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
+            }
+
+            @Override
+            public boolean isSqlParallelFilterPreTouchEnabled() {
+                return enableColumnPreTouch != null ? enableColumnPreTouch : super.isSqlParallelFilterPreTouchEnabled();
+            }
+
+            @Override
+            public int getColumnPurgeTaskPoolCapacity() {
+                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
+            }
+
+            @Override
+            public int getSqlCopyLogRetentionDays() {
+                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
+            }
+
+            @Override
+            public RostiAllocFacade getRostiAllocFacade() {
+                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
+            }
+
+            @Override
+            public boolean getWallEnabledDefault() {
+                return defaultTableWriteMode < 0 ? super.getWallEnabledDefault() : defaultTableWriteMode == 1;
+            }
+
+            @Override
+            public boolean isIOURingEnabled() {
+                return ioURingEnabled != null ? ioURingEnabled : super.isIOURingEnabled();
+            }
+
+            @Override
+            public int getSqlCopyBufferSize() {
+                return sqlCopyBufferSize;
+            }
+
+            @Override
+            public boolean attachPartitionCopy() {
+                return copyPartitionOnAttach == null ? super.attachPartitionCopy() : copyPartitionOnAttach;
+            }
+
+            @Override
+            public String getAttachPartitionSuffix() {
+                return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
+            }
         };
+        metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
@@ -286,6 +405,7 @@ public class AbstractCairoTest {
         engine = Misc.free(engine);
         backupDir = null;
         backupDirTimestampFormat = null;
+        DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
     @Before
@@ -293,31 +413,61 @@ public class AbstractCairoTest {
         SharedRandom.RANDOM.set(new Rnd());
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
-        engine.openTableId();
-        engine.resetTableId();
+        engine.getTableIdGenerator().open();
+        engine.getTableIdGenerator().reset();
         SharedRandom.RANDOM.set(new Rnd());
+        memoryUsage = -1;
     }
 
     @After
     public void tearDown() {
+        tearDown(true);
+    }
+
+    public void tearDown(boolean removeDir) {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         snapshotAgent.clear();
-        engine.freeTableId();
+        engine.getTableIdGenerator().close();
         engine.clear();
-        TestUtils.removeTestPath(root);
+        if (removeDir) {
+            TestUtils.removeTestPath(root);
+        }
         configOverrideMaxUncommittedRows = -1;
         configOverrideCommitLagMicros = -1;
         currentMicros = -1;
+        testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
-        pageFrameMaxSize = -1;
-        spinLockTimeoutUs = -1;
+        pageFrameMaxRows = -1;
+        jitMode = SqlJitMode.JIT_MODE_ENABLED;
+        rndFunctionMemoryPageSize = -1;
+        rndFunctionMemoryMaxPages = -1;
+        spinLockTimeout = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
+        enableParallelFilter = null;
+        enableColumnPreTouch = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
+        queryCacheEventQueueCapacity = -1;
+        pageFrameReduceShardCount = -1;
+        pageFrameReduceQueueCapacity = -1;
+        columnPurgeRetryDelayMultiplier = -1;
+        columnVersionPurgeQueueCapacity = -1;
+        columnVersionTaskPoolCapacity = -1;
+        rostiAllocFacade = null;
+        sqlCopyBufferSize = 1024 * 1024;
+        ioURingFacade = IOURingFacadeImpl.INSTANCE;
+        ioURingEnabled = null;
+        parallelImportStatusLogKeepNDays = -1;
+        defaultTableWriteMode = -1;
+        copyPartitionOnAttach = null;
+        attachableDirSuffix = null;
+        sink.clear();
+        ff = null;
+        memoryUsage = -1;
     }
 
     protected static void configureForBackups() throws IOException {
@@ -326,21 +476,22 @@ public class AbstractCairoTest {
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        assertMemoryLeak(null, code);
+        assertMemoryLeak(AbstractCairoTest.ff, code);
     }
 
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
         final FilesFacade ff2 = ff;
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
             try {
                 code.run();
                 engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
+                Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
                 engine.clear();
-                AbstractCairoTest.ff = null;
+                AbstractCairoTest.ff = ffBefore;
             }
         });
     }
@@ -353,5 +504,100 @@ public class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
+    }
+
+    private static class X implements MicrosecondClock {
+        @Override
+        public long getTicks() {
+            return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+        }
+    }
+
+    protected static void assertFactoryMemoryUsage() {
+        if (memoryUsage > -1) {
+            long memAfterCursorClose = getMemUsedByFactories();
+            long limit = memoryUsage + 50 * 1024;
+            if (memAfterCursorClose > limit) {
+                printFactoryMemoryUsageDiff();
+                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+            }
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            System.err.print(MemoryTag.nameOf(i));
+            System.err.print(":");
+            System.err.println(Unsafe.getMemUsedByTag(i));
+        }
+    }
+
+    @TestOnly
+    public static void snapshotMemoryUsage() {
+        memoryUsage = getMemUsedByFactories();
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
+        }
+    }
+
+    @TestOnly
+    public static void printMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(value);
+            }
+        }
+    }
+
+    @TestOnly
+    public static void printFactoryMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                continue;
+            }
+
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(value);
+            }
+        }
+    }
+
+    //ignores:
+    // o3, mmap - because they're usually linked with table readers that are kept in pool 
+    // join map memory - because it's usually a small and can't really be released until factory is closed
+    // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
+    @TestOnly
+    public static long getMemUsedByFactories() {
+        long tags = 0;
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                tags = tags | 1L << i;
+            }
+        }
+
+        return getMemUsedExcept(tags);
+    }
+
+    @TestOnly
+    public static long getMemUsedExcept(long tagsToIgnore) {
+        long memUsed = 0;
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if ((tagsToIgnore & 1L << i) == 0) {
+                memUsed += Unsafe.getMemUsedByTag(i);
+            }
+        }
+
+        return memUsed;
     }
 }

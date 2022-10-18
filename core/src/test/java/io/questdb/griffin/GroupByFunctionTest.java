@@ -32,27 +32,116 @@ import org.junit.Test;
 public class GroupByFunctionTest extends AbstractGriffinTest {
 
     @Test
-    public void testNestedGroupByFn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
-            try (RecordCursorFactory ignored = compiler.compile("select sym, max(sum(x + min(x)) - avg(x)) from test", sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
-            }
-        });
-    }
-
-    @Test
-    public void testNonNestedGroupByFn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
-            try (RecordCursorFactory ignored = compiler.compile("select sym, max(x) - (min(x) + 1) from test", sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertTrue(true);
-            } catch (SqlException e) {
-                Assert.fail();
-            }
-        });
+    public void testCaseInitsArgs() throws Exception {
+        assertQuery(
+                "y_utc_15m\ty_sf_position_mw\n" +
+                        "1970-01-01T00:00:00.000000Z\t-0.2246301342497259\n" +
+                        "1970-01-01T00:30:00.000000Z\t-0.6508594025855301\n" +
+                        "1970-01-01T00:45:00.000000Z\t-0.9856290845874263\n" +
+                        "1970-01-01T01:00:00.000000Z\t-0.5093827001617407\n" +
+                        "1970-01-01T01:30:00.000000Z\t0.5599161804800813\n" +
+                        "1970-01-01T01:45:00.000000Z\t0.2390529010846525\n" +
+                        "1970-01-01T02:00:00.000000Z\t-0.6778564558839208\n" +
+                        "1970-01-01T02:15:00.000000Z\t0.38539947865244994\n" +
+                        "1970-01-01T02:30:00.000000Z\t-0.33608255572515877\n" +
+                        "1970-01-01T02:45:00.000000Z\t0.7675673070796104\n" +
+                        "1970-01-01T03:00:00.000000Z\t0.6217326707853098\n" +
+                        "1970-01-01T03:15:00.000000Z\t0.6381607531178513\n" +
+                        "1970-01-01T03:45:00.000000Z\t0.12026122412833129\n" +
+                        "1970-01-01T04:00:00.000000Z\t-0.8912587536603974\n" +
+                        "1970-01-01T04:15:00.000000Z\t-0.42281342727402726\n" +
+                        "1970-01-01T04:30:00.000000Z\t-0.7664256753596138\n" +
+                        "1970-01-01T05:15:00.000000Z\t-0.8847591603509142\n" +
+                        "1970-01-01T05:30:00.000000Z\t0.931192737286751\n" +
+                        "1970-01-01T05:45:00.000000Z\t0.8001121139739173\n" +
+                        "1970-01-01T06:00:00.000000Z\t0.92050039469858\n" +
+                        "1970-01-01T06:15:00.000000Z\t0.456344569609078\n" +
+                        "1970-01-01T06:30:00.000000Z\t0.40455469747939254\n" +
+                        "1970-01-01T06:45:00.000000Z\t0.5659429139861241\n" +
+                        "1970-01-01T07:00:00.000000Z\t-0.6821660861001273\n" +
+                        "1970-01-01T07:30:00.000000Z\t-0.11585982949541473\n" +
+                        "1970-01-01T07:45:00.000000Z\t0.8164182592467494\n" +
+                        "1970-01-01T08:00:00.000000Z\t0.5449155021518948\n" +
+                        "1970-01-01T08:30:00.000000Z\t0.49428905119584543\n" +
+                        "1970-01-01T08:45:00.000000Z\t-0.6551335839796312\n" +
+                        "1970-01-01T09:15:00.000000Z\t0.9540069089049732\n" +
+                        "1970-01-01T09:30:00.000000Z\t-0.03167026265669903\n" +
+                        "1970-01-01T09:45:00.000000Z\t-0.19751370382305056\n" +
+                        "1970-01-01T10:00:00.000000Z\t0.6806873134626418\n" +
+                        "1970-01-01T10:15:00.000000Z\t-0.24008362859107102\n" +
+                        "1970-01-01T10:30:00.000000Z\t-0.9455893004802433\n" +
+                        "1970-01-01T10:45:00.000000Z\t-0.6247427794126656\n" +
+                        "1970-01-01T11:00:00.000000Z\t-0.3901731258748704\n" +
+                        "1970-01-01T11:15:00.000000Z\t-0.10643046345788132\n" +
+                        "1970-01-01T11:30:00.000000Z\t0.07246172621937097\n" +
+                        "1970-01-01T11:45:00.000000Z\t-0.3679848625908545\n" +
+                        "1970-01-01T12:00:00.000000Z\t0.6697969295620055\n" +
+                        "1970-01-01T12:15:00.000000Z\t-0.26369335635512836\n" +
+                        "1970-01-01T12:45:00.000000Z\t-0.19846258365662472\n" +
+                        "1970-01-01T13:00:00.000000Z\t-0.8595900073631431\n" +
+                        "1970-01-01T13:15:00.000000Z\t0.7458169804091256\n" +
+                        "1970-01-01T13:30:00.000000Z\t0.4274704286353759\n" +
+                        "1970-01-01T14:00:00.000000Z\t-0.8291193369353376\n" +
+                        "1970-01-01T14:30:00.000000Z\t0.2711532808184136\n" +
+                        "1970-01-01T15:00:00.000000Z\t-0.8189713915910615\n" +
+                        "1970-01-01T15:15:00.000000Z\t0.7365115215570027\n" +
+                        "1970-01-01T15:30:00.000000Z\t-0.9418719455092096\n" +
+                        "1970-01-01T16:00:00.000000Z\t-0.05024615679069011\n" +
+                        "1970-01-01T16:15:00.000000Z\t-0.8952510116133903\n" +
+                        "1970-01-01T16:30:00.000000Z\t-0.029227696942726644\n" +
+                        "1970-01-01T16:45:00.000000Z\t-0.7668146556860689\n" +
+                        "1970-01-01T17:00:00.000000Z\t-0.05158459929273784\n" +
+                        "1970-01-01T17:15:00.000000Z\t-0.06846631555382798\n" +
+                        "1970-01-01T17:30:00.000000Z\t-0.5708643723875381\n" +
+                        "1970-01-01T17:45:00.000000Z\t0.7260468106076399\n" +
+                        "1970-01-01T18:15:00.000000Z\t-0.1010501916946902\n" +
+                        "1970-01-01T18:30:00.000000Z\t-0.05094182589333662\n" +
+                        "1970-01-01T18:45:00.000000Z\t-0.38402128906440336\n" +
+                        "1970-01-01T19:15:00.000000Z\t0.7694744648762927\n" +
+                        "1970-01-01T19:45:00.000000Z\t0.6901976778065181\n" +
+                        "1970-01-01T20:00:00.000000Z\t-0.5913874468544745\n" +
+                        "1970-01-01T20:30:00.000000Z\t-0.14261321308606745\n" +
+                        "1970-01-01T20:45:00.000000Z\t0.4440250924606578\n" +
+                        "1970-01-01T21:00:00.000000Z\t-0.09618589590900506\n" +
+                        "1970-01-01T21:15:00.000000Z\t-0.08675950660182763\n" +
+                        "1970-01-01T21:30:00.000000Z\t-0.741970173888595\n" +
+                        "1970-01-01T21:45:00.000000Z\t0.4167781163798937\n" +
+                        "1970-01-01T22:00:00.000000Z\t-0.05514933756198426\n" +
+                        "1970-01-01T22:30:00.000000Z\t-0.2093569947644236\n" +
+                        "1970-01-01T22:45:00.000000Z\t-0.8439276969435359\n" +
+                        "1970-01-01T23:00:00.000000Z\t-0.03973283003449557\n" +
+                        "1970-01-01T23:15:00.000000Z\t-0.8551850405049611\n" +
+                        "1970-01-01T23:45:00.000000Z\t0.6226001464598434\n" +
+                        "1970-01-02T00:00:00.000000Z\t-0.7195457109208119\n" +
+                        "1970-01-02T00:15:00.000000Z\t-0.23493793601747937\n" +
+                        "1970-01-02T00:30:00.000000Z\t-0.6334964081687151\n",
+                "SELECT\n" +
+                        "    delivery_start_utc as y_utc_15m,\n" +
+                        "    sum(case\n" +
+                        "            when seller='sf' then -1.0*volume_mw\n" +
+                        "            when buyer='sf' then 1.0*volume_mw\n" +
+                        "            else 0.0\n" +
+                        "        end)\n" +
+                        "    as y_sf_position_mw\n" +
+                        "FROM (\n" +
+                        "    SELECT delivery_start_utc, seller, buyer, volume_mw FROM trades\n" +
+                        "    WHERE\n" +
+                        "        (seller = 'sf' OR buyer = 'sf')\n" +
+                        "    )\n" +
+                        "group by y_utc_15m",
+                "create table trades as (" +
+                        "select" +
+                        " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
+                        " rnd_symbol('sf', null) seller," +
+                        " rnd_symbol('sf', null) buyer," +
+                        " rnd_double() volume_mw" +
+                        " from long_sequence(100)" +
+                        "), index(seller), index(buyer) timestamp(delivery_start_utc)",
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -179,9 +268,10 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testKeyedKSumDoubleSomeNaN() throws Exception {
+        pageFrameMaxRows = 1_000_000;
         assertQuery("s\tksum\n" +
-                        "aa\t416262.4729439181\n" +
-                        "bb\t416933.3416598129\n",
+                        "aa\t416262.4729439185\n" +
+                        "bb\t416933.34165981336\n",
                 "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
@@ -200,9 +290,10 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testKeyedKSumKSumDoubleSomeNaN() throws Exception {
+        pageFrameMaxRows = 1_000_000;
         assertQueryExpectSize("s\tksum\tksum1\n" +
-                        "aa\t416262.4729439181\t416262.4729439181\n" +
-                        "bb\t416933.3416598129\t416933.3416598129\n",
+                        "aa\t416262.4729439185\t416262.4729439185\n" +
+                        "bb\t416933.34165981336\t416933.34165981336\n",
                 "select s, ksum(d), ksum(d) from x order by s",
                 "create table x as " +
                         "(" +
@@ -217,9 +308,10 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testKeyedKSumSumDoubleSomeNaN() throws Exception {
+        pageFrameMaxRows = 1_000_000;
         assertQuery("s\tksum\tsum\n" +
-                        "aa\t416262.4729439181\t416262.4729439233\n" +
-                        "bb\t416933.3416598129\t416933.34165981587\n",
+                        "aa\t416262.4729439185\t416262.47294389317\n" +
+                        "bb\t416933.34165981336\t416933.34165982535\n",
                 "select s, ksum(d), sum(d) from x order by s",
                 "create table x as " +
                         "(" +
@@ -385,119 +477,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(200)" +
                         ")",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testCaseInitsArgs() throws Exception {
-        assertQuery(
-                "y_utc_15m\ty_sf_position_mw\n" +
-                        "1970-01-01T00:00:00.000000Z\t-0.2246301342497259\n" +
-                        "1970-01-01T00:30:00.000000Z\t-0.6508594025855301\n" +
-                        "1970-01-01T00:45:00.000000Z\t-0.9856290845874263\n" +
-                        "1970-01-01T01:00:00.000000Z\t-0.5093827001617407\n" +
-                        "1970-01-01T01:30:00.000000Z\t0.5599161804800813\n" +
-                        "1970-01-01T01:45:00.000000Z\t0.2390529010846525\n" +
-                        "1970-01-01T02:00:00.000000Z\t-0.6778564558839208\n" +
-                        "1970-01-01T02:15:00.000000Z\t0.38539947865244994\n" +
-                        "1970-01-01T02:30:00.000000Z\t-0.33608255572515877\n" +
-                        "1970-01-01T02:45:00.000000Z\t0.7675673070796104\n" +
-                        "1970-01-01T03:00:00.000000Z\t0.6217326707853098\n" +
-                        "1970-01-01T03:15:00.000000Z\t0.6381607531178513\n" +
-                        "1970-01-01T03:45:00.000000Z\t0.12026122412833129\n" +
-                        "1970-01-01T04:00:00.000000Z\t-0.8912587536603974\n" +
-                        "1970-01-01T04:15:00.000000Z\t-0.42281342727402726\n" +
-                        "1970-01-01T04:30:00.000000Z\t-0.7664256753596138\n" +
-                        "1970-01-01T05:15:00.000000Z\t-0.8847591603509142\n" +
-                        "1970-01-01T05:30:00.000000Z\t0.931192737286751\n" +
-                        "1970-01-01T05:45:00.000000Z\t0.8001121139739173\n" +
-                        "1970-01-01T06:00:00.000000Z\t0.92050039469858\n" +
-                        "1970-01-01T06:15:00.000000Z\t0.456344569609078\n" +
-                        "1970-01-01T06:30:00.000000Z\t0.40455469747939254\n" +
-                        "1970-01-01T06:45:00.000000Z\t0.5659429139861241\n" +
-                        "1970-01-01T07:00:00.000000Z\t-0.6821660861001273\n" +
-                        "1970-01-01T07:30:00.000000Z\t-0.11585982949541473\n" +
-                        "1970-01-01T07:45:00.000000Z\t0.8164182592467494\n" +
-                        "1970-01-01T08:00:00.000000Z\t0.5449155021518948\n" +
-                        "1970-01-01T08:30:00.000000Z\t0.49428905119584543\n" +
-                        "1970-01-01T08:45:00.000000Z\t-0.6551335839796312\n" +
-                        "1970-01-01T09:15:00.000000Z\t0.9540069089049732\n" +
-                        "1970-01-01T09:30:00.000000Z\t-0.03167026265669903\n" +
-                        "1970-01-01T09:45:00.000000Z\t-0.19751370382305056\n" +
-                        "1970-01-01T10:00:00.000000Z\t0.6806873134626418\n" +
-                        "1970-01-01T10:15:00.000000Z\t-0.24008362859107102\n" +
-                        "1970-01-01T10:30:00.000000Z\t-0.9455893004802433\n" +
-                        "1970-01-01T10:45:00.000000Z\t-0.6247427794126656\n" +
-                        "1970-01-01T11:00:00.000000Z\t-0.3901731258748704\n" +
-                        "1970-01-01T11:15:00.000000Z\t-0.10643046345788132\n" +
-                        "1970-01-01T11:30:00.000000Z\t0.07246172621937097\n" +
-                        "1970-01-01T11:45:00.000000Z\t-0.3679848625908545\n" +
-                        "1970-01-01T12:00:00.000000Z\t0.6697969295620055\n" +
-                        "1970-01-01T12:15:00.000000Z\t-0.26369335635512836\n" +
-                        "1970-01-01T12:45:00.000000Z\t-0.19846258365662472\n" +
-                        "1970-01-01T13:00:00.000000Z\t-0.8595900073631431\n" +
-                        "1970-01-01T13:15:00.000000Z\t0.7458169804091256\n" +
-                        "1970-01-01T13:30:00.000000Z\t0.4274704286353759\n" +
-                        "1970-01-01T14:00:00.000000Z\t-0.8291193369353376\n" +
-                        "1970-01-01T14:30:00.000000Z\t0.2711532808184136\n" +
-                        "1970-01-01T15:00:00.000000Z\t-0.8189713915910615\n" +
-                        "1970-01-01T15:15:00.000000Z\t0.7365115215570027\n" +
-                        "1970-01-01T15:30:00.000000Z\t-0.9418719455092096\n" +
-                        "1970-01-01T16:00:00.000000Z\t-0.05024615679069011\n" +
-                        "1970-01-01T16:15:00.000000Z\t-0.8952510116133903\n" +
-                        "1970-01-01T16:30:00.000000Z\t-0.029227696942726644\n" +
-                        "1970-01-01T16:45:00.000000Z\t-0.7668146556860689\n" +
-                        "1970-01-01T17:00:00.000000Z\t-0.05158459929273784\n" +
-                        "1970-01-01T17:15:00.000000Z\t-0.06846631555382798\n" +
-                        "1970-01-01T17:30:00.000000Z\t-0.5708643723875381\n" +
-                        "1970-01-01T17:45:00.000000Z\t0.7260468106076399\n" +
-                        "1970-01-01T18:15:00.000000Z\t-0.1010501916946902\n" +
-                        "1970-01-01T18:30:00.000000Z\t-0.05094182589333662\n" +
-                        "1970-01-01T18:45:00.000000Z\t-0.38402128906440336\n" +
-                        "1970-01-01T19:15:00.000000Z\t0.7694744648762927\n" +
-                        "1970-01-01T19:45:00.000000Z\t0.6901976778065181\n" +
-                        "1970-01-01T20:00:00.000000Z\t-0.5913874468544745\n" +
-                        "1970-01-01T20:30:00.000000Z\t-0.14261321308606745\n" +
-                        "1970-01-01T20:45:00.000000Z\t0.4440250924606578\n" +
-                        "1970-01-01T21:00:00.000000Z\t-0.09618589590900506\n" +
-                        "1970-01-01T21:15:00.000000Z\t-0.08675950660182763\n" +
-                        "1970-01-01T21:30:00.000000Z\t-0.741970173888595\n" +
-                        "1970-01-01T21:45:00.000000Z\t0.4167781163798937\n" +
-                        "1970-01-01T22:00:00.000000Z\t-0.05514933756198426\n" +
-                        "1970-01-01T22:30:00.000000Z\t-0.2093569947644236\n" +
-                        "1970-01-01T22:45:00.000000Z\t-0.8439276969435359\n" +
-                        "1970-01-01T23:00:00.000000Z\t-0.03973283003449557\n" +
-                        "1970-01-01T23:15:00.000000Z\t-0.8551850405049611\n" +
-                        "1970-01-01T23:45:00.000000Z\t0.6226001464598434\n" +
-                        "1970-01-02T00:00:00.000000Z\t-0.7195457109208119\n" +
-                        "1970-01-02T00:15:00.000000Z\t-0.23493793601747937\n" +
-                        "1970-01-02T00:30:00.000000Z\t-0.6334964081687151\n",
-                "SELECT\n" +
-                        "    delivery_start_utc as y_utc_15m,\n" +
-                        "    sum(case\n" +
-                        "            when seller='sf' then -1.0*volume_mw\n" +
-                        "            when buyer='sf' then 1.0*volume_mw\n" +
-                        "            else 0.0\n" +
-                        "        end)\n" +
-                        "    as y_sf_position_mw\n" +
-                        "FROM (\n" +
-                        "    SELECT delivery_start_utc, seller, buyer, volume_mw FROM trades\n" +
-                        "    WHERE\n" +
-                        "        (seller = 'sf' OR buyer = 'sf')\n" +
-                        "    )\n" +
-                        "group by y_utc_15m",
-                "create table trades as (" +
-                        "select" +
-                        " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
-                        " rnd_symbol('sf', null) seller," +
-                        " rnd_symbol('sf', null) buyer," +
-                        " rnd_double() volume_mw" +
-                        " from long_sequence(100)" +
-                        "), index(seller), index(buyer) timestamp(delivery_start_utc)",
                 null,
                 true,
                 true,
@@ -845,6 +824,50 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNestedGroupByFn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
+            try (RecordCursorFactory ignored = compiler.compile("select sym, max(sum(x + min(x)) - avg(x)) from test", sqlExecutionContext).getRecordCursorFactory()) {
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
+            }
+        });
+    }
+
+    @Test
+    public void testNonNestedGroupByFn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
+            try (RecordCursorFactory ignored = compiler.compile("select sym, max(x) - (min(x) + 1) from test", sqlExecutionContext).getRecordCursorFactory()) {
+                Assert.assertTrue(true);
+            } catch (SqlException e) {
+                Assert.fail();
+            }
+        });
+    }
+
+    @Test
+    public void testVectorCountFirstColumnIsVar() throws Exception {
+        assertQuery("s\tc\n" +
+                        "101.99359297570571\t200\n",
+                "select sum(d) s, count() c from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_str() s," +
+                        " rnd_double() d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                false,
                 true,
                 true
         );
@@ -2975,26 +2998,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVectorCountFirstColumnIsVar() throws Exception {
-        assertQuery("s\tc\n" +
-                        "101.99359297570571\t200\n",
-                "select sum(d) s, count() c from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_str() s," +
-                        " rnd_double() d" +
-                        " from" +
-                        " long_sequence(200)" +
-                        ")",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testVectorNSumOneDouble() throws Exception {
         assertQuery("sum\n" +
                         "833539.8830410708\n",
@@ -3078,6 +3081,31 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(200)" +
                         ") timestamp(k) partition by DAY",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSumOverCrossJoinSubQuery() throws Exception {
+        assertQuery("sum\n" +
+                        "-0.5260093253070417\n",
+                "SELECT sum(lth*pcp) " +
+                        "from ( " +
+                        "  select (x.lth - avg_x.lth) as lth, (x.pcp - avg_x.pcp) as pcp " +
+                        "  from x cross join (select avg(lth) as lth, avg(pcp) as pcp from x) avg_x " +
+                        ")",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) lth," +
+                        " rnd_double(42) pcp," +
+                        " timestamp_sequence(0, 10000000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by day",
                 null,
                 false,
                 true,

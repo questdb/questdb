@@ -24,11 +24,13 @@
 
 package io.questdb.cutlass.line.tcp.load;
 
-import io.questdb.std.BoolList;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.line.tcp.ColumnNameType;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
+
+import java.util.List;
 
 public class LineData {
     private final long timestampNanos;
@@ -38,14 +40,23 @@ public class LineData {
     private final ObjList<CharSequence> names = new ObjList<>();
     private final ObjList<CharSequence> values = new ObjList<>();
     private final BoolList tagFlags = new BoolList();
+    private final LowerCaseCharSequenceHashSet updated = new LowerCaseCharSequenceHashSet();
 
     private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
+    private int tagsCount;
 
     public LineData(long timestampMicros) {
         timestampNanos = timestampMicros * 1000;
         final StringSink timestampSink = new StringSink();
         TimestampFormatUtils.appendDateTimeUSec(timestampSink, timestampMicros);
         addColumn("timestamp", timestampSink);
+    }
+
+    public void addColumn(CharSequence colName, CharSequence colValue) {
+        if (tagsCount == 0) {
+            tagsCount = names.size();
+        }
+        add(colName, colValue, false);
     }
 
     public long getTimestamp() {
@@ -56,15 +67,54 @@ public class LineData {
         add(tagName, tagValue, true);
     }
 
-    public void addColumn(CharSequence colName, CharSequence colValue) {
-        add(colName, colValue, false);
+    public synchronized String generateRandomUpdate(CharSequence tableName, List<ColumnNameType> columns, Rnd rnd) {
+        int columnType = -1;
+        int fieldIndex = -1;
+
+        OUT:
+        for (int i = 0; i < columns.size(); i++) {
+            final ColumnNameType column = columns.get(i);
+            final CharSequence name = column.columnName;
+            if (!updated.contains(name)) {
+                columnType = column.columnType;
+
+                for (int j = 0; j < names.size(); j++) {
+                    if (Chars.equals(name, names.getQuick(j))) {
+                        fieldIndex = j;
+                        updated.add(name);
+                        break OUT;
+                    }
+                }
+            }
+        }
+        if (fieldIndex == -1) {
+            // Nothing to update anymore on this line. Update field to the value of the self.
+            return String.format("update \"%s\" set %s=%s where 1 != 1", tableName, columns.get(0).columnName, columns.get(0).columnName);
+        }
+
+        double value = 5000.0 + rnd.nextInt(1000);
+        String valueStr = String.valueOf(value);
+        values.set(fieldIndex, valueStr);
+
+        boolean quote = columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL;
+        if (quote) {
+            return String.format("update \"%s\" set %s='%s' where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
+        } else {
+            return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
+        }
+    }
+
+    private String TimestampsToString(long uSecs) {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, null, null, sink);
+        return sink.toString();
     }
 
     private void add(CharSequence name, CharSequence value, boolean isTag) {
         names.add(name);
         values.add(value);
         tagFlags.add(isTag);
-        nameToIndex.putIfAbsent(name, names.size() -1);
+        nameToIndex.putIfAbsent(name, names.size() - 1);
     }
 
     public String toLine(final CharSequence tableName) {

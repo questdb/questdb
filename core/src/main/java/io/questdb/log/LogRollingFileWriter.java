@@ -29,7 +29,9 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -142,7 +144,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
 
         this.rollDeadline = rollDeadlineFunction.getDeadline();
-        this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
         this.lim = buf + nBufferSize;
         openFile();
     }
@@ -153,7 +155,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             if (_wptr > buf) {
                 flush();
             }
-            Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
             buf = 0;
         }
         if (this.fd != -1) {
@@ -308,7 +310,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
             path.put('.').put(index - 1);
             renameToPath.put('.').put(index);
-            if (!ff.rename(path.$(), renameToPath.$())) {
+            if (ff.rename(path.$(), renameToPath.$()) != Files.FILES_RENAME_OK) {
                 throw new LogError("Could not rename " + path + " to " + renameToPath);
             }
             index--;
@@ -318,7 +320,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         buildFilePath(path);
         buildFilePath(renameToPath);
         renameToPath.put(".1");
-        if (!ff.rename(path.$(), renameToPath.$())) {
+        if (ff.rename(path.$(), renameToPath.$()) != Files.FILES_RENAME_OK) {
             throw new LogError("Could not rename " + path + " to " + renameToPath);
         }
     }

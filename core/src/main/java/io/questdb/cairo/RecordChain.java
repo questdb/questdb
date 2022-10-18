@@ -27,14 +27,16 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI {
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI, Reopenable {
 
     private final long[] columnOffsets;
     private final MemoryARW mem;
@@ -46,9 +48,14 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
-    private RecordCursor symbolTableResolver;
+    private SymbolTableSource symbolTableResolver;
 
-    public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
+    public RecordChain(
+            @Transient @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            long pageSize,
+            int maxPages
+    ) {
         this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
         this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
@@ -88,14 +95,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     @Override
     public void clear() {
-        close();
+        mem.close();
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
     }
 
     @Override
     public void close() {
-        mem.close();
-        nextRecordOffset = -1L;
-        varAppendOffset = 0L;
+        clear();
+        symbolTableResolver = null;
     }
 
     @Override
@@ -126,6 +134,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public Record getRecordB() {
         return recordB;
+    }
+
+    @Override
+    public void reopen() {
+        //nothing to do here        
     }
 
     @Override
@@ -213,6 +226,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putLong128LittleEndian(long hi, long lo) {
+        mem.putLong128LittleEndian(hi, lo);
+    }
+
+    @Override
     public void putShort(short value) {
         mem.putShort(value);
     }
@@ -258,7 +276,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.skip(bytes);
     }
 
-    public void setSymbolTableResolver(RecordCursor resolver) {
+    public void setSymbolTableResolver(SymbolTableSource resolver) {
         this.symbolTableResolver = resolver;
     }
 
@@ -338,6 +356,16 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
+        public long getLong128Hi(int col) {
+            return mem.getLong(fixedWithColumnOffset(col) + 8);
+        }
+
+        @Override
+        public long getLong128Lo(int col) {
+            return mem.getLong(fixedWithColumnOffset(col));
+        }
+
+        @Override
         public long getRowId() {
             return baseOffset - 8;
         }
@@ -350,12 +378,14 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public CharSequence getStr(int col) {
             long offset = varWidthColumnOffset(col);
+            assert offset > -2;
             return offset == -1 ? null : mem.getStr(offset);
         }
 
         @Override
         public CharSequence getStrB(int col) {
             long offset = varWidthColumnOffset(col);
+            assert offset > -2;
             return offset == -1 ? null : mem.getStr2(offset);
         }
 

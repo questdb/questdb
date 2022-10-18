@@ -690,7 +690,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testTableDoesNotExist() throws Exception {
-        assertFailure("alter table y", 12, "table 'y' does not");
+        assertFailure("alter table y", 12, "table does not exist [table=y]");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

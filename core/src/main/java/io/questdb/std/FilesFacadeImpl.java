@@ -33,6 +33,17 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
     private long mapPageSize = 0;
+    private final FsOperation copyFsOperation = this::copy;
+    private final FsOperation hardLinkFsOperation = this::hardLink;
+
+    @Override
+    public boolean allocate(long fd, long size) {
+        // do not bother allocating on Windows because mmap() will try to allocate regardless
+        if (Os.type != Os.WINDOWS) {
+            return Files.allocate(fd, size);
+        }
+        return true;
+    }
 
     @Override
     public long append(long fd, long buf, int len) {
@@ -47,6 +58,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int copy(LPSZ from, LPSZ to) {
         return Files.copy(from, to);
+    }
+
+    @Override
+    public int copyRecursive(Path src, Path dst, int dirMode) {
+        return runRecursive(src, dst, dirMode, copyFsOperation);
     }
 
     @Override
@@ -65,15 +81,32 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public void findClose(long findPtr) {
-        Files.findClose(findPtr);
+    public void fadvise(long fd, long offset, long len, int advise) {
+        if (advise > -1) {
+            Files.fadvise(fd, offset, len, advise);
+        }
+    }
+
+    @Override
+    public void madvise(long address, long len, int advise) {
+        if (advise > -1) {
+            Files.madvise(address, len, advise);
+        }
+    }
+
+    @Override
+    public long findClose(long findPtr) {
+        if (findPtr != 0) {
+            Files.findClose(findPtr);
+        }
+        return 0;
     }
 
     @Override
     public long findFirst(LPSZ path) {
         long ptr = Files.findFirst(path);
         if (ptr == -1) {
-            throw CairoException.instance(Os.errno()).put("findFirst failed on ").put(path);
+            throw CairoException.critical(Os.errno()).put("findFirst failed on ").put(path);
         }
         return ptr;
     }
@@ -87,7 +120,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public int findNext(long findPtr) {
         int r = Files.findNext(findPtr);
         if (r == -1) {
-            throw CairoException.instance(Os.errno()).put("findNext failed");
+            throw CairoException.critical(Os.errno()).put("findNext failed");
         }
         return r;
     }
@@ -98,23 +131,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long getLastModified(LPSZ path) {
-        return Files.getLastModified(path);
-    }
-
-    @Override
-    public int msync(long addr, long len, boolean async) {
-        return Files.msync(addr, len, async);
-    }
-
-    @Override
     public int fsync(long fd) {
         return Files.fsync(fd);
     }
 
     @Override
-    public int sync() {
-        return Files.sync();
+    public long getLastModified(LPSZ path) {
+        return Files.getLastModified(path);
     }
 
     @Override
@@ -133,6 +156,21 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long getPageSize() {
         return Files.PAGE_SIZE;
+    }
+
+    @Override
+    public int hardLink(LPSZ src, LPSZ hardLink) {
+        return Files.hardLink(src, hardLink);
+    }
+
+    @Override
+    public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+        return runRecursive(src, dst, dirMode, hardLinkFsOperation);
+    }
+
+    @Override
+    public boolean isCrossDeviceCopyError(int errno) {
+        return Os.isPosix() && errno == 18;
     }
 
     @Override
@@ -158,7 +196,7 @@ public class FilesFacadeImpl implements FilesFacade {
     public long length(long fd) {
         long r = Files.length(fd);
         if (r < 0) {
-            throw CairoException.instance(Os.errno()).put("Checking file size failed");
+            throw CairoException.critical(Os.errno()).put("Checking file size failed");
         }
         return r;
     }
@@ -174,12 +212,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int mkdir(LPSZ path, int mode) {
+    public int mkdir(Path path, int mode) {
         return Files.mkdir(path, mode);
     }
 
     @Override
-    public int mkdirs(LPSZ path, int mode) {
+    public int mkdirs(Path path, int mode) {
         return Files.mkdirs(path, mode);
     }
 
@@ -189,13 +227,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
-        return Files.mmap(fd, len, flags, mode, memoryTag);
+    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+        return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
     @Override
-    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-        return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+    public int msync(long addr, long len, boolean async) {
+        return Files.msync(addr, len, async);
     }
 
     @Override
@@ -209,6 +247,15 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long openCleanRW(LPSZ name, long size) {
+        // Open files and if file exists, try exclusively lock it
+        // If exclusive lock worked the file will be cleaned and allocated to the given size
+        // Shared lock will be left on the file which will be removed when file descriptor is closed
+        // If file did not exist, it will be allocated to the size and shared lock set
+        return Files.openCleanRW(name, size);
+    }
+
+    @Override
     public long openRO(LPSZ name) {
         return Files.openRO(name);
     }
@@ -216,15 +263,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long openRW(LPSZ name, long opts) {
         return Files.openRW(name, opts);
-    }
-
-    @Override
-    public long openCleanRW(LPSZ name, long size) {
-        // Open files and if file exists, try exclusively lock it
-        // If exclusive lock worked the file will be cleaned and allocated to the given size
-        // Shared lock will be left on the file which will be removed when file descriptor is closed
-        // If file did not exist, it will be allocated to the size and shared lock set
-        return Files.openCleanRW(name, size);
     }
 
     @Override
@@ -243,13 +281,18 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rename(LPSZ from, LPSZ to) {
+    public int rename(LPSZ from, LPSZ to) {
         return Files.rename(from, to);
     }
 
     @Override
     public int rmdir(Path name) {
         return Files.rmdir(name);
+    }
+
+    @Override
+    public int sync() {
+        return Files.sync();
     }
 
     @Override
@@ -262,12 +305,27 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.truncate(fd, size);
     }
 
-    @Override
-    public boolean allocate(long fd, long size) {
-        if (Os.type != Os.WINDOWS) {
-            return Files.allocate(fd, size);
+    public void walk(Path path, FindVisitor func) {
+        int len = path.length();
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long name = findName(p);
+                    if (Files.notDots(name)) {
+                        int type = findType(p);
+                        path.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            func.onFind(name, type);
+                        } else {
+                            walk(path.concat(name).$(), func);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+            }
         }
-        return true;
     }
 
     @Override
@@ -288,4 +346,66 @@ public class FilesFacadeImpl implements FilesFacade {
         }
     }
 
+    private int runRecursive(Path src, Path dst, int dirMode, FsOperation operation) {
+        int dstLen = dst.length();
+        int srcLen = src.length();
+        int len = src.length();
+        long p = findFirst(src.$());
+        src.chop$();
+
+        if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
+            return -1;
+        }
+        dst.chop$();
+
+        if (p > 0) {
+            try {
+                int res;
+                do {
+                    long name = findName(p);
+                    if (Files.notDots(name)) {
+                        int type = findType(p);
+                        src.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            src.concat(name);
+                            dst.concat(name);
+
+                            if ((res = operation.invoke(src.$(), dst.$())) < 0) {
+                                return res;
+                            }
+
+                            src.trimTo(srcLen);
+                            dst.trimTo(dstLen);
+
+                        } else {
+                            src.concat(name);
+                            dst.concat(name);
+
+                            // Ignore if subfolder already exists
+                            mkdir(dst.$(), dirMode);
+
+                            dst.chop$();
+                            if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
+                                return res;
+                            }
+
+                            src.trimTo(srcLen);
+                            dst.trimTo(dstLen);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+                src.trimTo(srcLen);
+                dst.trimTo(dstLen);
+            }
+        }
+
+        return 0;
+    }
+
+    @FunctionalInterface
+    private interface FsOperation {
+        int invoke(LPSZ src, LPSZ dst);
+    }
 }

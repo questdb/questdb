@@ -194,7 +194,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
     @Test
     public void testBadSyntax() throws Exception {
-        assertFailure("alter table x alter column z", 28, "'add index' or 'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column z", 28, "'add index' or 'drop index' or 'cache' or 'nocache' expected");
     }
 
     @Test
@@ -257,7 +257,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
         @Override
         public void print(Record r, RecordMetadata m, CharSink sink) {
-            printColumn(r, m, columnIndex, sink);
+            TestUtils.printColumn(r, m, columnIndex, sink);
             sink.put("\n");
             sink.flush();
         }

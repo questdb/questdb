@@ -33,9 +33,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-import java.io.Closeable;
-
-public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
+public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
@@ -82,7 +80,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);
-        for (long lo = loRow; lo < hiRow; lo++) {
+        for (long lo = Math.max(loRow,  columnTop); lo < hiRow; lo++) {
             writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
         }
         writer.setMaxValue(hiRow - 1);

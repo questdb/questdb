@@ -120,12 +120,23 @@ public class GroupByFunctionTest {
             return null;
         }
 
-        private int getPosition() {
-            return 0;
+        @Override
+        public long getLong128Hi(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public RecordCursorFactory getRecordCursorFactory() {
+            return null;
+        }
+
+        @Override
+        public Record getRecord(Record rec) {
             return null;
         }
 
@@ -150,11 +161,6 @@ public class GroupByFunctionTest {
 
         @Override
         public void getStr(Record rec, CharSink sink, int arrayIndex) {
-        }
-
-        @Override
-        public Record getRecord(Record rec) {
-            return null;
         }
 
         @Override
@@ -215,6 +221,11 @@ public class GroupByFunctionTest {
         @Override
         public int getType() {
             return 0;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     };
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
@@ -52,9 +53,13 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private static int toByteRefs = 0;
     private FunctionFactory factory;
 
-    protected void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-        assertCursor(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
+    protected void assertQuery(CharSequence expected, CharSequence sql) throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(expected, cursor, factory.getMetadata(), true);
+            }
+        });
     }
 
     protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
@@ -471,18 +476,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             closeFunctions();
         }
 
-        public void andAssert(byte expected) {
-            Assert.assertEquals(expected, function1.getByte(record));
-            Assert.assertEquals(expected, function2.getByte(record));
-            closeFunctions();
-        }
-
-        public void andAssert(short expected) {
-            Assert.assertEquals(expected, function1.getShort(record));
-            Assert.assertEquals(expected, function2.getShort(record));
-            closeFunctions();
-        }
-
         public void andAssert(long expected) {
             Assert.assertEquals(expected, function1.getLong(record));
             Assert.assertEquals(expected, function2.getLong(record));
@@ -512,13 +505,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         public void andAssertLong256(Long256 expected) {
-            Assert.assertTrue(expected.equals(function1.getLong256A(record)));
-            Assert.assertTrue(expected.equals(function2.getLong256A(record)));
+            Assert.assertEquals(expected, function1.getLong256A(record));
+            Assert.assertEquals(expected, function2.getLong256A(record));
             closeFunctions();
-        }
-
-        public Record getRecord() {
-            return record;
         }
 
         private void assertString(Function func, CharSequence expected) {

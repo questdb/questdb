@@ -30,7 +30,8 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.*;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjuster;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -163,14 +164,11 @@ public class TimestampsBruteForceTest {
         ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
         ZonedDateTime deadline = current.plusYears(yearsToTest);
 
-        long l = 0;
         while (current.isBefore(deadline)) {
             long epochMicros = toEpochMicros(current);
             assertFunction.accept(current, epochMicros);
             current = stepFunction.apply(current);
-            l++;
         }
-        System.out.println("Tried " + l + " different timestamps.");
     }
 
     private static long toEpochMicros(ZonedDateTime zonedDateTime) {

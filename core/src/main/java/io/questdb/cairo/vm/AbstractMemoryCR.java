@@ -25,8 +25,12 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 
+//contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
@@ -39,7 +43,6 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     protected long fd = -1;
     protected long size = 0;
     protected long lim;
-    protected long grownLength;
 
     @Override
     public long offsetInPage(long offset) {
@@ -64,11 +67,6 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     public long resize(long size) {
         extend(size);
         return pageAddress;
-    }
-
-    public void zero() {
-        long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
     }
 
     @Override
@@ -110,9 +108,5 @@ public abstract class AbstractMemoryCR implements MemoryCR {
 
     public FilesFacade getFilesFacade() {
         return ff;
-    }
-
-    public long getGrownLength() {
-        return grownLength;
     }
 }

@@ -28,20 +28,17 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class ByteColumn extends ByteFunction implements ScalarFunction {
     private static final ObjList<ByteColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new ByteColumn(i));
-        }
-    }
-
     private final int columnIndex;
+
+    public ByteColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
+    }
 
     public static ByteColumn newInstance(int columnIndex) {
         if (columnIndex < STATIC_COLUMN_COUNT) {
@@ -50,12 +47,27 @@ public class ByteColumn extends ByteFunction implements ScalarFunction {
 
         return new ByteColumn(columnIndex);
     }
-    public ByteColumn(int columnIndex) {
-        this.columnIndex = columnIndex;
-    }
 
     @Override
     public byte getByte(Record rec) {
         return rec.getByte(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("ByteColumn(").put(columnIndex).put(')');
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new ByteColumn(i));
+        }
     }
 }

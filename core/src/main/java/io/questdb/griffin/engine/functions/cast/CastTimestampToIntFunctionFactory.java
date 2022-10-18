@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastTimestampToIntFunctionFactory implements FunctionFactory {
     @Override
@@ -63,5 +64,11 @@ public class CastTimestampToIntFunctionFactory implements FunctionFactory {
             final long value = arg.getTimestamp(rec);
             return value == Numbers.LONG_NaN ? Numbers.INT_NaN : (int) value;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("CastTimestampToInt(").put(arg).put(')');
+        }
     }
+
 }

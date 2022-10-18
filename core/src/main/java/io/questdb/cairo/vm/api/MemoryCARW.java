@@ -24,11 +24,11 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 
+//contiguous appendable readable writable
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     default long putBin(BinarySequence value) {
@@ -66,8 +66,8 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         putByte((byte) (value ? 1 : 0));
     }
 
-    default void putByte(byte b) {
-        Unsafe.getUnsafe().putByte(appendAddressFor(Byte.BYTES), b);
+    default void putByte(byte value) {
+        Unsafe.getUnsafe().putByte(appendAddressFor(Byte.BYTES), value);
     }
 
     default void putChar(char value) {
@@ -90,10 +90,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putLong(appendAddressFor(Long.BYTES), value);
     }
 
-    default void putLong128(long l1, long l2) {
+    @Override
+    default void putLongLong(long l0, long l1) {
         long addr = appendAddressFor(16);
-        Unsafe.getUnsafe().putLong(addr, l1);
-        Unsafe.getUnsafe().putLong(addr + 8, l2);
+        Unsafe.getUnsafe().putLong(addr, l0);
+        Unsafe.getUnsafe().putLong(addr + 8, l1);
     }
 
     default void putLong256(long l0, long l1, long l2, long l3) {
@@ -224,11 +225,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     default void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
-        try {
-            Long256FromCharSequenceDecoder.decode(hexString, start, end, acceptor);
-        } catch (NumericException e) {
-            throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
-        }
+        Long256FromCharSequenceDecoder.decode(hexString, start, end, acceptor);
     }
 
     default void putLong256Null() {
@@ -242,6 +239,4 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Chars.copyStrChars(value, pos, len, addr + Integer.BYTES);
         return getAppendOffset();
     }
-
-    void replacePage(long address, long size);
 }

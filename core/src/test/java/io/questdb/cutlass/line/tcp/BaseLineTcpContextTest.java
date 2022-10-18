@@ -35,14 +35,11 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.FloatingDirectCharSink;
-import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Before;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -98,6 +95,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean symbolAsFieldSupported;
     protected short floatDefaultColumnType;
     protected short integerDefaultColumnType;
+    protected boolean autoCreateNewColumns = true;
+    protected boolean autoCreateNewTables = true;
 
     @Before
     public void before() {
@@ -109,6 +108,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
+        autoCreateNewColumns = true;
+        autoCreateNewTables = true;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
     }
 
@@ -118,13 +119,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
         return new WorkerPool(new WorkerPoolConfiguration() {
-            private final int[] affinityByThread;
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinityByThread;
-            }
-
             @Override
             public int getWorkerCount() {
                 return workerCount;
@@ -134,12 +128,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
-
-            {
-                affinityByThread = new int[workerCount];
-                Arrays.fill(affinityByThread, -1);
-            }
-        }, metrics);
+        }, metrics.health());
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
@@ -168,6 +157,16 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         return new DefaultLineTcpReceiverConfiguration() {
+            @Override
+            public boolean getAutoCreateNewColumns() {
+                return autoCreateNewColumns;
+            }
+
+            @Override
+            public boolean getAutoCreateNewTables() {
+                return autoCreateNewTables;
+            }
+
             @Override
             public int getNetMsgBufferSize() {
                 return netMsgBufferSize.get();
@@ -302,11 +301,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.scheduleEvent(netIoJob, parser, floatingDirectCharSink);
+                return super.scheduleEvent(netIoJob, parser);
             }
         };
         if (authDb == null) {
@@ -331,6 +330,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public int getPort() {
+                return 9009;
+            }
+
+            @Override
             public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
                 return false;
             }
@@ -351,7 +355,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
         Assert.assertFalse(context.invalid());
         Assert.assertEquals(FD, context.getFd());
-        workerPool.assignCleaner(Path.CLEANER);
         workerPool.start(LOG);
     }
 

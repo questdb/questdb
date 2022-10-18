@@ -33,14 +33,13 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
-
+    //factory keeps a reference but allocation lifecycle is governed by cursor
     protected final Map map;
     protected final ObjList<GroupByFunction> groupByFunctions;
     protected final RecordSink mapSink;
@@ -65,17 +64,21 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     }
 
     @Override
-    public void close() {
-        super.close();
-        Misc.free(map);
+    protected void _close() {
+        super._close();
+        getRawCursor().close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        AbstractNoRecordSampleByCursor rawCursor = null;
         try {
-            map.clear();
+            rawCursor = getRawCursor();
+            if (rawCursor instanceof Reopenable) {
+                ((Reopenable) rawCursor).reopen();
+            }
 
             // This factory fills gaps in data. To do that we
             // have to know all possible key values. Essentially, every time
@@ -85,7 +88,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             int n = groupByFunctions.size();
             final Record baseCursorRecord = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = map.withKey();
                 mapSink.copy(baseCursorRecord, key);
                 MapValue value = key.createValue();
@@ -103,6 +106,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             // empty map? this means that base cursor was empty
             if (map.size() == 0) {
                 baseCursor.close();
+                rawCursor.close();
                 return EmptyTableNoSizeRecordCursor.INSTANCE;
             }
 
@@ -115,6 +119,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             return initFunctionsAndCursor(executionContext, baseCursor);
         } catch (Throwable ex) {
             baseCursor.close();
+            Misc.free(rawCursor);
             throw ex;
         }
     }

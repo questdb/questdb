@@ -77,11 +77,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / (4 * Long.BYTES));
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / (4 * Long.BYTES));
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / (4 * Long.BYTES), valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / (4 * Long.BYTES), valueOffset);
         }
     }
 
@@ -105,8 +105,8 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumLong256Merge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntSumLong256Merge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -117,8 +117,8 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
     }
 
     @Override

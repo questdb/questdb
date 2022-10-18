@@ -28,7 +28,7 @@
 #include "errno.h"
 
 int get_int_sockopt(SOCKET fd, int level, int opt) {
-    DWORD value = 0;
+    int value = 0;
     socklen_t len = sizeof(value);
     int result = getsockopt(fd, level, opt, (char *) &value, &len);
     if (result == SOCKET_ERROR) {
@@ -76,7 +76,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketUdp0
         closesocket(s);
         return -1;
     }
-    return s;
+    return (jlong)s;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEWouldBlock
@@ -84,7 +84,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEWouldBlock
     return EWOULDBLOCK;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr0
         (JNIEnv *e, jclass cl, jint address, jint port) {
     struct sockaddr_in *addr = calloc(1, sizeof(struct sockaddr_in));
     addr->sin_family = AF_INET;
@@ -93,10 +93,37 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr
     return (jlong) addr;
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo0
+        (JNIEnv *e, jclass cl, jlong host, jint port) {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *addr = NULL;
+
+    char _port[32];
+    itoa(port, _port, 10);
+    errno_t gai_err_code = getaddrinfo((const char *) host, (const char *) &_port, &hints, &addr);
+
+    if (gai_err_code == 0) {
+        return (jlong) addr;
+    }
+
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr0
         (JNIEnv *e, jclass cl, jlong address) {
     if (address != 0) {
         free((void *) address);
+    }
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeAddrInfo0
+(JNIEnv *e, jclass cl, jlong address) {
+    if (address != 0) {
+        freeaddrinfo((void *) address);
     }
 }
 
@@ -166,9 +193,22 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
     return FALSE;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connect
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
-    jlong res = connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+    jint res = connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+    if (res < 0) {
+        SaveLastError();
+    }
+    return res;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
+        (JNIEnv *e, jclass cl, jlong fd, jlong lpAddrInfo) {
+    struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
+    jint res = connect((SOCKET) fd,
+                        addr->ai_addr,
+                        (int) addr->ai_addrlen
+    );
     if (res < 0) {
         SaveLastError();
     }
@@ -394,4 +434,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
     }
     SaveLastError();
     return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_resolvePort
+        (JNIEnv *e, jclass cl, jlong fd) {
+    struct sockaddr_in resolved_addr;
+    memset(&resolved_addr, 0, sizeof(resolved_addr));
+    socklen_t resolved_addr_len = sizeof(resolved_addr);
+    if (getsockname(
+            fd,
+            (struct sockaddr *)&resolved_addr,
+            &resolved_addr_len) == -1)
+        return -1;
+    return ntohs(resolved_addr.sin_port);
 }

@@ -24,29 +24,42 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cutlass.text.TextImportRequestJob;
+import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
+import static org.hamcrest.Matchers.*;
+
 import java.io.*;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.sql.Timestamp;
+import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
@@ -78,10 +91,17 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
-        long rc = nf.connect(fd, ilpSockAddr);
+    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
+        long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
+        }
+    }
+
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+        long rc = connectAddrInfo(fd, sockAddrInfo);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
@@ -97,8 +117,8 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
-    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual) {
-        assertEquals(metadataExpected, metadataActual);
+    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
         long rowIndex = 0;
@@ -132,7 +152,9 @@ public final class TestUtils {
                             Assert.assertEquals(r.getGeoInt(i), l.getGeoInt(i));
                             break;
                         case ColumnType.STRING:
-                            TestUtils.assertEquals(r.getStr(i), l.getStr(i));
+                            CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? l.getSym(i) : l.getStr(i);
+                            CharSequence expected = r.getStr(i);
+                            TestUtils.assertEquals(expected, actual);
                             break;
                         case ColumnType.SYMBOL:
                             Assert.assertEquals(r.getSym(i), l.getSym(i));
@@ -330,6 +352,15 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(LongList expected, LongList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
         assertEqualsIgnoreCase(null, expected, actual);
     }
@@ -355,6 +386,29 @@ public final class TestUtils {
             if (Character.toLowerCase(expected.charAt(i)) != Character.toLowerCase(actual.charAt(i))) {
                 Assert.assertEquals(message, expected, actual);
             }
+        }
+    }
+
+    public static void assertEventually(Runnable assertion) {
+        assertEventually(assertion, 30);
+    }
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
         }
     }
 
@@ -404,6 +458,13 @@ public final class TestUtils {
         Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
+
+        int addrInfoCount = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
+
+        int sockAddrCount = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
+
         runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
@@ -417,11 +478,23 @@ public final class TestUtils {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
-                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
                     Assert.assertTrue(actualMemByTag > -1);
                 }
             }
             Assert.assertEquals(mem, memAfter);
+        }
+
+        int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue(addrInfoCountAfter > -1);
+        if (addrInfoCount != addrInfoCountAfter) {
+            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
+        }
+
+        int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue(sockAddrCountAfter > -1);
+        if (sockAddrCount != sockAddrCountAfter) {
+            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
         }
     }
 
@@ -452,11 +525,15 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log) throws SqlException {
+        assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
+    }
+
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
                     try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
-                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata());
+                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
                     }
                 } catch (AssertionError e) {
                     log.error().$(e).$();
@@ -512,6 +589,19 @@ public final class TestUtils {
         return Net.connect(fd, sockAddr);
     }
 
+    public static long connectAddrInfo(long fd, long sockAddrInfo) {
+        Assert.assertTrue(fd > -1);
+        return Net.connectAddrInfo(fd, sockAddrInfo);
+    }
+
+    public static void copyDirectory(Path src, Path dst, int dirMode) {
+        if (Files.mkdirs(dst, dirMode) != 0) {
+            Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
+        }
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        Assert.assertEquals(0, ff.copyRecursive(src, dst, dirMode));
+    }
+
     public static void copyMimeTypes(String targetDir) throws IOException {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
@@ -533,8 +623,17 @@ public final class TestUtils {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
-        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+            int partitionCount
+    ) throws NumericException, SqlException {
+        createPopulateTable(
+                tableModel.getTableName(),
+                compiler,
+                sqlExecutionContext,
+                tableModel,
+                totalRows,
+                startDate,
+                partitionCount
+        );
     }
 
     public static void createPopulateTable(
@@ -546,9 +645,27 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        compiler.compile(
+                createPopulateTableStmt(
+                        tableName,
+                        tableModel,
+                        totalRows,
+                        startDate,
+                        partitionCount
+                ),
+                sqlExecutionContext
+        );
+    }
 
-        long increment = 0;
+    public static String createPopulateTableStmt(
+            CharSequence tableName,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
             assert partitionAddMethod != null;
@@ -623,7 +740,7 @@ public final class TestUtils {
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
-        compiler.compile(sql.toString(), sqlExecutionContext);
+        return sql.toString();
     }
 
     public static void createTestPath(CharSequence root) {
@@ -635,12 +752,87 @@ public final class TestUtils {
         }
     }
 
+    public static Timestamp createTimestamp(long epochMicros) {
+        // constructor requires epoch millis
+        Timestamp ts = new Timestamp(epochMicros / 1000);
+        ts.setNanos((int) ((epochMicros % 1_000_000) * 1000));
+        return ts;
+    }
+
+    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
+        }
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration,
+            Metrics metrics,
+            Log log
+    ) throws Exception {
+        final int workerCount = pool != null ? pool.getWorkerCount() : 1;
+        try (
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+        ) {
+            try {
+                if (pool != null) {
+                    setupWorkerPool(pool, engine);
+                    pool.start(log);
+                }
+
+                runnable.run(engine, compiler, sqlExecutionContext);
+            } finally {
+                if (pool != null) {
+                    pool.halt();
+                }
+            }
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+        }
+    }
+
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration,
+            Log log
+    ) throws Exception {
+        execute(pool, runner, configuration, Metrics.disabled(), log);
+    }
+
     @NotNull
     public static Rnd generateRandom() {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
-        System.out.println("random seed " + s0 + ", " + s1);
         return new Rnd(s0, s1);
+    }
+
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        return new Rnd(s0, s1);
+    }
+
+    public static String getCsvRoot() {
+        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
+        try {
+            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
+            return new File(rootSource.toURI()).getParent();
+        } catch (URISyntaxException e) {
+            throw new AssertionError("missing test-import.csv", e);
+        }
     }
 
     public static int getJavaVersion() {
@@ -685,11 +877,159 @@ public final class TestUtils {
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
-        Assert.assertNotNull(compiledQuery.getInsertStatement());
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+        Assert.assertNotNull(compiledQuery.getInsertOperation());
+        final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
+        }
+    }
+
+    public static String insertFromSelectPopulateTableStmt(
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+
+        StringBuilder insertFromSelect = new StringBuilder();
+        insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
+                case ColumnType.INT:
+                    insertFromSelect.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    insertFromSelect.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    insertFromSelect.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    insertFromSelect.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    insertFromSelect.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    insertFromSelect.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    insertFromSelect.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    insertFromSelect.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    insertFromSelect.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    insertFromSelect.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    insertFromSelect.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                insertFromSelect.append("," + Misc.EOL);
+            }
+        }
+        insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
+        insertFromSelect.append(")" + Misc.EOL);
+        return insertFromSelect.toString();
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
+        printColumn(r, m, i, sink, false);
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean printTypes) {
+        final int columnType = m.getColumnType(i);
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DATE:
+                DateFormatUtils.appendDateTime(sink, r.getDate(i));
+                break;
+            case ColumnType.TIMESTAMP:
+                TimestampFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
+                break;
+            case ColumnType.DOUBLE:
+                sink.put(r.getDouble(i), Numbers.MAX_SCALE);
+                break;
+            case ColumnType.FLOAT:
+                sink.put(r.getFloat(i), 4);
+                break;
+            case ColumnType.INT:
+                sink.put(r.getInt(i));
+                break;
+            case ColumnType.NULL:
+                sink.put("null");
+                break;
+            case ColumnType.STRING:
+                r.getStr(i, sink);
+                break;
+            case ColumnType.SYMBOL:
+                sink.put(r.getSym(i));
+                break;
+            case ColumnType.SHORT:
+                sink.put(r.getShort(i));
+                break;
+            case ColumnType.CHAR:
+                char c = r.getChar(i);
+                if (c > 0) {
+                    sink.put(c);
+                }
+                break;
+            case ColumnType.LONG:
+                sink.put(r.getLong(i));
+                break;
+            case ColumnType.GEOBYTE:
+                putGeoHash(r.getGeoByte(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOSHORT:
+                putGeoHash(r.getGeoShort(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOINT:
+                putGeoHash(r.getGeoInt(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOLONG:
+                putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.BYTE:
+                sink.put(r.getByte(i));
+                break;
+            case ColumnType.BOOLEAN:
+                sink.put(r.getBool(i));
+                break;
+            case ColumnType.BINARY:
+                Chars.toSink(r.getBin(i), sink);
+                break;
+            case ColumnType.LONG256:
+                r.getLong256(i, sink);
+                break;
+            case ColumnType.LONG128:
+                long long128Hi = r.getLong128Hi(i);
+                long long128Lo = r.getLong128Lo(i);
+                if (!Long128Util.isNull(long128Hi, long128Lo)) {
+                    UUID guid = new UUID(long128Hi, long128Lo);
+                    sink.put(guid.toString());
+                }
+                break;
+            default:
+                break;
+        }
+        if (printTypes) {
+            sink.put(':').put(ColumnType.nameOf(columnType));
         }
     }
 
@@ -744,7 +1084,36 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+    }
+
+    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
+        WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return new int[1];
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+        };
+        WorkerPool pool = new WorkerPool(config, Metrics.disabled().health());
+        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
+        try {
+            pool.assign(processingJob);
+            pool.freeOnExit(processingJob);
+            pool.start(null);
+            task.run();
+        } finally {
+            pool.halt();
+        }
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -757,6 +1126,28 @@ public final class TestUtils {
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
+        }
+    }
+
+    private static long partitionIncrement(TableModel tableModel, long fromTimestamp, int totalRows, int partitionCount) {
+        long increment = 0;
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+        return increment;
+    }
+
+    private static void putGeoHash(long hash, int bits, CharSink sink) {
+        if (hash == GeoHashes.NULL) {
+            return;
+        }
+        if (bits % 5 == 0) {
+            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
+        } else {
+            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
         }
     }
 
@@ -781,20 +1172,15 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong3());
     }
 
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual) {
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
-        }
-    }
-
-    public static void assertEquals(LongList expected, LongList actual) {
-        Assert.assertEquals(expected.size(), actual.size());
-        for (int i = 0, n = expected.size(); i < n; i++) {
-            if (expected.getQuick(i) != actual.getQuick(i)) {
-                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
-            }
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 

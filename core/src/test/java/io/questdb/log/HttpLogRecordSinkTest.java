@@ -24,9 +24,13 @@
 
 package io.questdb.log;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
 import java.util.function.Consumer;
 
@@ -55,9 +59,9 @@ public class HttpLogRecordSinkTest {
 
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();
-            message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000μs]\n";
-            Assert.assertEquals(192, alertBuilder.encodeUtf8(message).$());
-            Assert.assertEquals("Content-Length:      192\r\n" + message, alertBuilder.toString());
+            message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000ms]\n";
+            Assert.assertEquals(191, alertBuilder.encodeUtf8(message).$());
+            Assert.assertEquals("Content-Length:      191\r\n" + message, alertBuilder.toString());
 
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();

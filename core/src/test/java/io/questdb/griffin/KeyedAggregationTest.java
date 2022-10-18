@@ -24,18 +24,271 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Os;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+
+import static org.hamcrest.Matchers.*;
+
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class KeyedAggregationTest extends AbstractGriffinTest {
+
+    @Test
+    public void testAggByHourReoptimization() throws Exception {
+        assertQuery("hour\tsum\n" +
+                        "14\t2.0\n",
+                "SELECT hour(ts), sum(amount)\n" +
+                        "FROM trades\n" +
+                        "WHERE symbol = 'BTC-USD' " +
+                        "AND ts > dateadd('d', -1, to_timestamp('2018-01-02T01:30:40', 'yyyy-MM-ddTHH:mm:ss') )\n" +
+                        "ORDER BY hour ASC",
+                "CREATE TABLE trades AS " +
+                        "(select 'BTC-USD'::symbol symbol, 'Buy'::symbol side, 1.0 price, 2.0 amount, to_timestamp('2018-01-01T14:11:40', 'yyyy-MM-ddTHH:mm:ss') as ts " +
+                        " from long_sequence(1) ) " +
+                        " timestamp(ts) ",
+                null,
+                true,
+                true,
+                true);
+    }
+
+    @Test
+    public void testOOMInRostiInitRelasesAllocatedNativeMemory() throws Exception {
+        RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            int counter = 0;
+
+            @Override
+            public long alloc(ColumnTypes types, long capacity) {
+                if (++counter == 4) {
+                    return 0;
+                } else {
+                    return super.alloc(types, capacity);
+                }
+            }
+        };
+
+        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
+            long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+            try {
+                assertQuery(compiler, "", "select i, sum(d) from tab group by i", null, true, sqlExecutionContext, true);
+                Assert.fail();
+            } catch (OutOfMemoryError oome) {
+                long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+                MatcherAssert.assertThat(memAfter, is(equalTo(memBefore)));
+            }
+        });
+    }
+
+    //test rosti failing to alloc in porallel aggregate computation
+    @Test
+    public void testOOMInRostiAggCalcResetsAllocatedNativeMemoryToMinSizes() throws Exception {
+        RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public void clear(long pRosti) {
+                Rosti.enableOOMOnMalloc();
+                super.clear(pRosti);
+            }
+
+            @Override
+            public boolean reset(long pRosti, int toSize) {
+                Rosti.disableOOMOnMalloc();
+                return super.reset(pRosti, toSize);
+            }
+        };
+
+        executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(100000))", sqlExecutionContext);
+            String query = "select i, sum(d) from tab group by i";
+
+            assertRostiMemory(compiler, query, sqlExecutionContext);
+        });
+    }
+
+    //Test triggers OOM during merge. 
+    //It's complex because it has to force scheduler (via custom rosti alloc facade) to split work evenly by having one thread wait until other rosti is big enough.
+    //This triggers merge of two rostis that in turn forces rosti resize and only then hits OOM in native code. 
+    @Test
+    public void testOOMInRostiMergeResetsAllocatedNativeMemoryToMinSizes() throws Exception {
+        final int WORKER_COUNT = 2;
+        pageFrameMaxRows = 1000;//if it's default (1mil) then rosti could create single task for whole table data  
+
+        RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            final AtomicInteger sizeCounter = new AtomicInteger(0);
+            int rostis;
+            final long[] pRostis = new long[2];
+
+            @Override
+            public long alloc(ColumnTypes types, long capacity) {
+                long result = super.alloc(types, capacity);
+                pRostis[rostis++] = result;
+                return result;
+            }
+
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                long otherProsti = pRosti == pRostis[0] ? pRostis[1] : pRostis[0];
+                long sleepStart = System.currentTimeMillis();
+
+                if (Rosti.getSize(pRosti) == 1000) {
+                    while (Rosti.getSize(otherProsti) < 1000) {
+                        Os.sleep(1);
+                        if ((System.currentTimeMillis() - sleepStart) > 30000) {
+                            throw new RuntimeException("Timed out waiting for rosti to consume data!");
+                        }
+                    }
+                }
+
+                super.updateMemoryUsage(pRosti, oldSize);
+            }
+
+            @Override
+            public long getSize(long pRosti) {
+                int currentValue = sizeCounter.incrementAndGet();
+                if (currentValue == WORKER_COUNT + 1) {
+                    Rosti.enableOOMOnMalloc();
+                }
+                return super.getSize(pRosti);
+            }
+
+            @Override
+            public boolean reset(long pRosti, int toSize) {
+                Rosti.disableOOMOnMalloc();
+                return super.reset(pRosti, toSize);
+            }
+        };
+
+        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(2000))", sqlExecutionContext);
+            String query = "select i, sum(l) from tab group by i";
+
+            assertRostiMemory(compiler, query, sqlExecutionContext);
+        });
+    }
+
+    //triggers OOM in wrapUp() wiht multiple workers
+    //some implementations of wrapUp() add null entry and could trigger resize for columns added after table creation (with column tops)  
+    @Test
+    public void testOOMInRostiWrapUpWithMultipleWorkersResetsAllocatedNativeMemoryToMinSizes() throws Exception {
+        final int WORKER_COUNT = 2;
+        final AtomicInteger sizeCounter = new AtomicInteger(0);
+
+        final RostiAllocFacade raf = new RostiAllocFacadeImpl() {
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                super.updateMemoryUsage(pRosti, oldSize);
+            }
+
+            @Override
+            public long getSize(long pRosti) {
+                int currentValue = sizeCounter.incrementAndGet();
+                if (currentValue == WORKER_COUNT + 1) {
+                    Rosti.enableOOMOnMalloc();
+                }
+                return super.getSize(pRosti);
+            }
+
+            @Override
+            public boolean reset(long pRosti, int toSize) {
+                Rosti.disableOOMOnMalloc();
+                return super.reset(pRosti, toSize);
+            }
+        };
+
+        executeWithPool(WORKER_COUNT, 64, raf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab as " +
+                    "(select rnd_double() d, x, " +
+                    "rnd_int() i, " +
+                    "rnd_long() l, " +
+                    "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
+                    "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp " +
+                    "from long_sequence(100))", sqlExecutionContext);
+            compiler.compile("alter table tab add column s symbol cache", sqlExecutionContext).execute(null).await();
+            compiler.compile("insert into tab select rnd_double(), " +
+                    "x + 1000,   " +
+                    "rnd_int() i, " +
+                    "rnd_long() l, " +
+                    "rnd_date(to_date('2015', 'yyyy'), to_date('2022', 'yyyy'), 0) dat, " +
+                    "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2022','yyyy'),0) tstmp, " +
+                    "cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext);
+
+            final String[] functions = {"sum(d)", "min(d)", "max(d)", "avg(d)", "nsum(d)", "ksum(d)",
+                    "sum(tstmp)", "min(tstmp)", "max(tstmp)",
+                    "sum(l)", "min(l)", "max(l)", "avg(l)",
+                    "sum(i)", "min(i)", "min(i)", "avg(i)",
+                    "sum(dat)", "min(dat)", "max(dat)"};
+
+            for (String function : functions) {
+                String query = "select s, " + function + " from tab group by s";
+                LOG.infoW().$(function).$();
+                //String query = "select s, sum(d) from tab group by s";
+                assertRostiMemory(compiler, query, sqlExecutionContext);
+                sizeCounter.set(0);
+            }
+        });
+    }
+
+    private void assertRostiMemory(SqlCompiler compiler, String query, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
+                }
+                Assert.fail("Cursor should throw OOM for " + query + " !");
+            } catch (OutOfMemoryError oome) {
+                long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+                MatcherAssert.assertThat(memAfter, is(lessThan(memBefore + 10 * 1024)));//rostis are minimized on OOM
+            }
+        } finally {
+            Rosti.disableOOMOnMalloc();
+        }
+    }
+
+    @Test
+    public void testOOMInRostiWrapUpWithOneWorkerResetsAllocatedNativeMemoryToMinSizes() throws Exception {
+        final int WORKER_COUNT = 1;
+
+        RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
+            int memCounter;
+
+            @Override
+            public void updateMemoryUsage(long pRosti, long oldSize) {
+                memCounter++;
+                super.updateMemoryUsage(pRosti, oldSize);
+                if (memCounter == 1) {
+                    Rosti.enableOOMOnMalloc();
+                }
+            }
+
+            @Override
+            public boolean reset(long pRosti, int toSize) {
+                Rosti.disableOOMOnMalloc();
+                return super.reset(pRosti, toSize);
+            }
+        };
+
+        executeWithPool(WORKER_COUNT, 64, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab as (select rnd_double() d, x from long_sequence(100))", sqlExecutionContext);
+            compiler.compile("alter table tab add column s symbol cache", sqlExecutionContext).execute(null).await();
+            compiler.compile("insert into tab select rnd_double(), x + 1000, cast('s' || x as symbol)  from long_sequence(896)", sqlExecutionContext);
+
+            assertRostiMemory(compiler, "select s, sum(d) from tab group by s", sqlExecutionContext);
+        });
+    }
+
 
     @Test
     public void testHourDouble() throws Exception {
@@ -205,7 +458,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compiler.compile("insert into tab select rnd_symbol('s1','s2','s3', null), rnd_double(2), rnd_symbol('a1','a2','a3', null) s2 from long_sequence(1000000)", sqlExecutionContext);
 
             try (
-                    RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
+                 RecordCursorFactory factory = compiler.compile("select s2, sum(val) from tab order by s2", sqlExecutionContext).getRecordCursorFactory()
             ) {
                 Record[] expected = new Record[]{
                         new Record() {
@@ -1082,13 +1335,117 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testFirstLastAggregationsNotSupported() {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.STRING, ":STRING"),};
+                new TypeVal(ColumnType.BINARY, ":BINARY"),};
 
         try {
             testAggregations(aggregateFunctions, aggregateColTypes);
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+        }
+    }
+
+    @Test
+    public void testStrFunctionKey() throws Exception {
+        // An important aspect of this test is that both replace() and count_distinct()
+        // functions use the same column as the input.
+        assertQuery("replace\tcount\tcount_distinct\n" +
+                        "foobaz\t63\t2\n" +
+                        "bazbaz\t37\t1\n",
+                "select replace(s, 'bar', 'baz'), count(), count_distinct(s) from tab",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testStrFunctionKeyReverseOrder() throws Exception {
+        // An important aspect of this test is that both replace() and count_distinct()
+        // functions use the same column as the input.
+        assertQuery("count_distinct\tcount\treplace\n" +
+                        "2\t63\tfoobaz\n" +
+                        "1\t37\tbazbaz\n",
+                "select count_distinct(s), count(), replace(s, 'bar', 'baz') from tab",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testRostiReallocation() throws Exception {
+        rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public long alloc(ColumnTypes types, long ignore) {
+                // force resize
+                return super.alloc(types, 64);
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            String ddl = "create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1500))";
+            String sql = "select distinct count, count1 from (select x1, count(*), count(*) from tab group by x1)";
+            assertQuery(
+                    "count\tcount1\n1\t1\n",
+                    sql,
+                    ddl,
+                    null, true, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testRostiWithManyAggregateFunctions() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runGroupByIntWithAgg);
+    }
+
+    private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile("create table tab as ( select cast(x as int) i, x as l, cast(x as date) dat, cast(x as timestamp) ts, cast(x as double) d, rnd_long256() l256  from long_sequence(1000));", sqlExecutionContext);
+
+        snapshotMemoryUsage();
+        CompiledQuery query = compiler.compile("select count(*) cnt from " +
+                "(select i, count(*), min(i), avg(i), max(i), sum(i), " +
+                "min(l), avg(l), max(l), sum(l), " +
+                "min(dat), avg(dat), max(dat), sum(dat), " +
+                "min(ts), avg(ts), max(ts), sum(ts), " +
+                "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
+                "sum(l256) from tab group by i )", sqlExecutionContext);
+
+        try {
+            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+    }
+
+    @Test
+    public void testRostiWithManyWorkers() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWithIdleWorkers() throws Exception {
+        executeWithPool(4, 16, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWithIdleWorkers2() throws Exception {
+        executeWithPool(4, 1, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWithNoWorkers() throws Exception {
+        executeWithPool(0, 0, KeyedAggregationTest::runGroupByTest);
+    }
+
+    private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
+        snapshotMemoryUsage();
+        CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
+
+        try {
+            assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
         }
     }
 
@@ -1147,4 +1504,88 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         public final String colName;
         public final String funcArg;
     }
+
+    private void executeWithPool(
+            int workerCount,
+            int queueSize,
+            CustomisableRunnable runnable) throws Exception {
+        executeWithPool(workerCount, queueSize, RostiAllocFacadeImpl.INSTANCE, runnable);
+    }
+
+    private void executeWithPool(
+            int workerCount,
+            int queueSize,
+            RostiAllocFacade rostiAllocFacade,
+            CustomisableRunnable runnable
+    ) throws Exception {
+        // we need to create entire engine
+        assertMemoryLeak(() -> {
+            if (workerCount > 0) {
+                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int getWorkerCount() {
+                        return workerCount - 1;
+                    }
+
+                    @Override
+                    public long getSleepTimeout() {
+                        return 1;
+                    }
+                });
+
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public int getVectorAggregateQueueCapacity() {
+                        return queueSize;
+                    }
+
+                    @Override
+                    public RostiAllocFacade getRostiAllocFacade() {
+                        return rostiAllocFacade;
+                    }
+
+                    @Override
+                    public int getSqlPageFrameMaxRows() {
+                        return configuration.getSqlPageFrameMaxRows();
+                    }
+                };
+
+                execute(pool, runnable, configuration1);
+            } else {
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root);
+                execute(null, runnable, configuration1);
+            }
+        });
+    }
+
+    protected static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
+
+        try (final CairoEngine engine = new CairoEngine(configuration);
+             final SqlCompiler compiler = new SqlCompiler(engine)) {
+            //workerCount - 1 
+            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
+                try {
+                    if (pool != null) {
+                        GroupByJob job = new GroupByJob(engine.getMessageBus());
+                        pool.assign(job);
+                        pool.start(LOG);
+                    }
+
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
+                } finally {
+                    if (pool != null) {
+                        pool.halt();
+                    }
+                }
+            }
+        }
+    }
 }
+

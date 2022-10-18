@@ -24,7 +24,7 @@ Publishing release will create a git tag on the latest master.
 Compile using maven on Windows, Linux and FreeBSD and upload to GH release
 
 ```bash
-mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
+mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
 ## Release Docker image
@@ -57,6 +57,19 @@ mvn clean deploy -DskipTests -P build-web-console,maven-central-release
 ```
 
 Then `release` by logging into https://oss.sonatype.org/
+
+## Release AMI
+
+Our current AMI version has to be bumped with every release we do. This might change in the future, but for now
+please follow these interactive steps to bump AMI:
+
+https://questdb.slab.com/posts/how-to-release-a-new-aws-ami-w7rkjimy
+
+## Update demo.questdb.io
+
+You need to SSH to the demo box. Either from your desktop, or AWS console via web browser:
+
+https://questdb.slab.com/posts/update-demo-airbus-and-telemetry-box-kyyl1mnw
 
 ## Update pom.xml to snapshot
 

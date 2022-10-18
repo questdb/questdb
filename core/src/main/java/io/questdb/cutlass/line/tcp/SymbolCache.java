@@ -24,10 +24,14 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 
@@ -53,8 +57,9 @@ class SymbolCache implements Closeable, SymbolLookup {
 
     @Override
     public void close() {
+        txReader = null;
         symbolMapReader.close();
-        symbolValueToKeyMap.clear();
+        symbolValueToKeyMap.reset();
     }
 
     @Override
@@ -88,6 +93,10 @@ class SymbolCache implements Closeable, SymbolLookup {
         return symbolValueToKeyMap.size();
     }
 
+    int getCacheCapacity() {
+        return symbolValueToKeyMap.capacity();
+    }
+
     void of(CairoConfiguration configuration,
             Path path,
             CharSequence columnName,
@@ -101,7 +110,7 @@ class SymbolCache implements Closeable, SymbolLookup {
         int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
         symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
-        symbolValueToKeyMap.clear(symCount);
+        symbolValueToKeyMap.clear();
     }
 
     private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {

@@ -35,7 +35,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
-class StringToStringArrayFunction extends StrArrayFunction {
+public class StringToStringArrayFunction extends StrArrayFunction {
     private static final int BRANCH_BEFORE_ITEM = 0;
     private static final int BRANCH_ITEM = 1;
     private static final int BRANCH_AFTER_ITEM = 2;
@@ -44,7 +44,7 @@ class StringToStringArrayFunction extends StrArrayFunction {
 
     private final ObjList<CharSequence> items = new ObjList<>();
 
-    StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
+    public StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
         if (type == null) {
             throw SqlException.$(position, "NULL is not allowed");
         }
@@ -145,26 +145,6 @@ class StringToStringArrayFunction extends StrArrayFunction {
         }
     }
 
-    private int findArrayOpeningBracketIndex(int position, CharSequence type) throws SqlException {
-        int charIndex = 0;
-        for (int len = type.length(); charIndex < len; charIndex++) {
-            char ch = type.charAt(charIndex);
-            if (ch == '{') {
-                return charIndex;
-            }
-            if (!GenericLexer.WHITESPACE_CH.contains(ch)) {
-                break;
-            }
-        }
-        throw SqlException.$(position, "array must start with '{'");
-    }
-
-    private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {
-        sink.put(type, stringStartIndex, stringEndIndex + 1);
-        items.add(Chars.toString(sink));
-        sink.clear();
-    }
-
     @Override
     public int getArrayLength() {
         return items.size();
@@ -193,5 +173,30 @@ class StringToStringArrayFunction extends StrArrayFunction {
     @Override
     public boolean isConstant() {
         return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {
+        sink.put(type, stringStartIndex, stringEndIndex + 1);
+        items.add(Chars.toString(sink));
+        sink.clear();
+    }
+
+    private int findArrayOpeningBracketIndex(int position, CharSequence type) throws SqlException {
+        int charIndex = 0;
+        for (int len = type.length(); charIndex < len; charIndex++) {
+            char ch = type.charAt(charIndex);
+            if (ch == '{') {
+                return charIndex;
+            }
+            if (!GenericLexer.WHITESPACE_CH.contains(ch)) {
+                break;
+            }
+        }
+        throw SqlException.$(position, "array must start with '{'");
     }
 }

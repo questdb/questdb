@@ -25,40 +25,35 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableStructureChangesException;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.update.UpdateStatement;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.RingQueue;
+import io.questdb.griffin.engine.ops.*;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.tasks.TableWriterTask;
+import io.questdb.std.Chars;
+import org.jetbrains.annotations.Nullable;
 
 public class CompiledQueryImpl implements CompiledQuery {
-    private static final Log LOG = LogFactory.getLog(CompiledQueryImpl.class);
-    private final CairoEngine engine;
-    private final AlterTableQueryFuture alterFuture = new AlterTableQueryFuture();
     private RecordCursorFactory recordCursorFactory;
-    private InsertStatement insertStatement;
-    private UpdateStatement updateStatement;
+    private InsertOperation insertOperation;
+    private UpdateOperation updateOperation;
+    private AlterOperation alterOperation;
     private TextLoader textLoader;
-    private AlterStatement alterStatement;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
-    //count of rows affected by this statement ; currently works only for insert as select/create table as insert
-    private long insertCount;
+    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
+    private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
+    private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
+
+    // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
+    private long affectedRowsCount;
+    // prepared statement name for DEALLOCATE operation
+    private CharSequence statementName;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        this.engine = engine;
+        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution");
+        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute");
     }
 
     @Override
@@ -67,8 +62,8 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public InsertStatement getInsertStatement() {
-        return insertStatement;
+    public InsertOperation getInsertOperation() {
+        return insertOperation;
     }
 
     @Override
@@ -77,8 +72,8 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public AlterStatement getAlterStatement() {
-        return alterStatement;
+    public AlterOperation getAlterOperation() {
+        return alterOperation;
     }
 
     @Override
@@ -87,50 +82,66 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public UpdateStatement getUpdateStatement() {
-        return updateStatement;
+    public UpdateOperation getUpdateOperation() {
+        return updateOperation;
     }
 
-    public CompiledQuery ofUpdate(UpdateStatement updateStatement) {
-        this.updateStatement = updateStatement;
+    public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
+        this.updateOperation = updateOperation;
         this.type = UPDATE;
         return this;
     }
 
     @Override
-    public QueryFuture execute(SCSequence eventSubSeq) throws SqlException {
-        if (type == INSERT) {
-            executeInsert();
-            return QueryFuture.DONE;
+    public OperationFuture execute(SCSequence eventSubSeq) throws SqlException {
+        switch (type) {
+            case INSERT:
+                return insertOperation.execute(sqlExecutionContext);
+            case UPDATE:
+                throw SqlException.$(0, "UPDATE execution is not supported via careless invocation. UpdateOperation is allocating.");
+            case ALTER:
+                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq);
+            default:
+                return doneFuture.of(0);
         }
+    }
 
-        if (type == ALTER) {
-            try (
-                    TableWriter writer = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            alterStatement.getTableName(),
-                            "Alter table execute"
-                    )
-            ) {
-                alterStatement.apply(writer, true);
-                return QueryFuture.DONE;
-            } catch (EntryUnavailableException busyException) {
-                if (eventSubSeq == null) {
-                    throw busyException;
-                }
-                alterFuture.of(sqlExecutionContext, eventSubSeq);
-                return alterFuture;
-            } catch (TableStructureChangesException e) {
-                assert false : "This must never happen when parameter acceptChange=true";
-            }
+    @SuppressWarnings("unchecked")
+    @Override
+    public <T extends AbstractOperation> OperationDispatcher<T> getDispatcher() {
+        switch (type) {
+            case ALTER:
+                return (OperationDispatcher<T>) alterOperationDispatcher;
+            case UPDATE:
+                return (OperationDispatcher<T>) updateOperationDispatcher;
+            default:
+                return null;
         }
+    }
 
-        return QueryFuture.DONE;
+    @SuppressWarnings("unchecked")
+    @Override
+    public <T extends AbstractOperation> T getOperation() {
+        switch (type) {
+            case INSERT:
+                return (T) insertOperation;
+            case UPDATE:
+                return (T) updateOperation;
+            case ALTER:
+                return (T) alterOperation;
+            default:
+                return null;
+        }
     }
 
     @Override
-    public long getInsertCount() {
-        return this.insertCount;
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
+    }
+
+    @Override
+    public CharSequence getStatementName() {
+        return statementName;
     }
 
     public CompiledQuery of(short type) {
@@ -147,16 +158,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQueryImpl withContext(SqlExecutionContext executionContext) {
-        sqlExecutionContext = executionContext;
+    public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
         return this;
-    }
-
-    private void executeInsert() throws SqlException {
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
     }
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {
@@ -166,13 +170,13 @@ public class CompiledQueryImpl implements CompiledQuery {
     private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
-        this.insertCount = -1;
+        this.affectedRowsCount = -1;
         return this;
     }
 
-    CompiledQuery ofAlter(AlterStatement statement) {
+    CompiledQuery ofAlter(AlterOperation statement) {
         of(ALTER);
-        alterStatement = statement;
+        alterOperation = statement;
         return this;
     }
 
@@ -180,8 +184,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(BACKUP_TABLE);
     }
 
-    CompiledQuery ofCopyLocal() {
-        return of(COPY_LOCAL);
+    CompiledQuery ofCopyLocal(@Nullable RecordCursorFactory factory) {
+        this.type = COPY_LOCAL;
+        this.recordCursorFactory = factory;
+        this.affectedRowsCount = -1;
+        return this;
     }
 
     CompiledQuery ofCopyRemote(TextLoader textLoader) {
@@ -193,9 +200,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(CREATE_TABLE);
     }
 
-    CompiledQuery ofCreateTableAsSelect(long insertCount) {
+    CompiledQuery ofCreateTableAsSelect(long affectedRowsCount) {
         of(CREATE_TABLE_AS_SELECT);
-        this.insertCount = insertCount;
+        this.affectedRowsCount = affectedRowsCount;
         return this;
     }
 
@@ -203,14 +210,14 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(DROP);
     }
 
-    CompiledQuery ofInsert(InsertStatement insertStatement) {
-        this.insertStatement = insertStatement;
+    CompiledQuery ofInsert(InsertOperation insertOperation) {
+        this.insertOperation = insertOperation;
         return of(INSERT);
     }
 
-    CompiledQuery ofInsertAsSelect(long insertCount) {
+    CompiledQuery ofInsertAsSelect(long affectedRowsCount) {
         of(INSERT_AS_SELECT);
-        this.insertCount = insertCount;
+        this.affectedRowsCount = affectedRowsCount;
         return this;
     }
 
@@ -254,143 +261,8 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(SNAPSHOT_DB_COMPLETE);
     }
 
-    private class AlterTableQueryFuture implements QueryFuture {
-        private SCSequence eventSubSeq;
-        private int status;
-        private long commandId;
-        private QueryFutureUpdateListener queryFutureUpdateListener;
-
-        @Override
-        public void await() throws SqlException {
-            status = await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
-            if (status == QUERY_STARTED) {
-                status = await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
-            }
-            if (status != QUERY_COMPLETE) {
-                throw SqlException.$(alterStatement.getTableNamePosition(), "Timeout expired on waiting for the ALTER TABLE execution result");
-            }
-        }
-
-        @Override
-        public int await(long timeout) throws SqlException {
-            if (status == QUERY_COMPLETE) {
-                return status;
-            }
-            return status = Math.max(status, awaitWriterEvent(timeout, alterStatement.getTableNamePosition()));
-        }
-
-        @Override
-        public int getStatus() {
-            return status;
-        }
-
-        @Override
-        public void close() {
-            if (eventSubSeq != null) {
-                engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
-                eventSubSeq.clear();
-                eventSubSeq = null;
-                commandId = -1;
-            }
-        }
-
-        /***
-         * Initializes instance of AlterTableQueryFuture with the parameters to wait for the new command
-         * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
-         */
-        public void of(SqlExecutionContext executionContext, SCSequence eventSubSeq) throws SqlException {
-            assert eventSubSeq != null : "event subscriber sequence must be provided";
-
-            this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
-            // Set up execution wait sequence to listen to the Engine async writer events
-            final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
-            writerEventFanOut.and(eventSubSeq);
-
-            try {
-                this.eventSubSeq = eventSubSeq;
-                try {
-                    // Publish new command and get published Command Id
-                    commandId = publishTableWriterCommand(alterStatement);
-                    queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
-                    status = QUERY_NO_RESPONSE;
-                } catch (TableStructureChangesException e) {
-                    assert false : "Should never throw TableStructureChangesException when executed with acceptStructureChange=true";
-                }
-            } catch (Throwable throwable) {
-                engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
-                throw throwable;
-            }
-        }
-
-        private long publishTableWriterCommand(AlterStatement alterTableStatement) throws TableStructureChangesException, SqlException {
-            CharSequence tableName = alterTableStatement.getTableName();
-            final long commandCorrelationId = engine.getCommandCorrelationId();
-            alterTableStatement.setCommandCorrelationId(commandCorrelationId);
-            try (TableWriter writer = engine.getWriterOrPublishCommand(sqlExecutionContext.getCairoSecurityContext(), tableName, "alter table", alterTableStatement)) {
-                if (writer != null) {
-                    alterTableStatement.apply(writer, true);
-                }
-            }
-
-            LOG.info()
-                    .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
-                    .$(",instance=").$(commandCorrelationId)
-                    .I$();
-            return commandCorrelationId;
-        }
-
-        private int awaitWriterEvent(
-                long writerAsyncCommandBusyWaitTimeout,
-                int queryTableNamePosition
-        ) throws SqlException {
-            assert eventSubSeq != null : "No sequence to wait on";
-            assert commandId > -1 : "No command id to wait for";
-
-            final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
-            final long start = clock.getTicks();
-            final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
-
-            int status = this.status;
-            while (true) {
-                long seq = eventSubSeq.next();
-                if (seq < 0) {
-                    // Queue is empty, check if the execution blocked for too long
-                    if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
-                        return status;
-                    }
-                    Os.pause();
-                    continue;
-                }
-
-                try {
-                    TableWriterTask event = tableWriterEventQueue.get(seq);
-                    int type = event.getType();
-                    if (event.getInstance() != commandId || (type != TableWriterTask.TSK_ALTER_TABLE_BEGIN && type != TableWriterTask.TSK_ALTER_TABLE_COMPLETE)) {
-                        LOG.debug()
-                                .$("writer command response received and ignored [instance=").$(event.getInstance())
-                                .$(", type=").$(type)
-                                .$(", expectedInstance=").$(commandId)
-                                .I$();
-                        Os.pause();
-                    } else if (type == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
-                        // If writer failed to execute the ALTER command it will send back string error
-                        // in the event data
-                        LOG.info().$("writer command response received [instance=").$(commandId).I$();
-                        int strLen = Unsafe.getUnsafe().getInt(event.getData());
-                        if (strLen > -1) {
-                            throw SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
-                        }
-                        queryFutureUpdateListener.reportProgress(commandId, QUERY_COMPLETE);
-                        return QUERY_COMPLETE;
-                    } else {
-                        status = QUERY_STARTED;
-                        queryFutureUpdateListener.reportProgress(commandId, QUERY_STARTED);
-                        LOG.info().$("writer command QUERY_STARTED response received [instance=").$(commandId).I$();
-                    }
-                } finally {
-                    eventSubSeq.done(seq);
-                }
-            }
-        }
+    CompiledQuery ofDeallocate(CharSequence statementName) {
+        this.statementName = Chars.toString(statementName);
+        return of(DEALLOCATE);
     }
 }

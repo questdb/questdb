@@ -32,19 +32,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextException;
-import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
+import io.questdb.cutlass.text.*;
+import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CopyFactory;
+import io.questdb.griffin.engine.ops.InsertOperationImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
-import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -55,6 +51,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
@@ -62,18 +59,26 @@ import java.util.ServiceLoader;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 
-
 public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-    private static final CastCharToStrFunctionFactory CHAR_TO_STR_FUNCTION_FACTORY = new CastCharToStrFunctionFactory();
-    protected final GenericLexer lexer;
-    protected final Path path = new Path();
+    //null object used to skip null checks in batch method
+    private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
+        @Override
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
+        }
+
+        @Override
+        public void preCompile(SqlCompiler compiler) {
+        }
+    };
     protected final CairoEngine engine;
-    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
-    protected final CompiledQueryImpl compiledQuery;
-    protected final AlterStatementBuilder alterQueryBuilder = new AlterStatementBuilder();
+    private final GenericLexer lexer;
+    private final Path path = new Path();
+    private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    private final CompiledQueryImpl compiledQuery;
+    private final AlterOperationBuilder alterOperationBuilder;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -95,29 +100,18 @@ public class SqlCompiler implements Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final FunctionParser functionParser;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
-    private final ExecutableMethod createTableMethod = this::createTable;
     private final TextLoader textLoader;
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
-
+    private final IndexBuilder rebuildIndex = new IndexBuilder();
+    private final VacuumColumnVersions vacuumColumnVersions;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
-    //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing. 
+    //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
-
-    //null object used to skip null checks in batch method
-    private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
-        @Override
-        public void preCompile(SqlCompiler compiler) {
-        }
-
-        @Override
-        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
-        }
-    };
-
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
+    private final ExecutableMethod createTableMethod = this::createTable;
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
@@ -145,6 +139,7 @@ public class SqlCompiler implements Closeable {
                         FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
+        this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);
@@ -161,11 +156,13 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor truncateTables = this::truncateTables;
         final KeywordBasedExecutor alterTable = this::alterTable;
         final KeywordBasedExecutor repairTables = this::repairTables;
+        final KeywordBasedExecutor reindexTable = this::reindexTable;
         final KeywordBasedExecutor dropTable = this::dropTable;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
+        final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
@@ -173,6 +170,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("ALTER", alterTable);
         keywordBasedExecutors.put("repair", repairTables);
         keywordBasedExecutors.put("REPAIR", repairTables);
+        keywordBasedExecutors.put("reindex", reindexTable);
+        keywordBasedExecutors.put("REINDEX", reindexTable);
         keywordBasedExecutors.put("set", compileSet);
         keywordBasedExecutors.put("SET", compileSet);
         keywordBasedExecutors.put("begin", compileBegin);
@@ -199,6 +198,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("VACUUM", vacuumTable);
         keywordBasedExecutors.put("snapshot", snapshotDatabase);
         keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
+        keywordBasedExecutors.put("deallocate", compileDeallocate);
+        keywordBasedExecutors.put("DEALLOCATE", compileDeallocate);
 
         configureLexer(lexer);
 
@@ -225,620 +226,7 @@ public class SqlCompiler implements Closeable {
                 postOrderTreeTraversalAlgo
         );
         this.textLoader = new TextLoader(engine);
-    }
-
-    // Creates data type converter.
-    // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
-    public static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
-        int timestampIndex = to.getTimestampIndex();
-        asm.init(RecordToRowCopier.class);
-        asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/rowcopier"));
-        int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
-
-        int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
-        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
-        int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
-        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
-        int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
-        int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
-        //
-        int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
-        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
-        int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
-        int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
-        int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
-        int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
-        int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
-        int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
-        int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
-        //
-        int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
-        int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
-        int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
-        int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
-        int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
-        //
-        int wPutByte = asm.poolInterfaceMethod(TableWriter.Row.class, "putByte", "(IB)V");
-        int wPutShort = asm.poolInterfaceMethod(TableWriter.Row.class, "putShort", "(IS)V");
-        int wPutBool = asm.poolInterfaceMethod(TableWriter.Row.class, "putBool", "(IZ)V");
-        int wPutFloat = asm.poolInterfaceMethod(TableWriter.Row.class, "putFloat", "(IF)V");
-        int wPutDouble = asm.poolInterfaceMethod(TableWriter.Row.class, "putDouble", "(ID)V");
-        int wPutSym = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
-        int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
-        int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
-        int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
-        int wPutTimestampStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
-        int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
-        int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
-        int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
-        int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
-        int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
-
-        int checkDoubleBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkDoubleBounds", "(DDDIII)V");
-        int checkLongBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkLongBounds", "(JJJIII)V");
-
-        int maxDoubleFloat = asm.poolDoubleConst(Float.MAX_VALUE);
-        int minDoubleFloat = asm.poolDoubleConst(-Float.MAX_VALUE);
-        int maxDoubleLong = asm.poolDoubleConst(Long.MAX_VALUE);
-        int minDoubleLong = asm.poolDoubleConst(Long.MIN_VALUE);
-        int maxDoubleInt = asm.poolDoubleConst(Integer.MAX_VALUE);
-        int minDoubleInt = asm.poolDoubleConst(Integer.MIN_VALUE);
-        int maxDoubleShort = asm.poolDoubleConst(Short.MAX_VALUE);
-        int minDoubleShort = asm.poolDoubleConst(Short.MIN_VALUE);
-        int maxDoubleByte = asm.poolDoubleConst(Byte.MAX_VALUE);
-        int minDoubleByte = asm.poolDoubleConst(Byte.MIN_VALUE);
-
-        int maxLongInt = asm.poolLongConst(Integer.MAX_VALUE);
-        int minLongInt = asm.poolLongConst(Integer.MIN_VALUE);
-        int maxLongShort = asm.poolLongConst(Short.MAX_VALUE);
-        int minLongShort = asm.poolLongConst(Short.MIN_VALUE);
-        int maxLongByte = asm.poolLongConst(Byte.MAX_VALUE);
-        int minLongByte = asm.poolLongConst(Byte.MIN_VALUE);
-
-        int copyNameIndex = asm.poolUtf8("copy");
-        int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
-
-        asm.finishPool();
-        asm.defineClass(thisClassIndex);
-        asm.interfaceCount(1);
-        asm.putShort(interfaceClassIndex);
-        asm.fieldCount(0);
-        asm.methodCount(2);
-        asm.defineDefaultConstructor();
-
-        asm.startMethod(copyNameIndex, copySigIndex, 15, 3);
-
-        int n = toColumnFilter.getColumnCount();
-        for (int i = 0; i < n; i++) {
-
-            final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
-            // do not copy timestamp, it will be copied externally to this helper
-
-            if (toColumnIndex == timestampIndex) {
-                continue;
-            }
-
-            final int toColumnType = to.getColumnType(toColumnIndex);
-            final int fromColumnType = from.getColumnType(i);
-            final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
-            final int toColumnWriterIndex = to.getWriterIndex(toColumnIndex);
-
-            asm.aload(2);
-            asm.iconst(toColumnWriterIndex);
-            asm.aload(1);
-            asm.iconst(i);
-
-            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
-            if (fromColumnTypeTag == ColumnType.NULL) {
-                fromColumnTypeTag = toColumnTypeTag;
-            }
-            switch (fromColumnTypeTag) {
-                case ColumnType.INT:
-                    asm.invokeInterface(rGetInt);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.LONG:
-                            asm.i2l();
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                        case ColumnType.DATE:
-                            asm.i2l();
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            asm.i2l();
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                        case ColumnType.SHORT:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.BYTE:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.FLOAT:
-                            asm.i2f();
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                        case ColumnType.DOUBLE:
-                            asm.i2d();
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                    }
-                    break;
-                case ColumnType.LONG:
-                    asm.invokeInterface(rGetLong);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.INT:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongInt, maxLongInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.l2i();
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        case ColumnType.DATE:
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                        case ColumnType.SHORT:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.l2i();
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.BYTE:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.l2i();
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.FLOAT:
-                            asm.l2f();
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                        case ColumnType.DOUBLE:
-                            asm.l2d();
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                    }
-                    break;
-                case ColumnType.DATE:
-                    asm.invokeInterface(rGetDate);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.INT:
-                            asm.l2i();
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        case ColumnType.LONG:
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                        case ColumnType.SHORT:
-                            asm.l2i();
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.BYTE:
-                            asm.l2i();
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.FLOAT:
-                            asm.l2f();
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                        case ColumnType.DOUBLE:
-                            asm.l2d();
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                    }
-                    break;
-                case ColumnType.TIMESTAMP:
-                    asm.invokeInterface(rGetTimestamp);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.INT:
-                            asm.l2i();
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        case ColumnType.LONG:
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                        case ColumnType.SHORT:
-                            asm.l2i();
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.BYTE:
-                            asm.l2i();
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.FLOAT:
-                            asm.l2f();
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                        case ColumnType.DOUBLE:
-                            asm.l2d();
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                        case ColumnType.DATE:
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                    }
-                    break;
-                case ColumnType.BYTE:
-                    asm.invokeInterface(rGetByte);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.INT:
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        case ColumnType.LONG:
-                            asm.i2l();
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                        case ColumnType.DATE:
-                            asm.i2l();
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            asm.i2l();
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                        case ColumnType.SHORT:
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.FLOAT:
-                            asm.i2f();
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                        case ColumnType.DOUBLE:
-                            asm.i2d();
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                    }
-                    break;
-                case ColumnType.SHORT:
-                    asm.invokeInterface(rGetShort);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.INT:
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        case ColumnType.LONG:
-                            asm.i2l();
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                        case ColumnType.DATE:
-                            asm.i2l();
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            asm.i2l();
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                        case ColumnType.BYTE:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.FLOAT:
-                            asm.i2f();
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                        case ColumnType.DOUBLE:
-                            asm.i2d();
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                    }
-                    break;
-                case ColumnType.BOOLEAN:
-                    asm.invokeInterface(rGetBool);
-                    asm.invokeInterface(wPutBool, 2);
-                    break;
-                case ColumnType.FLOAT:
-                    asm.invokeInterface(rGetFloat);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.INT:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.f2i();
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        case ColumnType.LONG:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.f2l();
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                        case ColumnType.DATE:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.f2l();
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.f2l();
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                        case ColumnType.SHORT:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.f2i();
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.BYTE:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.f2i();
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.DOUBLE:
-                            asm.f2d();
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                    }
-                    break;
-                case ColumnType.DOUBLE:
-                    asm.invokeInterface(rGetDouble);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.INT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.d2i();
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        case ColumnType.LONG:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.d2l();
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                        case ColumnType.DATE:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.d2l();
-                            asm.invokeInterface(wPutDate, 3);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.d2l();
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
-                        case ColumnType.SHORT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.d2i();
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.BYTE:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.d2i();
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.FLOAT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleFloat, maxDoubleFloat, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
-                            asm.d2f();
-                            asm.invokeInterface(wPutFloat, 2);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutDouble, 3);
-                            break;
-                    }
-                    break;
-                case ColumnType.CHAR:
-                    asm.invokeInterface(rGetChar);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.STRING:
-                            asm.invokeInterface(wPutStrChar, 2);
-                            break;
-                        case ColumnType.SYMBOL:
-                            asm.invokeInterface(wPutSymChar, 2);
-                            break;
-                        case ColumnType.GEOBYTE:
-                            asm.invokeStatic(encodeCharAsGeoByte);
-                            if (ColumnType.getGeoHashBits(toColumnType) < 5) {
-                                asm.i2l();
-                                asm.iconst(ColumnType.getGeoHashTypeWithBits(5));
-                                asm.iconst(toColumnType);
-                                asm.invokeStatic(truncateGeoHashTypes);
-                                asm.l2i();
-                                asm.i2b();
-                            }
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutChar, 2);
-                            break;
-                    }
-                    break;
-                case ColumnType.SYMBOL:
-                    asm.invokeInterface(rGetSym);
-                    if (toColumnTypeTag == ColumnType.STRING) {
-                        asm.invokeInterface(wPutStr, 2);
-                    } else {
-                        asm.invokeInterface(wPutSym, 2);
-                    }
-                    break;
-                case ColumnType.STRING:
-                    asm.invokeInterface(rGetStr);
-                    switch (toColumnTypeTag) {
-                        case ColumnType.SYMBOL:
-                            asm.invokeInterface(wPutSym, 2);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            asm.invokeInterface(wPutTimestampStr, 2);
-                            break;
-                        case ColumnType.GEOBYTE:
-                        case ColumnType.GEOSHORT:
-                        case ColumnType.GEOINT:
-                        case ColumnType.GEOLONG:
-                            asm.invokeInterface(wPutGeoStr, 2);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutStr, 2);
-                            break;
-                    }
-                    break;
-                case ColumnType.BINARY:
-                    asm.invokeInterface(rGetBin);
-                    asm.invokeInterface(wPutBin, 2);
-                    break;
-                case ColumnType.LONG256:
-                    asm.invokeInterface(rGetLong256);
-                    asm.invokeInterface(wPutLong256, 2);
-                    break;
-                case ColumnType.GEOBYTE:
-                    asm.invokeInterface(rGetGeoByte, 1);
-                    if (fromColumnType != toColumnType && (fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOBYTE)) {
-                        // truncate within the same storage type
-                        asm.i2l();
-                        asm.iconst(fromColumnType);
-                        asm.iconst(toColumnType);
-                        asm.invokeStatic(truncateGeoHashTypes);
-                        asm.l2i();
-                        asm.i2b();
-                    }
-                    asm.invokeInterface(wPutByte, 2);
-                    break;
-                case ColumnType.GEOSHORT:
-                    asm.invokeInterface(rGetGeoShort, 1);
-                    if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
-                        asm.i2l();
-                        asm.iconst(fromColumnType);
-                        asm.iconst(toColumnType);
-                        asm.invokeStatic(truncateGeoHashTypes);
-                        asm.l2i();
-                        asm.i2b();
-                        asm.invokeInterface(wPutByte, 2);
-                    } else if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOSHORT) {
-                        asm.i2l();
-                        asm.iconst(fromColumnType);
-                        asm.iconst(toColumnType);
-                        asm.invokeStatic(truncateGeoHashTypes);
-                        asm.l2i();
-                        asm.i2s();
-                        asm.invokeInterface(wPutShort, 2);
-                    } else {
-                        asm.invokeInterface(wPutShort, 2);
-                    }
-                    break;
-                case ColumnType.GEOINT:
-                    asm.invokeInterface(rGetGeoInt, 1);
-                    switch (ColumnType.tagOf(toColumnType)) {
-                        case ColumnType.GEOBYTE:
-                            asm.i2l();
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
-                            asm.l2i();
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.GEOSHORT:
-                            asm.i2l();
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
-                            asm.l2i();
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        default:
-                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOINT) {
-                                asm.i2l();
-                                asm.iconst(fromColumnType);
-                                asm.iconst(toColumnType);
-                                asm.invokeStatic(truncateGeoHashTypes);
-                                asm.l2i();
-                            }
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                    }
-                    break;
-                case ColumnType.GEOLONG:
-                    asm.invokeInterface(rGetGeoLong, 1);
-                    switch (ColumnType.tagOf(toColumnType)) {
-                        case ColumnType.GEOBYTE:
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
-                            asm.l2i();
-                            asm.i2b();
-                            asm.invokeInterface(wPutByte, 2);
-                            break;
-                        case ColumnType.GEOSHORT:
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
-                            asm.l2i();
-                            asm.i2s();
-                            asm.invokeInterface(wPutShort, 2);
-                            break;
-                        case ColumnType.GEOINT:
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
-                            asm.l2i();
-                            asm.invokeInterface(wPutInt, 2);
-                            break;
-                        default:
-                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOLONG) {
-                                asm.iconst(fromColumnType);
-                                asm.iconst(toColumnType);
-                                asm.invokeStatic(truncateGeoHashTypes);
-                            }
-                            asm.invokeInterface(wPutLong, 3);
-                            break;
-                    }
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        asm.return_();
-        asm.endMethodCode();
-
-        // exceptions
-        asm.putShort(0);
-
-        // we have to add stack map table as branch target
-        // jvm requires it
-
-        // attributes: 0 (void, no stack verification)
-        asm.putShort(0);
-
-        asm.endMethod();
-
-        // class attribute count
-        asm.putShort(0);
-
-        return asm.newInstance();
+        alterOperationBuilder = new AlterOperationBuilder();
     }
 
     public static void configureLexer(GenericLexer lexer) {
@@ -853,98 +241,29 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    public static boolean isAssignableFrom(int to, int from) {
-        final int toTag = ColumnType.tagOf(to);
-        final int fromTag = ColumnType.tagOf(from);
-        return (toTag == fromTag && (ColumnType.getGeoHashBits(to) <= ColumnType.getGeoHashBits(from)
-                || ColumnType.getGeoHashBits(from) == 0) /* to account for typed NULL assignment */)
-                // widening conversions,
-                || builtInFunctionCast(to, from)
-                //narrowing conversions
-                || (fromTag == ColumnType.DOUBLE && (toTag == ColumnType.FLOAT || (toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG)))
-                || (fromTag == ColumnType.FLOAT && toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG)
-                || (fromTag == ColumnType.LONG && toTag >= ColumnType.BYTE && toTag <= ColumnType.INT)
-                || (fromTag == ColumnType.INT && toTag >= ColumnType.BYTE && toTag <= ColumnType.SHORT)
-                || (fromTag == ColumnType.SHORT && toTag == ColumnType.BYTE)
-                //end of narrowing conversions
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.CHAR && toTag == ColumnType.GEOBYTE && ColumnType.getGeoHashBits(to) < 6)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOSHORT)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOINT)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOLONG)
-                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOINT)
-                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOSHORT)
-                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOSHORT)
-                || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.GEOSHORT && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.SYMBOL)
-                || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.STRING)
-                || (fromTag == ColumnType.CHAR && toTag == ColumnType.SYMBOL)
-                || (fromTag == ColumnType.CHAR && toTag == ColumnType.STRING)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.TIMESTAMP)
-                || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.TIMESTAMP);
-    }
-
-    public static boolean builtInFunctionCast(int toType, int fromType) {
-        // This method returns true when a cast is not needed from type to type
-        // because of the way typed functions are implemented.
-        // For example IntFunction has getDouble() method implemented and does not need
-        // additional wrap function to CAST to double.
-        // This is usually case for widening conversions.
-        return (fromType >= ColumnType.BYTE
-                && toType >= ColumnType.BYTE
-                && toType <= ColumnType.DOUBLE
-                && fromType < toType)
-                || fromType == ColumnType.NULL
-                // char can be short and short can be char for symmetry
-                || (fromType == ColumnType.CHAR && toType == ColumnType.SHORT)
-                || (fromType == ColumnType.TIMESTAMP && toType == ColumnType.LONG);
-    }
-
     @Override
     public void close() {
         backupAgent.close();
-        codeGenerator.close();
+        vacuumColumnVersions.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
+        Misc.free(rebuildIndex);
+        Misc.free(codeGenerator);
+        Misc.free(mem);
+        Misc.freeObjList(tableWriters);
     }
 
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        CompiledQuery result = compile0(query, executionContext);
-        if (result.getType() != CompiledQuery.UPDATE || configuration.enableDevelopmentUpdates()) {
-            return result;
-        }
-        throw SqlException.$(0, "UPDATE statement is not supported yet");
-    }
-
-    @NotNull
-    private CompiledQuery compile0(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(query);
         isSingleQueryMode = true;
-        
-        return compileInner(executionContext);
-    }
 
-    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext) throws SqlException {
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
-
-        if (tok == null) {
-            throw SqlException.$(0, "empty query");
-        }
-
-        // Save execution context in resulting Compiled Query
-        // it may be used for Alter Table statement execution
+        compileInner(executionContext);
         compiledQuery.withContext(executionContext);
-        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        if (executor == null) {
-            return compileUsingModel(executionContext);
-        }
-        return executor.execute(executionContext);
+        return compiledQuery;
     }
 
     /*
@@ -962,8 +281,14 @@ public class SqlCompiler implements Closeable {
      * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
-    public void compileBatch(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext, BatchCallback batchCallback)
-            throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+    public void compileBatch(
+            @NotNull CharSequence query,
+            @NotNull SqlExecutionContext executionContext,
+            BatchCallback batchCallback
+    ) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+
+        LOG.info().$("batch [text=").$(query).I$();
+
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
@@ -981,54 +306,48 @@ public class SqlCompiler implements Closeable {
                 return;
             }
 
-            batchCallback.preCompile(this);
-            clear();//we don't use normal compile here because we can't reset existing lexer
-            CompiledQuery current = compileInner(executionContext);
-            //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
-            //some code in postCompile might need full text of current query
-            CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
-            batchCallback.postCompile(this, current, currentQuery);
-        }
-    }
-
-    private int getNextValidTokenPosition(){
-        while (lexer.hasNext()){
-            CharSequence token = SqlUtil.fetchNext(lexer);
-            if ( token == null ){
-                return -1;
-            } else if (!isSemicolon(token)) {
-                lexer.unparse();
-                return lexer.lastTokenPosition();
+            boolean recompileStale = true;
+            for (int retries = 0; recompileStale; retries++) {
+                try {
+                    batchCallback.preCompile(this);
+                    clear();//we don't use normal compile here because we can't reset existing lexer
+                    CompiledQuery current = compileInner(executionContext);
+                    //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    //some code in postCompile might need full text of current query
+                    CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
+                    batchCallback.postCompile(this, current, currentQuery);
+                    recompileStale = false;
+                } catch (ReaderOutOfDateException e) {
+                    if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                        throw e;
+                    }
+                    LOG.info().$(e.getFlyweightMessage()).$();
+                    // will recompile
+                    lexer.restart();
+                }
             }
         }
-
-        return -1;
     }
 
-    private  int goToQueryEnd() {
-        CharSequence token;
-        lexer.unparse();
-        while ( lexer.hasNext() ){
-            token = SqlUtil.fetchNext(lexer);
-            if (token == null || isSemicolon(token)) {
-                break;
-            }
-        }
-
-        return lexer.getPosition();
-    }
-    
     public void filterPartitions(
             Function function,
             TableReader reader,
-            AlterStatementBuilder changePartitionStatement
+            AlterOperationBuilder changePartitionStatement
     ) {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
-        // Last partition cannot be dropped, exclude it from the list
-        // TODO: allow to drop last partition
-        for (int i = reader.getPartitionCount() - 2; i > -1; i--) {
-            long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+        final int partitionCount = reader.getPartitionCount();
+        if (partitionCount > 0) { // table may be empty
+            for (int i = partitionCount - 2; i > -1; i--) {
+                long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+                partitionFunctionRec.setTimestamp(partitionTimestamp);
+                if (function.getBool(partitionFunctionRec)) {
+                    changePartitionStatement.ofPartition(partitionTimestamp);
+                }
+            }
+
+            // remove last partition
+            long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
                 changePartitionStatement.ofPartition(partitionTimestamp);
@@ -1042,41 +361,6 @@ public class SqlCompiler implements Closeable {
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
-    }
-
-    private static void addCheckDoubleBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup2();
-
-        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void addCheckFloatBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup();
-        asm.f2d();
-
-        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void addCheckLongBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup2();
-
-        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void addCheckIntBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup();
-        asm.i2l();
-
-        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void invokeCheckMethod(BytecodeAssembler asm, int checkBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.ldc2_w(min);
-        asm.ldc2_w(max);
-        asm.iconst(fromColumnType);
-        asm.iconst(toColumnType);
-        asm.iconst(toColumnIndex);
-        asm.invokeStatic(checkBounds);
     }
 
     private static boolean isCompatibleCase(int from, int to) {
@@ -1120,7 +404,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            CharSequence lockedReason = engine.lockWriter(tok, "alterSystem");
+            CharSequence lockedReason = engine.lockWriter(executionContext.getCairoSecurityContext(), tok, "alterSystem");
             if (lockedReason != WriterPool.OWNERSHIP_REASON_NONE) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
@@ -1137,7 +421,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            engine.unlockWriter(tok);
+            engine.unlockWriter(executionContext.getCairoSecurityContext(), tok);
             return compiledQuery.ofUnlock();
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
@@ -1168,14 +452,21 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         return alterTableDropColumn(tableNamePosition, tableName, tableMetadata);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropOrAttachPartition(reader, PartitionAction.DROP, executionContext);
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DROP, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
                 } else if (SqlKeywords.isAttachKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                    }
+                } else if (SqlKeywords.isDetachKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DETACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
@@ -1192,7 +483,7 @@ public class SqlCompiler implements Closeable {
                         final int columnNameNamePosition = lexer.getPosition();
                         tok = expectToken(lexer, "column name");
                         final CharSequence columnName = GenericLexer.immutableOf(tok);
-                        tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
+                        tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
                             expectKeyword(lexer, "index");
                             tok = SqlUtil.fetchNext(lexer);
@@ -1215,19 +506,24 @@ public class SqlCompiler implements Closeable {
                             }
 
                             return alterTableColumnAddIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata, indexValueCapacity);
-                        } else {
-                            if (SqlKeywords.isCacheKeyword(tok)) {
-                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, true);
-                            } else if (SqlKeywords.isNoCacheKeyword(tok)) {
-                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, false);
-                            } else {
-                                throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
+                        } else if (SqlKeywords.isDropKeyword(tok)) {
+                            // alter table <table name> alter column drop index
+                            expectKeyword(lexer, "index");
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && !isSemicolon(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
                             }
+                            return alterTableColumnDropIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata);
+                        } else if (SqlKeywords.isCacheKeyword(tok)) {
+                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, true);
+                        } else if (SqlKeywords.isNoCacheKeyword(tok)) {
+                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, false);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
-
                 } else if (SqlKeywords.isSetKeyword(tok)) {
                     tok = expectToken(lexer, "'param'");
                     if (SqlKeywords.isParamKeyword(tok)) {
@@ -1245,7 +541,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'set' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(name).$(", ex=").$((Throwable) e).$();
@@ -1283,10 +579,10 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         //ignoring `column`
         if (tok != null && !SqlKeywords.isColumnKeyword(tok)) {
-            lexer.unparse();
+            lexer.unparseLast();
         }
 
-        AlterStatementBuilder addColumn = alterQueryBuilder.ofAddColumn(
+        AlterOperationBuilder addColumn = alterOperationBuilder.ofAddColumn(
                 tableNamePosition,
                 tableName,
                 tableMetadata.getId());
@@ -1308,7 +604,7 @@ public class SqlCompiler implements Closeable {
 
             CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
 
-            if (!TableUtils.isValidColumnName(columnName)) {
+            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
@@ -1439,7 +735,7 @@ public class SqlCompiler implements Closeable {
                     Numbers.ceilPow2(indexValueBlockCapacity)
             );
 
-            if (tok == null || (!isSingleQueryMode && isSemicolon(tok)) ) {
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
                 break;
             }
 
@@ -1449,7 +745,7 @@ public class SqlCompiler implements Closeable {
             }
 
         } while (true);
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableColumnAddIndex(
@@ -1459,7 +755,6 @@ public class SqlCompiler implements Closeable {
             CharSequence columnName,
             TableReaderMetadata metadata,
             int indexValueBlockSize
-
     ) throws SqlException {
 
         if (metadata.getColumnIndexQuiet(columnName) == -1) {
@@ -1469,7 +764,7 @@ public class SqlCompiler implements Closeable {
             indexValueBlockSize = configuration.getIndexValueBlockSize();
         }
         return compiledQuery.ofAlter(
-                alterQueryBuilder
+                alterOperationBuilder
                         .ofAddIndex(tableNamePosition, tableName, metadata.getId(), columnName, Numbers.ceilPow2(indexValueBlockSize))
                         .build()
         );
@@ -1493,15 +788,32 @@ public class SqlCompiler implements Closeable {
         }
 
         return cache ? compiledQuery.ofAlter(
-                alterQueryBuilder.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+                alterOperationBuilder.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
         )
                 : compiledQuery.ofAlter(
-                alterQueryBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+                alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+        );
+    }
+
+    private CompiledQuery alterTableColumnDropIndex(
+            int tableNamePosition,
+            String tableName,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableReaderMetadata metadata
+    ) throws SqlException {
+        if (metadata.getColumnIndexQuiet(columnName) == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+        return compiledQuery.ofAlter(
+                alterOperationBuilder
+                        .ofDropIndex(tableNamePosition, tableName, metadata.getId(), columnName)
+                        .build()
         );
     }
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterStatementBuilder dropColumnStatement = alterQueryBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
         int semicolonPos = -1;
         do {
             CharSequence tok = GenericLexer.unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
@@ -1530,11 +842,14 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private CompiledQuery alterTableDropOrAttachPartition(TableReader reader, int action, SqlExecutionContext executionContext)
-            throws SqlException {
+    private CompiledQuery alterTableDropDetachOrAttachPartition(
+            TableReader reader,
+            int action,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         TableReaderMetadata readerMetadata = reader.getMetadata();
         if (readerMetadata.getPartitionBy() == PartitionBy.NONE) {
@@ -1544,12 +859,19 @@ public class SqlCompiler implements Closeable {
         String tableName = reader.getTableName();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
-            return alterTableDropOrAttachPartitionByList(reader, pos, action);
+            return alterTableDropDetachOrAttachPartitionByList(reader, pos, action);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
-            if (action != PartitionAction.DROP) {
-                throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
+            AlterOperationBuilder alterPartitionStatement;
+            switch (action) {
+                case PartitionAction.DROP:
+                    alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+                    break;
+                case PartitionAction.DETACH:
+                    alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
+                    break;
+                default:
+                    throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
             }
-            AlterStatementBuilder alterPartitionStatement = alterQueryBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = null;
             int tsIndex = readerMetadata.getTimestampIndex();
@@ -1563,7 +885,7 @@ public class SqlCompiler implements Closeable {
                 if (function != null && ColumnType.isBoolean(function.getType())) {
                     function.init(null, executionContext);
                     filterPartitions(function, reader, alterPartitionStatement);
-                    return compiledQuery.ofAlter(alterQueryBuilder.build());
+                    return compiledQuery.ofAlter(alterOperationBuilder.build());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1575,15 +897,21 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
+    private CompiledQuery alterTableDropDetachOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
         String tableName = reader.getTableName();
-        AlterStatementBuilder partitions;
-        if (action == PartitionAction.DROP) {
-            partitions = alterQueryBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
-        } else {
-            partitions = alterQueryBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
+        AlterOperationBuilder partitions;
+        switch (action) {
+            case PartitionAction.DROP:
+                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+                break;
+            case PartitionAction.DETACH:
+                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
+                break;
+            default:
+                // attach
+                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
         }
-        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH;
+        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH || action == PartitionAction.DETACH;
         int semicolonPos = -1;
         do {
             CharSequence tok = maybeExpectToken(lexer, "partition name", semicolonPos < 0);
@@ -1609,7 +937,7 @@ public class SqlCompiler implements Closeable {
             partitions.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null|| (!isSingleQueryMode && isSemicolon(tok))) {
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
                 break;
             }
 
@@ -1619,11 +947,11 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterStatementBuilder renameColumnStatement = alterQueryBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder renameColumnStatement = alterOperationBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
         int hadSemicolonPos = -1;
 
         do {
@@ -1654,7 +982,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
             }
 
-            if (!TableUtils.isValidColumnName(tok)) {
+            if (!TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
@@ -1672,11 +1000,11 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
-        if (isMaxUncommittedRowsParam(paramName)) {
+        if (isMaxUncommittedRowsKeyword(paramName)) {
             int maxUncommittedRows;
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
@@ -1686,15 +1014,46 @@ public class SqlCompiler implements Closeable {
             if (maxUncommittedRows < 0) {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
-            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
-        } else if (isCommitLag(paramName)) {
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
+        } else if (isCommitLagKeyword(paramName)) {
             long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
             if (commitLag < 0) {
                 throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
             }
-            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamCommitLag(tableName, tableId, commitLag).build());
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamCommitLag(tableName, tableId, commitLag).build());
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
+        }
+    }
+
+    private void cancelTextImport(CopyModel model) throws SqlException {
+        assert model.isCancel();
+
+        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
+        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
+
+        long inProgressImportId = textImportExecutionContext.getActiveImportId();
+        // The cancellation is based on the best effort, so we don't worry about potential races with imports.
+        if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
+            throw SqlException.$(0, "No active import to cancel.");
+        }
+        long importId;
+        try {
+            CharSequence idString = model.getTarget().token;
+            int start = 0;
+            int end = idString.length();
+            if (Chars.isQuoted(idString)) {
+                start = 1;
+                end--;
+            }
+            importId = Numbers.parseHexLong(idString, start, end);
+        } catch (NumericException e) {
+            throw SqlException.$(0, "Provided id has invalid format.");
+        }
+        if (inProgressImportId == importId) {
+            circuitBreaker.cancel();
+        } else {
+            throw SqlException.$(0, "Active import has different id.");
         }
     }
 
@@ -1706,9 +1065,17 @@ public class SqlCompiler implements Closeable {
         optimiser.clear();
         parser.clear();
         backupAgent.clear();
-        alterQueryBuilder.clear();
+        alterOperationBuilder.clear();
         backupAgent.clear();
         functionParser.clear();
+    }
+
+    private CompiledQuery compileBegin(SqlExecutionContext executionContext) {
+        return compiledQuery.ofBegin();
+    }
+
+    private CompiledQuery compileCommit(SqlExecutionContext executionContext) {
+        return compiledQuery.ofCommit();
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
@@ -1725,25 +1092,61 @@ public class SqlCompiler implements Closeable {
                 }
             case ExecutionModel.UPDATE:
                 optimiser.optimiseUpdate((QueryModel) model, executionContext);
+                return model;
             default:
                 return model;
         }
+    }
+
+    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext) throws SqlException {
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.$(0, "empty query");
+        }
+
+        // Save execution context in resulting Compiled Query
+        // it may be used for Alter Table statement execution
+        compiledQuery.withContext(executionContext);
+        final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
+        if (executor == null) {
+            return compileUsingModel(executionContext);
+        }
+        return executor.execute(executionContext);
+    }
+
+    private CompiledQuery compileRollback(SqlExecutionContext executionContext) {
+        return compiledQuery.ofRollback();
     }
 
     private CompiledQuery compileSet(SqlExecutionContext executionContext) {
         return compiledQuery.ofSet();
     }
 
-    private CompiledQuery compileBegin(SqlExecutionContext executionContext) {
-        return compiledQuery.ofBegin();
+    private CopyFactory compileTextImport(CopyModel model) throws SqlException {
+        assert !model.isCancel();
+
+        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final ExpressionNode fileNameNode = model.getFileName();
+        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
+        assert fileName != null;
+
+        return new CopyFactory(
+                messageBus,
+                engine.getTextImportExecutionContext(),
+                Chars.toString(tableName),
+                Chars.toString(fileName),
+                model
+        );
     }
 
-    private CompiledQuery compileCommit(SqlExecutionContext executionContext) {
-        return compiledQuery.ofCommit();
-    }
-
-    private CompiledQuery compileRollback(SqlExecutionContext executionContext) {
-        return compiledQuery.ofRollback();
+    private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+        }
+        return compiledQuery.ofDeallocate(statementName);
     }
 
     @NotNull
@@ -1756,7 +1159,7 @@ public class SqlCompiler implements Closeable {
         // instance of compiler for safekeeping
 
         // lexer would have parsed first token to determine direction of execution flow
-        lexer.unparse();
+        lexer.unparseLast();
         codeGenerator.clear();
 
         ExecutionModel executionModel = compileExecutionModel(executionContext);
@@ -1774,7 +1177,7 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.ofRenameTable();
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
-                UpdateStatement updateStatement = generateUpdate(updateQueryModel, executionContext);
+                UpdateOperation updateStatement = generateUpdate(updateQueryModel, executionContext);
                 return compiledQuery.ofUpdate(updateStatement);
             default:
                 InsertModel insertModel = (InsertModel) executionModel;
@@ -1791,7 +1194,13 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private long copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    private long copyOrdered(
+            TableWriter writer,
+            RecordMetadata metadata,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex
+    ) {
         long rowCount;
 
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
@@ -1804,7 +1213,8 @@ public class SqlCompiler implements Closeable {
         return rowCount;
     }
 
-    private long copyOrdered0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    private long copyOrdered0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier,
+                              int cursorTimestampIndex) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -1876,17 +1286,13 @@ public class SqlCompiler implements Closeable {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             CharSequence str = record.getStr(cursorTimestampIndex);
-            try {
-                // It's allowed to insert ISO formatted string to timestamp column
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate(str));
-                copier.copy(record, row);
-                row.append();
-                if (++rowCount > deadline) {
-                    writer.commitWithLag(commitLag);
-                    deadline = rowCount + batchSize;
-                }
-            } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.TIMESTAMP));
+            copier.copy(record, row);
+            row.append();
+            if (++rowCount > deadline) {
+                writer.commitWithLag(commitLag);
+                deadline = rowCount + batchSize;
             }
         }
 
@@ -1894,77 +1300,58 @@ public class SqlCompiler implements Closeable {
     }
 
     //returns number of copied rows
-    private long copyOrderedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    private long copyOrderedStrTimestamp(
+            TableWriter writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex
+    ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             final CharSequence str = record.getStr(cursorTimestampIndex);
-            try {
-                // It's allowed to insert ISO formatted string to timestamp column
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate(str));
-                copier.copy(record, row);
-                row.append();
-                rowCount++;
-            } catch (NumericException numericException) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
-            }
+            // It's allowed to insert ISO formatted string to timestamp column
+            TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
+            copier.copy(record, row);
+            row.append();
+            rowCount++;
         }
 
         return rowCount;
     }
 
-    private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
-        try {
-            int len = configuration.getSqlCopyBufferSize();
-            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-            try {
-                final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
-                path.of(configuration.getInputRoot()).concat(name).$();
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
-                }
-                try {
-                    long fileLen = ff.length(fd);
-                    long n = ff.read(fd, buf, len, 0);
-                    if (n > 0) {
-                        textLoader.setForceHeaders(model.isHeader());
-                        textLoader.setSkipRowsWithExtraValues(false);
-                        textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
-                        textLoader.setState(TextLoader.LOAD_DATA);
-                        int read;
-                        while (n < fileLen) {
-                            read = (int) ff.read(fd, buf, len, n);
-                            if (read < 1) {
-                                throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
-                            }
-                            textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
-                            n += read;
-                        }
-                        textLoader.wrapUp();
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            } finally {
-                textLoader.clear();
-                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
-            }
-        } catch (TextException e) {
-            // we do not expect JSON exception here
-        } finally {
-            LOG.info().$("copied").$();
-        }
-    }
-
-    //sets insertCount to number of copied rows
-    private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
-        TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE, engine.getMetrics());
+    /**
+     * Sets insertCount to number of copied rows.
+     */
+    private TableWriter copyTableData(
+            CharSequence tableName,
+            RecordCursor cursor,
+            RecordMetadata cursorMetadata
+    ) throws SqlException {
+        TableWriter writer = new TableWriter(
+                configuration,
+                tableName,
+                messageBus,
+                null,
+                false,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                engine.getMetrics());
         try {
             RecordMetadata writerMetadata = writer.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
-            RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-            this.insertCount = copyTableData(cursor, cursorMetadata, writer, writerMetadata, recordToRowCopier);
+            this.insertCount = copyTableData(
+                    cursor,
+                    cursorMetadata,
+                    writer,
+                    writerMetadata,
+                    RecordToRowCopierUtils.generateCopier(
+                            asm,
+                            cursorMetadata,
+                            writerMetadata,
+                            entityColumnFilter
+                    )
+            );
             return writer;
         } catch (Throwable e) {
             writer.close();
@@ -1972,8 +1359,17 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    /* returns number of copied rows*/
-    private long copyTableData(RecordCursor cursor, RecordMetadata metadata, TableWriter writer, RecordMetadata writerMetadata, RecordToRowCopier recordToRowCopier) {
+    /*
+     * Returns number of copied rows.
+     */
+    private long copyTableData(
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            TableWriter writer,
+            RecordMetadata
+                    writerMetadata,
+            RecordToRowCopier recordToRowCopier
+    ) throws SqlException {
         int timestampIndex = writerMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
             return copyUnordered(cursor, writer, recordToRowCopier);
@@ -1982,7 +1378,9 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    //returns number of copied rows
+    /**
+     * Returns number of copied rows.
+     */
     private long copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier copier) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -1997,7 +1395,8 @@ public class SqlCompiler implements Closeable {
         return rowCount;
     }
 
-    private CompiledQuery createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws
+            SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
@@ -2026,6 +1425,9 @@ public class SqlCompiler implements Closeable {
                 }
                 try {
                     if (createTableModel.getQueryModel() == null) {
+                        if (createTableModel.getLikeTableName() != null) {
+                            copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
+                        }
                         engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                         newTable = true;
                     } else {
@@ -2049,9 +1451,38 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
-        try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
-             final RecordCursor cursor = factory.getCursor(executionContext)
+    private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
+        ExpressionNode likeTableName = model.getLikeTableName();
+        CharSequence likeTableNameToken = likeTableName.token;
+        tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
+        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
+            model.setCommitLag(rdr.getCommitLag());
+            model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
+            TableReaderMetadata rdrMetadata = rdr.getMetadata();
+            for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
+                int columnType = rdrMetadata.getColumnType(i);
+                boolean isSymbol = ColumnType.isSymbol(columnType);
+                int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
+                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
+                if (isSymbol) {
+                    model.cached(rdr.getSymbolMapReader(i).isCached());
+                }
+                model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
+            }
+            model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
+            if (rdrMetadata.getTimestampIndex() != -1) {
+                model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
+            }
+            model.setWalEnabled(rdrMetadata.isWalEnabled());
+        }
+        model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
+    }
+
+    private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws
+            SqlException {
+        try (
+                final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
+                final RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
@@ -2117,7 +1548,7 @@ public class SqlCompiler implements Closeable {
             }
             hasIfExists = true;
         } else {
-            lexer.unparse(); // tok has table name
+            lexer.unparseLast(); // tok has table name
         }
         final int tableNamePosition = lexer.getPosition();
         CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
@@ -2129,10 +1560,7 @@ public class SqlCompiler implements Closeable {
             if (hasIfExists) {
                 return compiledQuery.ofDrop();
             }
-            throw SqlException
-                    .$(tableNamePosition, "table '")
-                    .put(tableName)
-                    .put("' does not exist");
+            throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
         return compiledQuery.ofDrop();
@@ -2140,12 +1568,39 @@ public class SqlCompiler implements Closeable {
 
     @NotNull
     private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
-        setupTextLoaderFromModel(executionModel);
-        if (Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+        executionContext.getCairoSecurityContext().checkWritePermission();
+        if (!executionModel.isCancel() && Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+            // no-op implementation
+            setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
-        copyTable(executionContext, executionModel);
-        return compiledQuery.ofCopyLocal();
+        RecordCursorFactory copyFactory = executeCopy0(executionModel);
+        return compiledQuery.ofCopyLocal(copyFactory);
+    }
+
+    @Nullable
+    private RecordCursorFactory executeCopy0(CopyModel model) throws SqlException {
+        try {
+            if (model.isCancel()) {
+                cancelTextImport(model);
+                return null;
+            } else {
+                if (model.getTimestampColumnName() == null &&
+                        ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+                    throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
+                }
+                if (model.getTimestampFormat() == null) {
+                    model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
+                }
+                if (model.getDelimiter() < 0) {
+                    model.setDelimiter((byte) ',');
+                }
+                return compileTextImport(model);
+            }
+        } catch (TextImportException | TextException e) {
+            LOG.error().$((Throwable) e).$();
+            throw SqlException.$(0, e.getMessage());
+        }
     }
 
     private CompiledQuery executeWithRetries(
@@ -2169,75 +1624,56 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
-    UpdateStatement generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
+        return codeGenerator.generate(queryModel, executionContext);
+    }
+
+    UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
         // Update QueryModel structure is
         // QueryModel with SET column expressions
         // |-- QueryModel of select-virtual or select-choose of data selected for update
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-
-        // First generate plan for nested SELECT QueryModel
-        final RecordCursorFactory updateToCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
-
-        // And then generate plan for UPDATE top level QueryModel
-        final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
-        final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
-        final int tableId = selectQueryModel.getTableId();
-        final long tableVersion = selectQueryModel.getTableVersion();
-        return generateUpdateStatement(
+        final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                updateQueryModel.getUpdateTableName(),
+                selectQueryModel,
                 updateQueryModel,
-                tableColumnTypes,
-                tableColumnNames,
-                tableId,
-                tableVersion,
-                updateToCursorFactory
+                executionContext
+        );
+
+        return new UpdateOperation(
+                updateQueryModel.getUpdateTableName(),
+                selectQueryModel.getTableId(),
+                selectQueryModel.getTableVersion(),
+                lexer.getPosition(),
+                recordCursorFactory
         );
     }
 
-    private static UpdateStatement generateUpdateStatement(
-            @Transient QueryModel updateQueryModel,
-            @Transient IntList tableColumnTypes,
-            @Transient ObjList<CharSequence> tableColumnNames,
-            int tableId,
-            long tableVersion,
-            RecordCursorFactory updateToCursorFactory
-    ) throws SqlException {
-        try {
-            String tableName = updateQueryModel.getUpdateTableName();
-            if (!updateToCursorFactory.supportsUpdateRowId(tableName)) {
-                throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
+    private int getNextValidTokenPosition() {
+        while (lexer.hasNext()) {
+            CharSequence token = SqlUtil.fetchNext(lexer);
+            if (token == null) {
+                return -1;
+            } else if (!isSemicolon(token)) {
+                lexer.unparseLast();
+                return lexer.lastTokenPosition();
             }
-
-            // Check that updateDataFactoryMetadata match types of table to be updated exactly
-            RecordMetadata updateDataFactoryMetadata = updateToCursorFactory.getMetadata();
-
-            for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
-                int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
-                CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
-                int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
-                int tableColumnType = tableColumnTypes.get(tableColumnIndex);
-
-                if (virtualColumnType != tableColumnType) {
-                    // get column position
-                    ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                    int position = setRhs.position;
-                    throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
-                }
-            }
-
-            return new UpdateStatement(
-                    tableName,
-                    tableId,
-                    tableVersion,
-                    updateToCursorFactory
-            );
-        } catch (Throwable e) {
-            Misc.free(updateToCursorFactory);
-            throw e;
         }
+
+        return -1;
     }
 
-    RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
-        return codeGenerator.generate(queryModel, executionContext);
+    private int goToQueryEnd() {
+        CharSequence token;
+        lexer.unparseLast();
+        while (lexer.hasNext()) {
+            token = SqlUtil.fetchNext(lexer);
+            if (token == null || isSemicolon(token)) {
+                break;
+            }
+        }
+
+        return lexer.getPosition();
     }
 
     private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
@@ -2254,56 +1690,55 @@ public class SqlCompiler implements Closeable {
         )) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
-            final InsertStatementImpl insertStatement = new InsertStatementImpl(engine, reader.getTableName(), structureVersion);
-            final int writerTimestampIndex = metadata.getTimestampIndex();
-            final CharSequenceHashSet columnSet = model.getColumnSet();
-            final int columnSetSize = columnSet.size();
-            for (int t = 0, n = model.getRowTupleCount(); t < n; t++) {
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, reader.getTableName(), structureVersion);
+            final int metadataTimestampIndex = metadata.getTimestampIndex();
+            final ObjList<CharSequence> columnNameList = model.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
+            for (int tupleIndex = 0, n = model.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
                 Function timestampFunction = null;
                 listColumnFilter.clear();
                 if (columnSetSize > 0) {
                     valueFunctions = new ObjList<>(columnSetSize);
                     for (int i = 0; i < columnSetSize; i++) {
-                        int index = metadata.getColumnIndexQuiet(columnSet.get(i));
-                        if (index > -1) {
-                            final ExpressionNode node = model.getRowTupleValues(t).getQuick(i);
-
-                            Function function = functionParser.parseFunction(
+                        int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
+                        if (metadataColumnIndex > -1) {
+                            final ExpressionNode node = model.getRowTupleValues(tupleIndex).getQuick(i);
+                            final Function function = functionParser.parseFunction(
                                     node,
                                     GenericRecordMetadata.EMPTY,
                                     executionContext
                             );
 
-                            function = validateAndConsume(
+                            insertValidateFunctionAndAddToList(
                                     model,
-                                    t,
+                                    tupleIndex,
                                     valueFunctions,
                                     metadata,
-                                    writerTimestampIndex,
+                                    metadataTimestampIndex,
                                     i,
-                                    index,
+                                    metadataColumnIndex,
                                     function,
                                     node.position,
                                     executionContext.getBindVariableService()
                             );
 
-                            if (writerTimestampIndex == index) {
+                            if (metadataTimestampIndex == metadataColumnIndex) {
                                 timestampFunction = function;
                             }
 
                         } else {
-                            throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
+                            throw SqlException.invalidColumn(model.getColumnPosition(i), columnNameList.getQuick(i));
                         }
                     }
                 } else {
                     final int columnCount = metadata.getColumnCount();
-                    final ObjList<ExpressionNode> values = model.getRowTupleValues(t);
+                    final ObjList<ExpressionNode> values = model.getRowTupleValues(tupleIndex);
                     final int valueCount = values.size();
                     if (columnCount != valueCount) {
                         throw SqlException.$(
-                                model.getEndOfRowTupleValuesPosition(t),
-                                "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
-                                .put(", tuple=").put(t + 1).put(']');
+                                        model.getEndOfRowTupleValuesPosition(tupleIndex),
+                                        "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
+                                .put(", tuple=").put(tupleIndex + 1).put(']');
                     }
                     valueFunctions = new ObjList<>(columnCount);
 
@@ -2311,12 +1746,12 @@ public class SqlCompiler implements Closeable {
                         final ExpressionNode node = values.getQuick(i);
 
                         Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                        validateAndConsume(
+                        insertValidateFunctionAndAddToList(
                                 model,
-                                t,
+                                tupleIndex,
                                 valueFunctions,
                                 metadata,
-                                writerTimestampIndex,
+                                metadataTimestampIndex,
                                 i,
                                 i,
                                 function,
@@ -2324,22 +1759,22 @@ public class SqlCompiler implements Closeable {
                                 executionContext.getBindVariableService()
                         );
 
-                        if (writerTimestampIndex == i) {
+                        if (metadataTimestampIndex == i) {
                             timestampFunction = function;
                         }
                     }
                 }
 
                 // validate timestamp
-                if (writerTimestampIndex > -1 && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()))) {
+                if (metadataTimestampIndex > -1 && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()))) {
                     throw SqlException.$(0, "insert statement must populate timestamp");
                 }
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
-                RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
-                insertStatement.addInsertRow(new InsertRowImpl(record, copier, timestampFunction));
+                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
+                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
             }
-            return compiledQuery.ofInsert(insertStatement);
+            return compiledQuery.ofInsert(insertOperation);
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);
             throw e;
@@ -2352,9 +1787,10 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
         long insertCount;
 
-        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
-             RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
-
+        try (
+                TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
+                RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)
+        ) {
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
             final BaseRecordMetadata writerMetadata = writer.getMetadata().copyDense();
@@ -2363,8 +1799,8 @@ public class SqlCompiler implements Closeable {
             final int cursorColumnCount = cursorMetadata.getColumnCount();
 
             final RecordToRowCopier copier;
-            CharSequenceHashSet columnSet = model.getColumnSet();
-            final int columnSetSize = columnSet.size();
+            final ObjList<CharSequence> columnNameList = model.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
             int timestampIndexFound = -1;
             if (columnSetSize > 0) {
                 // validate type cast
@@ -2373,7 +1809,7 @@ public class SqlCompiler implements Closeable {
                 listColumnFilter.clear();
 
                 for (int i = 0; i < columnSetSize; i++) {
-                    CharSequence columnName = columnSet.get(i);
+                    CharSequence columnName = columnNameList.get(i);
                     int index = writerMetadata.getColumnIndexQuiet(columnName);
                     if (index == -1) {
                         throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
@@ -2381,7 +1817,7 @@ public class SqlCompiler implements Closeable {
 
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
-                    if (isAssignableFrom(toType, fromType)) {
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
                         listColumnFilter.add(index + 1);
                     } else {
                         throw SqlException.inconvertibleTypes(
@@ -2406,7 +1842,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(name.position, "select clause must provide timestamp column");
                 }
 
-                copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
+                copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
             } else {
                 // fail when target table requires chronological data and cursor cannot provide it
                 if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
@@ -2421,7 +1857,11 @@ public class SqlCompiler implements Closeable {
                 }
 
                 if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
-                    throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
+                    throw SqlException
+                            .$(name.position, "designated timestamp of existing table (").put(writerTimestampIndex)
+                            .put(") does not match designated timestamp in select query (")
+                            .put(cursorTimestampIndex)
+                            .put(')');
                 }
                 timestampIndexFound = writerTimestampIndex;
 
@@ -2433,7 +1873,7 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
-                    if (isAssignableFrom(toType, fromType)) {
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
                         continue;
                     }
 
@@ -2452,7 +1892,12 @@ public class SqlCompiler implements Closeable {
 
                 entityColumnFilter.of(writerMetadata.getColumnCount());
 
-                copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
+                copier = RecordToRowCopierUtils.generateCopier(
+                        asm,
+                        cursorMetadata,
+                        writerMetadata,
+                        entityColumnFilter
+                );
             }
 
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -2484,24 +1929,166 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofInsertAsSelect(insertCount);
     }
 
+    private void insertValidateFunctionAndAddToList(
+            InsertModel model,
+            int tupleIndex,
+            ObjList<Function> valueFunctions,
+            RecordMetadata metadata,
+            int metadataTimestampIndex,
+            int insertColumnIndex,
+            int metadataColumnIndex,
+            Function function,
+            int functionPosition,
+            BindVariableService bindVariableService
+    ) throws SqlException {
+
+        final int columnType = metadata.getColumnType(metadataColumnIndex);
+        if (function.isUndefined()) {
+            function.assignType(columnType, bindVariableService);
+        }
+
+        if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
+            if (metadataColumnIndex == metadataTimestampIndex) {
+                return;
+            }
+
+            valueFunctions.add(function);
+            listColumnFilter.add(metadataColumnIndex + 1);
+            return;
+        }
+
+        throw SqlException.inconvertibleTypes(
+                functionPosition,
+                function.getType(),
+                model.getRowTupleValues(tupleIndex).getQuick(insertColumnIndex).token,
+                metadata.getColumnType(metadataColumnIndex),
+                metadata.getColumnName(metadataColumnIndex)
+        );
+    }
+
     private ExecutionModel lightlyValidateInsertModel(InsertModel model) throws SqlException {
         ExpressionNode tableName = model.getTableName();
         if (tableName.type != ExpressionNode.LITERAL) {
             throw SqlException.$(tableName.position, "literal expected");
         }
 
-        int columnSetSize = model.getColumnSet().size();
+        int columnNameListSize = model.getColumnNameList().size();
 
         for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
-            if (columnSetSize > 0 && columnSetSize != model.getRowTupleValues(i).size()) {
+            if (columnNameListSize > 0 && columnNameListSize != model.getRowTupleValues(i).size()) {
                 throw SqlException.$(
-                        model.getEndOfRowTupleValuesPosition(i),
-                        "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
-                        .put(", tuple=").put(i + 1).put(']');
+                                model.getEndOfRowTupleValuesPosition(i),
+                                "row value count does not match column count [expected=").put(columnNameListSize)
+                        .put(", actual=").put(model.getRowTupleValues(i).size())
+                        .put(", tuple=").put(i + 1)
+                        .put(']');
             }
         }
 
         return model;
+    }
+
+    private RecordCursorFactory prepareForUpdate(
+            String tableName,
+            QueryModel selectQueryModel,
+            QueryModel updateQueryModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
+        final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
+
+        RecordCursorFactory updateToDataCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
+        try {
+            if (!updateToDataCursorFactory.supportsUpdateRowId(tableName)) {
+                // in theory this should never happen because all valid UPDATE statements should result in
+                // a query plan with real row ids but better to check to prevent data corruption
+                throw SqlException.$(updateQueryModel.getModelPosition(), "Unsupported SQL complexity for the UPDATE statement");
+            }
+
+            // Check that updateDataFactoryMetadata match types of table to be updated exactly
+            final RecordMetadata updateDataFactoryMetadata = updateToDataCursorFactory.getMetadata();
+            for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
+                int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
+                CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
+                int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
+                int tableColumnType = tableColumnTypes.get(tableColumnIndex);
+
+                if (virtualColumnType != tableColumnType) {
+                    if (!ColumnType.isSymbol(tableColumnType) || virtualColumnType != ColumnType.STRING) {
+                        // get column position
+                        ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                    }
+                }
+            }
+            return updateToDataCursorFactory;
+        } catch (Throwable th) {
+            updateToDataCursorFactory.close();
+            throw th;
+        }
+    }
+
+    private CompiledQuery reindexTable(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isTableKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null || Chars.equals(tok, ',')) {
+            throw SqlException.$(lexer.getPosition(), "table name expected");
+        }
+
+        if (Chars.isQuoted(tok)) {
+            tok = GenericLexer.unquote(tok);
+        }
+        tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+        CharSequence tableName = tok;
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableName), configuration);
+
+        tok = SqlUtil.fetchNext(lexer);
+        CharSequence columnName = null;
+
+        if (tok != null && SqlKeywords.isColumnKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (Chars.isQuoted(tok)) {
+                tok = GenericLexer.unquote(tok);
+            }
+            if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+                columnName = GenericLexer.immutableOf(tok);
+                tok = SqlUtil.fetchNext(lexer);
+            }
+        }
+
+        CharSequence partition = null;
+        if (tok != null && SqlKeywords.isPartitionKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (Chars.isQuoted(tok)) {
+                tok = GenericLexer.unquote(tok);
+            }
+            partition = tok;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok == null || !isLockKeyword(tok)) {
+            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isExclusiveKeyword(tok)) {
+            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.getPosition(), "EOF expected");
+        }
+
+        rebuildIndex.reindex(partition, columnName);
+        return compiledQuery.ofRepair();
     }
 
     private boolean removeTableDirectory(CreateTableModel model) {
@@ -2555,7 +2142,34 @@ public class SqlCompiler implements Closeable {
         // todo: configure the following
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
-        textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW, PartitionBy.NONE, null);
+
+        textLoader.configureDestination(model.getTarget().token, false, false,
+                model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
+                model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
+                model.getTimestampColumnName(), model.getTimestampFormat());
+    }
+
+    private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCairoSecurityContext().checkWritePermission();
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
+            }
+            snapshotAgent.prepareSnapshot(executionContext);
+            return compiledQuery.ofSnapshotPrepare();
+        }
+
+        if (Chars.equalsLowerCaseAscii(tok, "complete")) {
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
+            }
+            snapshotAgent.completeSnapshot();
+            return compiledQuery.ofSnapshotComplete();
+        }
+
+        throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
     }
 
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
@@ -2572,7 +2186,15 @@ public class SqlCompiler implements Closeable {
                 return sqlShowTransaction();
             }
 
-            if (isStandardConformingStringsKeyword(tok)) {
+            if (isTransactionIsolation(tok)) {
+                return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
+            }
+
+            if (isMaxIdentifierLength(tok)) {
+                return compiledQuery.of(new ShowMaxIdentifierLengthCursorFactory());
+            }
+
+            if (isStandardConformingStrings(tok)) {
                 return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
             }
 
@@ -2580,12 +2202,15 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.of(new ShowSearchPathCursorFactory());
             }
 
+            if (isDateStyleKeyword(tok)) {
+                return compiledQuery.of(new ShowDateStyleCursorFactory());
+            }
+
             if (SqlKeywords.isTimeKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     return compiledQuery.of(new ShowTimeZoneFactory());
                 }
-                // todo: what if or rather what else?!
             }
         }
 
@@ -2605,7 +2230,7 @@ public class SqlCompiler implements Closeable {
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
         int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, 0, tableName.length());
         if (status != TableUtils.TABLE_EXISTS) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not a valid table");
+            throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
         }
         return compiledQuery.of(new ShowColumnsRecordCursorFactory(tableName));
     }
@@ -2624,10 +2249,11 @@ public class SqlCompiler implements Closeable {
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
+            throw SqlException.$(position, "table does not exist [table=").put(tableName).put(']');
         }
     }
 
+    @TestOnly
     ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(query);
@@ -2635,6 +2261,7 @@ public class SqlCompiler implements Closeable {
     }
 
     // this exposed for testing only
+    @TestOnly
     ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
@@ -2642,6 +2269,7 @@ public class SqlCompiler implements Closeable {
     }
 
     // test only
+    @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
         clear();
         lexer.of(expression);
@@ -2713,7 +2341,7 @@ public class SqlCompiler implements Closeable {
                             throw SqlException.$(0, "there is an active query against '").put(writer.getTableName()).put("'. Try again.");
                         }
                     } catch (CairoException | CairoError e) {
-                        LOG.error().$("could truncate [table=").$(writer.getTableName()).$(", e=").$((Sinkable) e).$(']').$();
+                        LOG.error().$("could not truncate [table=").$(writer.getTableName()).$(", e=").$((Sinkable) e).$(']').$();
                         throw e;
                     }
                 }
@@ -2725,8 +2353,11 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery vacuum(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'partitions'");
-        if (isPartitionsKeyword(tok)) {
+        executionContext.getCairoSecurityContext().checkWritePermission();
+        CharSequence tok = expectToken(lexer, "'table'");
+        // It used to be VACUUM PARTITIONS but become VACUUM TABLE
+        boolean partitionsKeyword = isPartitionsKeyword(tok);
+        if (partitionsKeyword || isTableKeyword(tok)) {
             CharSequence tableName = expectToken(lexer, "table name");
             tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
@@ -2744,9 +2375,11 @@ public class SqlCompiler implements Closeable {
                                             "or increase Purge Discovery Queue Capacity"
                             );
                         }
-                        return compiledQuery.ofVacuum();
+                    } else if (partitionsKeyword) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
                     }
-                    throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
+                    vacuumColumnVersions.run(executionContext, rdr);
+                    return compiledQuery.ofVacuum();
                 }
             }
             throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");
@@ -2754,87 +2387,13 @@ public class SqlCompiler implements Closeable {
         throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
     }
 
-    private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCairoSecurityContext().checkWritePermission();
-        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
-
-        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            if (snapshotAgent == null) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
-            }
-            snapshotAgent.prepareSnapshot(executionContext);
-            return compiledQuery.ofSnapshotPrepare();
-        }
-
-        if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            if (snapshotAgent == null) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
-            }
-            snapshotAgent.completeSnapshot();
-            return compiledQuery.ofSnapshotComplete();
-        }
-
-        throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
-    }
-
-    private Function validateAndConsume(
-            InsertModel model,
-            int tupleIndex,
-            ObjList<Function> valueFunctions,
-            RecordMetadata metadata,
-            int writerTimestampIndex,
-            int bottomUpColumnIndex,
-            int metadataColumnIndex,
-            Function function,
-            int functionPosition,
-            BindVariableService bindVariableService
-    ) throws SqlException {
-
-        final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (function.isUndefined()) {
-            function.assignType(columnType, bindVariableService);
-        }
-
-        if (isAssignableFrom(columnType, function.getType())) {
-            if (metadataColumnIndex == writerTimestampIndex) {
-                return function;
-            }
-            if (ColumnType.isGeoHash(columnType)) {
-                switch (ColumnType.tagOf(function.getType())) {
-                    case ColumnType.GEOBYTE:
-                    case ColumnType.GEOSHORT:
-                    case ColumnType.GEOINT:
-                    case ColumnType.GEOLONG:
-                        break;
-                    case ColumnType.CHAR:
-                        function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
-                        // fall through to STRING
-                    default:
-                        function = CastStrToGeoHashFunctionFactory.newInstance(functionPosition, columnType, function);
-                        break;
-                }
-            }
-            valueFunctions.add(function);
-            listColumnFilter.add(metadataColumnIndex + 1);
-            return function;
-        }
-
-        throw SqlException.inconvertibleTypes(
-                functionPosition,
-                function.getType(),
-                model.getRowTupleValues(tupleIndex).getQuick(bottomUpColumnIndex).token,
-                metadata.getColumnType(metadataColumnIndex),
-                metadata.getColumnName(metadataColumnIndex)
-        );
-    }
-
     private InsertModel validateAndOptimiseInsertAsSelect(
             InsertModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
-        int targetColumnCount = model.getColumnSet().size();
-        if (targetColumnCount > 0 && queryModel.getBottomUpColumns().size() != targetColumnCount) {
+        int columnNameListSize = model.getColumnNameList().size();
+        if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableName().position, "column count mismatch");
         }
         model.setQueryModel(queryModel);
@@ -2864,8 +2423,7 @@ public class SqlCompiler implements Closeable {
             if (isCompatibleCase(from, to)) {
                 typeCast.put(index, to);
             } else {
-                throw SqlException.$(ccm.getColumnTypePos(),
-                        "unsupported cast [from=").put(ColumnType.nameOf(from)).put(",to=").put(ColumnType.nameOf(to)).put(']');
+                throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
             }
         }
 
@@ -2891,34 +2449,10 @@ public class SqlCompiler implements Closeable {
         CompiledQuery execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 
-    public interface RecordToRowCopier {
-        void copy(Record record, TableWriter.Row row);
-    }
-
-    public static class RecordToRowCopierUtils {
-        private RecordToRowCopierUtils() {
-        }
-
-        //used by copier
-        @SuppressWarnings("unused")
-        static void checkDoubleBounds(double value, double min, double max, int fromType, int toType, int toColumnIndex) throws SqlException {
-            if (value < min || value > max) {
-                throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
-            }
-        }
-
-        //used by copier
-        @SuppressWarnings("unused")
-        static void checkLongBounds(long value, long min, long max, int fromType, int toType, int toColumnIndex) throws SqlException {
-            if (value < min || value > max) {
-                throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
-            }
-        }
-    }
-
     public final static class PartitionAction {
         public static final int DROP = 1;
         public static final int ATTACH = 2;
+        public static final int DETACH = 3;
     }
 
     private static class TableStructureAdapter implements TableStructure {
@@ -2930,6 +2464,11 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getColumnCount() {
             return model.getColumnCount();
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            return metadata.getColumnHash(columnIndex);
         }
 
         @Override
@@ -2947,8 +2486,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return metadata.getColumnHash(columnIndex);
+        public long getCommitLag() {
+            return model.getCommitLag();
         }
 
         @Override
@@ -2957,13 +2496,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return model.isIndexed(columnIndex);
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return model.isSequential(columnIndex);
+        public int getMaxUncommittedRows() {
+            return model.getMaxUncommittedRows();
         }
 
         @Override
@@ -3001,13 +2535,18 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return model.getMaxUncommittedRows();
+        public boolean isWallEnabled() {
+            return model.isWallEnabled();
         }
 
         @Override
-        public long getCommitLag() {
-            return model.getCommitLag();
+        public boolean isIndexed(int columnIndex) {
+            return model.isIndexed(columnIndex);
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return model.isSequential(columnIndex);
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
@@ -3051,7 +2590,7 @@ public class SqlCompiler implements Closeable {
                 dstPath.trimTo(currDirPrefixLen).concat(file).$();
                 LOG.info().$("backup copying config file [from=").$(srcPath).$(",to=").$(dstPath).I$();
                 if (ff.copy(srcPath, dstPath) < 0) {
-                    throw CairoException.instance(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
+                    throw CairoException.critical(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
                 }
             }
         };
@@ -3065,6 +2604,11 @@ public class SqlCompiler implements Closeable {
                             .$("could not backup [path=").$(fileNameSink)
                             .$(", e=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
+                            .$(']').$();
+                } catch (SqlException e) {
+                    LOG.error()
+                            .$("could not backup [path=").$(fileNameSink)
+                            .$(", e=").$(e.getFlyweightMessage())
                             .$(']').$();
                 }
             }
@@ -3094,15 +2638,15 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(currDirPrefixLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             LOG.info().$("backup copying file [from=").$(srcPath).$(",to=").$(dstPath).I$();
             if (ff.copy(srcPath, dstPath) < 0) {
-                throw CairoException.instance(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("cannot backup tab index file [to=").put(dstPath).put(']');
             }
         }
 
-        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
+        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) throws SqlException {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
-                    throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                    throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
                 }
                 srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).slash$();
                 cachedTmpBackupRoot = Chars.toString(srcPath);
@@ -3119,7 +2663,12 @@ public class SqlCompiler implements Closeable {
                         RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
                         if (null == recordToRowCopier) {
                             entityColumnFilter.of(writerMetadata.getColumnCount());
-                            recordToRowCopier = assembleRecordToRowCopier(asm, reader.getMetadata(), writerMetadata, entityColumnFilter);
+                            recordToRowCopier = RecordToRowCopierUtils.generateCopier(
+                                    asm,
+                                    reader.getMetadata(),
+                                    writerMetadata,
+                                    entityColumnFilter
+                            );
                             tableBackupRowCopiedCache.put(srcPath.toString(), recordToRowCopier);
                         }
 
@@ -3137,18 +2686,18 @@ public class SqlCompiler implements Closeable {
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
-            } catch (CairoException ex) {
+            } catch (CairoException | SqlException e) {
                 LOG.info()
                         .$("could not backup [table=").$(tableName)
-                        .$(", ex=").$(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
+                        .$(", ex=").$(e.getFlyweightMessage())
+                        .$(", errno=").$((e instanceof CairoException) ? ((CairoException) e).getErrno() : 0)
                         .$(']').$();
                 srcPath.of(cachedTmpBackupRoot).concat(tableName).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
                     LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
                 }
-                throw ex;
+                throw e;
             }
         }
 
@@ -3164,11 +2713,11 @@ public class SqlCompiler implements Closeable {
             srcPath.of(backupRoot).concat(tableName).slash$();
 
             if (ff.exists(srcPath)) {
-                throw CairoException.instance(0).put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
+                throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
             }
 
             if (ff.mkdirs(srcPath, mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
+                throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(srcPath).put(']');
             }
 
             int rootLen = srcPath.length();
@@ -3203,7 +2752,7 @@ public class SqlCompiler implements Closeable {
             dstPath.trimTo(changeDirPrefixLen).concat(dir).slash$();
             currDirPrefixLen = dstPath.length();
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put(errorMessage).put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put(errorMessage).put(dstPath).put(']');
             }
         }
 
@@ -3226,7 +2775,7 @@ public class SqlCompiler implements Closeable {
             } while (ff.exists(dstPath));
 
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
             }
             changeDirPrefixLen = dstPath.length();
         }
@@ -3234,7 +2783,7 @@ public class SqlCompiler implements Closeable {
         private CompiledQuery sqlBackup(SqlExecutionContext executionContext) throws SqlException {
             executionContext.getCairoSecurityContext().checkWritePermission();
             if (null == configuration.getBackupRoot()) {
-                throw CairoException.instance(0).put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
+                throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
             }
             final CharSequence tok = SqlUtil.fetchNext(lexer);
             if (null != tok) {
@@ -3277,7 +2826,7 @@ public class SqlCompiler implements Closeable {
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
                     int status = engine.getStatus(executionContext.getCairoSecurityContext(), srcPath, tableName, 0, tableName.length());
                     if (status != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(tableName).put("' is not  a valid table");
+                        throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
                     }
                     tableNames.add(tableName);
 

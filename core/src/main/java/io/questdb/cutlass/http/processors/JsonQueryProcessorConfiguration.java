@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -43,6 +42,4 @@ public interface JsonQueryProcessorConfiguration {
     CharSequence getKeepAliveHeader();
 
     long getMaxQueryResponseRowLimit();
-
-    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 }

@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -40,9 +41,17 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class MinTimestampVectorAggregateFunction extends TimestampFunction implements VectorAggregateFunction {
 
-    public static final LongBinaryOperator MIN = Math::min;
+    public static final LongBinaryOperator MIN = (long l1, long l2) -> {
+        if (l1 == Numbers.LONG_NaN) {
+            return l2;
+        }
+        if (l2 == Numbers.LONG_NaN) {
+            return l1;
+        }
+        return Math.min(l1, l2);
+    };
     private final LongAccumulator accumulator = new LongAccumulator(
-            MIN, Long.MAX_VALUE
+            MIN, Numbers.LONG_NaN
     );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -71,11 +80,11 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
         }
     }
 
@@ -91,12 +100,12 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MAX_VALUE);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NaN);
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMinLongMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntMinLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -106,8 +115,8 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
     }
 
     @Override
@@ -117,7 +126,16 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public long getTimestamp(Record rec) {
-        final long value = accumulator.longValue();
-        return value == Long.MAX_VALUE ? Numbers.LONG_NaN : value;
+        return accumulator.longValue();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MinTimestampVector(").put(columnIndex).put(')');
     }
 }

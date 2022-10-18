@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -59,7 +60,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(functions);
         Misc.free(baseFactory);
     }
@@ -72,9 +73,14 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = baseFactory.getCursor(executionContext);
-        Function.init(functions, cursor, executionContext);
-        this.cursor.of(cursor);
-        return this.cursor;
+        try {
+            Function.init(functions, cursor, executionContext);
+            this.cursor.of(cursor);
+            return this.cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -85,5 +91,20 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean supportsUpdateRowId(CharSequence tableName) {
         return baseFactory.supportsUpdateRowId(tableName);
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return baseFactory.hasDescendingOrder();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("VirtualRecordCursorFactory");
+        sink.attr("supportsRandomAccess");
+        sink.val(supportsRandomAccess);
+        sink.attr("functions");
+        sink.val(functions);
+        sink.child(baseFactory);
     }
 }

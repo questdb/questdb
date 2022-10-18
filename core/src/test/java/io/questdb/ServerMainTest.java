@@ -26,94 +26,98 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import org.hamcrest.MatcherAssert;
-
-import static org.hamcrest.CoreMatchers.*;
-
-import org.junit.After;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
+import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.net.URL;
-import java.nio.file.Paths;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+import java.sql.Connection;
+import java.sql.DriverManager;
 
+public class ServerMainTest extends AbstractBootstrapTest {
 
-public class ServerMainTest {
+    // log is needed to greedily allocate logger infra and
+    // exclude it from leak detector
+    @SuppressWarnings("unused")
+    private static final Log LOG = LogFactory.getLog(ServerMainTest.class);
 
-    @Rule
-    public final TemporaryFolder temp = new TemporaryFolder();
-
-    boolean publicZipStubCreated = false;
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractBootstrapTest.setUpStatic();
+        try {
+            createDummyConfiguration();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     @Before
-    public void setUp() throws IOException {
-        //fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests 
-        URL resource = ServerMain.class.getResource("/io/questdb/site/public.zip");
-        if (resource == null) {
-            File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
-            File publicZip = new File(siteDir, "public.zip");
-
-            try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(publicZip))) {
-                ZipEntry entry = new ZipEntry("test.txt");
-                zip.putNextEntry(entry);
-                zip.write("test".getBytes());
-                zip.closeEntry();
-            }
-
-            publicZipStubCreated = true;
+    public void setUp() {
+        try (Path path = new Path().of(root).concat("db")) {
+            int plen = path.length();
+            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
+            Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
         }
     }
 
-    @After
-    public void tearDown() {
-        if (publicZipStubCreated) {
-            File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
-            File publicZip = new File(siteDir, "public.zip");
+    @Test
+    public void testServerMainNoReStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                serverMain.start();
+                serverMain.start(); // <== no effect
+                serverMain.close();
+                try {
+                    serverMain.getCairoEngine();
+                } catch (IllegalStateException ex) {
+                    TestUtils.assertContains("close was called", ex.getMessage());
+                }
+                try {
+                    serverMain.getWorkerPoolManager();
+                } catch (IllegalStateException ex) {
+                    TestUtils.assertContains("close was called", ex.getMessage());
+                }
+                serverMain.start(); // <== no effect
+                serverMain.close(); // <== no effect
+                serverMain.start(); // <== no effect
+            }
+        });
+    }
 
-            if (publicZip.exists()) {
-                publicZip.delete();
+    @Test
+    public void testServerMainNoStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Os.pause();
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainPgWire() throws Exception {
+        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            serverMain.start();
+            try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                Os.pause();
             }
         }
     }
 
     @Test
-    public void testExtractSiteExtractsDefaultLogConfFileIfItsMissing() throws IOException {
-        Log log = LogFactory.getLog("server-main");
-        File logConf = Paths.get(temp.getRoot().getPath(), "conf", LogFactory.DEFAULT_CONFIG_NAME).toFile();
-
-        MatcherAssert.assertThat(logConf.exists(), is(false));
-
-        ServerMain.extractSite(BuildInformationHolder.INSTANCE, temp.getRoot().getPath(), log);
-
-        MatcherAssert.assertThat(logConf.exists(), is(true));
-    }
-
-    @Test
-    public void testExtractSiteExtractsDefaultConfDirIfItsMissing() throws IOException {
-        Log log = LogFactory.getLog("server-main");
-
-        File conf = Paths.get(temp.getRoot().getPath(), "conf").toFile();
-        File logConf = Paths.get(conf.getPath(), LogFactory.DEFAULT_CONFIG_NAME).toFile();
-        File serverConf = Paths.get(conf.getPath(), "server.conf").toFile();
-        File mimeTypes = Paths.get(conf.getPath(), "mime.types").toFile();
-        //File dateFormats = Paths.get(conf.getPath(), "date.formats").toFile();
-
-        ServerMain.extractSite(BuildInformationHolder.INSTANCE, temp.getRoot().getPath(), log);
-
-        assertExists(logConf);
-        assertExists(serverConf);
-        assertExists(mimeTypes);
-        //assertExists(dateFormats); date.formats is referenced in method but doesn't exist in SCM/jar
-    }
-
-    private static void assertExists(File f) {
-        MatcherAssert.assertThat(f.getPath(), f.exists(), is(true));
+    public void testServerMainStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Assert.assertNotNull(serverMain.getConfiguration());
+                Assert.assertNotNull(serverMain.getCairoEngine());
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertFalse(serverMain.hasStarted());
+                Assert.assertFalse(serverMain.hasBeenClosed());
+                serverMain.start();
+            }
+        });
     }
 }

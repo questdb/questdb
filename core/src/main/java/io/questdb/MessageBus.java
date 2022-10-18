@@ -25,18 +25,21 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cutlass.text.TextImportRequestTask;
+import io.questdb.cutlass.text.TextImportTask;
 import io.questdb.mp.*;
-import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 
 import java.io.Closeable;
 
 public interface MessageBus extends Closeable {
-    @Override
-    default void close() {
-        // We need to close only queues with native backing memory.
-        Misc.free(getTableWriterEventQueue());
-    }
+
+    Sequence getColumnPurgePubSeq();
+
+    RingQueue<ColumnPurgeTask> getColumnPurgeQueue();
+
+    Sequence getColumnPurgeSubSeq();
 
     CairoConfiguration getConfiguration();
 
@@ -78,15 +81,25 @@ public interface MessageBus extends Closeable {
 
     MPSequence getO3PurgeDiscoveryPubSeq();
 
-    RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
+    RingQueue<O3PartitionPurgeTask> getO3PurgeDiscoveryQueue();
 
     MCSequence getO3PurgeDiscoverySubSeq();
+
+    FanOut getPageFrameCollectFanOut(int shard);
+
+    MPSequence getPageFrameReducePubSeq(int shard);
+
+    RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard);
+
+    int getPageFrameReduceShardCount();
+
+    MCSequence getPageFrameReduceSubSeq(int shard);
+
+    FanOut getTableWriterEventFanOut();
 
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
-
-    FanOut getTableWriterEventFanOut();
 
     Sequence getVectorAggregatePubSeq();
 
@@ -97,4 +110,18 @@ public interface MessageBus extends Closeable {
     MPSequence getQueryCacheEventPubSeq();
 
     FanOut getQueryCacheEventFanOut();
+
+    RingQueue<TextImportTask> getTextImportQueue();
+
+    Sequence getTextImportPubSeq();
+
+    Sequence getTextImportSubSeq();
+
+    SCSequence getTextImportColSeq();
+
+    RingQueue<TextImportRequestTask> getTextImportRequestQueue();
+
+    MPSequence getTextImportRequestPubSeq();
+
+    Sequence getTextImportRequestSubSeq();
 }

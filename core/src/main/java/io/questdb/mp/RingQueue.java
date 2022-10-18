@@ -24,11 +24,7 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.DirectObjectFactory;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjectFactory;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 
 import java.io.Closeable;
 
@@ -78,7 +74,7 @@ public class RingQueue<T> implements Closeable {
     @Override
     public void close() {
         for (int i = 0, n = buf.length; i < n; i++) {
-            Misc.free(buf[i]);
+            Misc.freeIfCloseable(buf[i]);
         }
         if (memorySize > 0) {
             Unsafe.free(memory, memorySize, memoryTag);

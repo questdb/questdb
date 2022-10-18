@@ -28,20 +28,17 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class BooleanColumn extends BooleanFunction implements ScalarFunction {
     private static final ObjList<BooleanColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
-
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new BooleanColumn(i));
-        }
-    }
-
     private final int columnIndex;
+
+    public BooleanColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
+    }
 
     public static BooleanColumn newInstance(int columnIndex) {
         if (columnIndex < STATIC_COLUMN_COUNT) {
@@ -50,12 +47,26 @@ public class BooleanColumn extends BooleanFunction implements ScalarFunction {
         return new BooleanColumn(columnIndex);
     }
 
-    public BooleanColumn(int columnIndex) {
-        this.columnIndex = columnIndex;
-    }
-
     @Override
     public boolean getBool(Record rec) {
         return rec.getBool(columnIndex);
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new BooleanColumn(i));
+        }
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("BooleanColumn(").put(columnIndex).put(')');
+    }
+
 }

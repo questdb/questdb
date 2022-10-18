@@ -531,7 +531,7 @@ final class WhereClauseParser implements Mutable {
     private static long parseTokenAsTimestamp(ExpressionNode lo) throws SqlException {
         try {
             if (!isNullKeyword(lo.token)) {
-                return IntervalUtils.parseFloorPartialDate(lo.token, 1, lo.token.length() - 1);
+                return IntervalUtils.parseFloorPartialTimestamp(lo.token, 1, lo.token.length() - 1);
             }
             return Numbers.LONG_NaN;
         } catch (NumericException ignore) {
@@ -541,7 +541,7 @@ final class WhereClauseParser implements Mutable {
 
     private static long parseStringAsTimestamp(CharSequence str, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialDate(str);
+            return IntervalUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException ignore) {
             throw SqlException.invalidDate(position);
         }
@@ -1309,7 +1309,7 @@ final class WhereClauseParser implements Mutable {
             CharSequence value
     ) throws SqlException {
         Function func = functionParser.createBindVariable(executionContext, position, value);
-        if (func.isRuntimeConstant() && func.getType() == ColumnType.UNDEFINED) {
+        if (func.isRuntimeConstant() && ColumnType.isUndefined(func.getType())) {
             func.assignType(ColumnType.STRING, executionContext.getBindVariableService());
         }
         func.init(null, executionContext);
@@ -1520,7 +1520,7 @@ final class WhereClauseParser implements Mutable {
         final int len = node.token.length();
         try {
             // Timestamp string
-            ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1);
+            ts = IntervalUtils.parseFloorPartialTimestamp(node.token, 1, len - 1);
             if (!equalsTo) {
                 ts += isLo ? 1 : -1;
             }

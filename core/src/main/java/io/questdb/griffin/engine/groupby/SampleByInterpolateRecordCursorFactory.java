@@ -29,12 +29,10 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionParser;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
@@ -42,12 +40,10 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByInterpolateRecordCursorFactory implements RecordCursorFactory {
+public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
-    protected final Map recordKeyMap;
-    private final Map dataMap;
-    private final VirtualFunctionSkewedSymbolRecordCursor cursor;
+    private final SampleByInterpolateRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<GroupByFunction> groupByScalarFunctions;
@@ -58,7 +54,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
-    private final RecordMetadata metadata;
     private final int timestampIndex;
     private final TimestampSampler sampler;
     private final int yDataSize;
@@ -70,55 +65,25 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     public SampleByInterpolateRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
+            RecordMetadata metadata,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> recordFunctions,
             @NotNull TimestampSampler timestampSampler,
             @Transient @NotNull QueryModel model,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull FunctionParser functionParser,
-            @Transient @NotNull SqlExecutionContext executionContext,
             @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull EntityColumnFilter entityColumnFilter,
-            @Transient @NotNull IntList recordFunctionPositions,
             @Transient @NotNull IntList groupByFunctionPositions,
             int timestampIndex
     ) throws SqlException {
+        super(metadata);
         final int columnCount = model.getBottomUpColumns().size();
-        final RecordMetadata metadata = base.getMetadata();
-        this.groupByFunctions = new ObjList<>(columnCount);
-        this.groupByScalarFunctions = new ObjList<>(columnCount);
-        this.groupByTwoPointFunctions = new ObjList<>(columnCount);
-        valueTypes.add(ColumnType.BYTE); // gap flag
-
-        GroupByUtils.prepareGroupByFunctions(
-                model,
-                metadata,
-                functionParser,
-                executionContext,
-                groupByFunctions,
-                groupByFunctionPositions,
-                valueTypes
-        );
-
-        this.recordFunctions = new ObjList<>(columnCount);
-        final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-        GroupByUtils.prepareGroupByRecordFunctions(
-                model,
-                metadata,
-                listColumnFilter,
-                groupByFunctions,
-                groupByFunctionPositions,
-                recordFunctions,
-                recordFunctionPositions,
-                groupByMetadata,
-                keyTypes,
-                valueTypes.getColumnCount(),
-                false,
-                timestampIndex
-        );
-
-        this.storeYFunctions = new ObjList<>(columnCount);
-        this.interpolatorFunctions = new ObjList<>(columnCount);
+        this.groupByFunctions = groupByFunctions;
+        this.recordFunctions = recordFunctions;
+        this.base = base;
+        this.sampler = timestampSampler;
 
         // create timestamp column
         TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
@@ -128,6 +93,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
         }
 
+        this.groupByScalarFunctions = new ObjList<>(columnCount);
+        this.groupByTwoPointFunctions = new ObjList<>(columnCount);
+        this.storeYFunctions = new ObjList<>(columnCount);
+        this.interpolatorFunctions = new ObjList<>(columnCount);
         this.groupByFunctionCount = groupByFunctions.size();
         for (int i = 0; i < groupByFunctionCount; i++) {
             GroupByFunction function = groupByFunctions.getQuick(i);
@@ -171,39 +140,31 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
         this.timestampIndex = timestampIndex;
         this.yDataSize = groupByFunctionCount * 16;
-        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_DEFAULT);
+        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
 
         // sink will be storing record columns to map key
-        this.mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
+        this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         entityColumnFilter.of(keyTypes.getColumnCount());
         this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
 
-        // this is the map itself, which we must not forget to free when factory closes
-        this.recordKeyMap = MapFactory.createMap(configuration, keyTypes);
-
-        // data map will contain rounded timestamp value as last key column
-        keyTypes.add(ColumnType.TIMESTAMP);
-
-        this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
-        this.base = base;
-        this.metadata = groupByMetadata;
-        this.sampler = timestampSampler;
-        this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions);
+        this.cursor = new SampleByInterpolateRecordCursor(recordFunctions, configuration, keyTypes, valueTypes);
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(recordFunctions);
-        Misc.free(recordKeyMap);
-        Misc.free(dataMap);
         freeYData();
         Misc.free(base);
+        Misc.free(cursor);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        recordKeyMap.clear();
-        dataMap.clear();
+        if (!cursor.isOpen) {
+            cursor.isOpen = true;
+            cursor.recordKeyMap.reopen();
+            cursor.dataMap.reopen();
+        }
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
@@ -214,20 +175,21 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // Collect map of unique key values.
             // using this values we will fill gaps in main
             // data before jumping to another timestamp.
-            // This will allow to maintain chronological order of
+            // This will allow maintaining chronological order of
             // main data map.
             //
             // At the same time check if cursor has data
             while (baseCursor.hasNext()) {
-                circuitBreaker.test();
-                final MapKey key = recordKeyMap.withKey();
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                final MapKey key = cursor.recordKeyMap.withKey();
                 mapSink.copy(baseRecord, key);
                 key.createValue();
             }
 
             // no data, nothing to do
-            if (recordKeyMap.size() == 0) {
+            if (cursor.recordKeyMap.size() == 0) {
                 baseCursor.close();
+                cursor.close();
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }
 
@@ -267,7 +229,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 }
 
                 // same data group - evaluate group-by functions
-                MapKey key = dataMap.withKey();
+                MapKey key = cursor.dataMap.withKey();
                 mapSink.copy(baseRecord, key);
                 key.putLong(sample);
 
@@ -287,17 +249,17 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     hiSample = sampler.nextTimestamp(prevSample);
                     break;
                 }
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             } while (true);
 
             // fill gaps if any at end of base cursor
             fillGaps(prevSample, hiSample, circuitBreaker);
 
             if (groupByTwoPointFunctionCount > 0) {
-                final RecordCursor mapCursor = recordKeyMap.getCursor();
+                final RecordCursor mapCursor = cursor.recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.test();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     MapValue value = findDataMapValue(mapRecord, loSample);
                     if (value.getByte(0) == 0) { //we have at least 1 data point
                         long x1 = loSample;
@@ -322,10 +284,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // find gaps by checking each of the unique keys against every sample
             long sample;
             for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = sampler.nextTimestamp(sample)) {
-                final RecordCursor mapCursor = recordKeyMap.getCursor();
+                final RecordCursor mapCursor = cursor.recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.test();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     // locate first gap
                     MapValue value = findDataMapValue(mapRecord, sample);
                     if (value.getByte(0) == 1) {
@@ -410,18 +372,14 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 }
             }
 
-            cursor.of(baseCursor, dataMap.getCursor());
+            cursor.of(baseCursor, cursor.dataMap.getCursor());
 
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
+            cursor.close();
             throw e;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override
@@ -444,13 +402,13 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     private void fillGaps(long lo, long hi, SqlExecutionCircuitBreaker circuitBreaker) {
-        final RecordCursor keyCursor = recordKeyMap.getCursor();
+        final RecordCursor keyCursor = cursor.recordKeyMap.getCursor();
         final Record record = keyCursor.getRecord();
         long timestamp = lo;
         while (timestamp < hi) {
             while (keyCursor.hasNext()) {
-                circuitBreaker.test();
-                MapKey key = dataMap.withKey();
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                MapKey key = cursor.dataMap.withKey();
                 mapSink2.copy(record, key);
                 key.putLong(timestamp);
                 MapValue value = key.createValue();
@@ -464,21 +422,21 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     private MapValue findDataMapValue(Record record, long timestamp) {
-        final MapKey key = dataMap.withKey();
+        final MapKey key = cursor.dataMap.withKey();
         mapSink2.copy(record, key);
         key.putLong(timestamp);
         return key.findValue();
     }
 
     private MapValue findDataMapValue2(Record record, long timestamp) {
-        final MapKey key = dataMap.withKey();
+        final MapKey key = cursor.dataMap.withKey();
         mapSink2.copy(record, key);
         key.putLong(timestamp);
         return key.findValue2();
     }
 
     private MapValue findDataMapValue3(Record record, long timestamp) {
-        final MapKey key = dataMap.withKey();
+        final MapKey key = cursor.dataMap.withKey();
         mapSink2.copy(record, key);
         key.putLong(timestamp);
         return key.findValue3();
@@ -486,12 +444,12 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     private void freeYData() {
         if (yData != 0) {
-            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
             yData = 0;
         }
     }
 
-    private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
+    private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) throws SqlException {
         computeYPoints(x1Value, x2value);
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
             final MapValue result = findDataMapValue3(mapRecord, x);
@@ -508,7 +466,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         }
     }
 
-    private void interpolateBoundaryRange(long x1, long x2, Record record) {
+    private void interpolateBoundaryRange(long x1, long x2, Record record) throws SqlException {
         //interpolating boundary
         for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
             GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
@@ -521,7 +479,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     private void nullifyRange(long lo, long hi, Record record) {
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
-            final MapKey key = dataMap.withKey();
+            final MapKey key = cursor.dataMap.withKey();
             mapSink2.copy(record, key);
             key.putLong(x);
             MapValue value = key.findValue();
@@ -529,6 +487,37 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
             for (int i = 0; i < groupByFunctionCount; i++) {
                 groupByFunctions.getQuick(i).setNull(value);
+            }
+        }
+    }
+
+    class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
+
+        protected final Map recordKeyMap;
+        private final Map dataMap;
+        private boolean isOpen;
+
+        public SampleByInterpolateRecordCursor(ObjList<Function> functions,
+                                               CairoConfiguration configuration,
+                                               @Transient @NotNull ArrayColumnTypes keyTypes,
+                                               @Transient @NotNull ArrayColumnTypes valueTypes) {
+            super(functions);
+            // this is the map itself, which we must not forget to free when factory closes
+            this.recordKeyMap = MapFactory.createMap(configuration, keyTypes);
+            // data map will contain rounded timestamp value as last key column
+            keyTypes.add(ColumnType.TIMESTAMP);
+            this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.isOpen = true;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                recordKeyMap.close();
+                dataMap.close();
+                Misc.clearObjList(groupByFunctions);
+                super.close();
             }
         }
     }

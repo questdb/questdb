@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
@@ -33,7 +32,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ExpressionParserTest extends AbstractCairoTest {
-    private final static SqlCompiler compiler = new SqlCompiler(new CairoEngine(configuration));
+    private final static SqlCompiler compiler = new SqlCompiler(engine);
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
     @Test
@@ -128,6 +127,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testUnquotedStrFail() {
         assertFail(
                 "s ~ 'TDF",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail2() {
+        assertFail(
+                "s ~ 'TDF''",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail3() {
+        assertFail(
+                "s ~ 'TDF''A''",
                 4,
                 "unclosed quoted string?"
         );
@@ -352,6 +369,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatQualifier() throws SqlException {
+        x("'NaN'float::", "'NaN'::float");
+    }
+
+    @Test
     public void testCaseLikeSwitch() throws SqlException {
         x("x1'a'2'b'case", "case x when 1 then 'a' when 2 then 'b' end");
     }
@@ -542,7 +564,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastGeoHashCastMissingSize2() {
         assertFail("cast('sp052w92' as geohash)",
                 19,
-                "invalid type");
+                "unsupported cast");
     }
 
     @Test
@@ -661,7 +683,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastMissingType2() {
         assertFail("cast(1 as 1)",
                 10,
-                "invalid type"
+                "unsupported cast"
         );
     }
 
@@ -669,7 +691,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastMissingType3() {
         assertFail("cast(1 as binary)",
                 10,
-                "invalid type"
+                "unsupported cast"
         );
     }
 
@@ -849,6 +871,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testDotLiteralsUnquotedQuoted() throws SqlException {
         x("x.y", "x.\"y\"");
+    }
+
+    @Test
+    public void testDotLiteralsUnquotedQuotedWithEscapedQuote() throws SqlException {
+        x("x.y\"\"z", "x.\"y\"\"z\"");
     }
 
     @Test

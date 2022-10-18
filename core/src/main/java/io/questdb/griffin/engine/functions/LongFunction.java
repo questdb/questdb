@@ -36,11 +36,6 @@ import io.questdb.std.str.CharSink;
 public abstract class LongFunction implements ScalarFunction {
 
     @Override
-    public final char getChar(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -61,22 +56,44 @@ public abstract class LongFunction implements ScalarFunction {
     }
 
     @Override
+    public final char getChar(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getDate(Record rec) {
         return getLong(rec);
     }
 
     @Override
     public double getDouble(Record rec) {
-        return Numbers.longToDouble(getLong(rec));
+        final long val = getLong(rec);
+        return val != Numbers.LONG_NaN ? val : Double.NaN;
     }
 
     @Override
     public float getFloat(Record rec) {
-        return Numbers.longToFloat(getLong(rec));
+        final long val = getLong(rec);
+        return val != Numbers.LONG_NaN ? val : Float.NaN;
     }
 
     @Override
     public final int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final Long256 getLong256A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -126,27 +143,6 @@ public abstract class LongFunction implements ScalarFunction {
     }
 
     @Override
-    public final int getType() {
-        return ColumnType.LONG;
-    }
-
-    @Override
-    public final Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getLong256(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-
-    @Override
     public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -164,5 +160,10 @@ public abstract class LongFunction implements ScalarFunction {
     @Override
     public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getType() {
+        return ColumnType.LONG;
     }
 }

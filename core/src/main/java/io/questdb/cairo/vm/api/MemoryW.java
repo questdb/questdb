@@ -28,14 +28,13 @@ import io.questdb.std.Long256;
 
 import java.io.Closeable;
 
+//writable
 public interface MemoryW extends Closeable {
 
     long appendAddressFor(long offset, long bytes);
 
     @Override
     void close();
-
-    void putBlockOfBytes(long offset, long from, long len);
 
     void putBool(long offset, boolean value);
 

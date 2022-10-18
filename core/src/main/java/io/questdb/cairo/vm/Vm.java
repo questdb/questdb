@@ -33,10 +33,13 @@ import io.questdb.std.str.LPSZ;
 public class Vm {
     public static final int STRING_LENGTH_BYTES = 4;
 
-    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size) {
+    public static final byte TRUNCATE_TO_PAGE = 0;
+    public static final byte TRUNCATE_TO_POINTER = 1;
+
+    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, byte truncateMode) {
         try {
             if (truncate) {
-                bestEffortTruncate(ff, log, fd, size);
+                bestEffortTruncate(ff, log, fd, size, truncateMode);
             } else {
                 log.debug().$("closed [fd=").$(fd).$(']').$();
             }
@@ -47,8 +50,8 @@ public class Vm {
         }
     }
 
-    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
-        long sz = Files.ceilPageSize(size);
+    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
+        long sz = (truncateMode == TRUNCATE_TO_PAGE) ? Files.ceilPageSize(size) : size;
         if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
                     .$("truncated and closed [fd=").$(fd)
@@ -58,6 +61,14 @@ public class Vm {
         }
         log.debug().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         return -1;
+    }
+
+    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size) {
+        bestEffortClose(ff, log, fd, truncate, size, TRUNCATE_TO_PAGE);
+    }
+
+    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
+        return bestEffortTruncate(ff, log, fd, size, TRUNCATE_TO_PAGE);
     }
 
     public static MemoryAR getARInstance(long pageSize, int maxPages, int memoryTag) {
@@ -106,6 +117,10 @@ public class Vm {
 
     public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
+    }
+
+    public static MemoryCMOR getMemoryCMOR() {
+        return new MemoryCMORImpl();
     }
 
     public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {

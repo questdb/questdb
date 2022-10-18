@@ -24,5 +24,6 @@
 
 package io.questdb.cairo.vm.api;
 
-public interface MemoryCMR extends MemoryCM, MemoryMR {
+//contiguous mapped readable
+public interface MemoryCMR extends MemoryCR, MemoryMR, MemoryCM {
 }

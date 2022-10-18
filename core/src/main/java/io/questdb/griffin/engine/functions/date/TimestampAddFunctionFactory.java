@@ -38,6 +38,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 
 public class TimestampAddFunctionFactory implements FunctionFactory {
 
@@ -133,6 +134,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return func.add(l, interval);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("AddLongIntVarConstFunction");
         }
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.geohash;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -74,7 +75,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                 compiler.compile("select cast(cast('questdb' as geohash(6c)) as geohash(7c)) from long_sequence(1)", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "CAST cannot decrease precision from GEOHASH(30b) to GEOHASH(35b)");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "CAST cannot narrow values from GEOHASH(30b) to GEOHASH(35b)");
             }
         });
     }
@@ -86,8 +87,8 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
                 Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "string is too short to cast to chosen GEOHASH precision");
+            } catch (ImplicitCastException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible value: `f91t` [STRING -> GEOHASH(8c)]");
             }
         });
     }

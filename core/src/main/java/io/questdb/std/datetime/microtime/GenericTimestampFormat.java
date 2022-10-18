@@ -259,7 +259,15 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     sink.put(dayOfWeek);
                     break;
-
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                    sink.put(Timestamps.getDayOfYear(micros));
+                    break;
+                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
+                    sink.put(Timestamps.getWeekOfMonth(micros));
+                    break;
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                    sink.put(Timestamps.getWeekOfYear(micros));
+                    break;
                 // MONTH
 
                 case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
@@ -317,21 +325,28 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                         year = Timestamps.getYear(micros);
                         leap = Timestamps.isLeapYear(year);
                     }
-                    sink.put(year);
+                    TimestampFormatUtils.appendYear(sink, year);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = Timestamps.isLeapYear(year);
                     }
-                    TimestampFormatUtils.append0(sink, year % 100);
+                    TimestampFormatUtils.appendYear0(sink, year % 100);
+                    break;
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    if (year == Integer.MIN_VALUE) {
+                        year = Timestamps.getYear(micros);
+                        leap = Timestamps.isLeapYear(year);
+                    }
+                    TimestampFormatUtils.appendYear00(sink, year % 1000);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = Timestamps.isLeapYear(year);
                     }
-                    TimestampFormatUtils.append000(sink, year);
+                    TimestampFormatUtils.appendYear000(sink, year);
                     break;
 
                 // ERA
@@ -580,8 +595,13 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     // ignore weekday
                     pos += Numbers.decodeHighInt(l);
                     break;
-
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                    l = Numbers.parseIntSafely(in, pos, hi);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
                 case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
                     TimestampFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday
                     Numbers.parseInt(in, pos, ++pos);
@@ -619,6 +639,10 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     TimestampFormatUtils.assertRemaining(pos + 1, hi);
                     year = TimestampFormatUtils.adjustYear(Numbers.parseInt(in, pos, pos += 2));
+                    break;
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    TimestampFormatUtils.assertRemaining(pos + 2, hi);
+                    year = Numbers.parseInt(in, pos, pos += 3);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {

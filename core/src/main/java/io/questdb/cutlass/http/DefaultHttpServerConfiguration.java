@@ -26,8 +26,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
@@ -42,7 +40,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
-    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
 
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
         @Override
@@ -105,11 +102,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
         }
-
-        @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            return circuitBreakerConfiguration;
-        }
     };
 
     public DefaultHttpServerConfiguration() {
@@ -131,7 +123,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
         }
         this.httpContextConfiguration = httpContextConfiguration;
-        this.circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
         this.dispatcherConfiguration = ioDispatcherConfiguration;
     }
 
@@ -162,7 +153,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public int getQueryCacheRowCount() {
-        return 16;
+        return 4;
     }
 
     @Override
@@ -201,22 +192,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean isEnabled() {
-        return true;
-    }
-
-    @Override
-    public int[] getWorkerAffinity() {
-        return new int[]{-1, -1};
-    }
-
-    @Override
     public int getWorkerCount() {
         return 2;
     }
 
     @Override
-    public boolean haltOnError() {
-        return false;
+    public String getPoolName() {
+        return "http";
     }
 }

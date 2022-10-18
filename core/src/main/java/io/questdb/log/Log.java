@@ -24,7 +24,10 @@
 
 package io.questdb.log;
 
+import io.questdb.mp.Sequence;
+
 public interface Log {
+
     LogRecord debug();
 
     LogRecord debugW();
@@ -45,8 +48,6 @@ public interface Log {
 
     LogRecord advisoryW();
 
-    boolean isDebugEnabled();
-
     LogRecord xerror();
 
     LogRecord xcritical();
@@ -60,4 +61,6 @@ public interface Log {
     LogRecord xDebugW();
 
     LogRecord xadvisory();
+
+    Sequence getCriticalSequence();
 }

@@ -116,9 +116,9 @@ public class DBeaverTest extends AbstractGriffinTest {
             compiler.compile("create table tab2(b long, z binary)", sqlExecutionContext);
 
             assertQuery(
-                    "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tdef_value\tdescription\n" +
-                            "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\t\t\n" +
-                            "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\t\t\n",
+                    "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
+                            "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\t\t\n" +
+                            "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\ttrue\t\t\n",
                     "SELECT \n" +
                             "    c.relname,\n" +
                             "    a.*,\n" +
@@ -144,10 +144,10 @@ public class DBeaverTest extends AbstractGriffinTest {
             compiler.compile("create table xyz(a int)", sqlExecutionContext);
             compiler.compile("create table tab2(b long)", sqlExecutionContext);
             assertQuery(
-                    "oid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\tdescription\tpartition_expr\tpartition_key\n" +
-                            "2\ttab2\t2200\tr\t0\t2\t\t\t\t\n" +
-                            "1\txyz\t2200\tr\t0\t1\t\t\t\t\n",
-                    "SELECT c.oid,c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
+                    "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
+                            "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
+                            "1\t1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n",
+                    "SELECT c.oid \"oid tral\",c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
                             "FROM pg_catalog.pg_class c\n" +
                             "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass\n" +
                             "WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c') order by relname",
@@ -164,7 +164,7 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListTypes() throws SqlException {
         assertQuery(
-                "oid\toid1\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\trelkind\tbase_type_name\tdescription\n" +
+                "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\trelkind\tbase_type_name\tdescription\n" +
                         "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
                         "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
                         "18\t18\tchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
@@ -176,7 +176,7 @@ public class DBeaverTest extends AbstractGriffinTest {
                         "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
                         "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
                         "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n",
-                "SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
+                "SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_description d ON t.oid=d.objoid\n" +
@@ -193,10 +193,10 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testNamespaceListSql() throws SqlException {
         assertQuery(
-                "oid\tnspname\toid1\tdescription\n" +
-                        "11\tpg_catalog\t11\t\n" +
-                        "2200\tpublic\t2200\t\n",
-                "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n\n" +
+                "n_oid\tnspname\toid\txmin\tnspowner\tdescription\n" +
+                        "11\tpg_catalog\t11\t0\t1\t\n" +
+                        "2200\tpublic\t2200\t0\t1\t\n",
+                "SELECT n.oid \"n_oid\",n.*,d.description FROM pg_catalog.pg_namespace n\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass\n" +
                         " ORDER BY nspname",
                 null,

@@ -25,12 +25,18 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cutlass.text.TextImportRequestTask;
+import io.questdb.cutlass.text.TextImportTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
+    private final CairoConfiguration configuration;
+
     private final RingQueue<ColumnIndexerTask> indexerQueue;
     private final MPSequence indexerPubSeq;
     private final MCSequence indexerSubSeq;
@@ -43,7 +49,7 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence o3CallbackPubSeq;
     private final MCSequence o3CallbackSubSeq;
 
-    private final RingQueue<O3PurgeDiscoveryTask> o3PurgeDiscoveryQueue;
+    private final RingQueue<O3PartitionPurgeTask> o3PurgeDiscoveryQueue;
     private final MPSequence o3PurgeDiscoveryPubSeq;
     private final MCSequence o3PurgeDiscoverySubSeq;
 
@@ -70,7 +76,22 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence queryCacheEventPubSeq;
     private final FanOut queryCacheEventSubSeq;
 
-    private final CairoConfiguration configuration;
+    private final int pageFrameReduceShardCount;
+    private final MPSequence[] pageFrameReducePubSeq;
+    private final MCSequence[] pageFrameReduceSubSeq;
+    private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
+    private final FanOut[] pageFrameCollectFanOut;
+    private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
+    private final SCSequence columnPurgeSubSeq;
+    private final MPSequence columnPurgePubSeq;
+
+    private final RingQueue<TextImportTask> textImportQueue;
+    private final SPSequence textImportPubSeq;
+    private final MCSequence textImportSubSeq;
+    private final SCSequence textImportColSeq;
+    private final RingQueue<TextImportRequestTask> textImportRequestQueue;
+    private final MPSequence textImportRequestPubSeq;
+    private final SCSequence textImportRequestSubSeq;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -104,7 +125,7 @@ public class MessageBusImpl implements MessageBus {
         this.o3CopySubSeq = new MCSequence(this.o3CopyQueue.getCycle());
         o3CopyPubSeq.then(o3CopySubSeq).then(o3CopyPubSeq);
 
-        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
+        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PartitionPurgeTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
         this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCycle());
         this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCycle());
         this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
@@ -127,6 +148,71 @@ public class MessageBusImpl implements MessageBus {
         this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
         this.queryCacheEventSubSeq = new FanOut();
         this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
+
+        this.columnPurgeQueue = new RingQueue<>(ColumnPurgeTask::new, configuration.getColumnPurgeQueueCapacity());
+        this.columnPurgeSubSeq = new SCSequence();
+        this.columnPurgePubSeq = new MPSequence(this.columnPurgeQueue.getCycle());
+        this.columnPurgePubSeq.then(this.columnPurgeSubSeq).then(this.columnPurgePubSeq);
+
+        this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
+
+        //noinspection unchecked
+        pageFrameReduceQueue = new RingQueue[pageFrameReduceShardCount];
+        pageFrameReducePubSeq = new MPSequence[pageFrameReduceShardCount];
+        pageFrameReduceSubSeq = new MCSequence[pageFrameReduceShardCount];
+        pageFrameCollectFanOut = new FanOut[pageFrameReduceShardCount];
+
+        int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+        for (int i = 0; i < pageFrameReduceShardCount; i++) {
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
+                    () -> new PageFrameReduceTask(configuration),
+                    reduceQueueCapacity
+            );
+
+            final MPSequence reducePubSeq = new MPSequence(reduceQueueCapacity);
+            final MCSequence reduceSubSeq = new MCSequence(reduceQueueCapacity);
+            final FanOut collectFanOut = new FanOut();
+            reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
+
+            pageFrameReduceQueue[i] = queue;
+            pageFrameReducePubSeq[i] = reducePubSeq;
+            pageFrameReduceSubSeq[i] = reduceSubSeq;
+            pageFrameCollectFanOut[i] = collectFanOut;
+        }
+
+        this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getSqlCopyQueueCapacity());
+        this.textImportPubSeq = new SPSequence(textImportQueue.getCycle());
+        this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
+        this.textImportColSeq = new SCSequence();
+        textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
+
+        // We allow only a single parallel import to be in-flight, hence queue size of 1.
+        this.textImportRequestQueue = new RingQueue<>(TextImportRequestTask::new, 1);
+        this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
+        this.textImportRequestSubSeq = new SCSequence();
+        textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
+    }
+
+    @Override
+    public void close() {
+        // We need to close only queues with native backing memory.
+        Misc.free(getTableWriterEventQueue());
+        Misc.free(pageFrameReduceQueue);
+    }
+
+    @Override
+    public Sequence getColumnPurgePubSeq() {
+        return columnPurgePubSeq;
+    }
+
+    @Override
+    public RingQueue<ColumnPurgeTask> getColumnPurgeQueue() {
+        return columnPurgeQueue;
+    }
+
+    @Override
+    public SCSequence getColumnPurgeSubSeq() {
+        return columnPurgeSubSeq;
     }
 
     @Override
@@ -230,13 +316,43 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
+    public RingQueue<O3PartitionPurgeTask> getO3PurgeDiscoveryQueue() {
         return o3PurgeDiscoveryQueue;
     }
 
     @Override
     public MCSequence getO3PurgeDiscoverySubSeq() {
         return o3PurgeDiscoverySubSeq;
+    }
+
+    @Override
+    public FanOut getPageFrameCollectFanOut(int shard) {
+        return pageFrameCollectFanOut[shard];
+    }
+
+    @Override
+    public MPSequence getPageFrameReducePubSeq(int shard) {
+        return pageFrameReducePubSeq[shard];
+    }
+
+    @Override
+    public RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard) {
+        return pageFrameReduceQueue[shard];
+    }
+
+    @Override
+    public int getPageFrameReduceShardCount() {
+        return pageFrameReduceShardCount;
+    }
+
+    @Override
+    public MCSequence getPageFrameReduceSubSeq(int shard) {
+        return pageFrameReduceSubSeq[shard];
+    }
+
+    @Override
+    public FanOut getTableWriterEventFanOut() {
+        return tableWriterEventSubSeq;
     }
 
     @Override
@@ -247,11 +363,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
-    }
-
-    @Override
-    public FanOut getTableWriterEventFanOut() {
-        return tableWriterEventSubSeq;
     }
 
     @Override
@@ -277,5 +388,40 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public FanOut getQueryCacheEventFanOut() {
         return queryCacheEventSubSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportTask> getTextImportQueue() {
+        return textImportQueue;
+    }
+
+    @Override
+    public Sequence getTextImportPubSeq() {
+        return textImportPubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportSubSeq() {
+        return textImportSubSeq;
+    }
+
+    @Override
+    public SCSequence getTextImportColSeq() {
+        return textImportColSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
+        return textImportRequestQueue;
+    }
+
+    @Override
+    public MPSequence getTextImportRequestPubSeq() {
+        return textImportRequestPubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportRequestSubSeq() {
+        return textImportRequestSubSeq;
     }
 }

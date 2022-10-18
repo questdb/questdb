@@ -59,7 +59,7 @@ public class CastLongToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getLong(rec) == 1;
+            return arg.getLong(rec) != 0;
         }
     }
 }

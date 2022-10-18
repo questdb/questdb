@@ -32,7 +32,7 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
 
-    void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
+    boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
 
     int getColumnIndex();
 
@@ -41,11 +41,13 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     void initRosti(long pRosti);
 
-    void merge(long pRostiA, long pRostiB);
+    //returns true if merge was fine and false if it failed on memory allocation 
+    boolean merge(long pRostiA, long pRostiB);
 
     void pushValueTypes(ArrayColumnTypes types);
 
     // sets null as result of aggregation of all nulls
     // this typically checks non-null count and replaces 0 with null if all values were null
-    void wrapUp(long pRosti);
+    //returns true if wrapUp was fine and false if it failed on memory allocation
+    boolean wrapUp(long pRosti);
 }

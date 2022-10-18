@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -52,37 +53,57 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsByte(getStr(rec));
     }
 
     @Override
     public final char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsChar(getStr(rec));
     }
 
     @Override
     public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsDate(getStr(rec));
     }
 
     @Override
     public final double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsDouble(getStr(rec));
     }
 
     @Override
     public final float getFloat(Record rec) {
+        return SqlUtil.implicitCastStrAsFloat(getStr(rec));
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsInt(getStr(rec));
     }
 
     @Override
     public final long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsLong(getStr(rec));
     }
 
     @Override
@@ -107,7 +128,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsShort(getStr(rec));
     }
 
     @Override
@@ -133,32 +154,16 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsTimestamp(getStr(rec));
     }
 
     @Override
     public final int getType() {
         return ColumnType.STRING;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 }

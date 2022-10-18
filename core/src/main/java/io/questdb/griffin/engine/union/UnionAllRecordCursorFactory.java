@@ -24,58 +24,31 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
-public class UnionAllRecordCursorFactory implements RecordCursorFactory {
-    private final RecordMetadata metadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final UnionAllRecordCursor cursor;
+public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory {
 
     public UnionAllRecordCursorFactory(
             RecordMetadata metadata,
-            RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory
+            RecordCursorFactory factoryA,
+            RecordCursorFactory factoryB,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB
     ) {
-        this.metadata = metadata;
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
-        this.cursor = new UnionAllRecordCursor();
+        super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
+        this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        RecordCursor slaveCursor = null;
-        try {
-            slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
-            return cursor;
-        } catch (Throwable e) {
-            Misc.free(slaveCursor);
-            Misc.free(masterCursor);
-            throw e;
-        }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
+    public boolean fragmentedSymbolTables() {
+        return true;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
     }
 }

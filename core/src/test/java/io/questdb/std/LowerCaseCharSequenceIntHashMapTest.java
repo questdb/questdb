@@ -35,6 +35,26 @@ import java.util.Map;
 public class LowerCaseCharSequenceIntHashMapTest {
 
     @Test
+    public void testRemoveEntry() {
+        final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
+
+        StringSink ss = new StringSink();
+        ss.put("a");
+        lowerCaseMap.put(ss, 1);
+        ss.clear();
+        ss.put("Bb");
+        lowerCaseMap.put(ss, 2);
+
+        Assert.assertEquals(1, lowerCaseMap.removeEntry("A"));
+        Assert.assertEquals(1, lowerCaseMap.size());
+        Assert.assertEquals(-1, lowerCaseMap.get("a"));
+        Assert.assertEquals(2, lowerCaseMap.get("bb"));
+        Assert.assertEquals(2, lowerCaseMap.get("Bb"));
+        Assert.assertEquals(2, lowerCaseMap.removeEntry("BB"));
+        Assert.assertEquals(0, lowerCaseMap.size());
+    }
+
+    @Test
     public void testPutMutableCharSequence() {
         final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
 
@@ -124,6 +144,36 @@ public class LowerCaseCharSequenceIntHashMapTest {
                 Assert.assertTrue(referenceMap.containsKey(v.toString()));
             }
         }
+    }
 
+    @Test
+    public void testEqualsAndHashCode() {
+        final int items = 100;
+
+        final LowerCaseCharSequenceIntHashMap mapA = new LowerCaseCharSequenceIntHashMap();
+        final LowerCaseCharSequenceIntHashMap mapB = new LowerCaseCharSequenceIntHashMap();
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
+
+        for (int i = 0; i < items; i++) {
+            mapA.put(Integer.toString(i), i);
+        }
+
+        Assert.assertNotEquals(mapA, mapB);
+
+        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the maps.
+        for (int i = items - 1; i > -1; i--) {
+            mapB.put(Integer.toString(i), i);
+        }
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
+
+        mapA.clear();
+        mapB.clear();
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
     }
 }

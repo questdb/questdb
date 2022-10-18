@@ -188,6 +188,9 @@ public class GroupByUtils {
                         case ColumnType.GEOLONG:
                             fun = GeoLongColumn.newInstance(keyColumnIndex - 1, type);
                             break;
+                        case ColumnType.LONG128:
+                            fun = Long128Column.newInstance(keyColumnIndex - 1);
+                            break;
                         default:
                             fun = BinColumn.newInstance(keyColumnIndex - 1);
                             break;
@@ -295,7 +298,7 @@ public class GroupByUtils {
                     final int dotIndex = Chars.indexOf(key.token, '.');
 
                     if (dotIndex > -1) {
-                        int aliasIndex = model.getAliasIndex(key.token, 0, dotIndex);
+                        int aliasIndex = model.getModelAliasIndex(key.token, 0, dotIndex);
                         if (aliasIndex > -1) {
                             // we should now check against main model
                             int refColumn = model.getAliasToColumnMap().keyIndex(key.token);

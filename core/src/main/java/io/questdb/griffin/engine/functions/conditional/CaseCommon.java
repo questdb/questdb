@@ -279,6 +279,7 @@ public class CaseCommon {
         constructors.extendAndSet(ColumnType.DATE, (position, picker, args) -> new DateCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.TIMESTAMP, (position, picker, args) -> new TimestampCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
+        constructors.extendAndSet(ColumnType.LONG128, (position, picker, args) -> new Long128CaseFunction(picker, args));
     }
 
     static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {

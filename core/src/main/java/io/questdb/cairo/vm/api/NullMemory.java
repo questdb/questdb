@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 
@@ -43,10 +46,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-    }
-
-    @Override
     public void zero() {
     }
 
@@ -60,7 +59,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
-
     }
 
     @Override
@@ -99,7 +97,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putByte(byte b) {
+    public void putByte(byte value) {
         throw new UnsupportedOperationException();
     }
 
@@ -129,7 +127,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putLong128(long l1, long l2) {
+    public void putLongLong(long l0, long l1) {
         throw new UnsupportedOperationException();
     }
 
@@ -251,11 +249,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public long getGrownLength() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public FilesFacade getFilesFacade() {
         throw new UnsupportedOperationException();
     }
@@ -275,7 +268,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         throw new UnsupportedOperationException();
     }
 
@@ -347,10 +340,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     @Override
     public long putStrUnsafe(CharSequence value, int pos, int len) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void replacePage(long address, long size) {
     }
 
     @Override

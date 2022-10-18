@@ -48,7 +48,183 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class SymbolCacheTest extends AbstractGriffinTest {
+
+    @Test
+    public void testAddSymbolColumnConcurrent() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            CyclicBarrier start = new CyclicBarrier(2);
+            AtomicInteger done = new AtomicInteger();
+            AtomicInteger columnsAdded = new AtomicInteger();
+            AtomicInteger reloadCount = new AtomicInteger();
+            int totalColAddCount = 10;
+            int rowsAdded = 1000;
+
+            String tableName = "tbl_symcache_test";
+            createTable(tableName, PartitionBy.DAY);
+            Rnd rnd = new Rnd();
+
+            Thread writerThread = new Thread(() -> {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    start.await();
+                    for (int i = 0; i < totalColAddCount; i++) {
+                        writer.addColumn("col" + i, ColumnType.SYMBOL);
+                        int colCount = writer.getMetadata().getColumnCount();
+                        columnsAdded.incrementAndGet();
+
+                        for (int rowNum = 0; rowNum < rowsAdded; rowNum++) {
+                            TableWriter.Row row = writer.newRow((i * rowsAdded + rowNum) * Timestamps.SECOND_MICROS);
+                            String value = "val" + (i * rowsAdded + rowNum);
+                            for (int col = 1; col < colCount; col++) {
+                                if (rnd.nextBoolean()) {
+                                    row.putSym(col, value);
+                                }
+                            }
+                            row.append();
+                        }
+
+                        writer.commit();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                } finally {
+                    done.incrementAndGet();
+                }
+            });
+
+            Thread readerThread = new Thread(() -> {
+                ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
+
+                try (Path path = new Path();
+                     TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
+                             path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                             PartitionBy.DAY
+                     );
+                     TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)
+                ) {
+                    path.of(configuration.getRoot()).concat(tableName);
+                    start.await();
+                    int colAdded = 0, newColsAdded;
+                    while (colAdded < totalColAddCount) {
+                        newColsAdded = columnsAdded.get();
+                        rdr.reload();
+                        for (int col = colAdded; col < newColsAdded; col++) {
+                            SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
+                            symbolCache.of(
+                                    engine.getConfiguration(),
+                                    path,
+                                    "col" + col,
+                                    col,
+                                    txReader,
+                                    rdr.getColumnVersionReader().getDefaultColumnNameTxn(col + 1)
+                            );
+                            symbolCacheObjList.add(symbolCache);
+                        }
+
+                        int symCount = symbolCacheObjList.size();
+                        String value = "val" + ((newColsAdded - 1) * rowsAdded);
+                        boolean found = false;
+                        for (int sym = 0; sym < symCount; sym++) {
+                            if (symbolCacheObjList.getQuick(sym).keyOf(value) != SymbolTable.VALUE_NOT_FOUND) {
+                                found = true;
+                            }
+                        }
+                        colAdded = newColsAdded;
+                        if (found) {
+                            reloadCount.incrementAndGet();
+                        }
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                } finally {
+                    Misc.freeObjList(symbolCacheObjList);
+                }
+            });
+            writerThread.start();
+            readerThread.start();
+
+            writerThread.join();
+            readerThread.join();
+
+            if (exceptions.size() != 0) {
+                for (Throwable ex : exceptions) {
+                    ex.printStackTrace();
+                }
+                Assert.fail();
+            }
+            Assert.assertTrue(reloadCount.get() > 0);
+            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
+        });
+    }
+
+    @Test
+    public void testCloseResetsCapacity() throws Exception {
+        final int N = 1024;
+        final String tableName = "tb1";
+        final FilesFacade ff = new FilesFacadeImpl();
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path();
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                         .col("symCol", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
+            ) {
+                CairoTestUtils.create(model);
+                try (
+                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        TxReader txReader = new TxReader(ff).ofRO(
+                                path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                                PartitionBy.DAY
+                        )
+                ) {
+                    int symColIndex = writer.getColumnIndex("symCol");
+
+                    cache.of(
+                            configuration,
+                            path.of(configuration.getRoot()).concat(tableName),
+                            "symCol",
+                            symColIndex,
+                            txReader,
+                            -1
+                    );
+
+                    final int initialCapacity = cache.getCacheCapacity();
+                    Assert.assertTrue(N > initialCapacity);
+
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow();
+                        r.putSym(symColIndex, "sym" + i);
+                        r.append();
+                    }
+                    writer.commit();
+
+                    for (int i = 0; i < N; i++) {
+                        int rc = cache.keyOf("sym" + i);
+                        Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    }
+
+                    Assert.assertEquals(N, cache.getCacheValueCount());
+                    Assert.assertTrue(cache.getCacheCapacity() >= N);
+
+                    cache.close();
+
+                    // Close should shrink cache back to initial capacity.
+                    Assert.assertEquals(0, cache.getCacheValueCount());
+                    Assert.assertEquals(initialCapacity, cache.getCacheCapacity());
+                }
+            }
+        });
+    }
 
     @Test
     public void testConcurrency() throws Exception {
@@ -65,7 +241,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                     Path path = new Path();
-                    TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat("x"), PartitionBy.DAY)
+                    TxReader txReader = new TxReader(ff).ofRO(
+                            path.of(configuration.getRoot()).concat("x").concat(TXN_FILE_NAME).$(),
+                            PartitionBy.DAY
+                    )
             ) {
                 path.of(configuration.getRoot()).concat("x");
                 symbolCache.of(configuration, path, "b", 1, txReader, -1);
@@ -167,16 +346,18 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
-                        TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat(tableName), PartitionBy.DAY)
+                        TxReader txReader = new TxReader(ff).ofRO(
+                                path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                                PartitionBy.DAY
+                        )
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
                     int symColIndex2 = writer.getColumnIndex("symCol2");
                     long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
-                    path.of(configuration.getRoot()).concat(tableName);
 
                     txMem.of(
                             configuration.getFilesFacade(),
-                            path.concat(TableUtils.TXN_FILE_NAME).$(),
+                            path,
                             transientSymCountOffset + Integer.BYTES,
                             transientSymCountOffset + Integer.BYTES,
                             MemoryTag.MMAP_DEFAULT
@@ -293,112 +474,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     Assert.assertEquals(2, cache.getCacheValueCount());
                 }
             }
-        });
-    }
-
-    @Test
-    public void testAddSymbolColumnConcurrent() throws Throwable {
-        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-        assertMemoryLeak(() -> {
-            CyclicBarrier start = new CyclicBarrier(2);
-            AtomicInteger done = new AtomicInteger();
-            AtomicInteger columnsAdded = new AtomicInteger();
-            AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = 10;
-            int rowsAdded = 1000;
-
-            String tableName = "tbl_symcache_test";
-            createTable(tableName, PartitionBy.DAY);
-            Rnd rnd = new Rnd();
-
-            Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                    start.await();
-                    for (int i = 0; i < totalColAddCount; i++) {
-                        writer.addColumn("col" + i, ColumnType.SYMBOL);
-                        int colCount = writer.getMetadata().getColumnCount();
-                        columnsAdded.incrementAndGet();
-
-                        for (int rowNum = 0; rowNum < rowsAdded; rowNum++) {
-                            TableWriter.Row row = writer.newRow((i * rowsAdded + rowNum) * Timestamps.SECOND_MICROS);
-                            String value = "val" + (i * rowsAdded + rowNum);
-                            for (int col = 1; col < colCount; col++) {
-                                if (rnd.nextBoolean()) {
-                                    row.putSym(col, value);
-                                }
-                            }
-                            row.append();
-                        }
-
-                        writer.commit();
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                } finally {
-                    done.incrementAndGet();
-                }
-            });
-
-            Thread readerThread = new Thread(() -> {
-                ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
-
-                try (Path path = new Path();
-                     TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(path.of(configuration.getRoot()).concat(tableName), PartitionBy.DAY);
-                     TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    start.await();
-                    int colAdded = 0, newColsAdded;
-                    while (colAdded < totalColAddCount) {
-                        newColsAdded = columnsAdded.get();
-                        rdr.reload();
-                        for (int col = colAdded; col < newColsAdded; col++) {
-                            SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
-                            int symbolIndexInTxFile = col;
-                            symbolCache.of(
-                                    engine.getConfiguration(),
-                                    path,
-                                    "col" + col,
-                                    symbolIndexInTxFile,
-                                    txReader,
-                                    rdr.getColumnVersionReader().getDefaultColumnNameTxn(col + 1)
-                            );
-                            symbolCacheObjList.add(symbolCache);
-                        }
-
-                        int symCount = symbolCacheObjList.size();
-                        String value = "val" + ((newColsAdded - 1) * rowsAdded);
-                        boolean found = false;
-                        for (int sym = 0; sym < symCount; sym++) {
-                            if (symbolCacheObjList.getQuick(sym).keyOf(value) != SymbolTable.VALUE_NOT_FOUND) {
-                                found = true;
-                            }
-                        }
-                        colAdded = newColsAdded;
-                        if (found) {
-                            reloadCount.incrementAndGet();
-                        }
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                } finally {
-                    Misc.freeObjList(symbolCacheObjList);
-                }
-            });
-            writerThread.start();
-            readerThread.start();
-
-            writerThread.join();
-            readerThread.join();
-
-            if (exceptions.size() != 0) {
-                for (Throwable ex : exceptions) {
-                    ex.printStackTrace();
-                }
-                Assert.fail();
-            }
-            Assert.assertTrue(reloadCount.get() > 0);
-            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
     }
 

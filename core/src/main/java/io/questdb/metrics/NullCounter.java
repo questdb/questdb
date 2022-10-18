@@ -41,7 +41,7 @@ class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels 
     }
 
     @Override
-    public long get() {
+    public long getValue() {
         return 0;
     }
 

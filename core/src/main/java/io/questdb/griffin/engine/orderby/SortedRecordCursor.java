@@ -24,25 +24,28 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.std.Misc;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
     private RecordTreeChain.TreeCursor chainCursor;
+    private boolean isOpen;
 
     public SortedRecordCursor(RecordTreeChain chain) {
         this.chain = chain;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        chainCursor.close();
-        chain.clear();
+        if (isOpen) {
+            Misc.free(chainCursor);
+            Misc.free(chain);
+            isOpen = false;
+        }
     }
 
     @Override
@@ -53,6 +56,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return chainCursor.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return chainCursor.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -83,13 +91,16 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
         try {
+            if (!isOpen) {
+                this.chain.reopen();
+                this.isOpen = true;
+            }
             this.chainCursor = chain.getCursor(base);
             final Record record = base.getRecord();
             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
-            chain.clear();
             while (base.hasNext()) {
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 // Tree chain is liable to re-position record to
                 // other rows to do record comparison. We must use our
                 // own record instance in case base cursor keeps

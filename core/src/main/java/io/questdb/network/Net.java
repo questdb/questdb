@@ -26,7 +26,11 @@ package io.questdb.network;
 
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Net {
 
@@ -42,6 +46,9 @@ public final class Net {
     @SuppressWarnings("unused")
     public static final int EOTHERDISCONNECT = -2;
     public static final int SHUT_WR = 1;
+
+    private static final AtomicInteger ADDR_INFO_COUNTER = new AtomicInteger();
+    private static final AtomicInteger SOCK_ADDR_COUNTER = new AtomicInteger();
 
     private Net() {
     }
@@ -83,15 +90,17 @@ public final class Net {
         return Files.close(fd);
     }
 
+    public native static int configureLinger(long fd, int seconds);
+
     public static int configureNoLinger(long fd) {
         return configureLinger(fd, 0);
     }
 
-    public native static int configureLinger(long fd, int seconds);
-
     public static native int configureNonBlocking(long fd);
 
-    public native static long connect(long fd, long sockaddr);
+    public native static int connect(long fd, long sockaddr);
+
+    public native static int connectAddrInfo(long fd, long lpAddrInfo);
 
     public static void dump(long buffer, int len) {
         if (len > 0) {
@@ -103,9 +112,52 @@ public final class Net {
         }
     }
 
+    private static native void freeAddrInfo0(long pAddrInfo);
+
+    public static void freeAddrInfo(long pAddrInfo) {
+        if (pAddrInfo != 0) {
+            ADDR_INFO_COUNTER.decrementAndGet();
+        }
+        freeAddrInfo0(pAddrInfo);
+    }
+
     public static native void freeMsgHeaders(long msgHeaders);
 
-    public native static void freeSockAddr(long sockaddr);
+    private static native void freeSockAddr0(long sockaddr);
+    public static void freeSockAddr(long sockaddr) {
+        if (sockaddr != 0) {
+            SOCK_ADDR_COUNTER.decrementAndGet();
+        }
+        freeSockAddr0(sockaddr);
+    }
+
+    public static long getAddrInfo(LPSZ host, int port) {
+        return getAddrInfo(host.address(), port);
+    }
+
+    public static long getAddrInfo(CharSequence host, int port) {
+        try (Path p = new Path().of(host).$()) {
+            return getAddrInfo(p, port);
+        }
+    }
+
+    private static native long getAddrInfo0(long lpszHost, int port);
+
+    public static long getAddrInfo(long lpszHost, int port) {
+        long addrInfo = getAddrInfo0(lpszHost, port);
+        if (addrInfo != -1) {
+            ADDR_INFO_COUNTER.incrementAndGet();
+        }
+        return addrInfo;
+    }
+
+    public static int getAllocatedAddrInfoCount() {
+        return ADDR_INFO_COUNTER.get();
+    }
+
+    public static int getAllocatedSockAddrCount() {
+        return SOCK_ADDR_COUNTER.get();
+    }
 
     public static long getMMsgBuf(long msgPtr) {
         return Unsafe.getUnsafe().getLong(Unsafe.getUnsafe().getLong(msgPtr + MMSGHDR_BUFFER_ADDRESS_OFFSET));
@@ -174,6 +226,8 @@ public final class Net {
 
     public static native int recvmmsg(long fd, long msgvec, int vlen);
 
+    public native static int resolvePort(long fd);
+
     public static native int send(long fd, long ptr, int len);
 
     public native static int sendTo(long fd, long ptr, int len, long sockaddr);
@@ -200,7 +254,12 @@ public final class Net {
         return sockaddr(parseIPv4(ipv4address), port);
     }
 
-    public native static long sockaddr(int ipv4address, int port);
+    public static long sockaddr(int ipv4address, int port) {
+        SOCK_ADDR_COUNTER.incrementAndGet();
+        return sockaddr0(ipv4address, port);
+    }
+
+    private native static long sockaddr0(int ipv4address, int port);
 
     public static long socketTcp(boolean blocking) {
         return Files.bumpFileCount(socketTcp0(blocking));

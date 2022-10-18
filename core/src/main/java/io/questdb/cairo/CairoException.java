@@ -27,21 +27,63 @@ package io.questdb.cairo;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
+    public static final int NON_CRITICAL = -1;
     public static final int METADATA_VALIDATION = -100;
+    public static final int ILLEGAL_OPERATION = -101;
 
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
-    private int errno;
+    protected int errno;
     private boolean cacheable;
-    private boolean interruption;
+    private boolean interruption; // used when a query times out
 
-    public static CairoException instance(int errno) {
+    public static CairoException duplicateColumn(CharSequence columnName) {
+        return duplicateColumn(columnName, null);
+    }
+
+    public static CairoException duplicateColumn(CharSequence columnName, CharSequence columnAlias) {
+        CairoException exception = invalidMetadata("Duplicate column", columnName);
+        if (columnAlias != null) {
+            exception.put(", [alias=").put(columnAlias).put(']');
+        }
+        return exception;
+    }
+
+    public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
+        return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+    }
+
+    public static CairoException detachedMetadataMismatch(CharSequence attribute) {
+        return critical(METADATA_VALIDATION)
+                .put("Detached partition metadata [")
+                .put(attribute)
+                .put("] is not compatible with current table metadata");
+    }
+
+    public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
+        return critical(METADATA_VALIDATION)
+                .put("Detached column [index=")
+                .put(columnIndex)
+                .put(", name=")
+                .put(columnName)
+                .put(", attribute=")
+                .put(attribute)
+                .put("] does not match current table metadata");
+    }
+
+    public static CairoException nonCritical() {
+        return critical(NON_CRITICAL);
+    }
+
+    public static CairoException critical(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new CairoException()) != null;
@@ -74,8 +116,17 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return result;
     }
 
+    public boolean isCritical() {
+        return errno != NON_CRITICAL;
+    }
+
     public boolean isCacheable() {
         return cacheable;
+    }
+
+    public CairoException putAsPrintable(CharSequence nonPrintable) {
+        message.putAsPrintable(nonPrintable);
+        return this;
     }
 
     public CairoException setCacheable(boolean cacheable) {
@@ -99,6 +150,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException put(CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException ts(long timestamp) {
+        TimestampFormatUtils.appendDateTime(message, timestamp);
         return this;
     }
 

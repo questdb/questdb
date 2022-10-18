@@ -71,7 +71,13 @@ public final class ColumnType {
     // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
     // inside the MAX type value.
     public static final short GEOHASH = 23;
-    public static final short NULL = 24;
+    public static final short LONG128 = 24; // Limited support, few tests only
+
+    // PG specific types to work with 3rd party software with canned catalogue queries
+    public static final short REGCLASS = 25;
+    public static final short REGPROCEDURE = 26;
+    public static final short ARRAY_STRING = 27;
+    public static final short NULL = 28;
 
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
@@ -96,7 +102,7 @@ public final class ColumnType {
             /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
             /* 9  FLOAT     */, {FLOAT, DOUBLE}
             /* 10 DOUBLE    */, {DOUBLE}
-            /* 11 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
+            /* 11 STRING    */, {STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
             /* 12 SYMBOL    */, {SYMBOL, STRING}
             /* 13 LONG256   */, {LONG256}
             /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
@@ -126,12 +132,44 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
+    public static boolean isAssignableFrom(int fromType, int toType) {
+        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
+    }
+
+    public static boolean isToSameOrWider(int fromType, int toType) {
+        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) &&
+                (
+                        getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0
+                ))
+                || isBuiltInWideningCast(fromType, toType)
+                || isStringCast(fromType, toType)
+                || isGeoHashWideningCast(fromType, toType)
+                || isImplicitParsingCast(fromType, toType);
+    }
+
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
     }
 
     public static boolean isBoolean(int columnType) {
         return columnType == ColumnType.BOOLEAN;
+    }
+
+    public static boolean isBuiltInWideningCast(int fromType, int toType) {
+        // This method returns true when a cast is not needed from type to type
+        // because of the way typed functions are implemented.
+        // For example IntFunction has getDouble() method implemented and does not need
+        // additional wrap function to CAST to double.
+        // This is usually case for widening conversions.
+        return (fromType >= BYTE
+                && toType >= BYTE
+                && toType <= DOUBLE
+                && fromType < toType)
+                || fromType == NULL
+                // char can be short and short can be char for symmetry
+                || (fromType == CHAR && toType == SHORT)
+                || (fromType == TIMESTAMP && toType == LONG)
+                ;
     }
 
     public static boolean isChar(int columnType) {
@@ -240,18 +278,6 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    public static long truncateGeoHashBits(long value, int fromBits, int toBits) {
-        return value >> (fromBits - toBits);
-    }
-
-    // This method used by row copier assembler
-    public static long truncateGeoHashTypes(long value, int fromType, int toType) {
-        final int fromBits = getGeoHashBits(fromType);
-        final int toBits = getGeoHashBits(toType);
-        assert fromBits >= toBits;
-        return truncateGeoHashBits(value, fromBits, toBits);
-    }
-
     private static int mkGeoHashType(int bits, short baseType) {
         return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
@@ -265,10 +291,59 @@ public final class ColumnType {
         return -1;
     }
 
+    private static boolean isStringCast(int fromType, int toType) {
+        return (fromType == STRING && toType == SYMBOL)
+                || (fromType == SYMBOL && toType == STRING)
+                || (fromType == CHAR && toType == SYMBOL)
+                || (fromType == CHAR && toType == STRING);
+    }
+
+    private static boolean isGeoHashWideningCast(int fromType, int toType) {
+        final int toTag = tagOf(toType);
+        final int fromTag = tagOf(fromType);
+        return (fromTag == GEOLONG && toTag == GEOINT)
+                || (fromTag == GEOLONG && toTag == GEOSHORT)
+                || (fromTag == GEOLONG && toTag == GEOBYTE)
+                || (fromTag == GEOINT && toTag == GEOSHORT)
+                || (fromTag == GEOINT && toTag == GEOBYTE)
+                || (fromTag == GEOSHORT && toTag == GEOBYTE);
+    }
+
+    private static boolean isImplicitParsingCast(int fromType, int toType) {
+        final int toTag = tagOf(toType);
+        return (fromType == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6)
+                || (fromType == STRING && toTag == GEOBYTE)
+                || (fromType == STRING && toTag == GEOSHORT)
+                || (fromType == STRING && toTag == GEOINT)
+                || (fromType == STRING && toTag == GEOLONG)
+                || (fromType == STRING && toTag == TIMESTAMP)
+                || (fromType == SYMBOL && toTag == TIMESTAMP)
+                ;
+    }
+
+    private static boolean isNarrowingCast(int fromType, int toType) {
+        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
+                || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
+                || (fromType == LONG && toType >= BYTE && toType <= INT)
+                || (fromType == INT && toType >= BYTE && toType <= SHORT)
+                || (fromType == SHORT && toType == BYTE)
+                || (fromType == CHAR && toType == BYTE)
+                || (fromType == STRING && toType == BYTE)
+                || (fromType == STRING && toType == SHORT)
+                || (fromType == STRING && toType == INT)
+                || (fromType == STRING && toType == LONG)
+                || (fromType == STRING && toType == DATE)
+                || (fromType == STRING && toType == TIMESTAMP)
+                || (fromType == STRING && toType == FLOAT)
+                || (fromType == STRING && toType == DOUBLE)
+                || (fromType == STRING && toType == CHAR)
+                ;
+    }
+
     static {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (short i = UNDEFINED; i < MAX; i++) {
-            for (short j = BOOLEAN; j < MAX; j++) {
+            for (short j = BOOLEAN; j <= MAX; j++) {
                 if (i < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i], j);
                     overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index != -1 ? index : NO_OVERLOAD;
@@ -301,10 +376,14 @@ public final class ColumnType {
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
         typeNameMap.put(LONG256, "LONG256");
+        typeNameMap.put(LONG128, "LONG128");
         typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(RECORD, "RECORD");
         typeNameMap.put(VAR_ARG, "VARARG");
         typeNameMap.put(GEOHASH, "GEOHASH");
+        typeNameMap.put(REGCLASS, "regclass");
+        typeNameMap.put(REGPROCEDURE, "regprocedure");
+        typeNameMap.put(ARRAY_STRING, "text[]");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
@@ -322,12 +401,17 @@ public final class ColumnType {
         nameTypeMap.put("timestamp", TIMESTAMP);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", LONG256);
+        nameTypeMap.put("long128", LONG128);
         nameTypeMap.put("geohash", GEOHASH);
         nameTypeMap.put("text", STRING);
         nameTypeMap.put("smallint", SHORT);
         nameTypeMap.put("bigint", LONG);
         nameTypeMap.put("real", FLOAT);
         nameTypeMap.put("bytea", STRING);
+        nameTypeMap.put("varchar", STRING);
+        nameTypeMap.put("regclass", REGCLASS);
+        nameTypeMap.put("regprocedure", REGPROCEDURE);
+        nameTypeMap.put("text[]", ARRAY_STRING);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
@@ -352,7 +436,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[INT] = 2;
         TYPE_SIZE_POW2[SYMBOL] = 2;
         TYPE_SIZE_POW2[DOUBLE] = 3;
-        TYPE_SIZE[STRING] = -1;
+        TYPE_SIZE_POW2[STRING] = -1;
         TYPE_SIZE_POW2[LONG] = 3;
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
@@ -367,6 +451,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[VAR_ARG] = -1;
         TYPE_SIZE_POW2[RECORD] = -1;
         TYPE_SIZE_POW2[NULL] = -1;
+        TYPE_SIZE_POW2[LONG128] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -392,6 +477,7 @@ public final class ColumnType {
         TYPE_SIZE[VAR_ARG] = -1;
         TYPE_SIZE[RECORD] = -1;
         TYPE_SIZE[NULL] = 0;
+        TYPE_SIZE[LONG128] = 2 * Long.BYTES;
     }
 
     //geohash bits <-> backing primitive types bit boundaries

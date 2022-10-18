@@ -24,10 +24,11 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
     @Override
@@ -51,12 +52,12 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     }
 
     @Override
-    public MicrosecondClock getClock() {
-        return MicrosecondClockImpl.INSTANCE;
+    public MillisecondClock getClock() {
+        return MillisecondClockImpl.INSTANCE;
     }
 
     @Override
-    public long getMaxTime() {
+    public long getTimeout() {
         return Long.MAX_VALUE;
     }
 }

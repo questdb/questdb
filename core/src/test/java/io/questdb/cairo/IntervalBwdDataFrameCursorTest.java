@@ -35,6 +35,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
+
 public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
     private static final LongList intervals = new LongList();
 
@@ -356,14 +358,15 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
             }
             final TableReaderRecord record = new TableReaderRecord();
-            final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
-                    engine,
-                    "x",
-                    -1,
-                    0,
-                    new RuntimeIntervalModel(intervals),
-                    timestampIndex);
-            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
+            try (
+                    final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
+                            "x",
+                            -1,
+                            0,
+                            new RuntimeIntervalModel(intervals),
+                            timestampIndex);
+                    final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC)
+            ) {
 
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -403,16 +406,16 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
                     Assert.assertFalse(cursor.reload());
                 }
-            }
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
-                writer.removeColumn("b");
-            }
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                    writer.removeColumn("b");
+                }
 
-            try {
-                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
-                Assert.fail();
-            } catch (ReaderOutOfDateException ignored) {
+                try {
+                    factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC);
+                    Assert.fail();
+                } catch (ReaderOutOfDateException ignored) {
+                }
             }
         });
     }

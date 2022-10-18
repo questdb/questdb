@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -39,16 +40,26 @@ public class TimestampColumn extends TimestampFunction implements ScalarFunction
         this.columnIndex = columnIndex;
     }
 
-    @Override
-    public long getTimestamp(Record rec) {
-        return rec.getTimestamp(columnIndex);
-    }
-
     public static TimestampColumn newInstance(int columnIndex) {
         if (columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
         return new TimestampColumn(columnIndex);
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return rec.getTimestamp(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("TimestampColumn(").put(columnIndex).put(')');
     }
 
     static {

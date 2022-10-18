@@ -26,11 +26,11 @@ package io.questdb.std;
 
 public final class Vect {
 
-    public static native double avgDouble(long pDouble, long count);
+    public static native double avgIntAcc(long pInt, long count, long pCount);
 
-    public static native double avgInt(long pInt, long count);
+    public static native double avgLongAcc(long pInt, long count, long pCount);
 
-    public static native double avgLong(long pLong, long count);
+    public static native double avgDoubleAcc(long pInt, long count, long pCount);
 
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
@@ -55,6 +55,8 @@ public final class Vect {
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
     public static native void flattenIndex(long pIndex, long count);
+
+    public static native void sort3LongAscInPlace(long address, long count);
 
     private static native void freeMergedIndex(long pIndex);
 
@@ -118,13 +120,16 @@ public final class Vect {
 
     public static native void memset(long dst, long len, int value);
 
-    //caller must call freeMergedIndex !!!
-    private static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
+    public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {
+        if (count < 2) {
+            throw new IllegalArgumentException("Count of indexes to merge should at least be 2.");
+        }
 
-    public static long mergeLongIndexesAsc(long pIndexStructArray, int count, long indexSize) {
-        Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
-        return mergeLongIndexesAsc(pIndexStructArray, count);
+        mergeLongIndexesAscInner(pIndexStructArray, count, mergedIndexAddr);
     }
+
+    // accept externally allocated memory for merged index of proper size
+    private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
@@ -173,6 +178,7 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
+    // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
 
     public static native void resetPerformanceCounters();

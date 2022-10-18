@@ -42,13 +42,13 @@ public class CastCharToShortFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastCharToShortFunction(args.getQuick(0));
     }
 
-    private static class Func extends ShortFunction implements UnaryFunction {
+    public static class CastCharToShortFunction extends ShortFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastCharToShortFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -59,7 +59,8 @@ public class CastCharToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
-            return (short) arg.getChar(rec);
+            final byte v = (byte) (arg.getChar(rec) - '0');
+            return v > -1 && v < 10 ? v : 0;
         }
     }
 }

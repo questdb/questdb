@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
@@ -34,6 +35,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * LongTreeChain with a size limit - used to keep only the necessary records
@@ -48,7 +50,7 @@ import io.questdb.std.str.CharSink;
  * L &gt;= 0, H &gt;= 0 - first H records (but skip first L later, if H &lt;= L then return empty set)
  * L &gt;= 0, H &lt; 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
  * H-th from the end, and we don't  ) and need to revert to default behavior -
- * produce the whole set and skip .
+ * produce the whole set and skip.
  * </p>
  * <p>
  * TreeChain stores repeating values (rowids) on valueChain as a linked list :
@@ -58,7 +60,7 @@ import io.questdb.std.str.CharSink;
  * but should only happen once . It's meant to limit value chain allocations on delete/insert.
  * </p>
  */
-public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
+public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reopenable {
     //value marks end of value chain 
     private static final long CHAIN_END = -1;
 
@@ -109,6 +111,19 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
         currentValues = 0;
         freeList.clear();
         chainFreeList.clear();
+        cursor.clear();
+    }
+
+    @Override
+    public void close() {
+        clear();
+        super.close();
+        Misc.free(valueChain);
+    }
+
+    @Override
+    public void reopen() {
+        super.reopen();
     }
 
     @Override
@@ -116,15 +131,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
         return currentValues;
     }
 
-    @Override
-    public void close() {
-        super.close();
-        Misc.free(valueChain);
-    }
-
     private long appendValue(long value, long prevValueOffset) {
         final long offset = valueChain.getAppendOffset();
-        valueChain.putLong128(value, prevValueOffset);
+        valueChain.putLongLong(value, prevValueOffset);
         return offset;
     }
 
@@ -363,6 +372,11 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
             treeCurrent = p;
             chainCurrent = refOf(treeCurrent);
         }
+
+        public void clear() {
+            treeCurrent = 0;
+            chainCurrent = 0;
+        }
     }
 
     @FunctionalInterface
@@ -374,6 +388,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
         }
     }
 
+    @TestOnly
     public void print(CharSink sink) {
         print(sink, null);
     }

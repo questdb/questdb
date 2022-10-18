@@ -56,6 +56,54 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testEscapeQuoteWithinStringLiteral() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.of("INSERT INTO tab VALUES ('o''brian');");
+
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
+        }
+        TestUtils.assertEquals("INSERT\n" +
+                        "INTO\n" +
+                        "tab\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'o''brian'\n" +
+                        ")\n;\n",
+                sink
+        );
+    }
+
+    @Test
+    public void testEscapeDoubleQuoteWithinQuotedIdentifier() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.of("INSERT INTO \"t\"\"ab\" VALUES ('obrian');");
+
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
+        }
+        TestUtils.assertEquals("INSERT\n" +
+                        "INTO\n" +
+                        "\"t\"\"ab\"\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'obrian'\n" +
+                        ")\n;\n",
+                sink
+        );
+    }
+
+    @Test
     public void testDoubleEscapedQuote() {
         GenericLexer lex = new GenericLexer(64);
 
@@ -273,7 +321,7 @@ public class GenericLexerTest {
 
         while (it.hasNext()) {
             CharSequence e = it.next();
-            ts.unparse();
+            ts.unparseLast();
             CharSequence a = it.next();
             TestUtils.assertEquals(e, a);
         }
@@ -367,9 +415,64 @@ public class GenericLexerTest {
         CharSequence cs = ts.next();
         ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
         Assert.assertEquals("orange", ts.getContent());
-        Assert.assertNull(ts.getUnparsed());
+        Assert.assertFalse(ts.hasUnparsed());
         Assert.assertEquals(6, ts.getPosition());
         Assert.assertEquals(6, ts.getTokenHi());
+    }
+
+    @Test
+    public void testStashUnStash() {
+        GenericLexer lexer = new GenericLexer(64);
+        lexer.of("orange blue yellow green");
+        TestUtils.assertEquals("orange", lexer.next());
+
+        CharSequence blue = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
+        int blueLast = lexer.lastTokenPosition();
+        int bluePos = lexer.getPosition();
+
+        TestUtils.assertEquals("blue", blue);
+        Assert.assertEquals(7, blueLast);
+        Assert.assertEquals(12, bluePos);
+
+        CharSequence yellow = SqlUtil.fetchNext(lexer);
+        int yellowLast = lexer.lastTokenPosition();
+        int yellowPos = lexer.getPosition();
+
+        TestUtils.assertEquals("yellow", yellow);
+        Assert.assertEquals(12, yellowLast);
+        Assert.assertEquals(19, yellowPos);
+
+        lexer.unparse(blue, blueLast, bluePos);
+        lexer.unparseLast();
+
+        lexer.stash();
+
+        CharSequence green = SqlUtil.fetchNext(lexer);
+        TestUtils.assertEquals("green", green);
+
+        Assert.assertNull(SqlUtil.fetchNext(lexer));
+
+        lexer.unstash();
+
+        blue = SqlUtil.fetchNext(lexer);
+        blueLast = lexer.lastTokenPosition();
+        bluePos = lexer.getPosition();
+
+        TestUtils.assertEquals("blue", blue);
+        Assert.assertEquals(7, blueLast);
+        Assert.assertEquals(12, bluePos);
+
+        yellow = SqlUtil.fetchNext(lexer);
+        yellowLast = lexer.lastTokenPosition();
+        yellowPos = lexer.getPosition();
+
+        TestUtils.assertEquals("yellow", yellow);
+        Assert.assertEquals(12, yellowLast);
+        Assert.assertEquals(19, yellowPos);
+
+
+        green = SqlUtil.fetchNext(lexer);
+        TestUtils.assertEquals("green", green);
     }
 
     @Test(expected = UnsupportedOperationException.class)

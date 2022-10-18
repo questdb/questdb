@@ -30,10 +30,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Chars;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -46,7 +43,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
     private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
-        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes());
+        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
         this.timestampIndex = -1;
         this.columnCount = 0;
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
@@ -183,7 +180,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
         MapValue value = key.createValue();
         if (!value.isNew()) {
-            throw CairoException.instance(0).put("Duplicate column [name=").put(columnName).put(", tableAlias=").put(tableAlias).put(']');
+            throw CairoException.duplicateColumn(columnName, tableAlias);
         }
 
         value.putLong(0, columnCount++);

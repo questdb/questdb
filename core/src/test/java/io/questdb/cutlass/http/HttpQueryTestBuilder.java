@@ -37,15 +37,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -60,11 +59,13 @@ public class HttpQueryTestBuilder {
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
-    private long startWriterWaitTimeout = 500_000;
-    private long maxWriterWaitTimeout = 30_000_000L;
-    private int jitMode = SqlJitMode.JIT_MODE_DISABLED;
+    private long startWriterWaitTimeout = 500;
+    private long maxWriterWaitTimeout = 30_000L;
+    private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private FilesFacade filesFacade = new FilesFacadeImpl();
     private QueryFutureUpdateListener queryFutureUpdateListener;
+    private String copyInputRoot;
+    private MicrosecondClock microsecondClock;
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -75,9 +76,6 @@ public class HttpQueryTestBuilder {
     }
 
     public void run(CairoConfiguration configuration, HttpClientCode code) throws Exception {
-        final int[] workerAffinity = new int[workerCount];
-        Arrays.fill(workerAffinity, -1);
-
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
@@ -87,25 +85,7 @@ public class HttpQueryTestBuilder {
                 metrics = Metrics.enabled();
             }
 
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return workerAffinity;
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, metrics);
-            if (workerCount > 1) {
-                workerPool.assignCleaner(Path.CLEANER);
-            }
+            final WorkerPool workerPool = new TestWorkerPool(workerCount, metrics);
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
@@ -128,11 +108,21 @@ public class HttpQueryTestBuilder {
                     public int getSqlJitMode() {
                         return jitMode;
                     }
+
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
+                    }
+
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
+                    }
                 };
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -206,7 +196,6 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -231,7 +220,7 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                QueryCache.configure(httpConfiguration);
+                QueryCache.configure(httpConfiguration, metrics);
 
                 workerPool.start(LOG);
 
@@ -288,6 +277,11 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withCopyInputRoot(String copyInputRoot) {
+        this.copyInputRoot = copyInputRoot;
+        return this;
+    }
+
     public HttpQueryTestBuilder withWorkerCount(int workerCount) {
         this.workerCount = workerCount;
         return this;
@@ -300,6 +294,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withJitMode(int jitMode) {
         this.jitMode = jitMode;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
+        this.microsecondClock = clock;
         return this;
     }
 

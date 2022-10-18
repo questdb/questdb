@@ -67,10 +67,20 @@ public class StrColumn extends StrFunction implements ScalarFunction {
         return rec.getStrLen(columnIndex);
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("StrColumn(").put(columnIndex).put(')');
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
             COLUMNS.setQuick(i, new StrColumn(i));
         }
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
     }
 }

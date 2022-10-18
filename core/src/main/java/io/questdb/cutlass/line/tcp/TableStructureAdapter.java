@@ -64,10 +64,10 @@ class TableStructureAdapter implements TableStructure {
             return DEFAULT_TIMESTAMP_FIELD;
         }
         CharSequence colName = entities.get(columnIndex).getName().toString();
-        if (TableUtils.isValidColumnName(colName)) {
+        if (TableUtils.isValidColumnName(colName, cairoConfiguration.getMaxFileNameLength())) {
             return colName;
         }
-        throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
+        throw CairoException.nonCritical().put("column name contains invalid characters [colName=").put(colName).put(']');
     }
 
     @Override
@@ -131,6 +131,11 @@ class TableStructureAdapter implements TableStructure {
     @Override
     public long getCommitLag() {
         return cairoConfiguration.getCommitLag();
+    }
+
+    @Override
+    public boolean isWallEnabled() {
+        return cairoConfiguration.getWallEnabledDefault();
     }
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {

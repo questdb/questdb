@@ -26,9 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
-public interface ColumnIndexer {
+
+public interface ColumnIndexer extends QuietCloseable {
     void distress();
 
     long getFd();

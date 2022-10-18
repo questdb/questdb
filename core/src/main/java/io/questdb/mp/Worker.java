@@ -24,8 +24,8 @@
 
 package io.questdb.mp;
 
-import io.questdb.Metrics;
 import io.questdb.log.Log;
+import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -45,8 +45,9 @@ public class Worker extends Thread {
     private final long sleepMs;
     private final long yieldThreshold;
     private final long sleepThreshold;
+    private final HealthMetrics metrics;
+    private final String criticalErrorLine;
     private volatile int running = 0;
-    private final Metrics metrics;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -60,7 +61,7 @@ public class Worker extends Thread {
             long yieldThreshold,
             long sleepThreshold,
             long sleepMs,
-            Metrics metrics
+            HealthMetrics metrics
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -74,6 +75,7 @@ public class Worker extends Thread {
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
         this.metrics = metrics;
+        this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
     }
 
     public int getWorkerId() {
@@ -92,16 +94,16 @@ public class Worker extends Thread {
                 if (affinity > -1) {
                     if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
                         if (log != null) {
-                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).I$();
                         }
                     } else {
                         if (log != null) {
-                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).I$();
                         }
                     }
                 } else {
                     if (log != null) {
-                        log.info().$("os scheduled [name=").$(getName()).$(']').$();
+                        log.info().$("os scheduled worker started [name=").$(getName()).I$();
                     }
                 }
                 setupJobs();
@@ -145,6 +147,7 @@ public class Worker extends Thread {
             }
         } catch (Throwable e) {
             ex = e;
+            stdErrCritical(e);
         } finally {
             // cleaner will typically attempt to release
             // thread-local instances
@@ -152,16 +155,24 @@ public class Worker extends Thread {
                 cleaner.run(ex);
             }
             haltLatch.countDown();
+            if (log != null) {
+                log.info().$("os scheduled worker stopped [name=").$(getName()).I$();
+            }
         }
     }
 
     private void onError(int i, Throwable e) throws Throwable {
-        metrics.healthCheck().incrementUnhandledErrors();
-        // Log error even when halt on error is set
+        try {
+            metrics.incrementUnhandledErrors();
+        } catch (Throwable t) {
+            stdErrCritical(e);
+        }
+
+        // Log error even then halt if halt error setting is on.
         if (log != null) {
-            log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
+            log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
         } else {
-            e.printStackTrace();
+            stdErrCritical(e);
         }
         if (haltOnError) {
             throw e;
@@ -184,4 +195,8 @@ public class Worker extends Thread {
         }
     }
 
+    private void stdErrCritical(Throwable e) {
+        System.err.println(criticalErrorLine);
+        e.printStackTrace();
+    }
 }

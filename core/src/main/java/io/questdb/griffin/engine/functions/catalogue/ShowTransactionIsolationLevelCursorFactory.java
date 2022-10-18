@@ -24,28 +24,27 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.SingleValueRecordCursor;
 
-public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorFactory {
+public class ShowTransactionIsolationLevelCursorFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final static StringValueRecord RECORD = new StringValueRecord("read committed");
-    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
+    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
+
+    public ShowTransactionIsolationLevelCursorFactory() {
+        super(METADATA);
+    }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.toTop();
         return cursor;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return METADATA;
     }
 
     @Override

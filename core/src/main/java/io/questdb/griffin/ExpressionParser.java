@@ -51,6 +51,7 @@ class ExpressionParser {
     private static final int BRANCH_RIGHT_BRACKET = 16;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
     private static final int BRANCH_GEOHASH = 18;
+    private static final int BRANCH_TIMESTAMP_ZONE = 19;
 
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
@@ -130,8 +131,22 @@ class ExpressionParser {
         return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
 
+    private boolean isExtractFunctionOnStack() {
+        boolean found = false;
+        for (int i = 0, n = opStack.size(); i < n; i++) {
+            ExpressionNode peek = opStack.peek(i);
+            if (Chars.equals(peek.token, '(')) {
+                if ((i + 1) < n && SqlKeywords.isExtractKeyword(opStack.peek(i + 1).token)) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        return found;
+    }
+
     private boolean isTypeQualifier() {
-        return opStack.size() >= 2 && SqlKeywords.isColonColonKeyword(opStack.peek(1).token);
+        return opStack.size() >= 2 && SqlKeywords.isColonColon(opStack.peek(1).token);
     }
 
     private int onNode(ExpressionParserListener listener, ExpressionNode node, int argStackDepth) throws SqlException {
@@ -167,17 +182,17 @@ class ExpressionParser {
                 thisChar = tok.charAt(0);
                 prevBranch = thisBranch;
                 boolean processDefaultBranch = false;
-                final int position = lexer.lastTokenPosition();
+                final int lastPos = lexer.lastTokenPosition();
                 switch (thisChar) {
                     case '-':
                     case '+':
                         processDefaultBranch = true;
                         if (prevBranch == BRANCH_CONSTANT) {
-                            if (position > 0) {
-                                char c = lexer.getContent().charAt(position - 1);
+                            if (lastPos > 0) {
+                                char c = lexer.getContent().charAt(lastPos - 1);
                                 if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
                                     ExpressionNode en = opStack.peek();
-                                    ((GenericLexer.FloatingSequence) en.token).setHi(position + 1);
+                                    ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                                     processDefaultBranch = false;
                                 }
                             }
@@ -186,9 +201,9 @@ class ExpressionParser {
                     case '.':
                         // Check what is on stack. If we have 'a .b' we have to stop processing
                         if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {
-                            char c = lexer.getContent().charAt(position - 1);
+                            char c = lexer.getContent().charAt(lastPos - 1);
                             if (GenericLexer.WHITESPACE_CH.contains(c)) {
-                                lexer.unparse();
+                                lexer.unparseLast();
                                 break OUT;
                             }
 
@@ -200,11 +215,11 @@ class ExpressionParser {
                             } else {
                                 // attach dot to existing literal or constant
                                 ExpressionNode en = opStack.peek();
-                                ((GenericLexer.FloatingSequence) en.token).setHi(position + 1);
+                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                             }
                         }
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
-                            throw SqlException.$(position, "too many dots");
+                            throw SqlException.$(lastPos, "too many dots");
                         }
 
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
@@ -215,18 +230,18 @@ class ExpressionParser {
                         break;
                     case ',':
                         if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_PARENTHESIS) {
-                            throw missingArgs(position);
+                            throw missingArgs(lastPos);
                         }
                         thisBranch = BRANCH_COMMA;
 
                         if (braceCount == 0) {
                             // comma outside of braces
-                            lexer.unparse();
+                            lexer.unparseLast();
                             break OUT;
                         }
 
                         if (castBraceCount > 0 && castBraceCountStack.peek() == castBraceCount) {
-                            throw SqlException.$(position, "',' is not expected here");
+                            throw SqlException.$(lastPos, "',' is not expected here");
                         }
 
                         // If the token is a function argument separator (e.g., a comma):
@@ -248,7 +263,7 @@ class ExpressionParser {
                     case '[':
                         if (isTypeQualifier()) {
                             ExpressionNode en = opStack.peek();
-                            ((GenericLexer.FloatingSequence) en.token).setHi(position + 1);
+                            ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                         } else {
                             thisBranch = BRANCH_LEFT_BRACKET;
 
@@ -273,7 +288,7 @@ class ExpressionParser {
 
                             // precedence must be max value to make sure control node isn't
                             // consumed as parameter to a greedy function
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, position));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, lastPos));
                             bracketCount++;
 
                             braceCountStack.push(braceCount);
@@ -285,16 +300,16 @@ class ExpressionParser {
                     case ']':
                         if (isTypeQualifier()) {
                             ExpressionNode en = opStack.peek();
-                            ((GenericLexer.FloatingSequence) en.token).setHi(position + 1);
+                            ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                         } else {
                             if (bracketCount == 0) {
-                                lexer.unparse();
+                                lexer.unparseLast();
                                 break OUT;
                             }
 
                             thisBranch = BRANCH_RIGHT_BRACKET;
                             if (prevBranch == BRANCH_LEFT_BRACKET) {
-                                throw SqlException.$(position, "missing array index");
+                                throw SqlException.$(lastPos, "missing array index");
                             }
 
                             bracketCount--;
@@ -320,7 +335,7 @@ class ExpressionParser {
                                     ExpressionNode.ARRAY_ACCESS,
                                     "[]",
                                     2,
-                                    position
+                                    lastPos
                             );
                             node.paramCount = 2;
                             opStack.push(node);
@@ -334,7 +349,7 @@ class ExpressionParser {
                             CharSequence geohashTok = GenericLexer.immutableOf(tok);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null || tok.charAt(0) != '(') {
-                                lexer.backTo(position + SqlKeywords.GEOHASH_KEYWORD_LENGTH, geohashTok);
+                                lexer.backTo(lastPos + SqlKeywords.GEOHASH_KEYWORD_LENGTH, geohashTok);
                                 tok = geohashTok;
                                 processDefaultBranch = true;
                                 break;
@@ -345,7 +360,7 @@ class ExpressionParser {
                                         ExpressionNode.CONSTANT,
                                         lexer.immutablePairOf(geohashTok, tok),
                                         Integer.MIN_VALUE,
-                                        position));
+                                        lastPos));
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null || tok.charAt(0) != ')') {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");
@@ -366,12 +381,12 @@ class ExpressionParser {
                             // optional / bits '/dd', '/d'
                             CharSequence slash = SqlUtil.fetchNext(lexer);
                             if (slash == null || slash.charAt(0) != '/') {
-                                lexer.unparse();
+                                lexer.unparseLast();
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
                                         geohashTok, // standard token, no suffix '/d', '/dd'
                                         Integer.MIN_VALUE,
-                                        position));
+                                        lastPos));
                                 break;
                             }
                             tok = SqlUtil.fetchNext(lexer);
@@ -382,7 +397,7 @@ class ExpressionParser {
                                     ExpressionNode.CONSTANT,
                                     lexer.immutablePairOf(geohashTok, '/', tok), // token plus suffix '/d', '/dd', where d in [0..9]
                                     Integer.MIN_VALUE,
-                                    position));
+                                    lastPos));
                             break;
                         }
 
@@ -392,7 +407,7 @@ class ExpressionParser {
                                     ExpressionNode.CONSTANT,
                                     GenericLexer.immutableOf(tok), // geohash bit literals do not allow suffix syntax
                                     Integer.MIN_VALUE,
-                                    position));
+                                    lastPos));
                             break;
                         }
 
@@ -401,7 +416,7 @@ class ExpressionParser {
 
                     case '(':
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
-                            throw SqlException.$(position, "not a method call");
+                            throw SqlException.$(lastPos, "not a method call");
                         }
 
                         thisBranch = BRANCH_LEFT_PARENTHESIS;
@@ -417,7 +432,7 @@ class ExpressionParser {
 
                         // precedence must be max value to make sure control node isn't
                         // consumed as parameter to a greedy function
-                        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "(", Integer.MAX_VALUE, position));
+                        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "(", Integer.MAX_VALUE, lastPos));
 
                         // check if this brace was opened after 'cast'
                         if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == -1) {
@@ -433,11 +448,11 @@ class ExpressionParser {
 
                     case ')':
                         if (prevBranch == BRANCH_COMMA) {
-                            throw missingArgs(position);
+                            throw missingArgs(lastPos);
                         }
 
                         if (braceCount == 0) {
-                            lexer.unparse();
+                            lexer.unparseLast();
                             break OUT;
                         }
 
@@ -447,7 +462,7 @@ class ExpressionParser {
 
                         if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == castBraceCount) {
                             if (castAsCount == 0) {
-                                throw SqlException.$(position, "'as' missing");
+                                throw SqlException.$(lastPos, "'as' missing");
                             }
 
                             castAsCount--;
@@ -478,7 +493,7 @@ class ExpressionParser {
                                         final short columnTypeTag = ColumnType.tagOf(node.token);
                                         if (((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) ||
                                                 (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
-                                            throw SqlException.$(node.position, "invalid type");
+                                            throw SqlException.$(node.position, "unsupported cast");
                                         }
                                         node.type = ExpressionNode.CONSTANT;
                                     }
@@ -506,7 +521,7 @@ class ExpressionParser {
                                     && (node = opStack.peek()) != null
                                     && node.token.charAt(0) == '('
                             ) {
-                                throw SqlException.$(position, "no function or operator?");
+                                throw SqlException.$(lastPos, "no function or operator?");
                             }
                         }
 
@@ -525,21 +540,21 @@ class ExpressionParser {
                             CharSequence caseTok = GenericLexer.immutableOf(tok);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null || tok.charAt(0) != '(') {
-                                lexer.backTo(position + SqlKeywords.CASE_KEYWORD_LENGTH, caseTok);
+                                lexer.backTo(lastPos + SqlKeywords.CASE_KEYWORD_LENGTH, caseTok);
                                 tok = caseTok;
                                 processDefaultBranch = true;
                                 break;
                             }
 
-                            lexer.backTo(position + SqlKeywords.CASE_KEYWORD_LENGTH, caseTok);
+                            lexer.backTo(lastPos + SqlKeywords.CASE_KEYWORD_LENGTH, caseTok);
                             tok = caseTok;
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                                 castBraceCountStack.push(-1);
                                 thisBranch = BRANCH_OPERATOR;
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, position));
+                                opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, lastPos));
                                 break;
                             } else {
-                                throw SqlException.$(position, "'cast' is not allowed here");
+                                throw SqlException.$(lastPos, "'cast' is not allowed here");
                             }
                         }
                         processDefaultBranch = true;
@@ -589,7 +604,7 @@ class ExpressionParser {
                         } else if (SqlKeywords.isAllKeyword(tok)) {
                             ExpressionNode operator = opStack.peek();
                             if (operator == null || operator.type != ExpressionNode.OPERATION) {
-                                throw SqlException.$(position, "missing operator");
+                                throw SqlException.$(lastPos, "missing operator");
                             }
                             CharSequence funcName = allFunctions.get(operator.token);
                             if (funcName != null && operator.paramCount == 2) {
@@ -598,6 +613,36 @@ class ExpressionParser {
                             } else {
                                 throw SqlException.$(operator.position, "unexpected operator");
                             }
+                        } else if ((prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) && SqlKeywords.isAtKeyword(tok)) {
+                            int pos = lexer.getPosition();
+                            // '.' processing expects floating char sequence
+                            CharSequence atTok = GenericLexer.immutableOf(tok);
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
+                                    // do the zone thing
+                                    thisBranch = BRANCH_TIMESTAMP_ZONE;
+                                } else {
+                                    throw SqlException.$(
+                                            tok == null ? lexer.getPosition() : lexer.lastTokenPosition(),
+                                            "did you mean 'at time zone <tz>'?"
+                                    );
+                                }
+                            } else {
+                                tok = atTok;
+                                // non-literal branches use 'tok' to create expressions
+                                // however literal branches exit, pushing literal back into lexer (unparse)
+                                // so for non-literal branches we have to preserve the very last token we
+                                // had to peek at
+                                if (caseCount > 0 || nonLiteralBranches.excludes(thisBranch)) {
+                                    lexer.unparseLast();
+                                } else {
+                                    lexer.unparse(tok, lastPos, pos);
+                                }
+                                processDefaultBranch = true;
+                            }
+
                         } else {
                             processDefaultBranch = true;
                         }
@@ -608,7 +653,7 @@ class ExpressionParser {
                             thisBranch = BRANCH_BETWEEN_START;
                             if (betweenCount > betweenAndCount) {
                                 // Nested between are not supported
-                                throw SqlException.$(position, "between statements cannot be nested");
+                                throw SqlException.$(lastPos, "between statements cannot be nested");
                             }
                             betweenCount++;
                             betweenStartCaseCount = caseCount;
@@ -620,7 +665,7 @@ class ExpressionParser {
                         if (SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
                             if (betweenCount > 0) {
-                                throw SqlException.$(position, "constant expected");
+                                throw SqlException.$(lastPos, "constant expected");
                             }
                             argStackDepth = processLambdaQuery(lexer, listener, argStackDepth);
                         } else {
@@ -648,8 +693,8 @@ class ExpressionParser {
                             }
 
                             thisBranch = BRANCH_CONSTANT;
-                            if (prevBranch == BRANCH_CONSTANT && position > 0) {
-                                char prevChar = lexer.getContent().charAt(position - 1);
+                            if (prevBranch == BRANCH_CONSTANT && lastPos > 0) {
+                                char prevChar = lexer.getContent().charAt(lastPos - 1);
                                 if (prevChar == '-' || prevChar == '+') {
                                     final ExpressionNode en = opStack.peek();
                                     if (en.token instanceof GenericLexer.FloatingSequence) {
@@ -662,7 +707,7 @@ class ExpressionParser {
                                 final ExpressionNode en = opStack.peek();
                                 if (en != null && en.type != ExpressionNode.CONTROL && en.type != ExpressionNode.OPERATION) {
                                     // check if this is '1.2' or '1. 2'
-                                    if (position > 0 && lexer.getContent().charAt(position - 1) == '.') {
+                                    if (lastPos > 0 && lexer.getContent().charAt(lastPos - 1) == '.') {
                                         if (en.token instanceof GenericLexer.FloatingSequence) {
                                             ((GenericLexer.FloatingSequence) en.token).setHi(lexer.getTokenHi());
                                         } else {
@@ -677,9 +722,9 @@ class ExpressionParser {
                                     opStack.push(
                                             expressionNodePool.next().of(
                                                     ExpressionNode.CONSTANT,
-                                                    lexer.immutableBetween(position - 1, lexer.getTokenHi()),
+                                                    lexer.immutableBetween(lastPos - 1, lexer.getTokenHi()),
                                                     0,
-                                                    position
+                                                    lastPos
                                             )
                                     );
                                     break;
@@ -687,9 +732,32 @@ class ExpressionParser {
                             }
                             if (prevBranch != BRANCH_DOT && nonLiteralBranches.excludes(prevBranch)) {
                                 if (SqlKeywords.isQuote(tok)) {
-                                    throw SqlException.$(position, "unclosed quoted string?");
+                                    throw SqlException.$(lastPos, "unclosed quoted string?");
                                 }
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
+
+                                ExpressionNode constNode = expressionNodePool.next().of(ExpressionNode.CONSTANT,
+                                        GenericLexer.immutableOf(tok),
+                                        0,
+                                        lastPos
+                                );
+
+                                if (prevBranch == BRANCH_TIMESTAMP_ZONE) {
+                                    argStackDepth = onNode(
+                                            listener,
+                                            constNode,
+                                            argStackDepth
+                                    );
+
+                                    // replace const node with 'to_timezone' function node
+                                    constNode = expressionNodePool.next().of(ExpressionNode.FUNCTION,
+                                            "to_timezone",
+                                            Integer.MIN_VALUE,
+                                            lastPos
+                                    );
+                                    constNode.paramCount = 2;
+                                    // fall thru
+                                }
+                                opStack.push(constNode);
                                 break;
                             } else {
                                 if (opStack.size() > 0 && prevBranch == BRANCH_LITERAL && thisChar == '\'') {
@@ -704,7 +772,7 @@ class ExpressionParser {
                                     if (columnType < ColumnType.BOOLEAN || columnType > ColumnType.LONG256) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {
-                                        ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position);
+                                        ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lastPos);
                                         onNode(listener, stringLiteral, 0);
 
                                         prevNode.type = ExpressionNode.CONSTANT;
@@ -720,13 +788,13 @@ class ExpressionParser {
                                 }
 
                                 if (opStack.size() > 1) {
-                                    throw SqlException.$(position, "dangling expression");
+                                    throw SqlException.$(lastPos, "dangling expression");
                                 }
-                                lexer.unparse();
+                                lexer.unparseLast();
                                 break OUT;
                             }
                         } else {
-                            throw SqlException.$(position, "constant is not allowed here");
+                            throw SqlException.$(lastPos, "constant is not allowed here");
                         }
                     case 'N':
                     case 'n':
@@ -739,7 +807,7 @@ class ExpressionParser {
                                         ExpressionNode.OPERATION,
                                         GenericLexer.immutableOf(tok),
                                         11,
-                                        position
+                                        lastPos
                                 );
                                 node.paramCount = 1;
                                 opStack.push(node);
@@ -759,9 +827,9 @@ class ExpressionParser {
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                                 thisBranch = BRANCH_CONSTANT;
                                 // If the token is a number, then add it to the output queue.
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
+                                opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lastPos));
                             } else {
-                                throw SqlException.$(position, "constant is not allowed here");
+                                throw SqlException.$(lastPos, "constant is not allowed here");
                             }
                             break;
                         }
@@ -777,7 +845,7 @@ class ExpressionParser {
                                 final CharSequence isTok = GenericLexer.immutableOf(tok);
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null) {
-                                    throw SqlException.$(position, "IS must be followed by [NOT] NULL");
+                                    throw SqlException.$(lastPos, "IS must be followed by [NOT] NULL");
                                 }
                                 if (SqlKeywords.isNotKeyword(tok)) {
                                     final int notTokPosition = lexer.lastTokenPosition();
@@ -787,16 +855,16 @@ class ExpressionParser {
                                         lexer.backTo(notTokPosition + 3, notTok);
                                         tok = "!=";
                                     } else {
-                                        throw SqlException.$(position, "IS NOT must be followed by NULL");
+                                        throw SqlException.$(lastPos, "IS NOT must be followed by NULL");
                                     }
                                 } else if (SqlKeywords.isNullKeyword(tok)) {
-                                    lexer.backTo(position + 2, isTok);
+                                    lexer.backTo(lastPos + 2, isTok);
                                     tok = "=";
                                 } else {
-                                    throw SqlException.$(position, "IS must be followed by NULL");
+                                    throw SqlException.$(lastPos, "IS must be followed by NULL");
                                 }
                             } else {
-                                throw SqlException.$(position, "IS [NOT] not allowed here");
+                                throw SqlException.$(lastPos, "IS [NOT] not allowed here");
                             }
                         }
                         processDefaultBranch = true;
@@ -811,8 +879,8 @@ class ExpressionParser {
                                 // therefore lexer.tokenHi does not move when * follows dot without whitespace
                                 // e.g. 'a.*'
                                 GenericLexer.FloatingSequence fs = (GenericLexer.FloatingSequence) en.token;
-                                if (GenericLexer.WHITESPACE_CH.excludes(lexer.getContent().charAt(position - 1))) {
-                                    fs.setHi(position + 1);
+                                if (GenericLexer.WHITESPACE_CH.excludes(lexer.getContent().charAt(lastPos - 1))) {
+                                    fs.setHi(lastPos + 1);
                                 } else {
                                     // in this case we have whitespace, e.g. 'a. *'
                                     processDefaultBranch = true;
@@ -821,9 +889,9 @@ class ExpressionParser {
                                 opStack.push(
                                         expressionNodePool.next().of(
                                                 ExpressionNode.CONSTANT,
-                                                lexer.immutableBetween(position - 1, lexer.getTokenHi()),
+                                                lexer.immutableBetween(lastPos - 1, lexer.getTokenHi()),
                                                 0,
-                                                position
+                                                lastPos
                                         )
                                 );
                             }
@@ -881,7 +949,7 @@ class ExpressionParser {
                                 op.type == OperatorExpression.SET ? ExpressionNode.SET_OPERATION : ExpressionNode.OPERATION,
                                 op.token,
                                 op.precedence,
-                                position
+                                lastPos
                         );
                         if (operatorType == OperatorExpression.UNARY) {
                             node.paramCount = 1;
@@ -905,11 +973,11 @@ class ExpressionParser {
 
                                 argStackDepthStack.push(argStackDepth);
                                 argStackDepth = 0;
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.FUNCTION, "case", Integer.MAX_VALUE, position));
+                                opStack.push(expressionNodePool.next().of(ExpressionNode.FUNCTION, "case", Integer.MAX_VALUE, lastPos));
                                 thisBranch = BRANCH_CASE_START;
                                 continue;
                             } else {
-                                throw SqlException.$(position, "'case' is not allowed here");
+                                throw SqlException.$(lastPos, "'case' is not allowed here");
                             }
                         }
 
@@ -920,11 +988,11 @@ class ExpressionParser {
                                 case 'e':
                                     if (SqlKeywords.isEndKeyword(tok)) {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
-                                            throw missingArgs(position);
+                                            throw missingArgs(lastPos);
                                         }
 
                                         if (paramCount == 0) {
-                                            throw SqlException.$(position, "'when' expected");
+                                            throw SqlException.$(lastPos, "'when' expected");
                                         }
 
                                         // If the token is a right parenthesis:
@@ -966,7 +1034,7 @@ class ExpressionParser {
                                     if (keywordIndex > -1) {
 
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
-                                            throw missingArgs(position);
+                                            throw missingArgs(lastPos);
                                         }
 
                                         // we need to track argument consumption so that operators and functions
@@ -990,12 +1058,12 @@ class ExpressionParser {
                                             case 0: // when
                                             case 2: // else
                                                 if ((paramCount % 2) == 0) {
-                                                    throw SqlException.$(position, "'then' expected");
+                                                    throw SqlException.$(lastPos, "'then' expected");
                                                 }
                                                 break;
                                             default: // then
                                                 if ((paramCount % 2) != 0) {
-                                                    throw SqlException.$(position, "'when' expected");
+                                                    throw SqlException.$(lastPos, "'when' expected");
                                                 }
                                                 break;
                                         }
@@ -1019,15 +1087,15 @@ class ExpressionParser {
                             // this deals with 'table.column' situations
                             ExpressionNode en = opStack.peek();
                             if (en == null) {
-                                throw SqlException.$(position, "qualifier expected");
+                                throw SqlException.$(lastPos, "qualifier expected");
                             }
                             // two possibilities here:
                             // 1. 'a.b'
                             // 2. 'a. b'
 
-                            if (GenericLexer.WHITESPACE_CH.contains(lexer.getContent().charAt(position - 1))) {
+                            if (GenericLexer.WHITESPACE_CH.contains(lexer.getContent().charAt(lastPos - 1))) {
                                 // 'a. b'
-                                lexer.unparse();
+                                lexer.unparseLast();
                                 break;
                             }
 
@@ -1045,44 +1113,87 @@ class ExpressionParser {
                             }
                         } else if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                             // If the token is a function token, then push it onto the stack.
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(tok), Integer.MIN_VALUE, lastPos));
                         } else {
                             argStackDepth++;
-                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, position);
+                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, lastPos);
                             dotDereference.paramCount = 2;
                             opStack.push(dotDereference);
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.unquote(tok), Integer.MIN_VALUE, lastPos));
                         }
                     } else {
-                        ExpressionNode last;
+                        ExpressionNode last = this.opStack.peek();
                         // Handle `timestamp with time zone`
-                        if ((last = this.opStack.peek()) != null && SqlKeywords.isTimestampKeyword(last.token) && SqlKeywords.isWithKeyword(tok)) {
-                            CharSequence withTok = GenericLexer.immutableOf(tok);
-                            int withTokPosition = lexer.getPosition();
-                            tok = SqlUtil.fetchNext(lexer);
-                            if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
+                        if (last != null) {
+                            if (SqlKeywords.isTimestampKeyword(last.token) && SqlKeywords.isWithKeyword(tok)) {
+                                CharSequence withTok = GenericLexer.immutableOf(tok);
+                                int withTokPosition = lexer.getPosition();
                                 tok = SqlUtil.fetchNext(lexer);
-                                if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
-                                    CharSequence zoneTok = GenericLexer.immutableOf(tok);
-                                    int zoneTokPosition = lexer.getTokenHi();
+                                if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
                                     tok = SqlUtil.fetchNext(lexer);
-                                    // Next token is string literal, or we are in 'as' part of cast function
-                                    boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
-                                    if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
-                                        lexer.backTo(zoneTokPosition, zoneTok);
-                                        continue;
+                                    if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
+                                        CharSequence zoneTok = GenericLexer.immutableOf(tok);
+                                        int zoneTokPosition = lexer.getTokenHi();
+                                        tok = SqlUtil.fetchNext(lexer);
+                                        // Next token is string literal, or we are in 'as' part of cast function
+                                        boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
+                                        if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
+                                            lexer.backTo(zoneTokPosition, zoneTok);
+                                            continue;
+                                        }
+                                        throw SqlException.$(zoneTokPosition, "String literal expected after 'timestamp with time zone'");
                                     }
-                                    throw SqlException.$(zoneTokPosition, "String literal expected after 'timestamp with time zone'");
+                                }
+                                lexer.backTo(withTokPosition, withTok);
+                            } else if (SqlKeywords.isFromKeyword(tok)) {
+                                // check if this is "extract(something from ...)"
+                                // we can do this by analyzing opStack
+                                if (opStack.size() > 2) {
+                                    boolean extractError = true;
+                                    ExpressionNode member = opStack.peek(0);
+                                    if (member.type == ExpressionNode.LITERAL || (member.type == ExpressionNode.CONSTANT)) {
+                                        if (Chars.equals(opStack.peek(1).token, '(')) {
+                                            if (SqlKeywords.isExtractKeyword(opStack.peek(2).token)) {
+                                                // validate part
+                                                if (SqlKeywords.validateExtractPart(GenericLexer.unquote(member.token))) {
+                                                    // in this case "from" keyword acts as ',' in function call
+                                                    member.type = ExpressionNode.MEMBER_ACCESS;
+                                                    argStackDepth = onNode(
+                                                            listener,
+                                                            member,
+                                                            argStackDepth
+                                                    );
+                                                    opStack.pop();
+                                                    paramCount++;
+                                                    thisBranch = BRANCH_COMMA;
+                                                    continue;
+                                                } else {
+                                                    throw SqlException.$(member.position, "unsupported timestamp part: ").put(member.token);
+                                                }
+                                            } else {
+                                                extractError = false;
+                                            }
+                                        }
+                                    }
+
+                                    // report error on extract
+                                    if (extractError && isExtractFunctionOnStack()) {
+                                        throw SqlException.$(member.position, "we expect timestamp part here");
+                                    }
+
                                 }
                             }
-                            lexer.backTo(withTokPosition, withTok);
                         }
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
-                        lexer.unparse();
+                        lexer.unparseLast();
                         break;
                     }
                 }
+            }
+
+            if (thisBranch == BRANCH_TIMESTAMP_ZONE) {
+                throw SqlException.$(lexer.lastTokenPosition(), "did you mean 'at time zone <tz>'?");
             }
 
             while ((node = opStack.pop()) != null) {
@@ -1101,7 +1212,7 @@ class ExpressionParser {
                 }
 
                 if (node.type == ExpressionNode.CONTROL) {
-                    // break on any other control node to allow parser to be reenterable
+                    // break on any other control node to allow parser to be re-enterable
                     // put control node back on stack because we don't own it
                     opStack.push(node);
                     break;
@@ -1140,7 +1251,7 @@ class ExpressionParser {
 
         int pos = lexer.lastTokenPosition();
         // allow sub-query to parse "select" keyword
-        lexer.unparse();
+        lexer.unparseLast();
 
         ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
         // validate is Query is allowed
@@ -1159,9 +1270,6 @@ class ExpressionParser {
         backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
         backupCastBraceCountStack.copyTo(castBraceCountStack, castBraceCountStackSize);
         backupCaseBraceCountStack.copyTo(caseBraceCountStack, caseBraceCountStackSize);
-
-        // re-introduce closing brace to this loop
-        lexer.unparse();
         return argStackDepth;
     }
 

@@ -30,6 +30,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -37,64 +39,79 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TextLoader implements Closeable, Mutable {
+
     public static final int LOAD_JSON_METADATA = 0;
     public static final int ANALYZE_STRUCTURE = 1;
     public static final int LOAD_DATA = 2;
     private static final Log LOG = LogFactory.getLog(TextLoader.class);
-    private final CairoTextWriter textWriter;
+    private final TextConfiguration textConfiguration;
+    private final TextMetadataDetector textMetadataDetector;
     private final TextMetadataParser textMetadataParser;
-    private final TextLexer textLexer;
     private final JsonLexer jsonLexer;
     private final Path path = new Path();
     private final int textAnalysisMaxLines;
     private final TextDelimiterScanner textDelimiterScanner;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
+    private final CairoTextWriter textWriter;
+    private final TextLexerWrapper tlw;
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
+    private AbstractTextLexer lexer;
+    private TimestampAdapter timestampAdapter;
     private int state;
     private boolean forceHeaders = false;
     private byte columnDelimiter = -1;
+    private CharSequence timestampColumn;
+    private CharSequence tableName;
+    private boolean skipLinesWithExtraValues = true;
 
     public TextLoader(CairoEngine engine) {
-        final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
+        this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
+        this.textWriter = new CairoTextWriter(engine);
+        this.textConfiguration = engine.getConfiguration().getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
-        jsonLexer = new JsonLexer(
-                textConfiguration.getJsonCacheSize(),
-                textConfiguration.getJsonCacheLimit()
-        );
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        textLexer = new TextLexer(textConfiguration, typeManager);
-        textWriter = new CairoTextWriter(engine, path, typeManager);
+        jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
+
+        textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
         textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
         parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
         parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
         parseMethods.extendAndSet(LOAD_DATA, this::parseData);
-        textLexer.setSkipLinesWithExtraValues(true);
     }
 
     @Override
     public void clear() {
         textWriter.clear();
-        textLexer.clear();
+        if (lexer != null) {
+            lexer.clear();
+            lexer = null;
+        }
         textMetadataParser.clear();
+        textMetadataDetector.clear();
         jsonLexer.clear();
         forceHeaders = false;
         columnDelimiter = -1;
         typeManager.clear();
+        timestampAdapter = null;
+        skipLinesWithExtraValues = true;
+        tableName = null;
     }
 
     @Override
     public void close() {
         Misc.free(textWriter);
-        Misc.free(textLexer);
+        Misc.free(tlw);
+        Misc.free(textMetadataDetector);
         Misc.free(textMetadataParser);
         Misc.free(jsonLexer);
         Misc.free(path);
@@ -111,11 +128,24 @@ public class TextLoader implements Closeable, Mutable {
         assert this.columnDelimiter > 0;
     }
 
-    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
-        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
-        textDelimiterScanner.setTableName(tableName);
-        textMetadataParser.setTableName(tableName);
-        textLexer.setTableName(tableName);
+    public void configureDestination(
+            CharSequence tableName,
+            boolean overwrite,
+            boolean durable,
+            int atomicity,
+            int partitionBy,
+            CharSequence timestampColumn,
+            CharSequence timestampFormat
+    ) {
+        configureDestination(tableName, overwrite, durable, atomicity, partitionBy, timestampColumn);
+        this.textDelimiterScanner.setTableName(tableName);
+        this.textMetadataParser.setTableName(tableName);
+        this.timestampColumn = timestampColumn;
+        if (timestampFormat != null) {
+            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
+                    textConfiguration.getDefaultDateLocale());
+        }
 
         LOG.info()
                 .$("configured [table=`").$(tableName)
@@ -123,8 +153,21 @@ public class TextLoader implements Closeable, Mutable {
                 .$(", durable=").$(durable)
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
-                .$(", timestamp=").$(timestampIndexCol)
+                .$(", timestamp=").$(timestampColumn)
+                .$(", timestampFormat=").$(timestampFormat)
                 .$(']').$();
+    }
+
+    public void configureDestination(
+            CharSequence tableName,
+            boolean overwrite,
+            boolean durable,
+            int atomicity,
+            int partitionBy,
+            CharSequence timestampColumn
+    ) {
+        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampColumn);
+        this.tableName = tableName;
     }
 
     public byte getColumnDelimiter() {
@@ -135,28 +178,20 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getColumnErrorCounts();
     }
 
+    public long getErrorLineCount() {
+        return lexer != null ? lexer.getErrorCount() : 0;
+    }
+
     public RecordMetadata getMetadata() {
         return textWriter.getMetadata();
     }
 
     public long getParsedLineCount() {
-        return textLexer.getLineCount();
-    }
-
-    public long getErrorLineCount() {
-        return textLexer.getErrorCount();
+        return lexer != null ? lexer.getLineCount() : 0;
     }
 
     public int getPartitionBy() {
         return textWriter.getPartitionBy();
-    }
-
-    public void setCommitLag(long commitLag) {
-        textWriter.setCommitLag(commitLag);
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        textWriter.setMaxUncommittedRows(maxUncommittedRows);
     }
 
     public CharSequence getTableName() {
@@ -183,12 +218,49 @@ public class TextLoader implements Closeable, Mutable {
         this.forceHeaders = forceHeaders;
     }
 
-    public void setSkipRowsWithExtraValues(boolean skipRowsWithExtraValues) {
-        this.textLexer.setSkipLinesWithExtraValues(skipRowsWithExtraValues);
+    public void parse(long lo, long hi, int lineCountLimit, CsvTextLexer.Listener textLexerListener) {
+        lexer.parse(lo, hi, lineCountLimit, textLexerListener);
+    }
+
+    public void parse(long lo, long hi, int lineCountLimit) {
+        lexer.parse(lo, hi, lineCountLimit, textWriter.getTextListener());
     }
 
     public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
         parseMethods.getQuick(state).parse(lo, hi, cairoSecurityContext);
+    }
+
+    public void prepareTable(
+            CairoSecurityContext ctx,
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager,
+            TimestampAdapter timestampAdapter
+    ) throws TextException {
+        textWriter.prepareTable(ctx, names, types, path, typeManager, timestampAdapter);
+    }
+
+    public final void restart(boolean header) {
+        lexer.restart(header);
+    }
+
+    public void setCommitLag(long commitLag) {
+        textWriter.setCommitLag(commitLag);
+    }
+
+    public void setDelimiter(byte delimiter) {
+        this.lexer = tlw.getLexer(delimiter);
+        this.lexer.setTableName(tableName);
+        this.lexer.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        textWriter.setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
+        this.skipLinesWithExtraValues = skipLinesWithExtraValues;
     }
 
     public void setState(int state) {
@@ -208,7 +280,11 @@ public class TextLoader implements Closeable, Mutable {
                 break;
             case ANALYZE_STRUCTURE:
             case LOAD_DATA:
-                textLexer.parseLast();
+                // when file is empty lexer could be null because we
+                // didn't get to find out the delimiter
+                if (lexer != null) {
+                    lexer.parseLast();
+                }
                 textWriter.commit();
                 break;
             default:
@@ -217,7 +293,7 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
-        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
+        parse(lo, hi, Integer.MAX_VALUE);
     }
 
     private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
@@ -230,25 +306,40 @@ public class TextLoader implements Closeable, Mutable {
 
     private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
         if (columnDelimiter > 0) {
-            textLexer.of(columnDelimiter);
+            setDelimiter(columnDelimiter);
         } else {
-            textLexer.of(textDelimiterScanner.scan(lo, hi));
+            setDelimiter(textDelimiterScanner.scan(lo, hi));
         }
-        textLexer.analyseStructure(
-                lo,
-                hi,
-                textAnalysisMaxLines,
-                forceHeaders,
+
+        if (timestampColumn != null && timestampAdapter != null) {
+            textMetadataParser.getColumnNames().add(timestampColumn);
+            textMetadataParser.getColumnTypes().add(timestampAdapter);
+        }
+
+        textMetadataDetector.of(
+                getTableName(),
                 textMetadataParser.getColumnNames(),
-                textMetadataParser.getColumnTypes()
+                textMetadataParser.getColumnTypes(),
+                forceHeaders
         );
-        textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
-        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
+        parse(lo, hi, textAnalysisMaxLines, textMetadataDetector);
+        textMetadataDetector.evaluateResults(getParsedLineCount(), getErrorLineCount());
+        restart(textMetadataDetector.isHeader());
+
+        prepareTable(
+                cairoSecurityContext,
+                textMetadataDetector.getColumnNames(),
+                textMetadataDetector.getColumnTypes(),
+                path,
+                typeManager,
+                timestampAdapter
+        );
+        parse(lo, hi, Integer.MAX_VALUE);
         state = LOAD_DATA;
     }
 
     @FunctionalInterface
-    private interface ParserMethod {
+    protected interface ParserMethod {
         void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException;
     }
 }

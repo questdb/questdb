@@ -34,6 +34,7 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -97,7 +98,10 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     @Override
     public void close() {
         if (fd > -1) {
-            halt();
+            if (running.compareAndSet(true, false)) {
+                started.await();
+                halted.await();
+            }
             if (nf.close(fd) != 0) {
                 LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
             } else {
@@ -113,13 +117,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
         }
     }
 
-    protected void halt() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            halted.await();
-        }
-    }
-
     public void start() {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
             new Thread(() -> {
@@ -132,6 +129,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     runSerially();
                 }
                 LOG.info().$("shutdown").$();
+                Path.clearThreadLocals();
                 halted.countDown();
             }).start();
         }
@@ -143,8 +141,8 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                 throw NetworkError.instance(nf.errno())
                         .put("cannot join group ")
                         .put("[fd=").put(fd)
-                        .put(", bind=").put(configuration.getBindIPv4Address())
-                        .put(", group=").put(configuration.getGroupIPv4Address())
+                        .put(", bind=").ip(configuration.getBindIPv4Address())
+                        .put(", group=").ip(configuration.getGroupIPv4Address())
                         .put(']');
             }
         } else {
@@ -161,7 +159,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$(configuration.getPort())
                     .$(" [fd=").$(fd)
                     .$(", commitRate=").$(commitRate)
-                    .$(']').$();
+                    .I$();
         } else {
             LOG.info()
                     .$("receiving multicast from ")
@@ -172,7 +170,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$ip(configuration.getBindIPv4Address())
                     .$(" [fd=").$(fd)
                     .$(", commitRate=").$(commitRate)
-                    .$(']').$();
+                    .I$();
         }
     }
 }

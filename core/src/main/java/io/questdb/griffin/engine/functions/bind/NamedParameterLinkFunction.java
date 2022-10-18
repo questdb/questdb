@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
@@ -50,11 +50,6 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public char getChar(Record rec) {
-        return getBase().getChar(rec);
-    }
-
-    @Override
     public BinarySequence getBin(Record rec) {
         return getBase().getBin(rec);
     }
@@ -72,6 +67,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public byte getByte(Record rec) {
         return getBase().getByte(rec);
+    }
+
+    @Override
+    public char getChar(Record rec) {
+        return getBase().getChar(rec);
     }
 
     @Override
@@ -97,6 +97,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        getBase().getLong256(rec, sink);
     }
 
     @Override
@@ -180,15 +185,27 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
-        getBase().getLong256(rec, sink);
+    public boolean isReadThreadSafe() {
+        switch (type) {
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.LONG256:
+            case ColumnType.BINARY:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    public String getVariableName() {
+        return variableName;
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableName);
         if (base == null) {
-            throw CairoException.instance(0).put("undefined bind variable: ").put(variableName);
+            throw SqlException.position(0).put("undefined bind variable: ").put(variableName);
         }
         assert base.getType() == type;
         base.init(symbolTableSource, executionContext);

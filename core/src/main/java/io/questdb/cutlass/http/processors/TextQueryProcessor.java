@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
@@ -39,10 +40,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -75,13 +73,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, null, null);
+        this(configuration, engine, workerCount, workerCount, null, null);
     }
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
+            int sharedWorkerCount,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
@@ -89,9 +88,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
         this.doubleScale = configuration.getDoubleScale();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
     }
 
@@ -101,12 +100,26 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         Misc.free(circuitBreaker);
     }
 
+    private static boolean isExpUrl(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == '/'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i) | 32) == 'p';
+    }
+
     public void execute(
             HttpConnectionContext context,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
+            boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
+
+            state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getCairoSecurityContext(),
@@ -119,6 +132,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
                     state.recordCursorFactory = cc.getRecordCursorFactory();
+                } else if (isExpRequest) {
+                    throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                 }
                 info(state).$("execute-new [q=`").utf8(state.query).
                         $("`, skip: ").$(state.skip).
@@ -136,17 +151,24 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             if (state.recordCursorFactory != null) {
                 try {
                     boolean runQuery = true;
-                    do {
+                    for (int retries = 0; runQuery; retries++) {
                         try {
                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             runQuery = false;
                         } catch (ReaderOutOfDateException e) {
+                            if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                                throw e;
+                            }
                             info(state).$(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                            if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
+                                throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                            }
+
                             state.recordCursorFactory = cc.getRecordCursorFactory();
                         }
-                    } while (runQuery);
+                    }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), state, 200);
                     resumeSend(context);
@@ -161,8 +183,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
-        } catch (SqlException e) {
-            syntaxError(context.getChunkedResponseSocket(), e, state);
+        } catch (SqlException | ImplicitCastException e) {
+            syntaxError(context.getChunkedResponseSocket(), state, e);
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponseSocket(), e, state);
@@ -317,8 +339,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
-    private LogRecord error(TextQueryProcessorState state) {
-        return LOG.error().$('[').$(state.getFd()).$("] ");
+    private LogRecord critical(TextQueryProcessorState state) {
+        return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
 
     protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -348,9 +370,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        error(state).$("Server error executing query ").utf8(state.query).$(e).$();
+        critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
-        metrics.healthCheck().incrementUnhandledErrors();
+        metrics.health().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);
     }
 
@@ -498,6 +520,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.GEOLONG:
                 putGeoHashStringValue(socket, rec.getGeoLong(col), type);
                 break;
+            case ColumnType.LONG128:
+                throw new UnsupportedOperationException();
             default:
                 assert false;
         }
@@ -547,14 +571,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void syntaxError(
             HttpChunkedResponseSocket socket,
-            SqlException sqlException,
-            TextQueryProcessorState state
+            TextQueryProcessorState state,
+            FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state)
                 .$("syntax-error [q=`").utf8(state.query)
-                .$("`, at=").$(sqlException.getPosition())
-                .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
+                .$("`, at=").$(container.getPosition())
+                .$(", message=`").$(container.getFlyweightMessage()).$('`')
                 .$(']').$();
-        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), state);
+        sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
     }
 }

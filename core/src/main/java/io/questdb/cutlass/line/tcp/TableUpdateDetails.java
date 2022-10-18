@@ -38,12 +38,14 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private final DefaultColumnTypes defaultColumnTypes;
     private final String tableNameUtf16;
     private final ThreadLocalDetails[] localDetailsArray;
     private final int timestampIndex;
@@ -66,10 +68,12 @@ public class TableUpdateDetails implements Closeable {
             CairoEngine engine,
             TableWriter writer,
             int writerThreadId,
-            NetworkIOJob[] netIoJobs
+            NetworkIOJob[] netIoJobs,
+            DefaultColumnTypes defaultColumnTypes
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
+        this.defaultColumnTypes = defaultColumnTypes;
         final int n = netIoJobs.length;
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
@@ -183,7 +187,7 @@ public class TableUpdateDetails implements Closeable {
 
     public void tick() {
         if (writer != null) {
-            writer.tick(false);
+            writer.tick();
         }
     }
 
@@ -215,8 +219,11 @@ public class TableUpdateDetails implements Closeable {
         }
         if (writer != null) {
             final long commitInterval = writer.getCommitInterval();
+            long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
-            nextCommitTime += commitInterval;
+            // Do not commit row by row if the commit takes longer than commitInterval.
+            // Exclude time to commit from the commit interval.
+            nextCommitTime += commitInterval + millisecondClock.getTicks() - start;
         }
         return nextCommitTime;
     }
@@ -226,7 +233,7 @@ public class TableUpdateDetails implements Closeable {
         if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
                 // Tick without commit. Some tick commands may force writer to commit though.
-                writer.tick(false);
+                writer.tick();
             }
             return;
         }
@@ -246,7 +253,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         // Tick after commit.
-        writer.tick(false);
+        writer.tick();
     }
 
     ThreadLocalDetails getThreadLocalDetails(int workerId) {
@@ -286,6 +293,9 @@ public class TableUpdateDetails implements Closeable {
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
+        // maps column names to their types
+        // will be populated for dynamically added columns only
+        private final CharSequenceIntHashMap columnTypeByNameUtf8 = new CharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
@@ -325,7 +335,7 @@ public class TableUpdateDetails implements Closeable {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
-                    throw CairoException.instance(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
+                    throw CairoException.critical(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
                 }
                 path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
                 SymbolCache symCache;
@@ -342,7 +352,9 @@ public class TableUpdateDetails implements Closeable {
                     if (this.txReader == null) {
                         this.txReader = new TxReader(filesFacade);
                     }
-                    this.txReader.ofRO(path, reader.getPartitionedBy());
+                    int pathLen = path.length();
+                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());
+                    path.trimTo(pathLen);
                     this.clean = false;
                 }
 
@@ -356,6 +368,7 @@ public class TableUpdateDetails implements Closeable {
 
         void clear() {
             columnIndexByNameUtf8.clear();
+            columnTypeByNameUtf8.clear();
             for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
                 if (null != symCache) {
@@ -433,6 +446,15 @@ public class TableUpdateDetails implements Closeable {
 
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
+        }
+
+        int getColumnType(String colName, byte entityType) {
+            int colType = columnTypeByNameUtf8.get(colName);
+            if (colType < 0) {
+                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                columnTypeByNameUtf8.put(colName, colType);
+            }
+            return colType;
         }
 
         private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {

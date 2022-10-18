@@ -26,11 +26,10 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashSet {
+public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashMap {
     private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
     private int[] values;
-    private final ObjList<CharSequence> list;
 
     public LowerCaseCharSequenceIntHashMap() {
         this(8);
@@ -43,15 +42,13 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
     public LowerCaseCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
         super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
-        this.list = new ObjList<>(capacity);
         values = new int[keys.length];
         clear();
     }
 
     @Override
-    public final void clear() {
+    public void clear() {
         super.clear();
-        list.clear();
         Arrays.fill(values, noEntryValue);
     }
 
@@ -61,22 +58,8 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         values[index] = noEntryValue;
     }
 
-    @Override
-    public void removeAt(int index) {
-        if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
     public int valueAt(int index) {
         return index < 0 ? values[-index - 1] : noEntryValue;
-    }
-
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
     }
 
     public int get(CharSequence key) {
@@ -94,7 +77,6 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         }
         final String keyString = Chars.toString(key);
         putAt0(index, keyString, value);
-        list.add(keyString);
         return true;
     }
 
@@ -103,7 +85,6 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         if (index > -1) {
             String keyStr = Chars.toString(key);
             putAt0(index, keyStr, value);
-            list.add(keyStr);
             return true;
         }
         return false;
@@ -116,15 +97,50 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         erase(from);
     }
 
-    protected void putAt0(int index, CharSequence key, int value) {
-        keys[index] = key;
+    private void putAt0(int index, CharSequence key, int value) {
         values[index] = value;
-        if (--free == 0) {
-            rehash();
-        }
+        putAt0(index, key);
     }
 
-    private void rehash() {
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LowerCaseCharSequenceIntHashMap that = (LowerCaseCharSequenceIntHashMap) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (CharSequence key : keys) {
+            if (key == null) {
+                continue;
+            }
+            if (that.excludes(key)) {
+                return false;
+            }
+            int value = get(key);
+            if (value != noEntryValue) {
+                int thatValue = that.get(key);
+                if (value != thatValue) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += Chars.hashCode(keys[i]) ^ values[i];
+            }
+        }
+        return hashCode;
+    }
+
+    @Override
+    protected void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
@@ -148,7 +164,10 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         }
     }
 
-    public ObjList<CharSequence> keys() {
-        return list;
+    public int removeEntry(CharSequence key) {
+        int index = keyIndex(key);
+        int value = valueAt(index);
+        removeAt(index);
+        return value;
     }
 }

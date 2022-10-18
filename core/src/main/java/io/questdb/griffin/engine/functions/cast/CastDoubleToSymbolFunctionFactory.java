@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -143,6 +144,16 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueBOf(int key) {
             return valueOf(key);
+        }
+
+        @Override
+        public @Nullable SymbolTable newSymbolTable() {
+            Func copy = new Func(arg, scale);
+            copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
+            copy.symbols.clear();
+            copy.symbols.addAll(this.symbols);
+            copy.next = this.next;
+            return copy;
         }
     }
 }

@@ -29,7 +29,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3PartitionUpdateTask;
 import org.jetbrains.annotations.Nullable;
@@ -97,8 +100,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
-        final long opts = tableWriter.getConfiguration().getWriterFileOpenOpts();
-        boolean directIoFlag = Os.type != Os.WINDOWS || opts != CairoConfiguration.O_NONE;
+        final boolean directIoFlag = tableWriter.preferDirectIO();
 
         LOG.debug().$("o3 copy [blockType=").$(blockType)
                 .$(", columnType=").$(columnType)
@@ -119,71 +121,91 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .$(", directIoFlag=").$(directIoFlag)
                 .I$();
 
-        switch (blockType) {
-            case O3_BLOCK_MERGE:
-                mergeCopy(
-                        columnType,
-                        timestampMergeIndexAddr,
-                        timestampMergeIndexSize,
-                        // this is a hack, when we have column top we can have only of the two:
-                        // srcDataFixOffset, when we had to shift data to back-fill nulls or
-                        // srcDataTopOffset - if we kept the column top
-                        // when one value is present the other will be 0
-                        srcDataFixAddr + srcDataFixOffset - srcDataTop,
-                        srcDataVarAddr + srcDataVarOffset,
-                        srcDataLo,
-                        srcDataHi,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        srcOooLo,
-                        srcOooHi,
-                        dstFixAddr + dstFixOffset,
-                        dstVarAddr,
-                        dstVarOffset,
-                        dstVarOffsetEnd
-                );
-                break;
-            case O3_BLOCK_O3:
-                copyO3(
-                        tableWriter.getFilesFacade(),
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        srcOooLo,
-                        srcOooHi,
-                        dstFixFd,
-                        dstFixAddr + dstFixOffset,
-                        dstFixFileOffset,
-                        dstVarAddr,
-                        dstVarFd,
-                        dstVarOffset,
-                        dstVarAdjust,
-                        dstVarSize,
-                        directIoFlag
-                );
-                break;
-            case O3_BLOCK_DATA:
-                copyData(
-                        tableWriter.getFilesFacade(),
-                        columnType,
-                        srcDataFixAddr + srcDataFixOffset,
-                        srcDataVarAddr + srcDataVarOffset,
-                        srcDataLo,
-                        srcDataHi,
-                        dstFixAddr + dstFixOffset,
-                        dstFixFd,
-                        dstFixFileOffset,
-                        dstVarAddr,
-                        dstVarFd,
-                        dstVarOffset,
-                        dstVarAdjust,
-                        dstVarSize,
-                        directIoFlag
-                );
-                break;
-            default:
-                break;
+        try {
+            switch (blockType) {
+                case O3_BLOCK_MERGE:
+                    mergeCopy(
+                            columnType,
+                            timestampMergeIndexAddr,
+                            timestampMergeIndexSize,
+                            // this is a hack, when we have column top we can have only of the two:
+                            // srcDataFixOffset, when we had to shift data to back-fill nulls or
+                            // srcDataTopOffset - if we kept the column top
+                            // when one value is present the other will be 0
+                            srcDataFixAddr + srcDataFixOffset - srcDataTop,
+                            srcDataVarAddr + srcDataVarOffset,
+                            srcDataLo,
+                            srcDataHi,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            dstFixAddr + dstFixOffset,
+                            dstVarAddr,
+                            dstVarOffset,
+                            dstVarOffsetEnd
+                    );
+                    break;
+                case O3_BLOCK_O3:
+                    copyO3(
+                            tableWriter.getFilesFacade(),
+                            columnType,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            dstFixFd,
+                            dstFixAddr + dstFixOffset,
+                            dstFixFileOffset,
+                            dstVarAddr,
+                            dstVarFd,
+                            dstVarOffset,
+                            dstVarAdjust,
+                            dstVarSize,
+                            directIoFlag
+                    );
+                    break;
+                case O3_BLOCK_DATA:
+                    copyData(
+                            tableWriter.getFilesFacade(),
+                            columnType,
+                            srcDataFixAddr + srcDataFixOffset,
+                            srcDataVarAddr + srcDataVarOffset,
+                            srcDataLo,
+                            srcDataHi,
+                            dstFixAddr + dstFixOffset,
+                            dstFixFd,
+                            dstFixFileOffset,
+                            dstVarAddr,
+                            dstVarFd,
+                            dstVarOffset,
+                            dstVarAdjust,
+                            dstVarSize,
+                            directIoFlag
+                    );
+                    break;
+                default:
+                    break;
+            }
+        } catch (Throwable th) {
+            FilesFacade ff = tableWriter.getFilesFacade();
+            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+
+            closeColumnIdle(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter
+            );
+            throw th;
         }
+
         copyTail(
                 columnCounter,
                 partCounter,
@@ -856,7 +878,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long len = (srcHi - srcLo + 1) << shl;
         final long fromAddress = src + (srcLo << shl);
         if (directIoFlag) {
-            ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset);
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
+                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
+            }
         } else {
             Vect.memcpy(dstFixAddr, fromAddress, len);
         }
@@ -1026,7 +1051,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         assert len <= Math.abs(dstVarSize) - dstVarOffset;
         final long offset = dstVarOffset + dstVarAdjust;
         if (directIoFlag) {
-            ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset);
+            if (ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstVarFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
+            }
         } else {
             Vect.memcpy(dstVarAddr + dstVarOffset, srcVarAddr + lo, len);
         }
@@ -1136,7 +1163,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust) {
         w.rollbackConditionally(row + rowAdjust);
-        final long count = dstFixSize / Integer.BYTES - rowAdjust;
+        final long count = dstFixSize / Integer.BYTES;
         for (; row < count; row++) {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }

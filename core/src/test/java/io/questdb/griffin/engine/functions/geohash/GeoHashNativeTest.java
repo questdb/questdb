@@ -25,7 +25,8 @@
 package io.questdb.griffin.engine.functions.geohash;
 
 import io.questdb.griffin.engine.table.LatestByArguments;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,7 +51,7 @@ public class GeoHashNativeTest {
         int keyCount = 20;
 
         DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
-        rows.extend(keyCount);
+        rows.setCapacity(keyCount);
 
         GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 

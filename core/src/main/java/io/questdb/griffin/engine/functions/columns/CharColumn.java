@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -49,6 +50,16 @@ public class CharColumn extends CharFunction implements ScalarFunction {
     @Override
     public char getChar(Record rec) {
         return rec.getChar(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("CharColumn(").put(columnIndex).put(')');
     }
 
     static {

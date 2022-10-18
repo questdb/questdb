@@ -31,6 +31,8 @@ public class MinLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+        pageFrameMaxRows = 10_000;
         assertQuery(
                 "avg\n" +
                         "5261.376146789\n",
@@ -47,7 +49,7 @@ public class MinLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         assertQuery(
                 "avg\tmin\n" +
-                        "2633.684612\t16772\n",
+                        "14.792007\t16772\n",
                 "select round(avg(f),6) avg, min(b) min from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,
@@ -68,6 +70,23 @@ public class MinLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "insert into tab select 99999999999999999L from long_sequence(1)",
                 "min\n" +
                         "99999999999999999\n",
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMaxLongOrNullThenMaxLong() throws Exception {
+        assertQuery(
+                "min\n" +
+                        "NaN\n",
+                "select min(f) from tab",
+                "create table tab as (select cast(null as long) f from long_sequence(33))",
+                null,
+                "insert into tab select 9223372036854775807L from long_sequence(1)",
+                "min\n" +
+                        "9223372036854775807\n",
                 false,
                 true,
                 true

@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -32,17 +33,18 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
-import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
-import static org.hamcrest.CoreMatchers.*;
-
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.hamcrest.CoreMatchers.is;
 
 public class LogFactoryTest {
 
@@ -54,7 +56,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
         try (LogFactory factory = new LogFactory()) {
             try {
-                LogFactory.configureFromSystemProperties(factory, null, null);
+                LogFactory.configureFromSystemProperties(factory);
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
@@ -79,6 +81,59 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testFlushJobsAndClose() {
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
+
+        final int messageCount = 20;
+        AtomicInteger counter = new AtomicInteger();
+        LogFactory factory = new LogFactory();
+        try {
+            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(int workerId) {
+                    long cursor = seq.next();
+                    if (cursor > -1) {
+                        counter.incrementAndGet();
+                        seq.done(cursor);
+                        Os.pause();
+                        return true;
+                    }
+                    Os.pause();
+                    return false;
+                }
+            }));
+
+            // Misbehaving Logger
+            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(int workerId) {
+                    throw new UnsupportedOperationException();
+                }
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            Log logger1 = factory.create("com.questdb.x.y");
+            for (int i = 0; i < messageCount; i++) {
+                logger1.criticalW().$("test ").$(i).$();
+            }
+        }
+        finally {
+            factory.close(true);
+        }
+        Assert.assertEquals(messageCount, counter.get());
+    }
+
+    @Test
     public void testHexLongWrite() throws Exception {
         final File x = temp.newFile();
         final File y = temp.newFile();
@@ -100,19 +155,15 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 64; i++) {
-                    logger.xerror().$("test ").$hex(i).$();
-                }
-
-                Os.sleep(100);
-
-                Assert.assertEquals(0, x.length());
-                Assert.assertEquals(576, y.length());
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 64; i++) {
+                logger.xerror().$("test ").$hex(i).$();
             }
+
+            Os.sleep(100);
+
+            Assert.assertEquals(0, x.length());
+            Assert.assertEquals(576, y.length());
         }
     }
 
@@ -138,18 +189,14 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 100000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-
-                Os.sleep(100);
-                Assert.assertTrue(x.length() > 0);
-                TestUtils.assertEquals(x, y);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 100000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
+
+            Os.sleep(100);
+            Assert.assertTrue(x.length() > 0);
+            TestUtils.assertEquals(x, y);
         }
     }
 
@@ -227,23 +274,19 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 1000; i++) {
-                    logger.xerror().$("test ").$(i).$();
-                }
-
-                yLatch.await(-1000);
-                Os.sleep(500);
-
-                for (int i = 0; i < 1000; i++) {
-                    logger.xinfo().$("test ").$(i).$();
-                }
-
-                xLatch.await(-1000);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 1000; i++) {
+                logger.xerror().$("test ").$(i).$();
             }
+
+            yLatch.await(-1000);
+            Os.sleep(500);
+
+            for (int i = 0; i < 1000; i++) {
+                logger.xinfo().$("test ").$(i).$();
+            }
+
+            xLatch.await(-1000);
         }
     }
 
@@ -324,7 +367,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1);
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, IntervalUtils.parseFloorPartialTimestamp("2019-12-31"));
 
         try (Path path = new Path()) {
             // create rogue file that would be in a way of logger rolling existing files
@@ -354,7 +397,7 @@ public class LogFactoryTest {
             writer.setLocation(logFile);
             writer.setRollSize("1m");
             writer.setBufferSize("64k");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
 
             AtomicBoolean running = new AtomicBoolean(true);
             SOCountDownLatch halted = new SOCountDownLatch();
@@ -404,7 +447,7 @@ public class LogFactoryTest {
 
     @Test
     public void testRollingFileWriterByYear() throws Exception {
-        testRollOnDate("mylog-${date:yyyy-MM}.log", 12 * 30 * 24 * 60000L, "month", "mylog-201");
+        testRollOnDate("mylog-${date:yyyy-MM}.log", 12 * 30 * 24 * 60000L, "year", "mylog-201");
     }
 
     @Test
@@ -413,7 +456,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
         try (LogFactory factory = new LogFactory()) {
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1);
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, IntervalUtils.parseFloorPartialTimestamp("2015-05-04"));
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
@@ -424,16 +467,12 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 100000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-
-                Os.sleep(100);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 100000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
+
+            Os.sleep(100);
         }
         Assert.assertTrue(new File(expectedLogFile).length() > 0);
     }
@@ -446,7 +485,7 @@ public class LogFactoryTest {
 
             String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
 
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1);
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, IntervalUtils.parseFloorPartialTimestamp("2015-05-04"));
 
             try (Path path = new Path()) {
 
@@ -474,16 +513,12 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 100000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-
-                Os.sleep(1000);
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 100000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
+
+            Os.sleep(1000);
         }
         Assert.assertTrue(new File(expectedLogFile).length() > 0);
     }
@@ -627,6 +662,21 @@ public class LogFactoryTest {
         testCustomLogIsCreated(false);
     }
 
+    private static void assertEnabled(LogRecord r) {
+        Assert.assertTrue(r.isEnabled());
+        r.$();
+    }
+
+    private static void assertDisabled(LogRecord r) {
+        Assert.assertFalse(r.isEnabled());
+        r.$();
+    }
+
+    private void assertFileLength(String file) {
+        long len = new File(file).length();
+        Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
+    }
+
     private void testCustomLogIsCreated(boolean isCreated) throws IOException {
         try (LogFactory factory = new LogFactory()) {
             File logConfDir = Paths.get(temp.getRoot().getPath(), "conf").toFile();
@@ -643,26 +693,11 @@ public class LogFactoryTest {
                 props.store(stream, "");
             }
 
-            LogFactory.configureFromSystemProperties(factory, null, temp.getRoot().getPath());
+            LogFactory.configureFromSystemProperties(factory, temp.getRoot().getPath(), false);
 
             File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
             MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
         }
-    }
-
-    private static void assertEnabled(LogRecord r) {
-        Assert.assertTrue(r.isEnabled());
-        r.$();
-    }
-
-    private static void assertDisabled(LogRecord r) {
-        Assert.assertFalse(r.isEnabled());
-        r.$();
-    }
-
-    private void assertFileLength(String file) {
-        long len = new File(file).length();
-        Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
     private void testRollOnDate(
@@ -672,9 +707,9 @@ public class LogFactoryTest {
             String mustContain
     ) throws NumericException {
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed);
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed, IntervalUtils.parseFloorPartialTimestamp("2019-12-31"));
 
-        long expectedFileCount = Files.getOpenFileCount();
+        final long expectedFileCount = Files.getOpenFileCount();
         long expectedMemUsage = Unsafe.getMemUsed();
 
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
@@ -693,13 +728,9 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 10000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
-                }
-            } finally {
-                factory.haltThread();
+            Log logger = factory.create("x");
+            for (int i = 0; i < 10000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
             }
         }
 
@@ -739,20 +770,21 @@ public class LogFactoryTest {
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {
-        private final long base;
         private final long start;
         private final long speed;
+        private final long limit;
+        private long k;
 
-        public TestMicrosecondClock(long start, long speed) {
-            this.base = Os.currentTimeMicros();
+        public TestMicrosecondClock(long start, long speed, long limit) {
             this.start = start;
             this.speed = speed;
+            this.limit = limit - 1;
+            this.k = 0;
         }
 
         @Override
         public long getTicks() {
-            long wall = Os.currentTimeMicros();
-            return (wall - base) * speed + start;
+            return Math.min(start + (k++) * speed, limit);
         }
     }
 }

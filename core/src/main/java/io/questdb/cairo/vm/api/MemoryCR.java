@@ -31,6 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 
+//contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
     default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);
@@ -108,7 +109,14 @@ public interface MemoryCR extends MemoryC, MemoryR {
             if (len + 4 + offset <= size()) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
-            throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size()).put(']');
+            throw CairoException.critical(0)
+                    .put("String is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", len=")
+                    .put(len)
+                    .put(", size=")
+                    .put(size())
+                    .put(']');
         }
         return null;
     }
@@ -134,7 +142,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
             return len;
         }
 
-        ByteSequenceView of(long address, long len) {
+        public ByteSequenceView of(long address, long len) {
             this.address = address;
             this.len = len;
             return this;
@@ -155,7 +163,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
             return Unsafe.getUnsafe().getChar(address + index * 2L);
         }
 
-        CharSequenceView of(long address, int len) {
+        public CharSequenceView of(long address, int len) {
             this.address = address;
             this.len = len;
             return this;

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.str.CharSink;
 
 public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
@@ -45,5 +46,61 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
     @Override
     public boolean getBool(Record rec) {
         return value;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return value ? 1 : 0;
+    }
+
+    @Override
+    public float getFloat(Record rec) {
+        return value ? 1 : 0;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return value ? 1 : 0;
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        return (short) (value ? 1 : 0);
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return value ? 1 : 0;
+    }
+
+    @Override
+    public char getChar(Record rec) {
+        return value ? 'T' : 'F';
+    }
+
+    @Override
+    public byte getByte(Record rec) {
+        return (byte)(value ? 1 : 0);
+    }
+
+    @Override
+    public long getDate(Record rec) {
+        return value ? 1 : 0;
+    }
+
+    @Override
+    protected String getStr0(Record rec) {
+        return value ? "true" : "false";
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return value ? 1 : 0;
+    }
+
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(value);
     }
 }

@@ -124,7 +124,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")",
-                7,
+                0,
                 "not enough columns in group by"
         );
     }
@@ -139,7 +139,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")",
-                7,
+                0,
                 "not enough columns in group by"
         );
     }
@@ -424,7 +424,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    ask double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                7,
+                0,
                 "not enough columns in group by"
         );
     }
@@ -641,6 +641,57 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "7\t0.47335449523280454\n" +
                         "0\t0.1911234617573182\n" +
                         "9\t0.5793466326862211\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByWithCrossJoinAndFilterOnSymbolColumn() throws Exception {
+        assertQuery(
+                "ts\tsym2\ttotalCost\n",
+                "SELECT A.ts, A.sym2, A.totalCost\n" +
+                        "FROM (\n" +
+                        "    SELECT checkpoint.minutestamp AS ts, T.sym2, sum(T.cost) AS totalCost\n" +
+                        "    FROM x AS T,\n" +
+                        "      (\n" +
+                        "        SELECT DISTINCT R.tsMs / 60000 * 60000 as minutestamp\n" +
+                        "        FROM x AS R\n" +
+                        "        WHERE\n" +
+                        "          R.ts BETWEEN '1970-01-03T00:00:33.303Z' AND '1970-01-04T09:03:33.303Z'\n" +
+                        "          AND R.sym1 = 'A'\n" +
+                        "        ORDER BY minutestamp ASC\n" +
+                        "      ) checkpoint\n" +
+                        "    WHERE\n" +
+                        "      T.ts BETWEEN '1970-01-03T00:00:33.303Z' AND '1970-01-04T09:03:33.303Z'\n" +
+                        "      AND T.sym1 = 'A'\n" +
+                        "      AND T.sym2 like '%E%'\n" +
+                        "    GROUP BY ts, sym2\n" +
+                        "    ORDER BY ts ASC\n" +
+                        "  ) as A\n" +
+                        "GROUP BY ts, sym2\n" +
+                        "ORDER BY ts ASC",
+                "create table x (\n" +
+                        "  ts timestamp,\n" +
+                        "  tsMs long,\n" +
+                        "  sym1 symbol,\n" +
+                        "  sym2 symbol,\n" +
+                        "  cost float\n" +
+                        ") timestamp(ts) partition by day",
+                null,
+                "insert into x select * from (select " +
+                        "        timestamp_sequence(172800000000, 360000000) ts, \n" +
+                        "        (x * 60000) tsMs, \n" +
+                        "        rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "        rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() cost \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "ts\tsym2\ttotalCost\n" +
+                        "180000\tE\t1.7202\n" +
+                        "300000\tE\t1.7202\n" +
+                        "420000\tE\t1.7202\n" +
+                        "1200000\tE\t1.7202\n",
                 true,
                 true,
                 true

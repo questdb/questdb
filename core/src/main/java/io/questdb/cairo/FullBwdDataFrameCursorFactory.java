@@ -25,23 +25,34 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullBwdDataFrameCursor cursor = new FullBwdDataFrameCursor();
 
-    public FullBwdDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
-        super(engine, tableName, tableId, tableVersion);
+    public FullBwdDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
+        super(tableName, tableId, tableVersion);
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(getReader(executionContext.getCairoSecurityContext()));
+    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        if (order == ORDER_DESC || order == ORDER_ANY) {
+            return cursor.of(getReader(executionContext));
+        }
+
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getOrder() {
         return ORDER_DESC;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FullBwdDataFrame");
+        super.toPlan(sink);
     }
 }

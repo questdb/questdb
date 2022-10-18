@@ -99,11 +99,15 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
          jlong len,
          jlong offset) {
     DWORD count;
+    if (len < 0 || offset < 0) {
+        // To align with other platforms
+        return -1;
+    }
     if (set_file_pos((HANDLE) fd, offset) && WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
@@ -112,13 +116,19 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
          jlong address,
          jlong len,
          jlong offset) {
+
+    if (len < 0 || offset < 0) {
+        // To align with other platforms
+        return -1;
+    }
+
     DWORD count;
     if (set_file_pos((HANDLE) fd, offset) &&
         ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
@@ -238,6 +248,35 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0(JNIEnv *e, jclass cl, 
     return len;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, jlong lpszSrc, jlong lpszHardLink) {
+
+    size_t lenSrc = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, NULL, 0);
+    if (lenSrc < 1) {
+        return -1;
+    }
+    wchar_t bufSrc[lenSrc];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
+
+    size_t lenHardLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, NULL, 0);
+    if (lenHardLink < 1) {
+        return -1;
+    }
+    wchar_t bufHardLink[lenHardLink];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, bufHardLink, (int) lenHardLink);
+
+    if (CreateHardLinkW(bufHardLink, bufSrc, NULL)) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_noop
+(JNIEnv *e, jclass cl) {
+    return 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlong lpszName, jint mode) {
 
     size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
@@ -287,7 +326,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
     }
 
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {
@@ -362,7 +401,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
     }
 
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
@@ -601,7 +640,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
     }
 
     SaveLastError();
-    return 1;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
@@ -666,7 +705,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
 
     int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszOld, -1, NULL, 0);
     if (len > 0) {
@@ -680,10 +719,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl
             MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszNew, -1, buf2, len);
 
             if (MoveFileW(buf1, buf2)) {
-                return TRUE;
+                return FILES_RENAME_ERR_OK;
             }
         }
     }
     SaveLastError();
-    return FALSE;
+    return ERROR_NOT_SAME_DEVICE == GetLastError() ? FILES_RENAME_ERR_EXDEV : FILES_RENAME_ERR_OTHER;
 }

@@ -24,7 +24,8 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;

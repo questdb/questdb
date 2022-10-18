@@ -31,6 +31,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
+/**
+ * Cursors returned by this class are not thread-safe.
+ */
 public class BitmapIndexFwdReader extends AbstractIndexReader {
     private final static Log LOG = LogFactory.getLog(BitmapIndexFwdReader.class);
     private final Cursor cursor = new Cursor();
@@ -145,7 +148,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                 }
 
                 if (cellIndex == blockValueCountMod && position < valueCount) {
-                    // we are at edge of block right now, next value will be in previous block
+                    // we are at edge of block right now, next value will be in next block
                     jumpToNextValueBlock();
                 }
 
@@ -169,8 +172,8 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         }
 
         private void jumpToNextValueBlock() {
-            // we don't need to extend valueMem because we going from farthest block back to start of file
-            // to closes, e.g. valueBlockOffset is decreasing.
+            // We don't need to extend valueMem because all calls to this method are protected
+            // with a position < valueCount check.
             valueBlockOffset = getNextBlock(valueBlockOffset);
         }
 
@@ -204,7 +207,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
                     if (clock.getTicks() > deadline) {
                         LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
-                        throw CairoException.instance(0).put(INDEX_CORRUPT);
+                        throw CairoException.critical(0).put(INDEX_CORRUPT);
                     }
                 }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
@@ -33,7 +34,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
-public class LongTreeChain extends AbstractRedBlackTree {
+public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private final TreeCursor cursor = new TreeCursor();
     private final MemoryARW valueChain;
 
@@ -52,11 +53,17 @@ public class LongTreeChain extends AbstractRedBlackTree {
     public void close() {
         super.close();
         Misc.free(valueChain);
+        cursor.clear();
+    }
+
+    @Override
+    public void reopen() {
+        //nothing to do here
     }
 
     private long appendValue(long value, long prevValueOffset) {
         final long offset = valueChain.getAppendOffset();
-        valueChain.putLong128(value, prevValueOffset);
+        valueChain.putLongLong(value, prevValueOffset);
         return offset;
     }
 
@@ -153,6 +160,11 @@ public class LongTreeChain extends AbstractRedBlackTree {
                 }
             }
             chainCurrent = refOf(treeCurrent = p);
+        }
+
+        public void clear() {
+            treeCurrent = -1;
+            chainCurrent = -1;
         }
     }
 }

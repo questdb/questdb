@@ -25,6 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -32,13 +33,16 @@ import io.questdb.std.Vect;
 import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
-    public static final int TSK_SLAVE_SYNC = 1;
-    public static final int TSK_ALTER_TABLE = 2;
-    public static final int TSK_ALTER_TABLE_BEGIN = 3;
-    public static final int TSK_ALTER_TABLE_COMPLETE = 4;
+    public static final int CMD_SLAVE_SYNC = 1;
+    public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_UPDATE_TABLE = 3;
+
+    public static final int TSK_BEGIN = 64;
+    public static final int TSK_COMPLETE = 65;
 
     private final long data;
     private final long dataSize;
+    private AsyncWriterCommand cmd;
     private int type;
     private long tableId;
     private String tableName;
@@ -81,7 +85,7 @@ public class TableWriterTask implements Closeable {
         Vect.memcpy(data + Long.BYTES, txMem, txMemSize);
         Unsafe.getUnsafe().putLong(data + txMemSize + Long.BYTES, metaMemSize);
         Vect.memcpy(data + txMemSize + 2 * Long.BYTES, metaMem, metaMemSize);
-        this.type = TSK_SLAVE_SYNC;
+        this.type = CMD_SLAVE_SYNC;
         this.tableId = tableId;
         this.tableName = tableName;
         this.ip = slaveIP;
@@ -100,8 +104,12 @@ public class TableWriterTask implements Closeable {
         this.ip = 0L;
     }
 
-    public long getAppendOffset() {
-        return appendPtr - data;
+    public AsyncWriterCommand getAsyncWriterCommand() {
+        return cmd;
+    }
+
+    public void setAsyncWriterCommand(AsyncWriterCommand cmd) {
+        this.cmd = cmd;
     }
 
     public long getData() {
@@ -182,7 +190,7 @@ public class TableWriterTask implements Closeable {
 
     private void checkCapacity(long byteCount) {
         if (appendPtr + byteCount > appendLim) {
-            throw CairoException.instance(0).put("async command/event queue buffer overflow");
+            throw CairoException.critical(0).put("async command/event queue buffer overflow");
         }
     }
 }

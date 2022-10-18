@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -33,24 +34,31 @@ import io.questdb.std.Misc;
 public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final IntervalFwdDataFrameCursor cursor;
     private final RuntimeIntrinsicIntervalModel intervals;
+    private IntervalBwdDataFrameCursor bwdCursor;
 
     public IntervalFwdDataFrameCursorFactory(
-            CairoEngine engine,
             String tableName,
             int tableId,
             long tableVersion,
             RuntimeIntrinsicIntervalModel intervals,
             int timestampIndex
     ) {
-        super(engine, tableName, tableId, tableVersion);
+        super(tableName, tableId, tableVersion);
         this.cursor = new IntervalFwdDataFrameCursor(intervals, timestampIndex);
         this.intervals = intervals;
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
-        return cursor;
+    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        if (order == ORDER_ASC || order == ORDER_ANY) {
+            cursor.of(getReader(executionContext), executionContext);
+            return cursor;
+        }
+
+        if (bwdCursor == null) {
+            bwdCursor = new IntervalBwdDataFrameCursor(intervals, cursor.getTimestampIndex());
+        }
+        return bwdCursor.of(getReader(executionContext), executionContext);
     }
 
     @Override
@@ -60,6 +68,14 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
 
     @Override
     public void close() {
+        super.close();
         Misc.free(intervals);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("IntervalFwdDataFrame");
+        super.toPlan(sink);
+        sink.attr("intervals").val(intervals);
     }
 }

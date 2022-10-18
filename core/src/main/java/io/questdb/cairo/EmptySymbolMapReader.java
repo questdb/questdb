@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 
 public class EmptySymbolMapReader implements SymbolMapReader {
@@ -31,23 +32,13 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     public static final EmptySymbolMapReader INSTANCE = new EmptySymbolMapReader();
 
     @Override
-    public int keyOf(CharSequence value) {
-        return SymbolTable.VALUE_NOT_FOUND;
+    public boolean containsNullValue() {
+        return false;
     }
 
     @Override
     public int getSymbolCount() {
         return 0;
-    }
-
-    @Override
-    public CharSequence valueOf(int key) {
-        return null;
-    }
-
-    @Override
-    public CharSequence valueBOf(int key) {
-        return null;
     }
 
     @Override
@@ -70,12 +61,22 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
-    public boolean containsNullValue() {
-        return false;
+    public StaticSymbolTable newSymbolTableView() {
+        return this;
     }
 
     @Override
-    public long symbolCharsAddressOf(int symbolIndex) {
-        return -1;
+    public int keyOf(CharSequence value) {
+        return SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public CharSequence valueOf(int key) {
+        return null;
+    }
+
+    @Override
+    public CharSequence valueBOf(int key) {
+        return null;
     }
 }

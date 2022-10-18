@@ -40,12 +40,22 @@ public class CharFunctionTest {
         public char getChar(Record rec) {
             return value;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     private static final CharFunction zeroFunc = new CharFunction() {
         @Override
         public char getChar(Record rec) {
             return 0;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
         }
     };
 

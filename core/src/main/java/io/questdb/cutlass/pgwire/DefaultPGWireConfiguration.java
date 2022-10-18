@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -49,8 +49,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
-    private final int[] workerAffinity = new int[]{-1};
-
     @Override
     public int getBinParamCountCapacity() {
         return 4;
@@ -68,7 +66,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getConnectionPoolInitialCapacity() {
-        return 64;
+        return 4;
     }
 
     @Override
@@ -98,12 +96,12 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getSelectCacheBlockCount() {
-        return 16;
+        return 8;
     }
 
     @Override
     public int getSelectCacheRowCount() {
-        return 16;
+        return 8;
     }
 
     @Override
@@ -113,17 +111,32 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getInsertCacheBlockCount() {
-        return 8;
+        return 4;
     }
 
     @Override
     public int getInsertCacheRowCount() {
-        return 8;
+        return 4;
     }
 
     @Override
     public int getInsertPoolCapacity() {
-        return 32;
+        return 16;
+    }
+
+    @Override
+    public boolean isUpdateCacheEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getUpdateCacheBlockCount() {
+        return 4;
+    }
+
+    @Override
+    public int getUpdateCacheRowCount() {
+        return 4;
     }
 
     @Override
@@ -178,22 +191,12 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int[] getWorkerAffinity() {
-        return workerAffinity;
-    }
-
-    @Override
     public int getWorkerCount() {
         return 1;
     }
 
     @Override
-    public boolean haltOnError() {
-        return false;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
+    public String getPoolName() {
+        return "pgwire";
     }
 }

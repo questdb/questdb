@@ -157,6 +157,40 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignedToCalendarWithTimezoneEndingWithSemicolon() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n" +
+                        "1970-01-03T06:00:00.000000Z\t6\n" +
+                        "1970-01-03T12:00:00.000000Z\t6\n" +
+                        "1970-01-03T18:00:00.000000Z\t2\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC';",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false);
+    }
+
+    @Test
+    public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 1;", "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false, true, true);
+    }
+
+    @Test
     public void testGroupByAllTypes() throws Exception {
         assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
@@ -529,7 +563,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                            factory.getCursor(sqlExecutionContext);
+                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -784,6 +818,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            snapshotMemoryUsage();
             try (
                     RecordCursorFactory factory = compiler.compile(
                             "select k, s, first(lat) lat, last(lon) lon " +
@@ -814,6 +849,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 // invalid timezone
                 sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
@@ -825,6 +861,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(108, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
@@ -835,6 +872,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(123, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -846,6 +884,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, null);
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -856,6 +895,51 @@ public class SampleByTest extends AbstractGriffinTest {
                             factory.getMetadata(),
                             true
                     );
+                }
+                assertFactoryMemoryUsage();
+            }
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarBindVariablesWrongTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a') s," +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s) timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            String sql = "select k, s, first(lat) lat, last(lon) lon from x sample by 1h align to calendar time zone $1 with offset $2";
+
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                sqlExecutionContext.getBindVariableService().setLong(0, 42);
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(91, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: 42");
+                }
+            }
+
+            sqlExecutionContext.getBindVariableService().clear();
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setLong(1, 42);
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(106, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: 42");
                 }
             }
         });
@@ -1190,7 +1274,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "),index(s) timestamp(k)");
     }
 
-    @Test
+    @Test//here
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
         assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
@@ -1382,7 +1466,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "sample by 3d");
     }
 
-    @Test
+    @Test//here
     public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -1593,6 +1677,38 @@ public class SampleByTest extends AbstractGriffinTest {
                         "timestamp_sequence(0, 60 * 60 * 1000000L) k\n" + // 60 mins
                         "from\n" +
                         "long_sequence(365 * 24)\n");
+    }
+
+    @Test
+    public void testIndexSampleByMonth() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "create table xx (k timestamp, s symbol, lat double, lon double)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "2014-01-01T00:00:00.000000Z\tb\t248.0\t123.7\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "insert into xx " +
+                        "values " +
+                        "    ('2014-01-01T00:00:00.000000Z', 'b', 245, 123.4)," +
+                        "    ('2014-01-01T00:05:00.000000Z', 'b', 246, 123.5)," +
+                        "    ('2014-01-01T00:10:00.000000Z', 'b', 247, 123.6)," +
+                        "    ('2014-01-01T00:15:00.000000Z', 'b', 248, 123.7);");
     }
 
     @Test
@@ -1952,13 +2068,13 @@ public class SampleByTest extends AbstractGriffinTest {
             compiler.compile(
                     "insert into xx " +
                             "select " +
-                            "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
+                            "timestamp_sequence('1970-01-01T12', 2 * 60 * 60 * 1000000L) k\n" +
                             "from\n" +
-                            "long_sequence(100)\n", sqlExecutionContext);
+                            "long_sequence(8)\n", sqlExecutionContext);
             compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
             compiler.compile("insert into xx " +
                     "select " +
-                    "timestamp_sequence(24 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
+                    "timestamp_sequence('1970-01-03', 1 * 60 * 1000000L),\n" +
                     "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                     "from\n" +
                     "long_sequence(60)\n", sqlExecutionContext);
@@ -1967,19 +2083,19 @@ public class SampleByTest extends AbstractGriffinTest {
         // 1970-01-01 data does not have s column
         // first hour of 1970-01-02 does not have s column
         assertSampleByIndexQuery("fk\tlk\tk\ts\n" +
-                        "1970-01-02T00:00:00.000000Z\t1970-01-02T00:58:00.000000Z\t1970-01-02T00:00:00.000000Z\tb\n" +
                         "1970-01-02T01:00:00.000000Z\t1970-01-02T01:58:00.000000Z\t1970-01-02T01:00:00.000000Z\tb\n" +
                         "1970-01-02T02:00:00.000000Z\t1970-01-02T02:58:00.000000Z\t1970-01-02T02:00:00.000000Z\tb\n" +
                         "1970-01-02T03:00:00.000000Z\t1970-01-02T03:58:00.000000Z\t1970-01-02T03:00:00.000000Z\tb\n" +
                         "1970-01-02T04:00:00.000000Z\t1970-01-02T04:58:00.000000Z\t1970-01-02T04:00:00.000000Z\tb\n" +
-                        "1970-01-02T05:00:00.000000Z\t1970-01-02T05:58:00.000000Z\t1970-01-02T05:00:00.000000Z\tb\n",
+                        "1970-01-02T05:00:00.000000Z\t1970-01-02T05:58:00.000000Z\t1970-01-02T05:00:00.000000Z\tb\n" +
+                        "1970-01-03T00:00:00.000000Z\t1970-01-03T00:58:00.000000Z\t1970-01-03T00:00:00.000000Z\tb\n",
                 "select first(k) fk, last(k) lk, k, s\n" +
                         "from xx " +
                         "where s in ('b')" +
                         "sample by 1h",
                 "insert into xx " +
                         "select " +
-                        "timestamp_sequence(25 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
+                        "timestamp_sequence('1970-01-02T01', 1 * 60 * 1000000L),\n" +
                         "(case when x % 2 = 0 then 'a' else 'b' end) sk\n" +
                         "from\n" +
                         "long_sequence(300)\n");
@@ -2023,7 +2139,7 @@ public class SampleByTest extends AbstractGriffinTest {
             compile("alter table xx add dt date", sqlExecutionContext);
         });
 
-        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
+        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t\t\t\t\t1970-01-01T00:00:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t\t\t\t\t1970-01-01T00:30:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t\t\t\t\t1970-01-01T01:00:00.000000Z\tb\n" +
@@ -2035,7 +2151,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "241\t269\tS\tL\t141\t169\t220.5000\t234.5000\t302.5\t372.5\tc3\tc3\t41\t69\t41\t69\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T00:00:00.000041Z\t1970-01-01T00:00:00.000069Z\t1970-01-01T00:00:00.041Z\t1970-01-01T00:00:00.069Z\t1970-01-01T04:00:00.000000Z\tb\n" +
                         "271\t299\tO\tN\t171\t199\t235.5000\t249.5000\t377.5\t447.5\ta1\tc3\t71\t99\t71\t99\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T00:00:00.000071Z\t1970-01-01T00:00:00.000099Z\t1970-01-01T00:00:00.071Z\t1970-01-01T00:00:00.099Z\t1970-01-01T04:30:00.000000Z\tb\n",
                 "select first(i1) fi1, last(i1) li1, first(c1) fc1, " +
-                        "last(c1) lc1, first(l1) fl1, last(l1) lf1, first(f1) ff1, last(f1) lf1, " +
+                        "last(c1) lc1, first(l1) fl1, last(l1) ll1, first(f1) ff1, last(f1) lf1, " +
                         "first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(ss1) fss1, " +
                         "last(ss1) lss1, first(b1) fb1, last(b1) lb1, first(k) fk, last(k) lk, first(t1) ft1, " +
                         "last(t1) lt1, first(dt) fdt, last(dt) ldt, k, s\n" +
@@ -2102,7 +2218,7 @@ public class SampleByTest extends AbstractGriffinTest {
             compile("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
         });
 
-        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
+        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T00:00:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T00:30:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T01:00:00.000000Z\tb\n" +
@@ -2114,7 +2230,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "241\t269\tJ\tR\t141\t169\t220.5000\t234.5000\t302.5\t372.5\t\tc3\t41\t69\t41\t69\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T00:00:00.000041Z\t1970-01-01T00:00:00.000069Z\t1970-01-01T00:00:00.041Z\t1970-01-01T00:00:00.069Z\t100\t001\tj8\tky\teuqer\twrv33\t791pjxsej\trzyp6xy6d\t1970-01-01T04:00:00.000000Z\tb\n" +
                         "271\t299\tR\tR\t171\t199\t235.5000\t249.5000\t377.5\t447.5\t\tc3\t71\t99\t71\t99\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T00:00:00.000071Z\t1970-01-01T00:00:00.000099Z\t1970-01-01T00:00:00.071Z\t1970-01-01T00:00:00.099Z\t001\t011\tby\tm1\t0rhez\t711s8\t57tv8npyb\t0prb8tpgj\t1970-01-01T04:30:00.000000Z\tb\n",
                 "select first(i1) fi1, last(i1) li1, first(c1) fc1, " +
-                        "last(c1) lc1, first(l1) fl1, last(l1) lf1, first(f1) ff1, last(f1) lf1, " +
+                        "last(c1) lc1, first(l1) fl1, last(l1) ll1, first(f1) ff1, last(f1) lf1, " +
                         "first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(ss1) fss1, " +
                         "last(ss1) lss1, first(b1) fb1, last(b1) lb1, first(k) fk, last(k) lk, first(t1) ft1, " +
                         "last(t1) lt1, first(dt) fdt, last(dt) ldt, " +
@@ -2179,8 +2295,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
-                "exception in function factory"
+                0,
+                "inconvertible value: `ab` [STRING -> DOUBLE]"
         );
     }
 
@@ -2197,8 +2313,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
-                "exception in function factory"
+                0,
+                "inconvertible value: `ac` [STRING -> DOUBLE]"
         );
     }
 
@@ -2559,6 +2675,59 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by 100U fill(none)",
+                "create table x" +
+                        "(" +
+                        " a double," +
+                        " b symbol," +
+                        " k timestamp" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 100) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k)",
+                "sum\tk\n" +
+                        "11.427984775756228\t1970-01-04T05:00:00.000000Z\n" +
+                        "42.17768841969397\t1970-01-04T05:00:00.000100Z\n" +
+                        "23.90529010846525\t1970-01-04T05:00:00.000200Z\n" +
+                        "70.94360487171201\t1970-01-04T05:00:00.000300Z\n" +
+                        "87.99634725391621\t1970-01-04T05:00:00.000400Z\n" +
+                        "32.881769076795045\t1970-01-04T05:00:00.000500Z\n" +
+                        "97.71103146051203\t1970-01-04T05:00:00.000600Z\n" +
+                        "81.46807944500559\t1970-01-04T05:00:00.000700Z\n" +
+                        "57.93466326862211\t1970-01-04T05:00:00.000800Z\n" +
+                        "12.026122412833129\t1970-01-04T05:00:00.000900Z\n" +
+                        "48.820511018586934\t1970-01-04T05:00:00.001000Z\n" +
+                        "26.922103479744898\t1970-01-04T05:00:00.001100Z\n" +
+                        "52.98405941762054\t1970-01-04T05:00:00.001200Z\n" +
+                        "84.45258177211063\t1970-01-04T05:00:00.001300Z\n" +
+                        "97.5019885372507\t1970-01-04T05:00:00.001400Z\n" +
+                        "49.00510449885239\t1970-01-04T05:00:00.001500Z\n" +
+                        "80.01121139739173\t1970-01-04T05:00:00.001600Z\n" +
+                        "92.050039469858\t1970-01-04T05:00:00.001700Z\n" +
+                        "45.6344569609078\t1970-01-04T05:00:00.001800Z\n" +
+                        "40.455469747939254\t1970-01-04T05:00:00.001900Z\n" +
+                        "56.594291398612405\t1970-01-04T05:00:00.002000Z\n" +
+                        "9.750574414434398\t1970-01-04T05:00:00.002100Z\n" +
+                        "12.105630273556178\t1970-01-04T05:00:00.002200Z\n" +
+                        "57.78947915182423\t1970-01-04T05:00:00.002300Z\n" +
+                        "86.85154305419587\t1970-01-04T05:00:00.002400Z\n" +
+                        "12.02416087573498\t1970-01-04T05:00:00.002500Z\n" +
+                        "49.42890511958454\t1970-01-04T05:00:00.002600Z\n" +
+                        "58.912164838797885\t1970-01-04T05:00:00.002700Z\n" +
+                        "67.52509547112409\t1970-01-04T05:00:00.002800Z\n" +
+                        "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
+                false);
+    }
+
+    @Test
     public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
         assertQuery(
                 "k\tb\tc\n" +
@@ -2800,70 +2969,76 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            RecordCursorFactory factory = compiler.compile(
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = compiler.compile(
                     "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
                     sqlExecutionContext
-            ).getRecordCursorFactory();
+            ).getRecordCursorFactory()) {
 
-            String expectedMoscow = "k\tcount\n" +
-                    "1970-01-02T22:45:00.000000Z\t3\n" +
-                    "1970-01-03T00:15:00.000000Z\t18\n" +
-                    "1970-01-03T01:45:00.000000Z\t18\n" +
-                    "1970-01-03T03:15:00.000000Z\t18\n" +
-                    "1970-01-03T04:45:00.000000Z\t18\n" +
-                    "1970-01-03T06:15:00.000000Z\t18\n" +
-                    "1970-01-03T07:45:00.000000Z\t7\n";
+                String expectedMoscow = "k\tcount\n" +
+                        "1970-01-02T22:45:00.000000Z\t3\n" +
+                        "1970-01-03T00:15:00.000000Z\t18\n" +
+                        "1970-01-03T01:45:00.000000Z\t18\n" +
+                        "1970-01-03T03:15:00.000000Z\t18\n" +
+                        "1970-01-03T04:45:00.000000Z\t18\n" +
+                        "1970-01-03T06:15:00.000000Z\t18\n" +
+                        "1970-01-03T07:45:00.000000Z\t7\n";
 
-            String expectedPrague = "k\tcount\n" +
-                    "1970-01-02T23:10:00.000000Z\t8\n" +
-                    "1970-01-03T00:40:00.000000Z\t18\n" +
-                    "1970-01-03T02:10:00.000000Z\t18\n" +
-                    "1970-01-03T03:40:00.000000Z\t18\n" +
-                    "1970-01-03T05:10:00.000000Z\t18\n" +
-                    "1970-01-03T06:40:00.000000Z\t18\n" +
-                    "1970-01-03T08:10:00.000000Z\t2\n";
+                String expectedPrague = "k\tcount\n" +
+                        "1970-01-02T23:10:00.000000Z\t8\n" +
+                        "1970-01-03T00:40:00.000000Z\t18\n" +
+                        "1970-01-03T02:10:00.000000Z\t18\n" +
+                        "1970-01-03T03:40:00.000000Z\t18\n" +
+                        "1970-01-03T05:10:00.000000Z\t18\n" +
+                        "1970-01-03T06:40:00.000000Z\t18\n" +
+                        "1970-01-03T08:10:00.000000Z\t2\n";
 
-            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
-            sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                assertCursor(
-                        expectedMoscow,
-                        cursor,
-                        factory.getMetadata(),
-                        true
-                );
-            }
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Moscow");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(
+                            expectedMoscow,
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
+                }
+                assertFactoryMemoryUsage();
 
-            // invalid timezone
-            sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
-            sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
-            try {
-                factory.getCursor(sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(67, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
-            }
+                // invalid timezone
+                sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(67, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
+                }
+                assertFactoryMemoryUsage();
 
-            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-            sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
-            try {
-                factory.getCursor(sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(82, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
-            }
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(82, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
+                }
+                assertFactoryMemoryUsage();
 
-            sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
-            sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                assertCursor(
-                        expectedPrague,
-                        cursor,
-                        factory.getMetadata(),
-                        true
-                );
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(
+                            expectedPrague,
+                            cursor,
+                            factory.getMetadata(),
+                            true
+                    );
+                }
+                assertFactoryMemoryUsage();
             }
         });
     }
@@ -3719,7 +3894,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
                             // with mmap count = 5 we should get failure in cursor
-                            factory.getCursor(sqlExecutionContext);
+                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -7946,7 +8121,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             ") timestamp(k) partition by NONE",
                     sqlExecutionContext
             );
-
+            snapshotMemoryUsage();
             try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)", sqlExecutionContext).getRecordCursorFactory()) {
                 assertTimestamp("k", factory);
                 String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
@@ -7990,7 +8165,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 // make sure we get the same outcome when we get factory to create new cursor
                 assertCursor(expected, factory, false, true, false, false);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, true);
+                assertVariableColumns(factory, true, sqlExecutionContext);
 
                 compiler.compile("truncate table x", sqlExecutionContext);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -8271,16 +8446,16 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueListWithNullAndPrev() throws Exception {
+    public void testSampleFillValueListWithNullAndPrev() throws Exception { //here
         assertQuery("b\tsum\tcount\tmin\tmax\tavg\tk\n" +
                         "XYZ\t28.45577791213847\t1\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:00:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T01:00:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:30:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T01:30:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:30:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T02:00:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T02:00:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T02:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T02:30:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T02:30:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T02:30:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:00:00.000000Z\n" +
                         "ABC\t79.05675319675964\t1\t79.05675319675964\t79.05675319675964\t79.05675319675964\t1970-01-03T03:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:30:00.000000Z\n" +
@@ -9141,6 +9316,38 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
+        assertQuery("open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
+                "select * from (" +
+                        "  select" +
+                        "    first(price) AS open," +
+                        "    max(price) AS high," +
+                        "    min(price) AS low," +
+                        "    last(price) AS close," +
+                        "    sum(amount) AS volume," +
+                        "    created_at as timestamp" +
+                        "  from trades" +
+                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                        "  sample by 60m" +
+                        "  fill(null, null, null, null, 0) align to calendar" +
+                        ") order by timestamp desc limit 0, 1",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_str('btcusdt', 'ethusdt') market_id," +
+                        " rnd_double(0) * 100 price," +
+                        " rnd_double(0) * 100 amount," +
+                        " timestamp_sequence(172800000000, 3600000) created_at" +
+                        " from long_sequence(20)" +
+                        ") timestamp(created_at) partition by day",
+                null,
+                true,
+                false,
+                true);
+    }
+
+    @Test
     public void testWrongTypeInPeriodSyntax() throws Exception {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0*3 T",
@@ -9183,6 +9390,7 @@ public class SampleByTest extends AbstractGriffinTest {
     private void assertSampleByIndexQuery(String expected, String query, String insert, boolean expectSize) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
+
         assertQuery(expected,
                 forceNoIndexQuery,
                 insert,

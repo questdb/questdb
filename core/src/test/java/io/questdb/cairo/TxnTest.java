@@ -29,8 +29,8 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -41,6 +41,8 @@ import org.junit.Test;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TxnTest extends AbstractCairoTest {
     protected final static Log LOG = LogFactory.getLog(TxnTest.class);
@@ -76,7 +78,7 @@ public class TxnTest extends AbstractCairoTest {
                 }
 
                 try (Path path = new Path()) {
-                    path.of(configuration.getRoot()).concat(tableName);
+                    path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 3000;
                     try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
                         // Add lots of partitions
@@ -173,13 +175,13 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        path.of(engine.getConfiguration().getRoot()).concat(tableName);
+                        path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
-                        MicrosecondClock microClock = engine.getConfiguration().getMicrosecondClock();
-                        long duration = 5_000_000;
+                        MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
+                        long duration = 5_000;
                         start.await();
                         while (done.get() == 0 || partitionCountCheck.get() != txReader.getPartitionCount() - 1) {
-                            TableUtils.safeReadTxn(txReader, microClock, duration);
+                            TableUtils.safeReadTxn(txReader, clock, duration);
                             long txn = txReader.getTxn();
 
                             // Each writer iteration creates 2 txn commits.
@@ -280,13 +282,13 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        path.of(engine.getConfiguration().getRoot()).concat(tableName);
+                        path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
-                        MicrosecondClock microClock = engine.getConfiguration().getMicrosecondClock();
-                        long duration = 5_000_000;
+                        MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
+                        long duration = 5_000;
                         start.await();
                         while (done.get() == 0) {
-                            TableUtils.safeReadTxn(txReader, microClock, duration);
+                            TableUtils.safeReadTxn(txReader, clock, duration);
                             reloadCount.incrementAndGet();
                             Assert.assertTrue(txReader.getPartitionCount() <= maxPartitionCount);
                             Assert.assertTrue(txReader.getSymbolColumnCount() <= maxSymbolCount);
@@ -323,7 +325,7 @@ public class TxnTest extends AbstractCairoTest {
                                 txReader.ofRO(path, PartitionBy.HOUR);
                             }
                         }
-                        TableUtils.safeReadTxn(txReader, microClock, duration);
+                        TableUtils.safeReadTxn(txReader, clock, duration);
                         Assert.assertEquals(partitionCountCheck.get(), txReader.getPartitionCount() - 1);
 
                     } catch (Throwable e) {
@@ -381,7 +383,7 @@ public class TxnTest extends AbstractCairoTest {
                     Path path = new Path();
                     TxWriter txWriter = new TxWriter(ff)
             ) {
-                path.of(engine.getConfiguration().getRoot()).concat(tableName);
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                 txWriter.ofRW(path, PartitionBy.HOUR);
 
                 start.await();

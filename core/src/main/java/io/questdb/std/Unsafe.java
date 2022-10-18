@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 public final class Unsafe {
+    public static final long BYTE_OFFSET;
+    public static final long BYTE_SCALE;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
@@ -57,11 +59,15 @@ public final class Unsafe {
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
 
+            BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
+            BYTE_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(byte[].class));
+
             INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
             INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
 
             LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
+
             //#if jdk.version!=8
             OVERRIDE = AccessibleObject_override_fieldOffset();
             implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
@@ -115,6 +121,7 @@ public final class Unsafe {
 
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
         class Probe {
+            @SuppressWarnings("unused")
             private int intField; // Accessed through reflection
 
             boolean probe() {
@@ -168,10 +175,13 @@ public final class Unsafe {
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
     }
 
-    public static void free(long ptr, long size, int memoryTag) {
-        getUnsafe().freeMemory(ptr);
-        FREE_COUNT.incrementAndGet();
-        recordMemAlloc(-size, memoryTag);
+    public static long free(long ptr, long size, int memoryTag) {
+        if (ptr != 0) {
+            getUnsafe().freeMemory(ptr);
+            FREE_COUNT.incrementAndGet();
+            recordMemAlloc(-size, memoryTag);
+        }
+        return 0;
     }
 
     public static boolean getBool(long address) {
@@ -184,6 +194,18 @@ public final class Unsafe {
         } catch (NoSuchFieldException e) {
             throw new ExceptionInInitializerError(e);
         }
+    }
+
+    public static long swapEndianness(long value) {
+        long b0 = value & 0xff;
+        long b1 = (value >> 8) & 0xff;
+        long b2 = (value >> 16) & 0xff;
+        long b3 = (value >> 24) & 0xff;
+        long b4 = (value >> 32) & 0xff;
+        long b5 = (value >> 40) & 0xff;
+        long b6 = (value >> 48) & 0xff;
+        long b7 = (value >> 56) & 0xff;
+        return (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7;
     }
 
     public static long getFreeCount() {
@@ -212,26 +234,41 @@ public final class Unsafe {
     }
 
     public static long malloc(long size, int memoryTag) {
-        long ptr = getUnsafe().allocateMemory(size);
-        recordMemAlloc(size, memoryTag);
-        MALLOC_COUNT.incrementAndGet();
-        return ptr;
+        try {
+            long ptr = getUnsafe().allocateMemory(size);
+            recordMemAlloc(size, memoryTag);
+            MALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.printf(
+                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d",
+                    MEM_USED.get(), size, memoryTag);
+            throw oom;
+        }
     }
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
-        long ptr = getUnsafe().reallocateMemory(address, newSize);
-        recordMemAlloc(-oldSize + newSize, memoryTag);
-        REALLOC_COUNT.incrementAndGet();
-        return ptr;
+        try {
+            long ptr = getUnsafe().reallocateMemory(address, newSize);
+            recordMemAlloc(-oldSize + newSize, memoryTag);
+            REALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.printf(
+                    "Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=%d",
+                    MEM_USED.get(), oldSize, newSize, memoryTag);
+            throw oom;
+        }
     }
 
     public static void recordMemAlloc(long size, int memoryTag) {
         long mem = MEM_USED.addAndGet(size);
         assert mem >= 0;
-        assert  memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
+        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
     }
 
+    //most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

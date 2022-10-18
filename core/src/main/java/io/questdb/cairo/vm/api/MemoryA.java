@@ -30,6 +30,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
+//appendable 
 public interface MemoryA extends Closeable {
 
     @Override
@@ -49,7 +50,7 @@ public interface MemoryA extends Closeable {
 
     void putBool(boolean value);
 
-    void putByte(byte b);
+    void putByte(byte value);
 
     void putChar(char value);
 
@@ -61,7 +62,12 @@ public interface MemoryA extends Closeable {
 
     void putLong(long value);
 
-    void putLong128(long l1, long l2);
+    default void putLong128LittleEndian(long hi, long lo) {
+        putLongLong(lo, hi);
+    }
+
+    // two longs are written back to back
+    void putLongLong(long l0, long l1);
 
     void putLong256(long l0, long l1, long l2, long l3);
 

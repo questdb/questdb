@@ -29,93 +29,103 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 
-class IntersectRecordCursor implements RecordCursor {
+class IntersectRecordCursor extends AbstractSetRecordCursor {
     private final Map map;
     private final RecordSink recordSink;
-    private RecordCursor masterCursor;
-    private RecordCursor slaveCursor;
-    private Record masterRecord;
-    private RecordCursor symbolCursor;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private Record recordA;
+    private Record recordB;
+    private boolean isOpen;
 
     public IntersectRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
-    }
-
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        circuitBreaker = executionContext.getCircuitBreaker();
-        map.clear();
-        populateSlaveMap(slaveCursor);
-        toTop();
-    }
-
-    private void populateSlaveMap(RecordCursor cursor) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            key.createValue();
-            circuitBreaker.test();
-        }
-    }
-
-    @Override
-    public Record getRecordB() {
-        return masterCursor.getRecordB();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        masterCursor.recordAt(record, atRowId);
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
-        circuitBreaker = null;
+        if (isOpen) {
+            isOpen = false;
+            this.map.close();
+            super.close();
+        }
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        super.of(cursorA, cursorB, circuitBreaker);
+        if (!isOpen) {
+            map.reopen();
+            isOpen = true;
+        }
+        this.recordB = cursorB.getRecord();
+        hashCursorB();
+        recordA = cursorA.getRecord();
+        toTop();
     }
 
     @Override
     public Record getRecord() {
-        return masterRecord;
+        return recordA;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return cursorA.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return cursorA.newSymbolTable(columnIndex);
     }
 
     @Override
     public boolean hasNext() {
-        while (masterCursor.hasNext()) {
+        while (cursorA.hasNext()) {
             MapKey key = map.withKey();
-            key.put(masterRecord, recordSink);
+            key.put(recordA, recordSink);
             if (key.findValue() != null) {
                 return true;
             }
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
         }
         return false;
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        return cursorA.getRecordB();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        cursorA.recordAt(record, atRowId);
     }
 
     @Override
     public void toTop() {
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
+        cursorA.toTop();
     }
 
     @Override
     public long size() {
         return -1;
+    }
+
+    private void hashCursorB() {
+        while (cursorB.hasNext()) {
+            MapKey key = map.withKey();
+            key.put(recordB, recordSink);
+            key.createValue();
+            circuitBreaker.statefulThrowExceptionIfTripped();
+        }
+        // this is an optimisation to release TableReader in case "this"
+        // cursor lingers around. If there is exception or circuit breaker fault
+        // we will rely on close() method to release reader.
+        this.cursorB = Misc.free(this.cursorB);
     }
 }

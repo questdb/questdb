@@ -24,11 +24,10 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.TelemetryJob;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,6 +38,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class TouchTableFunctionFactory implements FunctionFactory {
     @Override
@@ -56,10 +57,10 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         final Function function = args.get(0);
         final int pos = argPositions.get(0);
 
-        try(final RecordCursorFactory recordCursorFactory = function.getRecordCursorFactory()) {
-            if (recordCursorFactory == null || !recordCursorFactory.supportPageFrameCursor()) {
-                throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
-            }
+        // factory belongs to the function, do not close
+        final RecordCursorFactory recordCursorFactory = function.getRecordCursorFactory();
+        if (recordCursorFactory == null || !recordCursorFactory.supportPageFrameCursor()) {
+            throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
         }
 
         return new TouchTableFunc(function);
@@ -69,12 +70,9 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         private static final Log LOG = LogFactory.getLog(TouchTableFunc.class);
 
         private final Function arg;
-
-        private SqlExecutionContext sqlExecutionContext;
-
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-
+        private SqlExecutionContext sqlExecutionContext;
         private long garbage = 0;
         private long dataPages = 0;
         private long indexKeyPages = 0;
@@ -87,12 +85,6 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return arg;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            this.sqlExecutionContext = executionContext;
         }
 
         @Override
@@ -116,8 +108,14 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                     .put(dataPages)
                     .put(", \"index_key_pages\":")
                     .put(indexKeyPages)
-                    .put( ", \"index_values_pages\": ")
+                    .put(", \"index_values_pages\": ")
                     .put(indexValuePages).put("}");
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            this.sqlExecutionContext = executionContext;
         }
 
         private void clearCounters() {
@@ -125,40 +123,6 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             dataPages = 0;
             indexKeyPages = 0;
             indexValuePages = 0;
-        }
-
-        private void touchTable() {
-            clearCounters();
-            final long pageSize = Files.PAGE_SIZE;
-            try (RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory()) {
-                try (PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext)) {
-                    PageFrame frame;
-                    RecordMetadata metadata = recordCursorFactory.getMetadata();
-                    while ((frame = pageFrameCursor.next()) != null) {
-                        for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
-
-                            final long columnMemorySize = frame.getPageSize(columnIndex);
-                            final long columnBaseAddress = frame.getPageAddress(columnIndex);
-                            dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
-
-                            if (metadata.isColumnIndexed(columnIndex)) {
-                                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
-
-                                final long keyBaseAddress = indexReader.getKeyBaseAddress();
-                                final long keyMemorySize = indexReader.getKeyMemorySize();
-                                indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
-
-                                final long valueBaseAddress = indexReader.getValueBaseAddress();
-                                final long valueMemorySize = indexReader.getValueMemorySize();
-                                indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);
-                            }
-                        }
-                    }
-                } catch (SqlException e) {
-                    // do not propagate
-                    LOG.error().$("cannot acquire page frame cursor: ").$((Sinkable) e).$();
-                }
-            }
         }
 
         private long touchMemory(long pageSize, long baseAddress, long memorySize) {
@@ -170,6 +134,40 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             }
 
             return pageCount;
+        }
+
+        private void touchTable() {
+            clearCounters();
+            final long pageSize = Files.PAGE_SIZE;
+            // factory belongs to the function, do not close
+            final RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory();
+            try (PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                PageFrame frame;
+                RecordMetadata metadata = recordCursorFactory.getMetadata();
+                while ((frame = pageFrameCursor.next()) != null) {
+                    for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
+
+                        final long columnMemorySize = frame.getPageSize(columnIndex);
+                        final long columnBaseAddress = frame.getPageAddress(columnIndex);
+                        dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
+
+                        if (metadata.isColumnIndexed(columnIndex)) {
+                            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+
+                            final long keyBaseAddress = indexReader.getKeyBaseAddress();
+                            final long keyMemorySize = indexReader.getKeyMemorySize();
+                            indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
+
+                            final long valueBaseAddress = indexReader.getValueBaseAddress();
+                            final long valueMemorySize = indexReader.getValueMemorySize();
+                            indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);
+                        }
+                    }
+                }
+            } catch (SqlException e) {
+                // do not propagate
+                LOG.error().$("cannot acquire page frame cursor: ").$((Sinkable) e).$();
+            }
         }
     }
 }

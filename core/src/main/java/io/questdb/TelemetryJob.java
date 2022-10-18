@@ -29,8 +29,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -209,8 +211,8 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                     "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
                     executionContext
             );
-            try (QueryFuture execution = cc.execute(tempSequence)) {
-                execution.await();
+            try (OperationFuture fut = cc.execute(tempSequence)) {
+                fut.await();
             }
         } catch (SqlException ex) {
             LOG.info().$("Failed to alter telemetry table [table=").$(configTableName).$(",error=").$(ex.getFlyweightMessage()).I$();
@@ -224,7 +226,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     ) throws SqlException {
         final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, configTableName, WRITER_LOCK_REASON);
         final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
-        try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+        try (
+                final RecordCursorFactory factory = cc.getRecordCursorFactory();
+                final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
             if (cursor.hasNext()) {
                 final Record record = cursor.getRecord();
                 final boolean _enabled = record.getBool(1);

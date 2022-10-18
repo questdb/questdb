@@ -85,7 +85,7 @@ public class TableBackupTest {
             }
 
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (mkdirsErrno != -1 && --mkdirsErrnoCountDown < 1) {
                     nextErrno = mkdirsErrno;
                     mkdirsErrno = -1;
@@ -96,11 +96,11 @@ public class TableBackupTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (renameErrno != -1) {
                     nextErrno = renameErrno;
                     renameErrno = -1;
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -371,7 +371,7 @@ public class TableBackupTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(18, e.getPosition());
-                TestUtils.assertEquals("'tb2' is not  a valid table", e.getFlyweightMessage());
+                TestUtils.assertEquals("table does not exist [table=tb2]", e.getFlyweightMessage());
             }
         });
     }
@@ -504,7 +504,7 @@ public class TableBackupTest {
                 mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Backup dir for table \"testTable1\" already exists"));
+                Assert.assertTrue(ex.getMessage().contains("Backup dir for table \"testTable1\" already exists"));
             }
         });
     }

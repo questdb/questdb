@@ -24,12 +24,10 @@
 
 package io.questdb.std;
 
-
 import java.util.Arrays;
+import java.util.Objects;
 
-
-public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSequenceHashSet {
-    private final ObjList<CharSequence> list;
+public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSequenceHashMap {
     private T[] values;
 
     public LowerCaseCharSequenceObjHashMap() {
@@ -44,37 +42,18 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     public LowerCaseCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         values = (T[]) new Object[keys.length];
-        this.list = new ObjList<>(capacity);
         clear();
     }
 
-    public final void clear() {
+    public void clear() {
         super.clear();
-        list.clear();
         Arrays.fill(values, null);
-    }
-
-    public ObjList<CharSequence> keys() {
-        return list;
     }
 
     @Override
     protected void erase(int index) {
         keys[index] = noEntryKey;
         values[index] = null;
-    }
-
-    @Override
-    public void removeAt(int index) {
-        if (index < 0) {
-            CharSequence key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
     }
 
     public T get(CharSequence key) {
@@ -99,7 +78,6 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
         }
 
         putAt0(index, key, value);
-        list.add(key);
         return true;
     }
 
@@ -119,15 +97,50 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     }
 
     private void putAt0(int index, CharSequence key, T value) {
-        keys[index] = key;
         values[index] = value;
-        if (--free == 0) {
-            rehash();
+        putAt0(index, key);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LowerCaseCharSequenceObjHashMap<?> that = (LowerCaseCharSequenceObjHashMap<?>) o;
+        if (size() != that.size()) {
+            return false;
         }
+        for (CharSequence key : keys) {
+            if (key == null) {
+                continue;
+            }
+            if (that.excludes(key)) {
+                return false;
+            }
+            Object value = get(key);
+            if (value != null) {
+                Object thatValue = that.get(key);
+                if (!Objects.equals(value, thatValue)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += Chars.hashCode(keys[i]) ^ Objects.hashCode(values[i]);
+            }
+        }
+        return hashCode;
     }
 
     @SuppressWarnings("unchecked")
-    private void rehash() {
+    @Override
+    protected void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;

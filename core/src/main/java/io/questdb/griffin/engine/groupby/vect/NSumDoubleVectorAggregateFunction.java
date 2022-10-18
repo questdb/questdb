@@ -32,12 +32,16 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+    // We're using two double values per worker, hence +1 element in the padding.
+    private static final int SUM_PADDING = (Misc.CACHE_LINE_SIZE / Double.BYTES) + 1;
+    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
 
     private final int columnIndex;
     private final double[] sum;
@@ -52,8 +56,8 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     public NSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
-        this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
-        this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
+        this.sum = new double[workerCount * SUM_PADDING];
+        this.count = new long[workerCount * COUNT_PADDING];
         this.workerCount = workerCount;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;
@@ -70,28 +74,28 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
             // Neumaier compensated summation
             final double x = Vect.sumDoubleNeumaier(address, addressSize / Double.BYTES);
             if (x == x) {
-                final int offset = workerId * Misc.CACHE_LINE_SIZE;
-                final double sum = this.sum[offset];
+                final int sumOffset = workerId * SUM_PADDING;
+                final double sum = this.sum[sumOffset];
                 final double t = sum + x;
-                double c = this.sum[offset + 1];
+                double c = this.sum[sumOffset + 1];
                 if (Math.abs(sum) >= x) {
                     c += (sum - t) + x;
                 } else {
                     c += (x - t) + sum;
                 }
-                this.sum[offset] = t; // sum = t
-                this.sum[offset + 1] = c;
-                this.count[offset]++;
+                this.sum[sumOffset] = t; // sum = t
+                this.sum[sumOffset + 1] = c;
+                this.count[workerId * COUNT_PADDING]++;
             }
         }
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
         }
     }
 
@@ -113,8 +117,8 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntNSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntNSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -126,9 +130,9 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void wrapUp(long pRosti) {
+    public boolean wrapUp(long pRosti) {
         computeSum();
-        Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
+        return Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
     }
 
     @Override
@@ -143,13 +147,17 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         return transientCount > 0 ? transientSum + transientC : Double.NaN;
     }
 
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
     private void computeSum() {
         double sum = 0;
         long count = 0;
         double c = 0;
         for (int i = 0; i < workerCount; i++) {
-            final int offset = i * Misc.CACHE_LINE_SIZE;
-            double x = this.sum[offset] + this.sum[offset + 1];
+            double x = this.sum[i * SUM_PADDING] + this.sum[i * SUM_PADDING + 1];
             double t = sum + x;
             if (Math.abs(sum) >= x) {
                 c += (sum - t) + x;
@@ -157,10 +165,15 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
                 c += (x - t) + sum;
             }
             sum = t;
-            count += this.count[offset];
+            count += this.count[i * COUNT_PADDING];
         }
         this.transientSum = sum;
         this.transientCount = count;
         this.transientC = c;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("NSumDoubleVector(").put(columnIndex).put(')');
     }
 }

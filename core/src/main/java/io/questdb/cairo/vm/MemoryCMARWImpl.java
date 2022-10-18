@@ -35,6 +35,7 @@ import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+//contiguous mapped appendable readable writable
 public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
@@ -42,9 +43,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize = -1;
     private long extendSegmentMsb;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private int madviseOpts = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, size, memoryTag, opts);
+        of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
@@ -65,13 +67,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     @Override
     public void truncate() {
-        grownLength = 0;
         if (pageAddress != 0) {
             // try to remap to min size
             final long fileSize = ff.length(fd);
@@ -144,7 +146,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
-        grownLength = 0;
         size = 0;
         ff = null;
     }
@@ -209,9 +210,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = extendSegmentSize;
+        this.madviseOpts = madviseOpts;
         openFile(ff, name, opts);
         map(ff, name, size, memoryTag);
     }
@@ -231,14 +233,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
         of(ff, fd, null, size, memoryTag);
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
-    }
-
-    @Override
-    public void replacePage(long address, long size) {
-        long appendOffset = getAppendOffset();
-        this.pageAddress = this.appendAddress = address;
-        this.lim = pageAddress + size;
-        jumpTo(appendOffset);
     }
 
     @Override
@@ -275,7 +269,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                     previousSize,
                     newSize,
                     Files.MAP_RW,
-                    memoryTag);
+                    memoryTag
+            );
+            ff.madvise(pageAddress, newSize, madviseOpts);
         } catch (Throwable e) {
             appendAddress = pageAddress + previousSize;
             close(false);
@@ -284,7 +280,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         size = newSize;
         lim = pageAddress + newSize;
         appendAddress = pageAddress + offset;
-        grownLength = newSize;
     }
 
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size, int memoryTag) {
@@ -311,6 +306,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         try {
             this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
             this.lim = pageAddress + size;
+            ff.madvise(pageAddress, size, madviseOpts);
         } catch (Throwable e) {
             close(false);
             throw e;

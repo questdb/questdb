@@ -27,16 +27,16 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -51,37 +51,18 @@ public class HttpHealthCheckTestBuilder {
     private boolean injectUnhandledError;
 
     public void run(HttpClientCode code) throws Exception {
-        final int workerCount = 1;
-        final int[] workerAffinity = new int[workerCount];
-        Arrays.fill(workerAffinity, -1);
-
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
                     .build();
-            QueryCache.configure(httpConfiguration);
-
             if (metrics == null) {
                 metrics = Metrics.enabled();
             }
 
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return workerAffinity;
-                }
+            QueryCache.configure(httpConfiguration, metrics);
 
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, metrics);
+            WorkerPool workerPool = new TestWorkerPool(1, metrics);
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();
@@ -96,13 +77,13 @@ public class HttpHealthCheckTestBuilder {
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer ignored = HttpServer.createMin(httpConfiguration, workerPool, LOG, engine, null, null, metrics)
+                    HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)
             ) {
                 workerPool.start(LOG);
 
                 if (injectUnhandledError && metrics.isEnabled()) {
                     for (int i = 0; i < 40; i++) {
-                        if (metrics.healthCheck().unhandledErrorsCount() > 0) {
+                        if (metrics.health().unhandledErrorsCount() > 0) {
                             break;
                         }
                         Os.sleep(50);

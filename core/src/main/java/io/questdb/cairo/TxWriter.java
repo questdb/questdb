@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
@@ -71,12 +71,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // before out of order partition update happens
             updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
         }
-        recordStructureVersion++;
     }
 
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
-        ++structureVersion;
+        structureVersion++;
         commit(CommitMode.NOSYNC, denseSymbolMapWriters);
     }
 
@@ -130,6 +129,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    @Override
+    public TxWriter ofRO(@Transient LPSZ path, int partitionBy) {
+        throw new IllegalStateException();
+    }
+
     public boolean unsafeLoadAll() {
         super.unsafeLoadAll();
         this.baseVersion = getVersion();
@@ -142,11 +146,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             return true;
         }
         return false;
-    }
-
-    @Override
-    public TxWriter ofRO(@Transient Path path, int partitionBy) {
-        throw new IllegalStateException();
     }
 
     protected long unsafeGetRawMemorySize() {
@@ -179,6 +178,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             this.readBaseOffset = writeBaseOffset;
 
             prevTransientRowCount = transientRowCount;
+            prevMinTimestamp = minTimestamp;
+            prevMaxTimestamp = maxTimestamp;
+
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
         } else {
@@ -188,7 +190,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
-        recordStructureVersion++;
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
         finishPartitionSizeUpdate();
@@ -221,7 +222,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
     }
 
-    public TxWriter ofRW(@Transient Path path, int partitionBy) {
+    public TxWriter ofRW(@Transient LPSZ path, int partitionBy) {
         clear();
         openTxnFile(ff, path);
         try {
@@ -241,7 +242,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void openFirstPartition(long timestamp) {
         txPartitionCount = 1;
-        updateAttachedPartitionSizeByTimestamp(timestamp, 0);
+        updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }
 
     public void removeAttachedPartitions(long timestamp) {
@@ -308,7 +309,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
         long newTimestampLo = getPartitionTimestampLo(timestamp);
-        initPartitionAt(index, newTimestampLo, 0);
+        initPartitionAt(index, newTimestampLo, 0, txn - 1, -1);
         transientRowCount = 0;
         txPartitionCount++;
         if (extensionListener != null) {
@@ -325,6 +326,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         fixedRowCount = 0;
         txPartitionCount = 1;
         attachedPartitions.clear();
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0, -1L, columnVersion);
+        }
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset();
@@ -339,13 +344,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void updatePartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
-        recordStructureVersion++;
-        updateAttachedPartitionSizeByIndex(partitionIndex, partitionTimestampLo, rowCount);
+        updateAttachedPartitionSizeByIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
     }
 
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
         recordStructureVersion++;
-        updateAttachedPartitionSizeByTimestamp(timestamp, rowCount);
+        updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, txn - 1);
+    }
+
+    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount, long partitionNameTxn) {
+        recordStructureVersion++;
+        updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, partitionNameTxn);
     }
 
     void bumpPartitionTableVersion() {
@@ -367,8 +376,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private int calculateWriteSize() {
-        // If by any action data is reset, clear attachedPartitions
-        if (maxTimestamp == Long.MIN_VALUE) {
+        // If by any action data is reset and table is partitioned, clear attachedPartitions
+        if (maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.clear();
         }
         return calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
@@ -400,6 +409,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         finishABHeader(writeBaseOffset, symbolColumnCount * 8, attachedPartitions.size() * 8, commitMode);
 
         prevTransientRowCount = transientRowCount;
+        prevMinTimestamp = minTimestamp;
+        prevMaxTimestamp = maxTimestamp;
+
         prevRecordStructureVersion = lastRecordStructureVersion;
         lastRecordStructureVersion = recordStructureVersion;
         prevRecordBaseOffset = lastRecordBaseOffset;
@@ -435,7 +447,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txMemBase.getLong(readBaseOffset + offset);
     }
 
-    private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
+    private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize, long partitionNameTxn) {
         int size = attachedPartitions.size();
         attachedPartitions.setPos(size + LONGS_PER_TX_ATTACHED_PARTITION);
         if (index < size) {
@@ -445,24 +457,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         } else if (extensionListener != null) {
             extensionListener.onTableExtended(partitionTimestamp);
         }
-        initPartitionAt(index, partitionTimestamp, partitionSize);
+        recordStructureVersion++;
+        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1);
     }
 
-    private void openTxnFile(FilesFacade ff, Path path) {
-        int pathLen = path.length();
-        try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                if (txMemBase == null) {
-                    txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-                } else {
-                    txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-                }
-                return;
+    private void openTxnFile(FilesFacade ff, LPSZ path) {
+        if (ff.exists(path)) {
+            if (txMemBase == null) {
+                txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            } else {
+                txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
             }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
-        } finally {
-            path.trimTo(pathLen);
+            return;
         }
+        throw CairoException.critical(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     private void putInt(long offset, int value) {
@@ -487,8 +495,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
-        // change partition count only when we have something to save to the
-        // partition table
+        // change partition count only when we have something to save to the partition table
         if (maxTimestamp != Long.MIN_VALUE) {
             final int size = attachedPartitions.size();
             final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
@@ -517,31 +524,35 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
     }
 
-    private void updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize) {
+    private void updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
         if (partitionIndex > -1) {
             updatePartitionSizeByIndex(partitionIndex, partitionSize);
         } else {
-            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize);
+            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
         }
     }
 
-    private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize) {
+    private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
         final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize);
+        updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
+    }
+
+    void updatePartitionColumnVersion(long partitionTimestamp) {
+        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
+    }
+
+    void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
+        recordStructureVersion++;
+        attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+        attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {
         if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
             recordStructureVersion++;
             attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-            attachedPartitions.set(index + PARTITION_DATA_TX_OFFSET, txn);
         }
-    }
-
-    void updatePartitionSizeByIndexAndTxn(int index, long partitionSize) {
-        recordStructureVersion++;
-        attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-        attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 
     private void writeTransientSymbolCount(int symbolIndex, int symCount) {

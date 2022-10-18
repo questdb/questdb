@@ -69,4 +69,15 @@ public class Long256Column extends Long256Function implements ScalarFunction {
             COLUMNS.setQuick(i, new Long256Column(i));
         }
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("Long256Column(").put(columnIndex).put(')');
+    }
+
 }

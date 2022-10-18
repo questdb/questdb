@@ -32,7 +32,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
@@ -43,7 +43,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
-    protected MicrosecondClock clock;
+    protected MillisecondClock clock;
     protected int keyCount;
     protected long unIndexedNullCount;
     private int keyCountIncludingNulls;
@@ -94,23 +94,23 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         this.unIndexedNullCount = unIndexedNullCount;
         TableUtils.txnPartitionConditionally(path, partitionTxn);
         final int plen = path.length();
-        this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
+        this.spinLockTimeoutUs = configuration.getSpinLockTimeout();
 
         try {
             this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
-            this.clock = configuration.getMicrosecondClock();
+            this.clock = configuration.getMillisecondClock();
 
             // key file should already be created at least with header
             long keyMemSize = this.keyMem.size();
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Index file too short: ").put(path);
+                throw CairoException.critical(0).put("Index file too short: ").put(path);
             }
 
             // verify header signature
             if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Unknown format: ").put(path);
+                throw CairoException.critical(0).put("Unknown format: ").put(path);
             }
 
             // Triple check atomic read. We read first and last sequences. If they match - there is a chance at stable
@@ -136,19 +136,20 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 }
 
                 if (clock.getTicks() > deadline) {
-                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
-                    throw CairoException.instance(0).put(INDEX_CORRUPT);
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
+                    throw CairoException.critical(0).put(INDEX_CORRUPT);
                 }
 
                 Os.pause();
             }
 
+            // Resize key memory eagerly to avoid doing that when searching keys.
+            keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));
+
             this.blockValueCountMod = blockValueCountMod;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-            this.keyCount = this.keyCountIncludingNulls = keyCount;
-            if (unIndexedNullCount > 0) {
-                this.keyCountIncludingNulls++;
-            }
+            this.keyCount = keyCount;
+            this.keyCountIncludingNulls = unIndexedNullCount > 0 ? keyCount + 1 : keyCount;
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn), valueMemSize, valueMemSize, MemoryTag.MMAP_INDEX_READER);
         } catch (Throwable e) {
             close();
@@ -166,7 +167,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             Unsafe.getUnsafe().loadFence();
             if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-
                 keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
@@ -177,17 +177,15 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
-                throw CairoException.instance(0).put(INDEX_CORRUPT);
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
+                throw CairoException.critical(0).put(INDEX_CORRUPT);
             }
             Os.pause();
         }
 
         if (keyCount > this.keyCount) {
-            this.keyCount = this.keyCountIncludingNulls = keyCount;
-            if (unIndexedNullCount > 0) {
-                this.keyCountIncludingNulls++;
-            }
+            this.keyCount = keyCount;
+            this.keyCountIncludingNulls = unIndexedNullCount > 0 ? keyCount + 1 : keyCount;
         }
     }
 }

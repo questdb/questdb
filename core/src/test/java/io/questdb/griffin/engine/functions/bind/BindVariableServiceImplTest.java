@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Long256Impl;
@@ -108,8 +109,8 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setChar(2, 'o');
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 2 is defined as INT and cannot accept CHAR");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }
 
@@ -119,8 +120,8 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setChar("a", 'k');
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable 'a' is defined as LONG and cannot accept CHAR");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
         }
     }
 
@@ -510,8 +511,8 @@ public class BindVariableServiceImplTest {
     @Test
     public void testSetCharToStr() throws SqlException {
         bindVariableService.define(0, ColumnType.CHAR, 0);
-        bindVariableService.setStr(0, "65");
-        Assert.assertEquals('A', bindVariableService.getFunction(0).getChar(null));
+        bindVariableService.setStr(0, "6");
+        Assert.assertEquals('6', bindVariableService.getFunction(0).getChar(null));
         bindVariableService.setStr(0, "");
         Assert.assertEquals(0, bindVariableService.getFunction(0).getChar(null));
         bindVariableService.setStr(0, null);
@@ -592,8 +593,8 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setStr(0, "xyz");
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "could not parse [value='xyz', as=FLOAT, index=0]");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `xyz` [STRING -> FLOAT]");
         }
     }
 
@@ -736,16 +737,16 @@ public class BindVariableServiceImplTest {
     public void testSetTimestampToStr() throws SqlException {
         bindVariableService.define(0, ColumnType.TIMESTAMP, 0);
         try {
-            bindVariableService.setStr(0, "21");
+            bindVariableService.setStr(0, "hello");
             Assert.fail();
-        } catch (SqlException e) {
-            // Number string is not allowed to be set as timestamp
-            // ISO formatted timestamp string is OK, but not number
+        } catch (ImplicitCastException ignored) {
         }
+        bindVariableService.setStr(0, "21");
+        Assert.assertEquals(21, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, null);
         Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, "2019-10-31 15:05:22+08:00");
-        Assert.assertEquals(1572505522000L, bindVariableService.getFunction(0).getTimestamp(null));
+        Assert.assertEquals(1572505522000000L, bindVariableService.getFunction(0).getTimestamp(null));
     }
 
     @Test
@@ -762,8 +763,8 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setStr(0, "ok");
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "could not parse [value='ok', as=LONG, index=0]");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `ok` [STRING -> LONG]");
         }
     }
 
@@ -773,8 +774,8 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setStr("a", "ok");
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "could not parse [value='ok', as=LONG, index=-1]");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `ok` [STRING -> LONG]");
         }
     }
 

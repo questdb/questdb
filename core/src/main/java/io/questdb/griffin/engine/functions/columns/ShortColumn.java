@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -49,6 +50,16 @@ public class ShortColumn extends ShortFunction implements ScalarFunction {
     @Override
     public short getShort(Record rec) {
         return rec.getShort(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("ShortColumn(").put(columnIndex).put(')');
     }
 
     static {

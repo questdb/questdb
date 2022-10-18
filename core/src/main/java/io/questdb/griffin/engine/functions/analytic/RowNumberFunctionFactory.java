@@ -24,17 +24,15 @@
 
 package io.questdb.griffin.engine.functions.analytic;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
@@ -43,8 +41,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-
-import java.io.Closeable;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
@@ -71,10 +67,29 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     analyticContext.getPartitionBySink()
             );
         }
-        return null;
+        return new SequenceRowNumberFunction();
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Closeable {
+    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction {
+        private long next = 1;
+
+        @Override
+        public long getLong(Record rec) {
+            return next++;
+        }
+
+        @Override
+        public void toTop() {
+            next = 1;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            toTop();
+        }
+    }
+
+    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -89,13 +104,18 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             Misc.free(map);
-            Misc.free(partitionByRecord.getFunctions());
+            Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
         @Override
         public long getLong(Record rec) {
             // not called
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -111,7 +131,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                 x = value.getLong(0);
             }
             value.putLong(0, x + 1);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), x);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), x + 1);
         }
 
         @Override
@@ -123,8 +143,13 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void reopen() {
+            map.reopen();
+        }
+
+        @Override
         public void reset() {
-            map.clear();
+            map.close();
         }
 
         @Override

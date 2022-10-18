@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastCharToLongFunctionFactory implements FunctionFactory {
@@ -57,7 +58,8 @@ public class CastCharToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return arg.getChar(rec);
+            final byte v = (byte) (arg.getChar(rec) - '0');
+            return v > -1 && v < 10 ? v : Numbers.LONG_NaN;
         }
     }
 }

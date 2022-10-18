@@ -162,6 +162,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
     }
 
+    public static boolean isOpenColumnModeForAppend(int openColumnMode) {
+        switch (openColumnMode) {
+            case OPEN_MID_PARTITION_FOR_APPEND:
+            case OPEN_LAST_PARTITION_FOR_APPEND:
+            case OPEN_NEW_PARTITION_FOR_APPEND:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public static void openColumn(O3OpenColumnTask task, long cursor, Sequence subSeq) {
         final int openColumnMode = task.getOpenColumnMode();
         final Path pathToTable = task.getPathToTable();
@@ -685,20 +696,21 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         try {
             dstFixSize = dstLen << shl;
+            dstFixOffset = (srcDataMax - srcDataTop) << shl;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
-                dstFixOffset = (srcDataMax - srcDataTop) << shl;
+                // Area we want to write is not mapped
                 dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
-                dstIndexOffset = dstFixOffset;
-                dstIndexAdjust = 0;
-                dstFixFileOffset = dstFixOffset;
             } else {
-                dstFixAddr = dstFixMem.getAppendAddress();
-                dstFixOffset = 0;
+                // Area we want to write is mapped.
+                // Set dstFixAddr to Append Address with adjustment that dstFixOffset offset points to offset 0.
+                dstFixAddr = dstFixMem.getAppendAddress() - dstFixOffset;
+                // Set size negative meaning it will not be freed
                 dstFixSize = -dstFixSize;
-                dstIndexOffset = 0;
-                dstIndexAdjust = srcDataMax - srcDataTop;
-                dstFixFileOffset = dstFixMem.getAppendOffset();
             }
+            dstIndexOffset = dstFixOffset;
+            dstIndexAdjust = srcDataTop;
+            dstFixFileOffset = dstFixOffset;
+
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                 BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName, columnNameTxn);
                 dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
@@ -742,7 +754,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 srcOooLo,
                 srcOooHi,
-                srcDataTop,
+                srcDataTop << shl,
                 srcDataMax,
                 srcOooFixAddr,
                 srcOooVarAddr,
@@ -1894,6 +1906,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcFixFd = Math.abs(srcDataFixFd);
         final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
         final FilesFacade ff = tableWriter.getFilesFacade();
+        final boolean directIoFlag = tableWriter.preferDirectIO();
 
         try {
             txnPartition(pathToPartition.trimTo(pplen), txn);
@@ -1906,7 +1919,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                    setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                    TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
                     Vect.memcpy(srcDataFixAddr + srcDataMaxBytes, srcDataFixAddr, srcDataActualBytes);
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
@@ -1916,11 +1930,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
                     srcDataFixSize = srcDataActualBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataFixOffset = 0;
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
                 srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
             }
 
@@ -1930,6 +1946,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+            if (directIoFlag) {
+                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
+            } else {
+                ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
+            }
 
             // when prefix is "data" we need to reduce it by "srcDataTop"
             if (prefixType == O3_BLOCK_DATA) {
@@ -2108,6 +2129,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcFixFd = Math.abs(srcDataFixFd);
         final long srcVarFd = Math.abs(srcDataVarFd);
         final FilesFacade ff = tableWriter.getFilesFacade();
+        final boolean directIoFlag = tableWriter.preferDirectIO();
 
         try {
             txnPartition(pathToPartition.trimTo(pplen), txn);
@@ -2120,6 +2142,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
 
                     if (srcDataActualBytes > 0) {
                         srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataActualBytes);
@@ -2135,6 +2158,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         reservedBytesForColTopNulls = srcDataTop * Integer.BYTES;
                         srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
                         srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
 
                         // Set var column values to null first srcDataTop times
                         // Next line should be:
@@ -2170,6 +2194,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         reservedBytesForColTopNulls = srcDataTop * Long.BYTES;
                         srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
                         srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
 
                         // Set var column values to null first srcDataTop times
                         // Next line should be:
@@ -2206,19 +2231,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
                     srcDataFixSize = srcDataActualBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataFixOffset = 0;
 
                     srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
                     srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
             } else {
                 // var index column is n+1
                 srcDataFixSize = (srcDataMax + 1) * Long.BYTES;
                 srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
 
                 srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
                 srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
             // upgrade srcDataTop to offset
@@ -2228,12 +2257,22 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
+            if (directIoFlag) {
+                ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
+            } else {
+                ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
+            }
 
             dFile(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
             dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstVarSize = srcDataVarSize - srcDataVarOffset
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
+            if (directIoFlag) {
+                ff.fadvise(dstVarFd, 0, dstVarSize, Files.POSIX_FADV_RANDOM);
+            } else {
+                ff.madvise(dstVarAddr, dstVarSize, Files.POSIX_MADV_RANDOM);
+            }
 
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) * Long.BYTES;
@@ -2373,46 +2412,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter,
                 null
         );
-    }
-
-    private static void setNull(int columnType, long addr, long count) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                Vect.memset(addr, count, 0);
-                break;
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-                Vect.setMemoryShort(addr, (short) 0, count);
-                break;
-            case ColumnType.INT:
-            case ColumnType.GEOINT:
-                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
-                break;
-            case ColumnType.FLOAT:
-                Vect.setMemoryFloat(addr, Float.NaN, count);
-                break;
-            case ColumnType.SYMBOL:
-                Vect.setMemoryInt(addr, -1, count);
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.GEOLONG:
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
-                break;
-            case ColumnType.DOUBLE:
-                Vect.setMemoryDouble(addr, Double.NaN, count);
-                break;
-            case ColumnType.LONG256:
-                // Long256 is null when all 4 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
-                break;
-            default:
-                break;
-        }
     }
 
     private static void appendNewPartition(
@@ -2642,7 +2641,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2696,7 +2695,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2753,7 +2752,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2807,7 +2806,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2861,7 +2860,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2920,7 +2919,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2974,7 +2973,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,

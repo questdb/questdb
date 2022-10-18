@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
@@ -39,6 +40,9 @@ import java.util.Arrays;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+    private static final int SUM_PADDING = Misc.CACHE_LINE_SIZE / Double.BYTES;
+    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
+
     private final int columnIndex;
     private final double[] sum;
     private final long[] count;
@@ -49,8 +53,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     public SumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
-        this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
-        this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
+        this.sum = new double[workerCount * SUM_PADDING];
+        this.count = new long[workerCount * COUNT_PADDING];
         this.workerCount = workerCount;
 
         if (keyKind == GKK_HOUR_INT) {
@@ -67,21 +71,20 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         if (address != 0) {
             final double value = Vect.sumDouble(address, addressSize / Double.BYTES);
             if (value == value) {
-                final int offset = workerId * Misc.CACHE_LINE_SIZE;
-                this.sum[offset] += value;
-                this.count[offset]++;
+                this.sum[workerId * SUM_PADDING] += value;
+                this.count[workerId * COUNT_PADDING]++;
             }
         }
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
             // no values? no problem :)
             // create list of distinct key values so that we can show NULL against them
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
         }
     }
 
@@ -102,8 +105,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -114,15 +117,14 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void wrapUp(long pRosti) {
+    public boolean wrapUp(long pRosti) {
         double sum = 0;
         long count = 0;
         for (int i = 0; i < workerCount; i++) {
-            final int offset = i * Misc.CACHE_LINE_SIZE;
-            sum += this.sum[offset];
-            count += this.count[offset];
+            sum += this.sum[i * SUM_PADDING];
+            count += this.count[i * COUNT_PADDING];
         }
-        Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
+        return Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
 
     @Override
@@ -136,10 +138,19 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         double sum = 0;
         long count = 0;
         for (int i = 0; i < workerCount; i++) {
-            final int offset = i * Misc.CACHE_LINE_SIZE;
-            sum += this.sum[offset];
-            count += this.count[offset];
+            sum += this.sum[i * SUM_PADDING];
+            count += this.count[i * COUNT_PADDING];
         }
         return count > 0 ? sum : Double.NaN;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("SumDoubleVector(").put(columnIndex).put(')');
     }
 }

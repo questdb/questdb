@@ -31,8 +31,9 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-public class FastMap implements Map {
+public class FastMap implements Map, Reopenable {
 
     private static final HashFunction DEFAULT_HASH = Hash::hashMem;
     private static final int MIN_INITIAL_CAPACITY = 128;
@@ -51,6 +52,8 @@ public class FastMap implements Map {
     private final int initialKeyCapacity;
     private final int initialPageSize;
     private long capacity;
+    // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory
+    // with 0 instead of -1 when clearing/rehashing.
     private DirectLongList offsets;
     private long kStart;
     private long kLimit;
@@ -82,6 +85,18 @@ public class FastMap implements Map {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            int memoryTag
+    ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, memoryTag, memoryTag);
+    }
+
     FastMap(
             int pageSize,
             @Transient ColumnTypes keyTypes,
@@ -91,20 +106,35 @@ public class FastMap implements Map {
             HashFunction hashFunction,
             int maxResizes
     ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, hashFunction, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+    }
+
+    @TestOnly
+    FastMap(
+            int pageSize,
+            @Transient ColumnTypes keyTypes,
+            @Transient ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            HashFunction hashFunction,
+            int maxResizes,
+            int mapMemoryTag,
+            int listMemoryTag
+    ) {
         assert pageSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
         this.initialKeyCapacity = keyCapacity;
         this.initialPageSize = pageSize;
         this.loadFactor = loadFactor;
-        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, MemoryTag.NATIVE_FAST_MAP);
+        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, mapMemoryTag);
         this.kLimit = kStart + pageSize;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = this.keyCapacity - 1;
         this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets = new DirectLongList(this.keyCapacity, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+        this.offsets = new DirectLongList(this.keyCapacity, listMemoryTag);
         this.offsets.setPos(this.keyCapacity);
-        this.offsets.zero(-1);
+        this.offsets.zero(0);
         this.hashFunction = hashFunction;
         this.nResizes = 0;
         this.maxResizes = maxResizes;
@@ -146,9 +176,12 @@ public class FastMap implements Map {
                     case ColumnType.LONG256:
                         offset += Long256.BYTES;
                         break;
+                    case ColumnType.LONG128:
+                        offset += 16;
+                        break;
                     default:
                         close();
-                        throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                        throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
                 }
             }
             this.value = new FastMapValue(valueOffsets);
@@ -170,20 +203,30 @@ public class FastMap implements Map {
         this.cursor = new FastMapCursor(record, this);
     }
 
+    public void reopen() {
+        if (kStart == 0) {
+            //handles both mem and offsets
+            restoreInitialCapacity();
+        }
+    }
+
     @Override
     public void clear() {
         kPos = kStart;
         free = (int) (keyCapacity * loadFactor);
         size = 0;
-        offsets.zero(-1);
+        offsets.zero(0);
     }
 
     @Override
     public final void close() {
-        offsets = Misc.free(offsets);
+        Misc.free(offsets);
         if (kStart != 0) {
             Unsafe.free(kStart, capacity, MemoryTag.NATIVE_FAST_MAP);
-            kStart = 0;
+            kLimit = kStart = kPos = 0;
+            free = 0;
+            size = 0;
+            capacity = 0;
         }
     }
 
@@ -212,6 +255,7 @@ public class FastMap implements Map {
         return key.init();
     }
 
+    @Override
     public void restoreInitialCapacity() {
         this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
         this.kLimit = kStart + this.initialPageSize;
@@ -219,9 +263,10 @@ public class FastMap implements Map {
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = this.keyCapacity - 1;
         this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets.extend(this.keyCapacity);
+        this.offsets.resetCapacity();
+        this.offsets.setCapacity(this.keyCapacity);
         this.offsets.setPos(this.keyCapacity);
-        this.offsets.zero(-1);
+        this.offsets.zero(0);
         this.nResizes = 0;
     }
 
@@ -231,6 +276,22 @@ public class FastMap implements Map {
 
     public int getKeyCapacity() {
         return keyCapacity;
+    }
+
+    private long getOffset(long index) {
+        return getOffset(offsets, index);
+    }
+
+    private static long getOffset(DirectLongList offsets, long index) {
+        return offsets.get(index) - 1;
+    }
+
+    private void setOffset(long index, long value) {
+        setOffset(offsets, index, value);
+    }
+
+    private static void setOffset(DirectLongList offsets, long index, long value) {
+        offsets.set(index, value + 1);
     }
 
     private static boolean eqMixed(long a, long b, long lim) {
@@ -272,9 +333,9 @@ public class FastMap implements Map {
         return true;
     }
 
-    private FastMapValue asNew(Key keyWriter, int index, FastMapValue value) {
+    private FastMapValue asNew(Key keyWriter, long index, FastMapValue value) {
         kPos = keyWriter.appendAddress;
-        offsets.set(index, keyWriter.startAddress - kStart);
+        setOffset(index, keyWriter.startAddress - kStart);
         if (--free == 0) {
             rehash();
         }
@@ -317,13 +378,13 @@ public class FastMap implements Map {
         return valueColumnCount;
     }
 
-    private int keyIndex() {
+    private long keyIndex() {
         return hashFunction.hash(key.startAddress + keyDataOffset, key.len - keyDataOffset) & mask;
     }
 
-    private FastMapValue probe0(Key keyWriter, int index, FastMapValue value) {
+    private FastMapValue probe0(Key keyWriter, long index, FastMapValue value) {
         long offset;
-        while ((offset = offsets.get(index = (++index & mask))) != -1) {
+        while ((offset = getOffset(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
                 return valueOf(kStart + offset, false, value);
             }
@@ -331,9 +392,9 @@ public class FastMap implements Map {
         return asNew(keyWriter, index, value);
     }
 
-    private FastMapValue probeReadOnly(Key keyWriter, int index, FastMapValue value) {
+    private FastMapValue probeReadOnly(Key keyWriter, long index, FastMapValue value) {
         long offset;
-        while ((offset = offsets.get(index = (++index & mask))) != -1) {
+        while ((offset = getOffset(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
                 return valueOf(kStart + offset, false, value);
             }
@@ -344,23 +405,23 @@ public class FastMap implements Map {
     private void rehash() {
         int capacity = keyCapacity << 1;
         mask = capacity - 1;
-        DirectLongList pointers = new DirectLongList(capacity, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
-        pointers.setPos(capacity);
-        pointers.zero(-1);
+        DirectLongList newOffsets = new DirectLongList(capacity, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+        newOffsets.setPos(capacity);
+        newOffsets.zero(0);
 
         for (long i = 0, k = this.offsets.size(); i < k; i++) {
-            long offset = this.offsets.get(i);
+            long offset = getOffset(i);
             if (offset == -1) {
                 continue;
             }
-            int index = hashFunction.hash(kStart + offset + keyDataOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyDataOffset) & mask;
-            while (pointers.get(index) != -1) {
+            long index = hashFunction.hash(kStart + offset + keyDataOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyDataOffset) & mask;
+            while (getOffset(newOffsets, index) != -1) {
                 index = (index + 1) & mask;
             }
-            pointers.set(index, offset);
+            setOffset(newOffsets, index, offset);
         }
         this.offsets.close();
-        this.offsets = pointers;
+        this.offsets = newOffsets;
         this.free += (capacity - keyCapacity) * loadFactor;
         this.keyCapacity = capacity;
     }
@@ -401,7 +462,7 @@ public class FastMap implements Map {
 
     @FunctionalInterface
     public interface HashFunction {
-        int hash(long address, int len);
+        long hash(long address, long len);
     }
 
     public class Key implements MapKey {
@@ -459,7 +520,7 @@ public class FastMap implements Map {
             } else {
                 long len = value.length() + 4;
                 if (len > Integer.MAX_VALUE) {
-                    throw CairoException.instance(0).put("binary column is too large");
+                    throw CairoException.nonCritical().put("binary column is too large");
                 }
 
                 checkSize((int) len);
@@ -532,6 +593,15 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
             appendAddress += Long256.BYTES;
+            writeOffset();
+        }
+
+        @Override
+        public void putLong128LittleEndian(long hi, long lo) {
+            checkSize(16);
+            Unsafe.getUnsafe().putLong(appendAddress, lo);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
+            appendAddress += 16;
             writeOffset();
         }
 
@@ -645,8 +715,8 @@ public class FastMap implements Map {
             commit();
             // calculate hash remembering "key" structure
             // [ len | value block | key offset block | key data block ]
-            int index = keyIndex();
-            long offset = offsets.get(index);
+            long index = keyIndex();
+            long offset = getOffset(index);
 
             if (offset == -1) {
                 return asNew(this, index, value);
@@ -659,8 +729,8 @@ public class FastMap implements Map {
 
         private MapValue findValue(FastMapValue value) {
             commit();
-            int index = keyIndex();
-            long offset = offsets.get(index);
+            long index = keyIndex();
+            long offset = getOffset(index);
 
             if (offset == -1) {
                 return null;
@@ -681,7 +751,7 @@ public class FastMap implements Map {
         private void writeOffset() {
             long len = appendAddress - startAddress;
             if (len > Integer.MAX_VALUE) {
-                throw CairoException.instance(0).put("row data is too large");
+                throw CairoException.critical(0).put("row data is too large");
             }
             Unsafe.getUnsafe().putInt(nextColOffset, (int) len);
             nextColOffset += 4;

@@ -50,7 +50,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
-        path.of(configuration.getSnapshotRoot()).slash();
+        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
         rootLen = path.length();
         testFilesFacade.errorOnSync = false;
     }
@@ -131,19 +131,19 @@ public class SnapshotTest extends AbstractGriffinTest {
                 try (TableReader tableReader = new TableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
 
-                        try (TableReaderMetadata metadata1 = new TableReaderMetadata(ff)) {
+                        try (TableReaderMetadata metadata = new TableReaderMetadata(ff)) {
                             // Assert _meta contents.
                             path.concat(TableUtils.META_FILE_NAME).$();
-                            metadata1.of(path, ColumnType.VERSION);
+                            metadata.deferredInit(path, ColumnType.VERSION);
 
-                            Assert.assertEquals(metadata0.getColumnCount(), metadata1.getColumnCount());
-                            Assert.assertEquals(metadata0.getPartitionBy(), metadata1.getPartitionBy());
-                            Assert.assertEquals(metadata0.getTimestampIndex(), metadata1.getTimestampIndex());
-                            Assert.assertEquals(metadata0.getVersion(), metadata1.getVersion());
-                            Assert.assertEquals(metadata0.getId(), metadata1.getId());
-                            Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata1.getMaxUncommittedRows());
-                            Assert.assertEquals(metadata0.getCommitLag(), metadata1.getCommitLag());
-                            Assert.assertEquals(metadata0.getStructureVersion(), metadata1.getStructureVersion());
+                            Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
+                            Assert.assertEquals(metadata0.getPartitionBy(), metadata.getPartitionBy());
+                            Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
+                            Assert.assertEquals(metadata0.getVersion(), metadata.getVersion());
+                            Assert.assertEquals(metadata0.getId(), metadata.getId());
+                            Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
+                            Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
+                            Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
                                 TableColumnMetadata columnMetadata0 = metadata0.getColumnQuick(i);
@@ -159,8 +159,8 @@ public class SnapshotTest extends AbstractGriffinTest {
                             // Assert _txn contents.
                             path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
                             try (TxReader txReader0 = tableReader.getTxFile()) {
-                                try (TxReader txReader1 = new TxReader(ff).ofRO(path, metadata1.getPartitionBy())) {
-                                    TableUtils.safeReadTxn(txReader1, configuration.getMicrosecondClock(), configuration.getSpinLockTimeoutUs());
+                                try (TxReader txReader1 = new TxReader(ff).ofRO(path, metadata.getPartitionBy())) {
+                                    TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());
                                     Assert.assertEquals(txReader0.getTransientRowCount(), txReader1.getTransientRowCount());
@@ -179,7 +179,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                                         Assert.assertEquals(txReader0.getPartitionNameTxn(i), txReader1.getPartitionNameTxn(i));
                                         Assert.assertEquals(txReader0.getPartitionSize(i), txReader1.getPartitionSize(i));
                                         Assert.assertEquals(txReader0.getPartitionTimestamp(i), txReader1.getPartitionTimestamp(i));
-                                        Assert.assertEquals(txReader0.getPartitionDataTxn(i), txReader1.getPartitionDataTxn(i));
+                                        Assert.assertEquals(txReader0.getPartitionColumnVersion(i), txReader1.getPartitionColumnVersion(i));
                                     }
                                 }
                             }
@@ -188,7 +188,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
                             try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
                                 try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path)) {
-                                    cvReader1.readSafe(configuration.getMicrosecondClock(), configuration.getSpinLockTimeoutUs());
+                                    cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());
                                     TestUtils.assertEquals(cvReader0.getCachedList(), cvReader1.getCachedList());
@@ -220,6 +220,28 @@ public class SnapshotTest extends AbstractGriffinTest {
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 null,
                 tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareEmptyFolder() throws Exception {
+        final String tableName = "test";
+        path.of(configuration.getRoot()).concat("empty_folder").slash$();
+        FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null,
+                tableName
+        );
+
+        // Assert snapshot folder exists
+        Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).slash$())
+        );
+        // But snapshot/db folder does not
+        Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
         );
     }
 
@@ -309,7 +331,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compile("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                path.of(configuration.getSnapshotRoot());
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                 FilesFacade ff = configuration.getFilesFacade();
                 try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                     mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);

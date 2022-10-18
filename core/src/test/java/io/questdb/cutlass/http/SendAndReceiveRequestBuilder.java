@@ -57,7 +57,7 @@ public class SendAndReceiveRequestBuilder {
                     "\r\n";
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
-    private final int maxWaitTimeoutMs = 30000;
+    private final int maxWaitTimeoutMs = 120000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private boolean printOnly;
@@ -66,25 +66,44 @@ public class SendAndReceiveRequestBuilder {
     private int compareLength = -1;
     private boolean expectSendDisconnect;
     private int clientLingerSeconds = -1;
+    private long statementTimeout = -1L;
 
     public long connectAndSendRequest(String request) {
         final long fd = nf.socketTcp(true);
-        long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
         try {
-            TestUtils.assertConnect(fd, sockAddr);
+            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
             if (clientLingerSeconds > -1) {
                 Assert.assertEquals(0, nf.configureLinger(fd, clientLingerSeconds));
             }
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
-                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                nf.configureNonBlocking(fd);
             }
 
             executeWithSocket(request, "", fd);
         } finally {
-            nf.freeSockAddr(sockAddr);
+            nf.freeAddrInfo(sockAddrInfo);
         }
         return fd;
+    }
+
+    public long connectAndSendRequestWithHeaders(String request) {
+        return connectAndSendRequest(request + requestHeaders());
+    }
+
+    public void executeWithStandardHeaders(
+            String request,
+            String response
+    ) throws InterruptedException {
+        execute(request + requestHeaders(), ResponseHeaders + response);
+    }
+
+    public void executeWithStandardRequestHeaders(
+            String request,
+            CharSequence response
+    ) throws InterruptedException {
+        execute(request + requestHeaders(), response);
     }
 
     public void execute(
@@ -93,10 +112,10 @@ public class SendAndReceiveRequestBuilder {
     ) throws InterruptedException {
         final long fd = nf.socketTcp(true);
         try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            long sockAddrInfo = nf.sockaddr("127.0.0.1", 9001);
             try {
                 Assert.assertTrue(fd > -1);
-                TestUtils.assertConnect(nf, fd, sockAddr);
+                TestUtils.assertConnect(nf, fd, sockAddrInfo);
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
                 if (!expectDisconnect) {
                     nf.configureNonBlocking(fd);
@@ -104,7 +123,7 @@ public class SendAndReceiveRequestBuilder {
 
                 executeWithSocket(request, response, fd);
             } finally {
-                nf.freeSockAddr(sockAddr);
+                nf.freeSockAddr(sockAddrInfo);
             }
         } finally {
             nf.close(fd);
@@ -300,11 +319,9 @@ public class SendAndReceiveRequestBuilder {
 
     }
 
-    public void executeWithStandardHeaders(
-            String request,
-            String response
-    ) throws InterruptedException {
-        execute(request + RequestHeaders, ResponseHeaders + response);
+    public SendAndReceiveRequestBuilder withStatementTimeout(long statementTimeout) {
+        this.statementTimeout = statementTimeout;
+        return this;
     }
 
     public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
@@ -347,6 +364,26 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
+    private String requestHeaders() {
+        if (statementTimeout < 0) {
+            return RequestHeaders;
+        } else {
+            return "Host: localhost:9000\r\n" +
+                    "Connection: keep-alive\r\n" +
+                    "Accept: */*\r\n" +
+                    "X-Requested-With: XMLHttpRequest\r\n" +
+                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                    "Sec-Fetch-Site: same-origin\r\n" +
+                    "Sec-Fetch-Mode: cors\r\n" +
+                    "Referer: http://localhost:9000/index.html\r\n" +
+                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                    "Statement-Timeout: " + statementTimeout + "\r\n" +
+                    "\r\n";
+
+        }
+    }
+
     private void executeWithSocket(String request, CharSequence response, long fd) {
         final int len = Math.max(response.length(), request.length()) * 2;
         long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
@@ -374,5 +411,9 @@ public class SendAndReceiveRequestBuilder {
                 String request,
                 String response
         ) throws InterruptedException;
+    }
+
+    public static String responseWithCode(String code) {
+        return ResponseHeaders.replace("200 OK", code);
     }
 }

@@ -32,8 +32,10 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -59,7 +61,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     private static final long NULL_ROWID = -1L;
     private final RecordCursorFactory slaveFactory;
     private final RecordCursorFactory masterFactory;
-    private final Map joinKeyMap;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final SpliceJoinLightRecordCursor cursor;
@@ -78,13 +79,14 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        this.joinKeyMap = MapFactory.createMap(
+        this.masterKeySink = masterSink;
+        this.slaveKeySink = slaveSink;
+
+        Map joinKeyMap = MapFactory.createMap(
                 cairoConfiguration,
                 joinColumnTypes,
                 valueTypes
         );
-        this.masterKeySink = masterSink;
-        this.slaveKeySink = slaveSink;
         this.cursor = new SpliceJoinLightRecordCursor(
                 joinKeyMap,
                 columnSplit,
@@ -96,11 +98,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
-    public void close() {
-        joinKeyMap.close();
+    protected void _close() {
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();
         slaveFactory.close();
+        cursor.close();
     }
 
     @Override
@@ -123,18 +125,20 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         return false;
     }
 
-    private class SpliceJoinLightRecordCursor implements NoRandomAccessRecordCursor {
+    @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
+    private class SpliceJoinLightRecordCursor extends AbstractJoinCursor {
         private final JoinRecord record;
         private final Map joinKeyMap;
-        private final int columnSplit;
         private final int masterTimestampIndex;
         private final int slaveTimestampIndex;
         private final Record nullMasterRecord;
         private final Record nullSlaveRecord;
         private Record masterRecord2;
         private Record slaveRecord2;
-        private RecordCursor masterCursor;
-        private RecordCursor slaveCursor;
         private Record masterRecord;
         private Record slaveRecord;
         private long masterKeyAddress = -1L;
@@ -146,6 +150,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         private boolean hasMaster = true;
         private boolean hasSlave = true;
         private boolean dualRecord = false;
+        private boolean isOpen;
 
         public SpliceJoinLightRecordCursor(
                 Map joinKeyMap,
@@ -155,32 +160,19 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 Record nullMasterRecord,
                 Record nullSlaveRecord
         ) {
+            super(columnSplit);
             this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
-            this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
-        }
-
-        @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
+            this.isOpen = true;
         }
 
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override
@@ -280,6 +272,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+            if (!this.isOpen) {
+                this.isOpen = true;
+                this.joinKeyMap.reopen();
+            }
             // avoid resetting these
             if (this.masterCursor == null) {
                 this.masterCursor = masterCursor;
@@ -314,6 +310,15 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             } else {
                 masterCursor.recordAt(masterRecord2, rowid);
                 record.of(masterRecord2, slaveRecord);
+            }
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                super.close();
             }
         }
     }

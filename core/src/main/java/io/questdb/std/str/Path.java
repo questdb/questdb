@@ -42,7 +42,7 @@ import java.io.Closeable;
 public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
-    public static final Closeable CLEANER = Path::clearThreadLocals;
+    public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
     private long ptr;
     private long wptr;
@@ -55,15 +55,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path(int capacity) {
         this.capacity = capacity;
-        this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
+        this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
     }
 
     public static void clearThreadLocals() {
-        Misc.free(PATH.get());
-        PATH.remove();
-
-        Misc.free(PATH2.get());
-        PATH2.remove();
+        Misc.free(PATH);
+        Misc.free(PATH2);
     }
 
     public static Path getThreadLocal(CharSequence root) {
@@ -93,6 +90,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    public void $at(int index) {
+        Unsafe.getUnsafe().putByte(ptr + index, (byte) 0);
+    }
+
+    public void put(int index, char c) {
+        Unsafe.getUnsafe().putByte(ptr + index, (byte) c);
+    }
+
     @Override
     public long address() {
         return ptr;
@@ -116,7 +121,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public void close() {
         if (ptr != 0) {
-            Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_PATH);
             ptr = 0;
         }
     }
@@ -146,19 +151,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
             len++;
         }
 
-        return this;
-    }
-
-    public Path seekZ() {
-        int count = 0;
-        while (count < capacity+1) {
-            if (Unsafe.getUnsafe().getByte(ptr + count) == 0) {
-                len = count;
-                wptr = ptr + len;
-                break;
-            }
-            count++;
-        }
         return this;
     }
 
@@ -276,7 +268,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         // Copy binary array representation instead of trying to UTF8 encode it
         int len = other.length();
         if (this.ptr == 0) {
-            this.ptr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_DEFAULT);
+            this.ptr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);
             this.capacity = len;
         } else if (this.capacity < len) {
             extend(len);
@@ -295,6 +287,19 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         this.wptr = ptr;
         this.len = 0;
         return concat(str, from, to);
+    }
+
+    public Path seekZ() {
+        int count = 0;
+        while (count < capacity + 1) {
+            if (Unsafe.getUnsafe().getByte(ptr + count) == 0) {
+                len = count;
+                wptr = ptr + len;
+                break;
+            }
+            count++;
+        }
+        return this;
     }
 
     public Path slash() {
@@ -328,9 +333,28 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    public Path parent() {
+        if (len > 0) {
+            int idx = len - 1;
+            char last = (char) Unsafe.getUnsafe().getByte(ptr + idx);
+            if (last == Files.SEPARATOR || last == '\0') {
+                if (idx < 2) {
+                    return this;
+                }
+                idx--;
+            }
+            while (idx > 0 && (char) Unsafe.getUnsafe().getByte(ptr + idx) != Files.SEPARATOR) {
+                idx--;
+            }
+            len = idx;
+            wptr = ptr + len;
+        }
+        return this;
+    }
+
     private void checkClosed() {
         if (ptr == 0) {
-            this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
+            this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
         }
     }
 
@@ -347,7 +371,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     private void extend(int len) {
-        long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1, MemoryTag.NATIVE_DEFAULT);
+        long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1, MemoryTag.NATIVE_PATH);
         long d = wptr - ptr;
         this.ptr = p;
         this.wptr = p + d;

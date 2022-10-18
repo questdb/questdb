@@ -35,6 +35,11 @@ public class DoubleFunctionTest {
         public double getDouble(Record rec) {
             return 0;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

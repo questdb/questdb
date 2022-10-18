@@ -36,8 +36,8 @@ endif
 get_cbinaries: az_login az_trigger_pipeline
 
 README:
-	@ echo "1. make sure you have installed all the dependecies listed in https://questdb.slab.com/posts/development-station-configuration-zw6gdow8"
-	@ echo "2. You need az-cli, aws cli, jq and azure devops token set env varible"
+	@ echo "1. make sure you have installed all the dependencies listed in https://questdb.slab.com/posts/development-station-configuration-zw6gdow8"
+	@ echo "2. You need az-cli, aws cli, jq and azure devops token set env variable"
 	@ echo "3. to start build run 'make get_cbinaries'"
 
 az_login:

@@ -26,6 +26,7 @@ package io.questdb.network;
 
 import io.questdb.log.Log;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 
 public class NetworkFacadeImpl implements NetworkFacade {
     public static final NetworkFacade INSTANCE = new NetworkFacadeImpl();
@@ -33,18 +34,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public void abortAccept(long fd) {
         Net.abortAccept(fd);
-    }
-
-    @Override
-    public void close(long fd, Log logger) {
-        if (close(fd) != 0) {
-            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
-        }
-    }
-
-    @Override
-    public int shutdown(long fd, int how) {
-        return Net.shutdown(fd, how);
     }
 
     @Override
@@ -68,6 +57,13 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public void close(long fd, Log logger) {
+        if (close(fd) != 0) {
+            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
+        }
+    }
+
+    @Override
     public void configureNoLinger(long fd) {
         Net.configureNoLinger(fd);
     }
@@ -83,13 +79,23 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public long connect(long fd, long sockaddr) {
-        return Net.connect(fd, sockaddr);
+    public int connect(long fd, long pSockaddr) {
+        return Net.connect(fd, pSockaddr);
     }
 
     @Override
-    public void freeSockAddr(long socketAddress) {
-        Net.freeSockAddr(socketAddress);
+    public int connectAddrInfo(long fd, long pAddrInfo) {
+        return Net.connectAddrInfo(fd, pAddrInfo);
+    }
+
+    @Override
+    public void freeSockAddr(long pSockaddr) {
+        Net.freeSockAddr(pSockaddr);
+    }
+
+    @Override
+    public void freeAddrInfo(long pAddrInfo) {
+        Net.freeAddrInfo(pAddrInfo);
     }
 
     @Override
@@ -163,6 +169,16 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public long getAddrInfo(LPSZ host, int port) {
+        return Net.getAddrInfo(host, port);
+    }
+
+    @Override
+    public long getAddrInfo(CharSequence host, int port) {
+        return Net.getAddrInfo(host, port);
+    }
+
+    @Override
     public int setMulticastInterface(long fd, CharSequence address) {
         return Net.setMulticastInterface(fd, Net.parseIPv4(address));
     }
@@ -175,6 +191,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public int setMulticastLoop(long fd, boolean loop) {
         return Net.setMulticastLoop(fd, loop);
+    }
+
+    @Override
+    public int shutdown(long fd, int how) {
+        return Net.shutdown(fd, how);
     }
 
     @Override
@@ -220,6 +241,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public int recvmmsg(long fd, long msgVec, int msgCount) {
         return Net.recvmmsg(fd, msgVec, msgCount);
+    }
+
+    @Override
+    public int resolvePort(long fd) {
+        return Net.resolvePort(fd);
     }
 
     @Override

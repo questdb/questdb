@@ -50,7 +50,27 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
          jlong address,
          jlong len,
          jlong offset) {
-    return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
+
+    off_t writeOffset = offset;
+    ssize_t written;
+
+    do {
+        size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
+        written = pwrite((int) fd, (void *) (address), count, writeOffset);
+        if (written < 0
+            // Signals should not interrupt pwrite on Linux but just to align with POSIX standards
+            && errno != EINTR) {
+            // If process interrupted, do another spin.
+            // Negative means error. Return negative.
+            return written;
+        }
+        len -= written;
+        writeOffset += written;
+        address += written;
+        // Exit if written == 0 or there is nothing to write
+    } while (len > 0 && written > 0);
+
+    return writeOffset - offset;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
@@ -85,7 +105,27 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
          jlong len,
          jlong offset) {
 
-    return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
+    off_t readOffset = offset;
+    ssize_t read;
+
+    do {
+        size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
+        read = pread((int) fd, (void *) (address), count, readOffset);
+        if (read < 0
+            // Signals should not interrupt pread on Linux but just to align with POSIX standards
+            && errno != EINTR) {
+            // If process interrupted, do another spin.
+            // Negative means error. Return negative.
+            return read;
+        }
+        len -= read;
+        readOffset += read;
+        address += read;
+
+        // Exit if read the given length or EOL (read == 0)
+    } while (len > 0 && read > 0);
+
+    return readOffset - offset;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
@@ -145,6 +185,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
 
     int r = stat((const char *) pchar, &st);
     return r == 0 ? st.st_size : r;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
+        (JNIEnv *e, jclass cl, jlong pcharSrc, jlong pcharHardLink) {
+    return link((const char *) pcharSrc, (const char *) pcharHardLink);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir
@@ -362,7 +407,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
     jlong fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 
-    if (fd < -1) {
+    if (fd < 0) {
         // error opening / creating file
         return fd;
     }
@@ -407,9 +452,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
     return -1;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {
-    return (jboolean) (rename((const char *) lpszOld, (const char *) lpszNew) == 0);
+    int err = rename((const char *) lpszOld, (const char *) lpszNew);
+    if (err != 0) {
+        return errno == EXDEV ? FILES_RENAME_ERR_EXDEV : FILES_RENAME_ERR_OTHER;
+    }
+    return FILES_RENAME_ERR_OK;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0

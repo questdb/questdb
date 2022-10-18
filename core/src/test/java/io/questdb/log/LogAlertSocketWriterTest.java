@@ -99,7 +99,7 @@ public class LogAlertSocketWriterTest {
 
                         TestUtils.await(startBarrier);
                         writer.setAlertTargets("localhost:1234,localhost:1242");
-                        writer.bindProperties(LogFactory.INSTANCE);
+                        writer.bindProperties(LogFactory.getInstance());
 
                         LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
                         recordSink.setLevel(LogLevel.ERROR);
@@ -210,7 +210,7 @@ public class LogAlertSocketWriterTest {
                         writer.setLocation("/alert-manager-tpt-international.json");
                         writer.setAlertTargets("localhost:1234");
                         writer.setReconnectDelay("100");
-                        writer.bindProperties(LogFactory.INSTANCE);
+                        writer.bindProperties(LogFactory.getInstance());
 
                         LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
                         recordSink.setLevel(LogLevel.ERROR);
@@ -260,7 +260,7 @@ public class LogAlertSocketWriterTest {
     @Test
     public void testBindPropertiesBadTemplateFile() throws Exception {
         withLogAlertSocketWriter(writer -> {
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertEquals(LogAlertSocket.OUT_BUFFER_SIZE, writer.getOutBufferSize());
             Assert.assertEquals(LogAlertSocketWriter.DEFAULT_ALERT_TPT_FILE, writer.getLocation());
             Assert.assertEquals(LogAlertSocket.DEFAULT_HOST + ":" + LogAlertSocket.DEFAULT_PORT, writer.getAlertTargets());
@@ -270,7 +270,7 @@ public class LogAlertSocketWriterTest {
             writer.setLocation("/log-file.conf");
             writer.setAlertTargets("127.0.0.1:8989");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals(
@@ -289,7 +289,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setLocation("some-silly-path.conf");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals("Cannot read some-silly-path.conf [errno=2]", e.getMessage());
@@ -302,7 +302,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setLocation("/alert-manager-tpt-test-missing-message-key.json");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals(
@@ -318,7 +318,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setAlertTargets("");
             writer.setLocation("");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertEquals("/alert-manager-tpt.json", writer.getLocation());
         });
     }
@@ -328,7 +328,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setOutBufferSize(String.valueOf(1024));
             writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertNotNull(LogAlertSocket.localHostIp);
             Assert.assertEquals("127.0.0.1:9093", writer.getAlertTargets());
         });
@@ -339,7 +339,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setReconnectDelay(String.valueOf(50));
             writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertNotNull(LogAlertSocket.localHostIp);
             Assert.assertEquals(50_000_000, writer.getReconnectDelay());
         });
@@ -351,7 +351,7 @@ public class LogAlertSocketWriterTest {
             writer.setReconnectDelay("banana");
             writer.setAlertTargets("\"\"");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
             } catch (LogError e) {
                 Assert.assertEquals("Invalid value for reconnectDelay: banana", e.getMessage());
             }
@@ -363,7 +363,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setInBufferSize(String.valueOf(12));
             writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertNotNull(LogAlertSocket.localHostIp);
             Assert.assertEquals(12, writer.getInBufferSize());
         });
@@ -375,7 +375,7 @@ public class LogAlertSocketWriterTest {
             writer.setInBufferSize("anaconda");
             writer.setAlertTargets("\"\"");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
             } catch (LogError e) {
                 Assert.assertEquals("Invalid value for inBufferSize: anaconda", e.getMessage());
             }
@@ -387,7 +387,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setDefaultAlertHost("127.0.0.1");
             writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertNotNull(LogAlertSocket.localHostIp);
             Assert.assertEquals("127.0.0.1", writer.getDefaultAlertHost());
         });
@@ -399,7 +399,7 @@ public class LogAlertSocketWriterTest {
             writer.setDefaultAlertHost("pineapple");
             writer.setAlertTargets("\"\"");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
             } catch (NetworkError e) {
                 Assert.assertEquals("[0] invalid address [pineapple]", e.getMessage());
             }
@@ -411,7 +411,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setDefaultAlertPort(String.valueOf(12));
             writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertNotNull(LogAlertSocket.localHostIp);
             Assert.assertEquals(12, writer.getDefaultAlertPort());
         });
@@ -423,7 +423,7 @@ public class LogAlertSocketWriterTest {
             writer.setDefaultAlertPort("pineapple");
             writer.setAlertTargets("\"\"");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
             } catch (LogError e) {
                 Assert.assertEquals("Invalid value for defaultAlertPort: pineapple", e.getMessage());
             }
@@ -435,7 +435,7 @@ public class LogAlertSocketWriterTest {
         withLogAlertSocketWriter(writer -> {
             writer.setOutBufferSize(String.valueOf(12));
             writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
+            writer.bindProperties(LogFactory.getInstance());
             Assert.assertNotNull(LogAlertSocket.localHostIp);
             Assert.assertEquals(12, writer.getOutBufferSize());
         });
@@ -447,7 +447,7 @@ public class LogAlertSocketWriterTest {
             writer.setOutBufferSize("coconut");
             writer.setAlertTargets("\"\"");
             try {
-                writer.bindProperties(LogFactory.INSTANCE);
+                writer.bindProperties(LogFactory.getInstance());
             } catch (LogError e) {
                 Assert.assertEquals("Invalid value for outBufferSize: coconut", e.getMessage());
             }
@@ -552,7 +552,7 @@ public class LogAlertSocketWriterTest {
     private static void withLogAlertSocketWriter(Consumer<LogAlertSocketWriter> consumer) throws Exception {
         final NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public long connect(long fd, long sockaddr) {
+            public int connect(long fd, long pSockaddr) {
                 return -1;
             }
         };

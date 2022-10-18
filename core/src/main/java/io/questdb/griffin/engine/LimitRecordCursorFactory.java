@@ -58,7 +58,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         base.close();
     }
 
@@ -100,6 +100,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return base.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndex);
         }
 
         @Override
@@ -172,7 +177,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                                 limit = count + hi;
                             } else {
                                 skipTo(count + lo);
-                                limit = -lo + hi;
+                                limit = Math.min(count, -lo + hi);
                             }
                             size = limit;
                         }
@@ -218,7 +223,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void skipTo(long rowCount) {
-            base.skipTo(rowCount);
+            base.skipTo(Math.max(0, rowCount));
         }
     }
 }

@@ -35,6 +35,41 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     static final int ORDER_DESC = 1;
 
     @Test
+    public void testOrderByDescInOverClause() throws Exception {
+        String expected = "ts\ttemp\n" +
+                "1970-04-23T22:00:00.000000Z\t99.9780\n" +
+                "1971-02-02T02:00:00.000000Z\t98.3369\n";
+        String direction = "desc";
+
+        assertOrderByInOverClause(expected, direction);
+    }
+
+    @Test
+    public void testOrderByAscInOverClause() throws Exception {
+        String expected = "ts\ttemp\n" +
+                "1970-05-23T02:00:00.000000Z\t0.0049\n" +
+                "1971-02-21T16:00:00.000000Z\t0.3032\n";
+        String direction = "asc";
+
+        assertOrderByInOverClause(expected, direction);
+    }
+
+    private void assertOrderByInOverClause(String expected, String direction) throws Exception {
+        assertQuery(expected,
+                "select ts, temp from \n" +
+                        "( \n" +
+                        "  Select temp, ts, \n" +
+                        "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
+                        "  from weather \n" +
+                        ") inq \n" +
+                        "where rid = 1 \n" +
+                        "order by ts",
+                "create table weather as " +
+                        "(select cast(x*36000000000 as timestamp) ts, \n" +
+                        "  rnd_float(0)*100 temp from long_sequence(1000));", null);
+    }
+
+    @Test
     public void testOrderByAscWithByteFilter() throws Exception {
         testOrderByWithFilter("byte", ORDER_ASC);
     }
@@ -259,7 +294,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "8\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, "ts####DESC", true, false, true);
+                null, "ts###DESC", true, false, true);
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "1010\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
@@ -267,7 +302,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "1008\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "1010\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, null, true, false, true);
+                null, "ts###DESC", true, false, true);
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +
@@ -288,8 +323,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithComplexJittedFilter() throws Exception {
-
+    public void testOrderByTimestampWithComplexJITFilter() throws Exception {
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x," +
@@ -305,7 +339,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithJittedAndIntervalFilters() throws Exception {
+    public void testOrderByTimestampWithJITAndIntervalFilters() throws Exception {
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into trips " +
@@ -324,7 +358,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithJittedFilter() throws Exception {
+    public void testOrderByTimestampWithJitFilterAndLimitDesc() throws Exception {
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
@@ -339,11 +373,16 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\t2022-01-04T03:46:40.000000Z\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, "ts###DESC", true, false, true);
+                null,
+                "ts###DESC",
+                true,
+                false,
+                true
+        );
     }
 
     @Test
-    public void testOrderByTimestampWithJittedFilterAsc() throws Exception {
+    public void testOrderByTimestampWithJitFilterAndLimitAsc() throws Exception {
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
@@ -362,7 +401,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithNonJittedFilter() throws Exception {
+    public void testOrderByTimestampWithNonJitFilter() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
@@ -379,6 +418,34 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts desc limit 5",
                 null, "ts###DESC", true, false, true);
+    }
+
+    @Test
+    public void testOrderByTimestampWithJitFilterDesc() throws Exception {
+        testOrderByTimestampWithFilterDesc();
+    }
+
+    @Test
+    public void testOrderByTimestampWithNonJitFilterDesc() throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        testOrderByTimestampWithFilterDesc();
+    }
+
+    private void testOrderByTimestampWithFilterDesc() throws Exception {
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+
+        assertQuery("l\tts\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n" +
+                        "4\t2022-01-06T11:20:00.000000Z\n" +
+                        "3\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n",
+                "select l, ts from trips where l <= 5 order by ts desc",
+                null, "ts###DESC", true, false, false);
     }
 
     private void runQueries(String... queries) throws Exception {
@@ -410,19 +477,19 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 //should create 3+ partitions with randomly ordered x values
                 ("insert into test " +
                         "select #FUNC#,\n" +
-                        "    timestamp_sequence(to_timestamp('2022-01-01'), 100000000000)\n" +
+                        "    timestamp_sequence('2022-01-01'::timestamp, 100000000000)\n" +
                         "from long_sequence(100)\n" +
                         "union all \n" +
-                        "select cast(1 as #TYPE#), rnd_timestamp('2022-01-01', '2022-01-03' + 33*100000000000 , 0)\n" +
+                        "select cast(1 as #TYPE#), rnd_timestamp('2022-01-01'::timestamp, '2022-01-03'::timestamp + 33*100000000000 , 0)\n" +
                         "union all  " +
-                        "select cast(2 as #TYPE#), rnd_timestamp('2022-01-01' + 34*100000000000, '2022-01-03' + 66*100000000000 , 0)\n" +
+                        "select cast(2 as #TYPE#), rnd_timestamp('2022-01-01'::timestamp + 34*100000000000, '2022-01-03'::timestamp + 66*100000000000 , 0)\n" +
                         "union all " +
-                        "select cast(3 as #TYPE#), rnd_timestamp('2022-01-01' + 67*100000000000, '2022-01-03' + 100*100000000000 , 0)\n")
+                        "select cast(3 as #TYPE#), rnd_timestamp('2022-01-01'::timestamp + 67*100000000000, '2022-01-03'::timestamp + 100*100000000000 , 0)\n")
                         .replace("#FUNC#", function)
                         .replace("#TYPE#", type));
         //add new column and create more partitions to trigger jit col tops case
         assertMemoryLeak(() -> compile("alter table test add column y double;"));
-        runQueries(("insert into test select #FUNC#, timestamp_sequence(to_timestamp('2022-01-01')+100*100000000000, 100000000000), rnd_double() " +
+        runQueries(("insert into test select #FUNC#, timestamp_sequence('2022-01-01'::timestamp + 100*100000000000, 100000000000), rnd_double() " +
                 "from long_sequence(100) ")
                 .replace("#FUNC#", function)
                 .replace("#TYPE#", type));

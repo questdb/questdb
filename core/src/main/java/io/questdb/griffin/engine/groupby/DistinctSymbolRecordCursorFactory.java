@@ -24,55 +24,47 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
+public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DistinctSymbolRecordCursor cursor;
-    private final CairoEngine engine;
-    private final GenericRecordMetadata metadata;
     private final String tableName;
-    private final int columnIndex;
     private final long tableVersion;
     private final int tableId;
 
     public DistinctSymbolRecordCursorFactory(
-            final CairoEngine engine,
             final GenericRecordMetadata metadata,
             final String tableName,
             final int columnIndex,
             final int tableId,
-            final long tableVersion) {
-        this.engine = engine;
-        this.metadata = metadata;
+            final long tableVersion
+    ) {
+        super(metadata);
         this.tableName = tableName;
-        this.columnIndex = columnIndex;
         this.tableVersion = tableVersion;
         this.tableId = tableId;
-        this.cursor = new DistinctSymbolRecordCursor();
+        this.cursor = new DistinctSymbolRecordCursor(columnIndex);
     }
 
     @Override
-    public void close() {
-        cursor.close();
+    protected void _close() {
+        Misc.free(cursor);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
-        cursor.of(reader, columnIndex);
+        TableReader reader = executionContext.getCairoEngine()
+                .getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
+        cursor.of(reader);
         return cursor;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override
@@ -86,6 +78,11 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         private TableReader reader;
         private int numberOfSymbols;
         private SymbolMapReader symbolMapReader;
+        private final int columnIndex;
+
+        public DistinctSymbolRecordCursor(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
 
         @Override
         public void close() {
@@ -99,7 +96,14 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
+            // this is single column cursor
             return symbolMapReader;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            // this is single column cursor
+            return reader.newSymbolTable(this.columnIndex);
         }
 
         @Override
@@ -130,7 +134,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             recordA.reset();
         }
 
-        public void of(TableReader reader, int columnIndex) {
+        public void of(TableReader reader) {
             this.reader = reader;
             this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
             this.numberOfSymbols = symbolMapReader.getSymbolCount() + (symbolMapReader.containsNullValue() ? 1 : 0);

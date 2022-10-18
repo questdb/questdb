@@ -24,8 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -40,7 +38,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -250,35 +247,7 @@ public class LatestByParallelTest {
         executeVanilla(() -> {
             if (workerCount > 0) {
 
-                int[] affinity = new int[workerCount];
-                for (int i = 0; i < workerCount; i++) {
-                    affinity[i] = -1;
-                }
-
-                WorkerPool pool = new WorkerPool(
-                        new WorkerPoolAwareConfiguration() {
-                            @Override
-                            public int[] getWorkerAffinity() {
-                                return affinity;
-                            }
-
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
-
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
-                            }
-                        },
-                        Metrics.disabled()
-                );
+                WorkerPool pool = new WorkerPool(() -> workerCount);
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
@@ -320,7 +289,6 @@ public class LatestByParallelTest {
             ) {
                 try {
                     if (pool != null) {
-                        pool.assignCleaner(Path.CLEANER);
                         pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
                         pool.start(LOG);
                     }

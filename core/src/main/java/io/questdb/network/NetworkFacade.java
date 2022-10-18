@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.log.Log;
+import io.questdb.std.str.LPSZ;
 
 public interface NetworkFacade {
 
@@ -46,9 +47,13 @@ public interface NetworkFacade {
 
     int configureNonBlocking(long fd);
 
-    long connect(long fd, long sockaddr);
+    int connect(long fd, long pSockaddr);
 
-    void freeSockAddr(long socketAddress);
+    int connectAddrInfo(long fd, long pAddrInfo);
+
+    void freeSockAddr(long pSockaddr);
+
+    void freeAddrInfo(long pAddrInfo);
 
     long getPeerIP(long fd);
 
@@ -78,6 +83,10 @@ public interface NetworkFacade {
 
     long sockaddr(CharSequence address, int port);
 
+    long getAddrInfo(LPSZ host, int port);
+
+    long getAddrInfo(CharSequence host, int port);
+
     int setMulticastInterface(long fd, CharSequence address);
 
     int setMulticastInterface(long fd, int ipv4Address);
@@ -104,6 +113,8 @@ public interface NetworkFacade {
 
     @SuppressWarnings("SpellCheckingInspection")
     int recvmmsg(long fd, long msgVec, int msgCount);
+
+    int resolvePort(long fd);
 
     boolean setSndBuf(long fd, int size);
 

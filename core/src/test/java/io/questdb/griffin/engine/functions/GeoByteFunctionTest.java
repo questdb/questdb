@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.NumericException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,6 +43,11 @@ public class GeoByteFunctionTest extends AbstractGriffinTest {
         public byte getGeoByte(Record rec) {
             return (byte) hash;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test
@@ -53,7 +59,7 @@ public class GeoByteFunctionTest extends AbstractGriffinTest {
         GeoHashes.appendBinary(function.getGeoByte(null), ColumnType.getGeoHashBits(function.getType()), sink);
         TestUtils.assertEquals("11101", sink);
 
-        final int truncatedHash = (int) ColumnType.truncateGeoHashTypes(
+        final int truncatedHash = (int) SqlUtil.implicitCastGeoHashAsGeoHash(
                 function.getGeoByte(null),
                 function.getType(),
                 ColumnType.getGeoHashTypeWithBits(3)

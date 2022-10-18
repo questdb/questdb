@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -53,14 +54,13 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private final ChunkBuffer buffer;
-    private ChunkBuffer compressOutBuffer;
+    private final ChunkBuffer compressOutBuffer;
     private final HttpResponseHeaderImpl headerImpl;
     private final SimpleResponseImpl simple = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
     private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
     private final NetworkFacade nf;
-    private final int responseBufferSize;
     private final boolean dumpNetworkTraffic;
     private final String httpVersion;
     private long fd;
@@ -77,9 +77,10 @@ public class HttpResponseSink implements Closeable, Mutable {
     private boolean compressionComplete;
 
     public HttpResponseSink(HttpContextConfiguration configuration) {
-        this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+        final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkBuffer(responseBufferSize);
+        this.compressOutBuffer = new ChunkBuffer(responseBufferSize);
         this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
@@ -105,16 +106,16 @@ public class HttpResponseSink implements Closeable, Mutable {
             Zip.deflateEnd(z_streamp);
             z_streamp = 0;
             compressOutBuffer.close();
-            compressOutBuffer = null;
         }
         buffer.close();
+        fd = -1;
     }
 
     public void setDeflateBeforeSend(boolean deflateBeforeSend) {
         this.deflateBeforeSend = deflateBeforeSend;
         if (z_streamp == 0 && deflateBeforeSend) {
             z_streamp = Zip.deflateInit();
-            compressOutBuffer = new ChunkBuffer(responseBufferSize);
+            compressOutBuffer.reopen();
         }
     }
 
@@ -237,6 +238,9 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     void of(long fd) {
         this.fd = fd;
+        if (fd > -1) {
+            this.buffer.reopen();
+        }
     }
 
     private void prepareHeaderSink() {
@@ -454,7 +458,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                 escapeSpace(c);
             } else {
                 switch (c) {
-                    case '/':
                     case '\"':
                     case '\\':
                         put('\\');
@@ -473,8 +476,6 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         private void escapeSpace(char c) {
             switch (c) {
-                case '\0':
-                    break;
                 case '\b':
                     put("\\b");
                     break;
@@ -491,7 +492,9 @@ public class HttpResponseSink implements Closeable, Mutable {
                     put("\\t");
                     break;
                 default:
-                    put(c);
+                    put("\\u00");
+                    put(c >> 4);
+                    put(Numbers.hexDigits[c & 15]);
                     break;
             }
         }
@@ -578,27 +581,33 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private class ChunkBuffer extends AbstractCharSink implements Closeable {
+    private class ChunkBuffer extends AbstractCharSink implements Closeable, Reopenable {
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
+        private final long bufSize;
         private long bufStart;
-        private final long bufStartOfData;
-        private long bufEndOfData;
+        private long bufStartOfData;
         private long _wptr;
         private long _rptr;
 
-        private ChunkBuffer(int sz) {
-            bufStart = Unsafe.malloc(sz + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
-            bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
-            bufEndOfData = bufStartOfData + sz;
-            clear();
+        private ChunkBuffer(int bufSize) {
+            this.bufSize = bufSize;
         }
 
         @Override
         public void close() {
-            if (0 != bufStart) {
-                Unsafe.free(bufStart, bufEndOfData - bufStart + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
-                bufStart = bufEndOfData = _wptr = _rptr = 0;
+            if (bufStart != 0) {
+                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                bufStart = bufStartOfData = _wptr = _rptr = 0;
+            }
+        }
+
+        @Override
+        public void reopen() {
+            if (bufStart == 0) {
+                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
+                clear();
             }
         }
 
@@ -629,7 +638,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         long getWriteNAvailable() {
-            return bufEndOfData - _wptr;
+            return bufStartOfData + bufSize - _wptr;
         }
 
         void onWrite(int nWrite) {

@@ -26,24 +26,26 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 
-import java.io.Closeable;
-
-abstract class AbstractTypeContainer<T extends Closeable> implements Closeable {
+public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> extends AbstractSelfReturningObject<T> {
     private final IntList types = new IntList();
-    private final WeakAutoClosableObjectPool<T> parentPool;
+    private boolean closing;
 
-    public AbstractTypeContainer(WeakAutoClosableObjectPool<T> parentPool) {
-        this.parentPool = parentPool;
+    public AbstractTypeContainer(WeakSelfReturningObjectPool<T> parentPool) {
+        super(parentPool);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public void close() {
-        types.clear();
-        this.parentPool.push((T) this);
+        if (!closing) {
+            closing = true;
+            super.close();
+            types.clear();
+            closing = false;
+        }
     }
 
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {

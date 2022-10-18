@@ -33,7 +33,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.PriorityQueue;
-import java.util.concurrent.locks.LockSupport;
 
 public class WaitProcessor extends SynchronizedJob implements RescheduleContext, Closeable {
 
@@ -68,6 +67,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
 
     @Override
     public void close() {
+        processInQueue(); // Process incoming queue to close all contexts
         for (int i = 0, n = nextRerun.size(); i < n; i++) {
             Misc.free(nextRerun.poll());
         }
@@ -132,6 +132,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             long cursor = inSubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
+                Os.pause();
                 continue;
             }
 
@@ -165,6 +166,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             long cursor = inPubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
+                Os.pause();
                 continue;
             }
 

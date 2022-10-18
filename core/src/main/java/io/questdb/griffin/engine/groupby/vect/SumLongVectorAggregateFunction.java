@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -68,11 +69,11 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
         }
     }
 
@@ -93,8 +94,8 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -105,8 +106,8 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override
@@ -121,5 +122,15 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
             return sum.sum();
         }
         return Numbers.LONG_NaN;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("SumLongVector(").put(columnIndex).put(')');
     }
 }

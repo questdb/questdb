@@ -130,7 +130,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         noDesignatedTimestampNorIdxMetadata = noDesignatedTimestampNorIdxReader.getMetadata();
 
         bindVariableService = new BindVariableServiceImpl(configuration);
-        compiler = new SqlCompiler(new CairoEngine(configuration));
+        compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine, 1)
                 .with(
@@ -150,6 +150,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         noDesignatedTimestampNorIdxReader.close();
         compiler.close();
         sqlExecutionContext.close();
+        TestUtils.removeTestPath(root);
+    }
+
+    @Override
+    public void tearDown() {
+        super.tearDown(false);
     }
 
     @Test
@@ -386,7 +392,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
-        currentMicros = IntervalUtils.parseFloorPartialDate("2014-01-03T12:30:00.000000Z");
+        currentMicros = IntervalUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z");
         runWhereTest("timestamp between now() and dateadd('d', -1, now())",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
@@ -1911,7 +1917,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
-    private static final void swap(String[] arr, int i, int j) {
+    private static void swap(String[] arr, int i, int j) {
         String tmp = arr[i];
         arr[i] = arr[j];
         arr[j] = tmp;

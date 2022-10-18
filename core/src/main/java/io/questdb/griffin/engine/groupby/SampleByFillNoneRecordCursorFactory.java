@@ -42,7 +42,6 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
-    protected final Map map;
     private final SampleByFillNoneRecordCursor cursor;
 
     public SampleByFillNoneRecordCursorFactory(
@@ -66,9 +65,9 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         // sink will be storing record columns to map key
         final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
-        this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+        Map map = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
         this.cursor = new SampleByFillNoneRecordCursor(
-                this.map,
+                map,
                 mapSink,
                 groupByFunctions,
                 this.recordFunctions,
@@ -82,14 +81,9 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
-    public void close() {
-        super.close();
-        Misc.free(map);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
+    protected void _close() {
+        cursor.close();
+        super._close();
     }
 
     @Override
@@ -102,13 +96,14 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             if (baseCursor.hasNext()) {
-                map.clear();
                 return initFunctionsAndCursor(executionContext, baseCursor);
             }
             Misc.free(baseCursor);
+            Misc.free(cursor);
             return EmptyTableNoSizeRecordCursor.INSTANCE;
         } catch (Throwable ex) {
             Misc.free(baseCursor);
+            Misc.free(cursor);
             throw ex;
         }
     }

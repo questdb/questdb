@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Sinkable;
@@ -34,9 +35,9 @@ import java.io.Closeable;
 /**
  * A factory interface for dataframe cursors
  */
-public interface DataFrameCursorFactory extends Sinkable, Closeable {
+public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
 
-    DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
+    DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
 
     /**
      * @param sink to print data frame cursor to
@@ -54,6 +55,24 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
      */
     int getOrder();
 
+    @Override
+    void close();
+
     int ORDER_ASC = 0;
     int ORDER_DESC = 1;
+    // Any order means that algorithm is able to work with frames in any order.
+    // In this case frame order will be driven by the optimiser.
+    // Any order is not returned by the factory
+    int ORDER_ANY = 2;
+
+    static int reverse(int order) {
+        switch (order) {
+            case ORDER_ASC:
+                return ORDER_DESC;
+            case ORDER_DESC:
+                return ORDER_ASC;
+            default:
+                return ORDER_ANY;
+        }
+    }
 }

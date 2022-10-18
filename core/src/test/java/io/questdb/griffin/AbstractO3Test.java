@@ -25,8 +25,10 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,11 +43,13 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test {
     protected static final StringSink sink = new StringSink();
@@ -55,6 +59,12 @@ public class AbstractO3Test {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static int dataAppendPageSize = -1;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setupStatic() {
@@ -86,7 +96,7 @@ public class AbstractO3Test {
             String table,
             CairoEngine engine
     ) throws SqlException {
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG, true);
         TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
     }
 
@@ -154,16 +164,17 @@ public class AbstractO3Test {
             compiler.compile(referenceTableDDL, sqlExecutionContext);
         }
         compiler.compile(o3InsertSQL, sqlExecutionContext);
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
         engine.releaseAllReaders();
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
 
         TestUtils.assertSqlCursors(
                 compiler,
                 sqlExecutionContext,
                 "select count() from " + countReferenceSQL,
                 "select count() from " + countAssertSQL,
-                LOG
+                LOG,
+                false
         );
     }
 
@@ -212,7 +223,7 @@ public class AbstractO3Test {
 
     protected static void executeWithPool(
             int workerCount,
-            O3Runnable runnable
+            CustomisableRunnable runnable
     ) throws Exception {
         executeWithPool(
                 workerCount,
@@ -223,40 +234,12 @@ public class AbstractO3Test {
 
     protected static void executeWithPool(
             int workerCount,
-            O3Runnable runnable,
+            CustomisableRunnable runnable,
             FilesFacade ff
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                int[] affinity = new int[workerCount];
-                for (int i = 0; i < workerCount; i++) {
-                    affinity[i] = -1;
-                }
-
-                WorkerPool pool = new WorkerPool(
-                        new WorkerPoolAwareConfiguration() {
-                            @Override
-                            public int[] getWorkerAffinity() {
-                                return affinity;
-                            }
-
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
-
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
-
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
-                            }
-                        },
-                        Metrics.disabled()
-                );
+                WorkerPool pool = new WorkerPool(() -> workerCount);
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
@@ -275,7 +258,7 @@ public class AbstractO3Test {
                     }
                 };
 
-                execute(pool, runnable, configuration);
+                TestUtils.execute(pool, runnable, configuration, LOG);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -324,33 +307,9 @@ public class AbstractO3Test {
                         return 0;
                     }
                 };
-                execute(null, runnable, configuration);
+                TestUtils.execute(null, runnable, configuration, LOG);
             }
         });
-    }
-
-    protected static void execute(@Nullable WorkerPool pool, O3Runnable runnable, CairoConfiguration configuration) throws Exception {
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-        ) {
-            try {
-                if (pool != null) {
-                    pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
-                    pool.start(LOG);
-                }
-
-                runnable.run(engine, compiler, sqlExecutionContext);
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                if (pool != null) {
-                    pool.halt();
-                }
-            }
-        }
     }
 
     protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -358,8 +317,12 @@ public class AbstractO3Test {
         assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
-    protected static void executeVanilla(O3Runnable code) throws Exception {
-        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
+    protected static void executeVanilla(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), LOG));
+    }
+
+    protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled(), LOG));
     }
 
     static void assertO3DataConsistency(

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
@@ -44,6 +45,7 @@ import org.jetbrains.annotations.Nullable;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
+    private final int sharedWorkerCount;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final MicrosecondClock clock;
@@ -58,11 +60,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private long now;
     private int jitMode;
+    private boolean cloneSymbolTables = false;
 
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
-        this.workerCount = workerCount;
         assert workerCount > 0;
+        this.workerCount = workerCount;
+        assert sharedWorkerCount > 0;
+        this.sharedWorkerCount = sharedWorkerCount;
         this.cairoEngine = cairoEngine;
         this.clock = cairoConfiguration.getMicrosecondClock();
         this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
@@ -73,6 +78,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
+    }
+
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
+       this(cairoEngine, workerCount, workerCount);
     }
 
     @Override
@@ -111,6 +120,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public int getSharedWorkerCount() {
+        return sharedWorkerCount;
+    }
+
+    @Override
     public Rnd getRandom() {
         return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
     }
@@ -121,7 +135,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public CairoEngine getCairoEngine() {
+    public @NotNull CairoEngine getCairoEngine() {
         return cairoEngine;
     }
 
@@ -131,8 +145,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionCircuitBreaker getCircuitBreaker() {
-        circuitBreaker.powerUp();
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        circuitBreaker.resetTimer();
         return circuitBreaker;
     }
 
@@ -194,6 +208,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
+    @Override
+    public void setCloneSymbolTables(boolean cloneSymbolTables) {
+        this.cloneSymbolTables = cloneSymbolTables;
+    }
+
     public SqlExecutionContextImpl with(
             long requestFd
     ) {
@@ -221,5 +240,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void storeTelemetryNoop(short event, short origin) {
+    }
+
+    @Override
+    public boolean getCloneSymbolTables() {
+        return cloneSymbolTables;
     }
 }

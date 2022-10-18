@@ -36,11 +36,12 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closeable {
+public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Closeable {
     private static final Log LOG = LogFactory.getLog(TextMetadataDetector.class);
     private final StringSink tempSink = new StringSink();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjHashSet<CharSequence> uniqueColumnNames = new ObjHashSet<>();
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
     private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
@@ -63,6 +64,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     public void clear() {
         tempSink.clear();
         columnNames.clear();
+        uniqueColumnNames.clear();
         _blanks.clear();
         _histogram.clear();
         fieldCount = 0;
@@ -78,7 +80,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     }
 
     public void evaluateResults(long lineCount, long errorCount) {
-        // try calculate types counting all rows
+        // try to calculate types counting all rows
         // if all types come up as strings, reduce lineCount by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
         if ((calcTypes(lineCount - errorCount, true) && !calcTypes(lineCount - errorCount - 1, false)) || forceHeader) {
@@ -93,17 +95,34 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
                     .$(']').$();
         }
 
-        // make up field names if there is no header
         for (int i = 0; i < fieldCount; i++) {
             if (!header || columnNames.getQuick(i).length() == 0) {
                 tempSink.clear();
                 tempSink.put('f').put(i);
+
+                if (header) {
+                    for (int attempt = 0; attempt < 20; attempt++) {
+                        if (!columnNames.contains(tempSink)) {
+                            break;
+                        }
+
+                        tempSink.put('_');
+                    }
+
+                    if (columnNames.contains(tempSink)) {
+                        throw TextException.$("Failed to generate unique name for column [no=").put(i).put("]");
+                    }
+                }
+
                 columnNames.setQuick(i, tempSink.toString());
+            }
+
+            if (!uniqueColumnNames.add(columnNames.getQuick(i))) {
+                throw TextException.$("duplicate column name found [no=").put(i).put(",name=").put(columnNames.get(i)).put(']');
             }
         }
 
         // override calculated types with user-supplied information
-        //
         if (schemaColumns.size() > 0) {
             for (int i = 0, k = columnNames.size(); i < k; i++) {
                 TypeAdapter type = schemaColumns.get(columnNames.getQuick(i));
@@ -118,7 +137,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         return header;
     }
 
-    public void of(ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
+    public void of(CharSequence tableName, ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
         clear();
         if (names != null && types != null) {
             final int n = names.size();
@@ -128,6 +147,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             }
         }
         this.forceHeader = forceHeader;
+        this.tableName = tableName;
     }
 
     @Override
@@ -202,6 +222,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     // metadata detector is essentially part of text lexer
     // we can potentially keep a cache of char sequences until the whole
     // system is reset, similar to flyweight char sequence over array of chars
+    //NOTE! should be kept consistent with TableUtils.isValidColumnName() 
     private String normalise(CharSequence seq) {
         boolean capNext = false;
         tempSink.clear();
@@ -216,7 +237,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
                 case '\"':
                 case '\\':
                 case '/':
-                case '\0':
                 case ':':
                 case ')':
                 case '(':
@@ -225,11 +245,27 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
                 case '*':
                 case '%':
                 case '~':
+                case '\u0000':
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009':
+                case '\u000B':
+                case '\u000c':
+                case '\r':
+                case '\n':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
                     capNext = true;
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     break;
                 default:
-
                     if (tempSink.length() == 0 && Character.isDigit(c)) {
                         tempSink.put('_');
                     }
@@ -251,10 +287,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         this._blanks.setAll(count, 0);
         this.columnTypes.extendAndSet(count - 1, null);
         this.columnNames.setAll(count, "");
-    }
-
-    void setTableName(CharSequence tableName) {
-        this.tableName = tableName;
     }
 
     private void stashPossibleHeader(ObjList<DirectByteCharSequence> values, int hi) {

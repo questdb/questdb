@@ -32,11 +32,9 @@ import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import org.junit.rules.TemporaryFolder;
-
-import java.util.Arrays;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -57,37 +55,19 @@ public class HttpMinTestBuilder {
     }
 
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        final int[] workerAffinity = new int[1];
-        Arrays.fill(workerAffinity, -1);
-
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .build();
 
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return workerAffinity;
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerAffinity.length;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool workerPool = new TestWorkerPool(1);
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -101,7 +81,7 @@ public class HttpMinTestBuilder {
                     }
                 });
 
-                QueryCache.configure(httpConfiguration);
+                QueryCache.configure(httpConfiguration, Metrics.disabled());
 
                 workerPool.start(LOG);
 

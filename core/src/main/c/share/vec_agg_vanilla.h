@@ -31,15 +31,11 @@ double sumDoubleKahan_Vanilla(double *d, int64_t count);
 
 double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
 
-double avgDouble_Vanilla(double *d, int64_t count);
-
 double minDouble_Vanilla(double *d, int64_t count);
 
 double maxDouble_Vanilla(double *d, int64_t count);
 
 int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
-
-double avgInt_Vanilla(int32_t *pi, int64_t count);
 
 int32_t minInt_Vanilla(int32_t *pi, int64_t count);
 
@@ -50,8 +46,6 @@ int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
 int64_t minLong_Vanilla(int64_t *pl, int64_t count);
 
 int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
-
-double avgLong_Vanilla(int64_t *pl, int64_t count);
 
 bool hasNull_Vanilla(int32_t *pi, int64_t count);
 

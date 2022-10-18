@@ -26,109 +26,121 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class AllowAllSqlSecurityContext {
-    public static final SqlExecutionContext INSTANCE = new SqlExecutionContext() {
-        @Override
-        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-            return QueryFutureUpdateListener.EMPTY;
-        }
 
-        @Override
-        public BindVariableService getBindVariableService() {
-            return null;
-        }
+    public static SqlExecutionContext instance(@NotNull CairoEngine engine) {
+        return new SqlExecutionContext() {
+            @Override
+            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                return QueryFutureUpdateListener.EMPTY;
+            }
 
-        @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return AllowAllCairoSecurityContext.INSTANCE;
-        }
+            @Override
+            public BindVariableService getBindVariableService() {
+                return null;
+            }
 
-        @Override
-        public boolean isTimestampRequired() {
-            return false;
-        }
+            @Override
+            public CairoSecurityContext getCairoSecurityContext() {
+                return AllowAllCairoSecurityContext.INSTANCE;
+            }
 
-        @Override
-        public void popTimestampRequiredFlag() {
-        }
+            @Override
+            public boolean isTimestampRequired() {
+                return false;
+            }
 
-        @Override
-        public void pushTimestampRequiredFlag(boolean flag) {
-        }
+            @Override
+            public void popTimestampRequiredFlag() {
+            }
 
-        @Override
-        public int getWorkerCount() {
-            return 0;
-        }
+            @Override
+            public void pushTimestampRequiredFlag(boolean flag) {
+            }
 
-        @Override
-        public Rnd getRandom() {
-            return null;
-        }
+            @Override
+            public int getWorkerCount() {
+                return 0;
+            }
 
-        @Override
-        public void setRandom(Rnd rnd) {
+            @Override
+            public Rnd getRandom() {
+                return null;
+            }
 
-        }
+            @Override
+            public void setRandom(Rnd rnd) {
+            }
 
-        @Override
-        public CairoEngine getCairoEngine() {
-            return null;
-        }
+            @Override
+            public @NotNull CairoEngine getCairoEngine() {
+                return engine;
+            }
 
-        @Override
-        public long getRequestFd() {
-            return 0;
-        }
+            @Override
+            public long getRequestFd() {
+                return 0;
+            }
 
-        @Override
-        public SqlExecutionCircuitBreaker getCircuitBreaker() {
-            return null;
-        }
+            @Override
+            public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            }
 
-        @Override
-        public void storeTelemetry(short event, short origin) {
-        }
+            @Override
+            public void storeTelemetry(short event, short origin) {
+            }
 
-        @Override
-        public AnalyticContext getAnalyticContext() {
-            return null;
-        }
+            @Override
+            public AnalyticContext getAnalyticContext() {
+                return null;
+            }
 
-        @Override
-        public void configureAnalyticContext(
-                @Nullable VirtualRecord partitionByRecord,
-                @Nullable RecordSink partitionBySink,
-                @Nullable ColumnTypes keyTypes,
-                boolean isOrdered,
-                boolean baseSupportsRandomAccess
-        ) {
-        }
+            @Override
+            public void configureAnalyticContext(
+                    @Nullable VirtualRecord partitionByRecord,
+                    @Nullable RecordSink partitionBySink,
+                    @Nullable ColumnTypes keyTypes,
+                    boolean isOrdered,
+                    boolean baseSupportsRandomAccess
+            ) {
+            }
 
-        @Override
-        public void initNow() {
-        }
+            @Override
+            public void initNow() {
+            }
 
-        @Override
-        public long getNow() {
-            return 0;
-        }
+            @Override
+            public long getNow() {
+                return 0;
+            }
 
-        @Override
-        public int getJitMode() {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
+            @Override
+            public int getJitMode() {
+                return SqlJitMode.JIT_MODE_ENABLED;
+            }
 
-        @Override
-        public void setJitMode(int jitMode) {
-        }
-    };
+            @Override
+            public void setJitMode(int jitMode) {
+            }
+
+            @Override
+            public void setCloneSymbolTables(boolean cloneSymbolTables) {
+            }
+
+            @Override
+            public boolean getCloneSymbolTables() {
+                return false;
+            }
+        };
+    }
 }

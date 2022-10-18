@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -39,11 +40,6 @@ public class GeoLongColumn extends GeoLongFunction {
     public GeoLongColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return rec.getGeoLong(columnIndex);
     }
 
     public static GeoLongColumn newInstance(int columnIndex, int columnType) {
@@ -59,6 +55,21 @@ public class GeoLongColumn extends GeoLongFunction {
         return new GeoLongColumn(columnIndex, columnType);
     }
 
+    @Override
+    public long getGeoLong(Record rec) {
+        return rec.getGeoLong(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     static {
         int bits = ColumnType.GEOLONG_MAX_BITS - ColumnType.GEOLONG_MIN_BITS + 1;
         COLUMNS = new GeoLongColumn[STATIC_COLUMN_COUNT * bits];
@@ -70,8 +81,8 @@ public class GeoLongColumn extends GeoLongFunction {
         }
     }
 
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("GeoLongColumn(").put(columnIndex).put(')');
     }
 }

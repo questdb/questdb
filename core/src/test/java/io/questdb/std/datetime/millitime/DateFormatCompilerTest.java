@@ -108,6 +108,22 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testDayOfYear() throws Exception {
+        assertThat("D, MM-yyyy", "2010-11-01T00:00:00.000Z", "25, 11-2010");
+    }
+
+    @Test
+    public void testWeekOfYear() throws Exception {
+        assertThat("w, MM-yyyy", "2010-11-01T00:00:00.000Z", "6, 11-2010");
+    }
+
+    @Test
+    public void testWeekOfMonth() throws Exception {
+        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
+    }
+
+
+    @Test
     public void testEra() throws Exception {
         assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 AD");
         assertThat("E, dd-MM-yyyy G", "-2013-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 BC");
@@ -141,6 +157,27 @@ public class DateFormatCompilerTest {
     @Test
     public void testFormatDay() throws Exception {
         assertFormat("03", "dd", "2014-04-03T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatDayOfYear() throws Exception {
+        assertFormat("1", "D", "2010-01-01T00:00:00.000Z");
+        assertFormat("69", "D", "2010-03-10T00:00:00.000Z");
+        assertFormat("70", "D", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatWeekOfYear() throws Exception {
+        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
+        assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
+        assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatWeekOfMonth() throws Exception {
+        assertFormat("1", "W", "2010-01-01T00:00:00.000Z");
+        assertFormat("2", "W", "2010-03-10T00:00:00.000Z");
+        assertFormat("2", "W", "2020-03-10T00:00:00.000Z");
     }
 
     @Test
@@ -406,7 +443,7 @@ public class DateFormatCompilerTest {
     @Test
     public void testGreedyYear() throws Exception {
         assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
-        assertThat("y-MM", "1936-03-01T00:00:00.000Z", "36-03");
+        assertThat("y-MM", "2036-03-01T00:00:00.000Z", "36-03");
         assertThat("y-MM", "2015-03-01T00:00:00.000Z", "15-03");
         assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
     }
@@ -418,7 +455,7 @@ public class DateFormatCompilerTest {
             DateFormatUtils.updateReferenceYear(Dates.toMillis(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
-            assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
+            assertThat("y-MM", "2055-03-01T00:00:00.000Z", "55-03");
             assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
         } finally {
             DateFormatUtils.updateReferenceYear(referenceYear);
@@ -526,7 +563,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testMillisGreedy() throws Exception {
-        assertThat("ddMMy HH:mm:ss.S", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
+        assertThat("ddMMy HH:mm:ss.S", "2078-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
 
     @Test(expected = NumericException.class)
@@ -542,7 +579,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testMillisThreeDigits() throws Exception {
-        assertThat("ddMMy HH:mm:ss.SSS", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
+        assertThat("ddMMy HH:mm:ss.SSS", "2078-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
 
     @Test
@@ -569,7 +606,7 @@ public class DateFormatCompilerTest {
     @Test
     public void testMonthName() throws Exception {
         assertThat("dd-MMM-y", "2012-11-15T00:00:00.000Z", "15-NOV-12");
-        assertThat("dd MMMM yyy", "2013-09-18T00:00:00.000Z", "18 September 2013");
+        assertThat("dd MMMM yyyy", "2013-09-18T00:00:00.000Z", "18 September 2013");
     }
 
     @Test
@@ -617,7 +654,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testSecondGreedy() throws Exception {
-        assertThat("ddMMy HH:mm:s", "1978-03-19T21:20:45.000Z", "190378 21:20:45");
+        assertThat("ddMMy HH:mm:s", "2078-03-19T21:20:45.000Z", "190378 21:20:45");
     }
 
     @Test
@@ -627,7 +664,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testSecondTwoDigits() throws Exception {
-        assertThat("ddMMy HH:mm:ss", "1978-03-19T21:20:45.000Z", "190378 21:20:45");
+        assertThat("ddMMy HH:mm:ss", "2078-03-19T21:20:45.000Z", "190378 21:20:45");
     }
 
     @Test
@@ -684,6 +721,12 @@ public class DateFormatCompilerTest {
     public void testTwoDigitYear() throws Exception {
         assertThat("MMyy", "2010-11-01T00:00:00.000Z", "1110");
         assertThat("MM, yy", "2010-11-01T00:00:00.000Z", "11, 10");
+    }
+
+    @Test
+    public void testThreeDigitYear() throws Exception {
+        assertThat("MMyyy", "2010-11-01T00:00:00.000Z", "11010");
+        assertThat("MM, yyy", "2010-11-01T00:00:00.000Z", "11, 010");
     }
 
     @Test

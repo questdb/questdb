@@ -24,10 +24,12 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.Gauge;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.ThreadLocal;
 
@@ -39,18 +41,20 @@ public final class QueryCache implements Closeable {
     private static ThreadLocal<QueryCache> TL_QUERY_CACHE;
     private final AssociativeCache<RecordCursorFactory> cache;
 
-    public QueryCache(int blocks, int rows) {
-        this.cache = new AssociativeCache<>(blocks, rows);
+    public QueryCache(int blocks, int rows, Gauge cachedQueriesGauge) {
+        this.cache = new AssociativeCache<>(blocks, rows, cachedQueriesGauge);
     }
 
-    public static void configure(HttpServerConfiguration configuration) {
+    public static void configure(HttpServerConfiguration configuration, Metrics metrics) {
         final boolean enableQueryCache = configuration.isQueryCacheEnabled();
         final int blockCount = enableQueryCache ? configuration.getQueryCacheBlockCount() : 1;
         final int rowCount = enableQueryCache ? configuration.getQueryCacheRowCount() : 1;
-        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(blockCount, rowCount));
+        TL_QUERY_CACHE = new ThreadLocal<>(
+                () -> new QueryCache(blockCount, rowCount, metrics.jsonQuery().cachedQueriesGauge())
+        );
     }
 
-    public static QueryCache getInstance() {
+    public static QueryCache getThreadLocalInstance() {
         return TL_QUERY_CACHE.get();
     }
 
@@ -73,17 +77,15 @@ public final class QueryCache implements Closeable {
         }
     }
 
-    public void remove(CharSequence sql) {
-        cache.put(sql, null);
-        log("remove", sql);
-    }
-
     public void clear() {
         cache.clear();
         LOG.info().$("cleared").$();
     }
 
     private void log(CharSequence action, CharSequence sql) {
-        LOG.info().$(action).$(" [thread=").$(Thread.currentThread().getName()).$(", sql=").utf8(sql).$(']').$();
+        LOG.info().$(action)
+                .$(" [thread=").$(Thread.currentThread().getName())
+                .$(", sql=").utf8(sql)
+                .I$();
     }
 }

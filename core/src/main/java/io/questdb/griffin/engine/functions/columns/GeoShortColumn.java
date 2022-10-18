@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -39,11 +40,6 @@ public class GeoShortColumn extends GeoShortFunction {
     public GeoShortColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return rec.getGeoShort(columnIndex);
     }
 
     public static GeoShortColumn newInstance(int columnIndex, int columnType) {
@@ -59,6 +55,21 @@ public class GeoShortColumn extends GeoShortFunction {
         return new GeoShortColumn(columnIndex, columnType);
     }
 
+    @Override
+    public short getGeoShort(Record rec) {
+        return rec.getGeoShort(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     static {
         int bits = ColumnType.GEOSHORT_MAX_BITS - ColumnType.GEOSHORT_MIN_BITS + 1;
         COLUMNS = new GeoShortColumn[STATIC_COLUMN_COUNT * bits];
@@ -70,8 +81,8 @@ public class GeoShortColumn extends GeoShortFunction {
         }
     }
 
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("GeoShortColumn(").put(columnIndex).put(')');
     }
 }

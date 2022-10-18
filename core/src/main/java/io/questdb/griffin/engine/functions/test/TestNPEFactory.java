@@ -52,5 +52,10 @@ public class TestNPEFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             throw new NullPointerException();
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     }
 }

@@ -45,11 +45,6 @@ public class FanOut implements Barrier {
         holder = h;
     }
 
-    @Override
-    public long current() {
-        return barrier.current();
-    }
-
     public static FanOut to(Barrier barrier) {
         return new FanOut().and(barrier);
     }
@@ -57,6 +52,9 @@ public class FanOut implements Barrier {
     public FanOut and(Barrier barrier) {
         Holder _new;
         boolean barrierNotSetUp = true;
+
+        final long current = this.barrier != null ? this.barrier.current() : -1;
+        Unsafe.getUnsafe().loadFence();
 
         do {
             Holder h = this.holder;
@@ -68,10 +66,12 @@ public class FanOut implements Barrier {
 
             if (this.barrier != null) {
                 if (barrierNotSetUp) {
-                    barrier.root().setBarrier(this.barrier);
+                    Barrier b = barrier.root();
+                    b.setBarrier(this.barrier);
+                    b.setCurrent(current);
                     barrierNotSetUp = false;
+                    Unsafe.getUnsafe().storeFence();
                 }
-                barrier.setCurrent(this.barrier.current());
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
@@ -97,12 +97,30 @@ public class FanOut implements Barrier {
     // loop is in flight
     @Override
     public long availableIndex(final long lo) {
-        long l = Long.MAX_VALUE;
+        long l = barrier.availableIndex(lo);
         ObjList<Barrier> barriers = holder.barriers;
         for (int i = 0, n = barriers.size(); i < n; i++) {
             l = Math.min(l, barriers.getQuick(i).availableIndex(lo));
         }
         return l;
+    }
+
+    @Override
+    public long current() {
+        return barrier.current();
+    }
+
+    @Override
+    public Barrier getBarrier() {
+        return barrier;
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).setCurrent(value);
+        }
     }
 
     @Override
@@ -120,14 +138,6 @@ public class FanOut implements Barrier {
         ObjList<Barrier> barriers = holder.barriers;
         for (int i = 0, n = barriers.size(); i < n; i++) {
             barriers.getQuick(i).root().setBarrier(barrier);
-        }
-    }
-
-    @Override
-    public void setCurrent(long value) {
-        ObjList<Barrier> barriers = holder.barriers;
-        for (int i = 0, n = barriers.size(); i < n; i++) {
-            barriers.getQuick(i).setCurrent(value);
         }
     }
 

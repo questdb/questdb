@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
@@ -55,19 +56,22 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.ColumnType.NO_OVERLOAD;
+
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
-    public void overloadBetweenNullAndAnyTypeIsZero() {
-        for (short type = ColumnType.BOOLEAN; type <= ColumnType.MAX; type++) {
-            Assert.assertEquals(0, ColumnType.overloadDistance(ColumnType.NULL, type));
-            Assert.assertEquals(0, ColumnType.overloadDistance(type, ColumnType.NULL));
+    public void testOverloadBetweenNullAndAnyType() {
+        for (short type = ColumnType.BOOLEAN; type < ColumnType.MAX; type++) {
+            String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
+            Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
+            Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
         }
     }
 
     @Test
     public void overloadFromCharToDoubleDoesNotExist() {
-        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), ColumnType.NO_OVERLOAD);
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), NO_OVERLOAD);
     }
 
     @Test
@@ -105,6 +109,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public double getDouble(Record rec) {
                         return 123.123;
                     }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
+                        return true;
+                    }
+
                 };
             }
         });
@@ -120,6 +130,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public float getFloat(Record rec) {
                         return 123.123f;
+                    }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
+                        return true;
                     }
                 };
             }
@@ -343,9 +358,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("COUNT()", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
-        Assert.assertEquals(
-                "io.questdb.griffin.engine.functions.groupby.CountGroupByFunction",
-                function.getClass().getCanonicalName());
+        Assert.assertEquals(CountLongGroupByFunction.class, function.getClass());
     }
 
     @Test
@@ -627,6 +640,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             public boolean isConstant() {
                 return true;
             }
+
+            @Override
+            public boolean isReadThreadSafe() {
+                return true;
+            }
         };
 
         functions.add(new FunctionFactory() {
@@ -665,6 +683,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
+                        return true;
+                    }
                 };
             }
         });
@@ -691,6 +714,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };
@@ -721,6 +749,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
+                        return true;
+                    }
                 };
             }
         });
@@ -747,6 +780,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };
@@ -777,6 +815,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
+                        return true;
+                    }
                 };
             }
         });
@@ -805,6 +848,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
+                        return true;
+                    }
                 };
             }
         });
@@ -831,6 +879,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };
@@ -912,6 +965,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
+                        return true;
+                    }
                 };
             }
         });
@@ -991,6 +1049,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };
@@ -1212,10 +1275,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", 1, ColumnType.STRING));
         metadata.add(new TableColumnMetadata("b", 2, ColumnType.SYMBOL, false, 0, false, null));
 
-        Function function = parseFunction("length(b) - length(a)",
+        final Function function = parseFunction("length(b) - length(a)",
                 metadata,
                 functionParser
         );
+
+        String symbolValue = "EFGHT";
 
         Record record = new Record() {
             @Override
@@ -1230,9 +1295,37 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public CharSequence getSym(int col) {
-                return "EFGHT";
+                return symbolValue;
+            }
+
+            @Override
+            public int getInt(int col) {
+                return 0;
             }
         };
+
+        function.init(new SymbolTableSource() {
+                          @Override
+                          public SymbolTable getSymbolTable(int columnIndex) {
+                              return new SymbolTable() {
+                                  @Override
+                                  public CharSequence valueOf(int key) {
+                                      return symbolValue;
+                                  }
+
+                                  @Override
+                                  public CharSequence valueBOf(int key) {
+                                      return symbolValue;
+                                  }
+                              };
+                          }
+
+                          @Override
+                          public SymbolTable newSymbolTable(int columnIndex) {
+                              return getSymbolTable(columnIndex);
+                          }
+                      }
+                , sqlExecutionContext);
 
         Assert.assertEquals(2, function.getInt(record));
 

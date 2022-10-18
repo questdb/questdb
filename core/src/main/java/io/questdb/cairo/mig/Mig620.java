@@ -96,7 +96,7 @@ public class Mig620 {
                 path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),
                 Files.PAGE_SIZE,
                 COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
-                MemoryTag.NATIVE_DEFAULT,
+                MemoryTag.NATIVE_MIG_MMAP,
                 CairoConfiguration.O_NONE
         )) {
             cvMemory.extend(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
@@ -112,7 +112,8 @@ public class Mig620 {
                 ObjList<String> columnNames = readColumNames(metaMem);
                 int columnCount = columnNames.size();
                 LongList columnTops = readColumnTops(columnCount, partitionBy, partitionSizeOffset, partitionTableSize, txMemory, ff, path, pathLen, columnNames);
-                long sizeBytes = writeColumnVersion(columnTops, columnCount, columnNames, cvMemory);
+                path.trimTo(pathLen);
+                long sizeBytes = writeColumnVersion(path, columnTops, columnCount, columnNames, cvMemory);
                 cvMemory.putLong(CV_OFFSET_OFFSET_A_64, CV_HEADER_SIZE);
                 cvMemory.putLong(CV_OFFSET_SIZE_A_64, sizeBytes);
                 cvMemory.jumpTo(CV_HEADER_SIZE + sizeBytes);
@@ -120,7 +121,7 @@ public class Mig620 {
         }
     }
 
-    private static long writeColumnVersion(LongList columnTops, int columnCount, ObjList<String> columnNames, MemoryMARW cvMemory) {
+    private static long writeColumnVersion(Path tablePath, LongList columnTops, int columnCount, ObjList<String> columnNames, MemoryMARW cvMemory) {
         int topStep = columnCount + 1;
         LongList columnVersions = new LongList();
         LongList maxPartitionIndexWithNoColumnList = new LongList();
@@ -143,7 +144,7 @@ public class Mig620 {
 
             if (maxPartitionIndexWithNoColumn != -1) {
                 if (maxPartitionIndexWithNoColumn + topStep >= columnTops.size()) {
-                    throw CairoException.instance(0).put("Column ").put(columnNames.getQuick(columnIndex)).put(" not present in any partition");
+                    throw CairoException.critical(0).put("Table ").put(tablePath).put(" column '").put(columnNames.getQuick(columnIndex)).put("' is not present in the last partition.");
                 }
                 long columnAddedPartitionTs = columnTops.getQuick(maxPartitionIndexWithNoColumn + topStep);
                 columnVersions.add(CV_COL_TOP_DEFAULT_PARTITION_MIG, columnIndex, -1L, columnAddedPartitionTs);
@@ -190,11 +191,11 @@ public class Mig620 {
         long txSize = txMemory.size() - 4 * 8;
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             if (offset > txSize) {
-                throw CairoException.instance(0).put("corrupt _txn file ").put(path.trimTo(pathLen).$()).put(", file is too small to read offset ").put(offset);
+                throw CairoException.critical(0).put("corrupt _txn file ").put(path.trimTo(pathLen).$()).put(", file is too small to read offset ").put(offset);
             }
             long partitionTs = txMemory.getLong(offset);
             if (partitionTs <= prevPartition) {
-                throw CairoException.instance(0).put("corrupt _txn file, partitions are not ordered at ").put(path.trimTo(pathLen).$());
+                throw CairoException.critical(0).put("corrupt _txn file, partitions are not ordered at ").put(path.trimTo(pathLen).$());
             }
             long partitionNameTxn = txMemory.getLong(offset + PARTITION_NAME_TX_OFFSET_MIG * 8);
             readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, partitionTs, partitionNameTxn, ff, path, pathLen);
@@ -211,15 +212,33 @@ public class Mig620 {
         setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionPathLen = path.length();
 
-        for (int i = 0; i < columnCount; i++) {
-            path.trimTo(partitionPathLen);
-            String columnName = columnNames.get(i);
-            dFile(path, columnName);
-            long columnTop = -1;
-            if (ff.exists(path)) {
-                columnTop = readColumnTop(ff, path.trimTo(partitionPathLen), columnName, partitionPathLen);
+        if (ff.exists(path.put(Files.SEPARATOR).$())) {
+            for (int i = 0; i < columnCount; i++) {
+                path.trimTo(partitionPathLen);
+                String columnName = columnNames.get(i);
+                dFile(path, columnName);
+                long columnTop = -1;
+                if (ff.exists(path)) {
+                    columnTop = readColumnTop(ff, path.trimTo(partitionPathLen), columnName, partitionPathLen);
+                }
+                tops.add(columnTop);
             }
-            tops.add(columnTop);
+        } else {
+            // Sometimes _txn file does not match the table directories, e.g. snapshot is inconsistent.
+            // Consider that file presence is same as previous partition.
+            // Except if previous partition column existed but column top was not 0, make it 0
+            if (tops.size() > columnCount) {
+                tops.add(tops, tops.size() - columnCount - 1, tops.size() - 1);
+                for (int i = tops.size() - columnCount, n = tops.size(); i < n; i++) {
+                    if (tops.getQuick(i) > 0) {
+                        tops.setQuick(i, 0);
+                    }
+                }
+            } else {
+                for (int i = 0; i < columnCount; i++) {
+                    tops.add(-1L);
+                }
+            }
         }
     }
 
@@ -272,14 +291,14 @@ public class Mig620 {
         long fileLen = ff.length(path);
 
         if (fileLen < 0) {
-            throw CairoException.instance(ff.errno()).put("cannot read file length: ").put(path);
+            throw CairoException.critical(ff.errno()).put("cannot read file length: ").put(path);
         }
 
         if (fileLen < readOffset + Long.BYTES) {
-            throw CairoException.instance(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
+            throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
         }
 
-        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);
     }
 
     private static void dFile(Path path, CharSequence columnName) {
@@ -321,7 +340,7 @@ public class Mig620 {
             Mig620.LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
-        throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+        throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
     private static LPSZ topFile(Path path, CharSequence columnName) {

@@ -24,33 +24,24 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Misc;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjList;
 
-class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
-    private final DelegatingRecordImpl record = new DelegatingRecordImpl();
-    private RecordCursor masterCursor;
-    private RecordCursor slaveCursor;
-    private final NextMethod nextSlave = this::nextSlave;
-    private Record masterRecord;
-    private Record slaveRecord;
+class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+    private final AbstractUnionRecord record;
+    private final NextMethod nextB = this::nextB;
     private NextMethod nextMethod;
-    private RecordCursor symbolCursor;
-    private final NextMethod nextMaster = this::nextMaster;
+    private final NextMethod nextA = this::nextA;
 
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        toTop();
-    }
-
-    @Override
-    public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
+    public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
+        if (castFunctionsA != null && castFunctionsB != null) {
+            this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
+        } else {
+            assert castFunctionsA == null && castFunctionsB == null;
+            this.record = new UnionRecord();
+        }
     }
 
     @Override
@@ -63,43 +54,42 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
         return nextMethod.next();
     }
 
-    private boolean nextSlave() {
-        return slaveCursor.hasNext();
+    @Override
+    public void toTop() {
+        record.setAb(true);
+        nextMethod = nextA;
+        cursorA.toTop();
+        cursorB.toTop();
     }
 
     @Override
     public long size() {
-        final long masterSize = masterCursor.size();
-        final long slaveSize = slaveCursor.size();
-        if (masterSize == -1 || slaveSize == -1) {
+        final long sizeA = cursorA.size();
+        final long sizeB = cursorB.size();
+        if (sizeA == -1 || sizeB == -1) {
             return -1;
         }
-        return masterSize + slaveSize;
+        return sizeA + sizeB;
     }
 
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
+    private boolean nextA() {
+        return cursorA.hasNext() || switchToSlaveCursor();
     }
 
-    private boolean nextMaster() {
-        return masterCursor.hasNext() || switchToSlaveCursor();
+    private boolean nextB() {
+        return cursorB.hasNext();
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker ) throws SqlException {
+        super.of(cursorA, cursorB, circuitBreaker);
+        record.of(cursorA.getRecord(), cursorB.getRecord());
+        toTop();
     }
 
     private boolean switchToSlaveCursor() {
-        record.of(slaveRecord);
-        nextMethod = nextSlave;
-        symbolCursor = slaveCursor;
+        record.setAb(false);
+        nextMethod = nextB;
         return nextMethod.next();
-    }
-
-    @Override
-    public void toTop() {
-        record.of(masterRecord);
-        nextMethod = nextMaster;
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
-        slaveCursor.toTop();
     }
 
     interface NextMethod {

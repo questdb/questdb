@@ -31,7 +31,7 @@ import org.junit.Test;
 public class UnsupportedProbeTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testBadDate() {
-        BadDateAdapter.INSTANCE.probe("xyz");
+        BadDateAdapter.INSTANCE.probe(null);
     }
 
     @Test
@@ -41,7 +41,7 @@ public class UnsupportedProbeTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testBadTimestamp() {
-        BadTimestampAdapter.INSTANCE.probe("xyz");
+        BadTimestampAdapter.INSTANCE.probe(null);
     }
 
     @Test
@@ -51,26 +51,26 @@ public class UnsupportedProbeTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testByte() {
-        ByteAdapter.INSTANCE.probe("xyz");
+        ByteAdapter.INSTANCE.probe(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testFloat() {
-        FloatAdapter.INSTANCE.probe("xyz");
+        FloatAdapter.INSTANCE.probe(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testShort() {
-        ShortAdapter.INSTANCE.probe("xyz");
+        ShortAdapter.INSTANCE.probe(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testString() {
-        new StringAdapter(null).probe("xyz");
+        new StringAdapter(null).probe(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testSymbol() {
-        new SymbolAdapter(null, false).probe("xyz");
+        new SymbolAdapter(null, false).probe(null);
     }
 }

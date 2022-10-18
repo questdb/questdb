@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastCharToDateFunctionFactory implements FunctionFactory {
@@ -42,13 +43,13 @@ public class CastCharToDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastCharToDateFunction(args.getQuick(0));
     }
 
-    private static class Func extends DateFunction implements UnaryFunction {
+    public static class CastCharToDateFunction extends DateFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastCharToDateFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -59,7 +60,8 @@ public class CastCharToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            return arg.getChar(rec);
+            final byte v = (byte) (arg.getChar(rec) - '0');
+            return v > -1 && v < 10 ? v : Numbers.LONG_NaN;
         }
     }
 }

@@ -73,12 +73,12 @@ public final class BitmapIndexUtils {
      * <p>
      * List of value blocks is assumed to be ordered by value in ascending order.
      *
-     * @param valueCount         total count of values in all blocks.
-     * @param blockOffset offset of last value block in chain of blocks.
-     * @param valueMem             value block memory
-     * @param maxValue             upper limit for block values.
-     * @param blockValueCountMod   number of values in single block - 1
-     * @param seeker               interface that collects results of the search
+     * @param valueCount         total count of values in all blocks
+     * @param blockOffset        offset of last value block in chain of blocks
+     * @param valueMem           value block memory
+     * @param maxValue           upper limit for block values
+     * @param blockValueCountMod number of values in single block - 1
+     * @param seeker             interface that collects results of the search
      */
     static void seekValueBlockRTL(
             long valueCount,
@@ -97,7 +97,7 @@ public final class BitmapIndexUtils {
                 long lo = valueMem.getLong(valueBlockOffset);
                 cellCount = (valueCount - 1 & blockValueCountMod) + 1;
 
-                // can we skip this block ?
+                // can we skip this block?
                 if (lo > maxValue) {
                     valueCount -= cellCount;
                     // do we have previous block?
@@ -125,10 +125,14 @@ public final class BitmapIndexUtils {
      * Seeks first block that contains first value, which is greater or equal to minValue.
      * It starts from first block in the list and proceeds moving right until it finds
      * block with low and high values surrounding minValue.
-     * This block is then binary searched to count values that are all greater or equal
-     * than minValue.
+     * <p>
+     * The found block is then binary searched to count values that are all greater or
+     * equal than minValue.
+     * <p>
+     * Unlike seekValueBlockRTL, this method does a boundary check over the valueMem size.
      *
-     * @param initialCount          total count of values in all blocks.
+     * @param totalCount            total count of values in all blocks;
+     *                              *important note*: initialCount may include blocks that exceed the file boundary
      * @param firstValueBlockOffset offset of first block in linked list
      * @param valueMem              value block memory
      * @param minValue              lower limit for values
@@ -136,15 +140,21 @@ public final class BitmapIndexUtils {
      * @param seeker                interface that collects results of the search
      */
     static void seekValueBlockLTR(
-            long initialCount,
+            long totalCount,
             long firstValueBlockOffset,
             MemoryR valueMem,
             long minValue,
             long blockValueCountMod,
             ValueBlockSeeker seeker
     ) {
-        long valueCount = initialCount;
+        long valueCount = totalCount;
         long valueBlockOffset = firstValueBlockOffset;
+        if (firstValueBlockOffset >= valueMem.size()) {
+            // The very first block is beyond the memory boundary. Report that we didn't find the value by
+            // using the total count of values in the seeker call.
+            seeker.seek(totalCount, firstValueBlockOffset);
+            return;
+        }
         if (valueCount > 0) {
             long cellCount;
             do {
@@ -156,13 +166,19 @@ public final class BitmapIndexUtils {
                 }
                 final long hi = valueMem.getLong(valueBlockOffset + (cellCount - 1) * 8);
 
-                // can we skip this block ?
+                // can we skip this block?
                 if (hi < minValue) {
                     valueCount -= cellCount;
-                    // do we have previous block?
+                    // do we have next block?
                     if (valueCount > 0) {
                         final long nextBlockOffset = (blockValueCountMod + 1) * 8 + 8;
                         valueBlockOffset = valueMem.getLong(valueBlockOffset + nextBlockOffset);
+                        if (valueBlockOffset >= valueMem.size()) {
+                            // We've reached the memory boundary. Report that we didn't find the value by
+                            // using the total count of values in the seeker call.
+                            seeker.seek(totalCount, valueBlockOffset);
+                            return;
+                        }
                         continue;
                     }
                 }
@@ -178,9 +194,8 @@ public final class BitmapIndexUtils {
                 }
             }
         }
-        seeker.seek(initialCount - valueCount, valueBlockOffset);
+        seeker.seek(totalCount - valueCount, valueBlockOffset);
     }
-
 
     static long getKeyEntryOffset(int key) {
         return key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
@@ -199,18 +214,22 @@ public final class BitmapIndexUtils {
      * ^
      * <p>
      * Same index will be returned when we search for value of 3.
+     * <p>
+     * This method is meant to search for the position of a rowid (value), 100% guaranteed to exist, otherwise
+     * it means the index is corrupt.
      *
      * @param memory    virtual memory instance
      * @param offset    offset in virtual memory
      * @param cellCount length of the available memory measured in 64-bit cells
      * @param value     value we search of
-     * @return index directly behind the searched value or group of values if list contains duplicate values.
+     * @return index directly behind the searched value or group of values if list contains duplicate values
+     * @throws CairoException when the index is corrupted
      */
     static long searchValueBlock(MemoryR memory, long offset, long cellCount, long value) {
         // when block is "small", we just scan it linearly
         if (cellCount < 64) {
             // this will definitely exit because we had checked that at least the last value is greater than value
-            for (long i = offset; ; i += 8) {
+            for (long i = offset, limit = memory.size(); i < limit; i += 8) {
                 if (memory.getLong(i) > value) {
                     return (i - offset) / 8;
                 }
@@ -236,6 +255,11 @@ public final class BitmapIndexUtils {
 
             return low + 1;
         }
+        throw CairoException.critical(0)
+                .put("index is corrupt, rowid not found [offset=").put(offset)
+                .put(", cellCount=").put(cellCount)
+                .put(", value=").put(value)
+                .put(']');
     }
 
     @FunctionalInterface

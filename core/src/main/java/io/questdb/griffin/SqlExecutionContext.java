@@ -30,8 +30,10 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -59,15 +61,23 @@ public interface SqlExecutionContext extends Closeable {
 
     int getWorkerCount();
 
+    default int getSharedWorkerCount() {
+        return getWorkerCount();
+    }
+
     Rnd getRandom();
+
+    default Rnd getAsyncRandom() {
+        return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
+    }
 
     void setRandom(Rnd rnd);
 
-    CairoEngine getCairoEngine();
+    @NotNull CairoEngine getCairoEngine();
 
     long getRequestFd();
 
-    SqlExecutionCircuitBreaker getCircuitBreaker();
+    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
 
     void storeTelemetry(short event, short origin);
 
@@ -92,4 +102,8 @@ public interface SqlExecutionContext extends Closeable {
     @Override
     default void close(){
     }
+
+    void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    boolean getCloneSymbolTables();
 }

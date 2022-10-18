@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
@@ -158,7 +159,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 createX(tbl);
             }
             engine.releaseAllWriters();
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
 
             ff = new FilesFacadeImpl() {
                 int attempt = 0;
@@ -210,9 +211,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     int attempt = 0;
 
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
+                    public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
-                            return false;
+                            return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
                     }
@@ -241,7 +242,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -249,9 +250,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
+                    public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
-                            return false;
+                            return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
                     }
@@ -283,7 +284,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -291,9 +292,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
+                    public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
-                            return false;
+                            return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
                     }
@@ -382,7 +383,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     "1\tx1\tts\tDAY\t150\t0\n"
@@ -396,7 +397,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     "1\tx1\tts\tDAY\t150\t0\n"
@@ -440,7 +441,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     expected
@@ -454,7 +455,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables() where name = 'x1'",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     expected

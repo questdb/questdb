@@ -24,40 +24,33 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 
 public class RecoverVarIndex extends RebuildColumnBase {
+    private static final Log LOG = LogFactory.getLog(RecoverVarIndex.class);
 
-    private static final Log LOG = LogFactory.getLog(RebuildIndex.class);
-
-    protected boolean checkColumnType(TableReaderMetadata metadata, int rebuildColumnIndex) {
-        return metadata.getColumnType(rebuildColumnIndex) == ColumnType.STRING;
+    @Override
+    protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
+        return metadata.getColumnType(columnIndex) == ColumnType.STRING;
     }
 
     @Override
-    protected void rebuildColumn(
-            CharSequence columnName,
+    protected void doReindex(
+            ColumnVersionReader columnVersionReader, int columnWriterIndex, CharSequence columnName,
             CharSequence partitionName,
-            int indexValueBlockCapacity,
-            long partitionSize,
-            FilesFacade ff,
-            ColumnVersionReader columnVersionReader,
-            int columnIndex,
-            long partitionTimestamp,
-            long partitionNameTxn
+            long partitionNameTxn, long partitionSize, long partitionTimestamp, int indexValueBlockCapacity
     ) {
-        long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-        long columnAddedPartition = columnVersionReader.getColumnTopPartitionTimestamp(columnIndex);
-        long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+        long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
+        long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
 
-        if (columnTop == 0 && partitionTimestamp < columnAddedPartition) {
+        if (columnTop == -1L) {
             LOG.info().$("not rebuilding column ").$(columnName).$(" in partition ").$ts(partitionTimestamp).$(", column not added to partition").$();
             return;
         }
@@ -78,7 +71,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
                 ff,
                 path.$(),
                 maxOffset,
-                MemoryTag.NATIVE_DEFAULT
+                MemoryTag.MMAP_DEFAULT
         )) {
 
             path.trimTo(colNameLen).put(".i");
@@ -92,7 +85,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
                     path.$(),
                     8 * 1024 * 1024,
                     0,
-                    MemoryTag.NATIVE_DEFAULT,
+                    MemoryTag.MMAP_DEFAULT,
                     0
             )) {
                 long expectedRowCount = partitionSize - columnTop;
@@ -113,7 +106,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
                     rows++;
                 }
                 if (rows != expectedRowCount) {
-                    throw CairoException.instance(0)
+                    throw CairoException.critical(0)
                             .put(" rebuild var index file failed [path=").put(path)
                             .put(", expectedRows=").put(expectedRowCount)
                             .put(", actualRows=").put(rows).put(']');

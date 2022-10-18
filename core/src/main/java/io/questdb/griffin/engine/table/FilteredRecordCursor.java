@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;
@@ -42,7 +43,7 @@ class FilteredRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        base.close();
+        Misc.free(base);
     }
 
     @Override
@@ -56,24 +57,18 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        if (filter.isConstant()) {
-            return filterIsConstant();
-        }
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
+    }
 
+    @Override
+    public boolean hasNext() {
         while (base.hasNext()) {
             if (filter.getBool(record)) {
                 return true;
             }
         }
 
-        return false;
-    }
-
-    private boolean filterIsConstant() {
-        if (filter.getBool(record)) {
-            return base.hasNext();
-        }
         return false;
     }
 

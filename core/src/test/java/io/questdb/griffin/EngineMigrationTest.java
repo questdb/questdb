@@ -24,12 +24,17 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -401,6 +406,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
         if (withColTopO3) {
             assertColTopsO3();
+            assertMissingPartitions();
         }
     }
 
@@ -423,13 +429,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_day",
+                "select distinct k from t_day order by k",
                 sink,
                 "k\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
                         "bbbbbb\n" +
-                        "\n"
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -492,13 +498,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_day_ooo",
+                "select distinct k from t_day_ooo order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
+                        "\n" +
                         "aaa\n" +
-                        "c\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -749,6 +755,38 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         );
     }
 
+    private void assertMissingPartitions() throws SqlException {
+        compile("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день_missing_parts where день = null", sink,
+                "x\tm\tts\tдень\n" +
+                        "6\tc\t1970-01-02T04:20:00.000000Z\tNaN\n" +
+                        "7\tb\t1970-01-02T09:53:20.000000Z\tNaN\n" +
+                        "8\t\t1970-01-02T15:26:40.000000Z\tNaN\n" +
+                        "9\t\t1970-01-02T21:00:00.000000Z\tNaN\n" +
+                        "10\tc\t1970-01-03T02:33:20.000000Z\tNaN\n" +
+                        "11\tb\t1970-01-03T08:06:40.000000Z\tNaN\n" +
+                        "12\tb\t1970-01-03T13:40:00.000000Z\tNaN\n" +
+                        "13\tb\t1970-01-03T19:13:20.000000Z\tNaN\n");
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день_missing_parts where день != null", sink,
+                "x\tm\tts\tдень\n" +
+                        "16\te\t1970-01-03T07:36:40.000000Z\t16\n" +
+                        "17\tf\t1970-01-03T08:10:00.000000Z\t17\n" +
+                        "18\te\t1970-01-03T08:43:20.000000Z\t18\n" +
+                        "19\t\t1970-01-03T09:16:40.000000Z\t19\n" +
+                        "20\te\t1970-01-03T09:50:00.000000Z\t20\n" +
+                        "21\td\t1970-01-03T10:23:20.000000Z\t21\n" +
+                        "22\td\t1970-01-03T10:56:40.000000Z\t22\n" +
+                        "23\tf\t1970-01-03T11:30:00.000000Z\t23\n" +
+                        "24\t\t1970-01-03T12:03:20.000000Z\t24\n" +
+                        "25\td\t1970-01-03T12:36:40.000000Z\t25\n" +
+                        "26\te\t1970-01-03T13:10:00.000000Z\t26\n" +
+                        "27\te\t1970-01-03T13:43:20.000000Z\t27\n" +
+                        "28\tf\t1970-01-03T14:16:40.000000Z\t28\n" +
+                        "29\te\t1970-01-03T14:50:00.000000Z\t29\n" +
+                        "30\td\t1970-01-03T15:23:20.000000Z\t30\n");
+    }
+
     private void assertMonth() throws SqlException {
         TestUtils.assertSql(
                 compiler,
@@ -769,13 +807,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_month",
+                "select distinct k from t_month order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -845,13 +883,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_month_ooo",
+                "select distinct k from t_month_ooo order by k",
                 sink,
                 "k\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
                         "bbbbbb\n" +
-                        "\n"
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -921,13 +959,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_none",
+                "select distinct k from t_none order by k",
                 sink,
                 "k\n" +
+                        "\n" +
                         "aaa\n" +
-                        "c\n" +
                         "bbbbbb\n" +
-                        "\n"
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -1005,13 +1043,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_none_nts",
+                "select distinct k from t_none_nts order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
         TestUtils.assertSql(
                 compiler,
@@ -1069,13 +1107,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_year",
+                "select distinct k from t_year order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
+                        "\n" +
                         "aaa\n" +
-                        "c\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -1144,13 +1182,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_year_ooo",
+                "select distinct k from t_year_ooo order by k",
                 sink,
                 "k\n" +
-                        "c\n" +
-                        "bbbbbb\n" +
+                        "\n" +
                         "aaa\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -1222,7 +1260,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3) throws IOException, SqlException {
         if (freeTableId) {
-            engine.freeTableId();
+            engine.getTableIdGenerator().close();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
@@ -1462,5 +1500,27 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         " from long_sequence(36)",
                 sqlExecutionContext
         );
+
+        Path from = Path.getThreadLocal(configuration.getRoot()).concat("t_col_top_день");
+        String copyTableWithMissingPartitions = "t_col_top_день_missing_parts";
+        Path to = Path.getThreadLocal2(configuration.getRoot()).concat(copyTableWithMissingPartitions);
+
+
+        TestUtils.copyDirectory(from.$(), to.$(), configuration.getMkDirMode());
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+        // Remove first partition
+        to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);
+        if (ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR).$()) != 0) {
+            throw CairoException.critical(ff.errno()).put("cannot remove ").put(to);
+        }
+
+        // Rename last partition from 1970-01-04 to 1970-01-04.4
+        from.of(configuration.getRoot()).concat(copyTableWithMissingPartitions).concat("1970-01-04");
+        to.trimTo(0).put(from).put(".4");
+
+        if (ff.rename(from.put(Files.SEPARATOR).$(), to.put(Files.SEPARATOR).$()) != Files.FILES_RENAME_OK) {
+            throw CairoException.critical(ff.errno()).put("cannot rename to ").put(to);
+        }
     }
 }

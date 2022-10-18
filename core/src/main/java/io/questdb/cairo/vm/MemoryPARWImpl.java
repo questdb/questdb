@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -37,6 +36,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
+//paged appendable readable writable
 public class MemoryPARWImpl implements MemoryARW {
     private static final Log LOG = LogFactory.getLog(MemoryPARWImpl.class);
     protected final LongList pages = new LongList(4, 0);
@@ -68,7 +68,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     protected MemoryPARWImpl() {
         maxPages = Integer.MAX_VALUE;
-        memoryTag = MemoryTag.NATIVE_DEFAULT;
+        memoryTag = MemoryTag.MMAP_DEFAULT;
     }
 
     @Override
@@ -78,11 +78,6 @@ public class MemoryPARWImpl implements MemoryARW {
 
     @Override
     public long appendAddressFor(long offset, long bytes) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
         throw new UnsupportedOperationException();
     }
 
@@ -311,11 +306,11 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public void putByte(byte b) {
+    public void putByte(byte value) {
         if (pageHi == appendPointer) {
             pageAt(getAppendOffset() + 1);
         }
-        Unsafe.getUnsafe().putByte(appendPointer++, b);
+        Unsafe.getUnsafe().putByte(appendPointer++, value);
     }
 
     @Override
@@ -369,14 +364,14 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public final void putLong128(long l1, long l2) {
+    public final void putLongLong(long l0, long l1) {
         if (pageHi - appendPointer > 15) {
-            Unsafe.getUnsafe().putLong(appendPointer, l1);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l2);
+            Unsafe.getUnsafe().putLong(appendPointer, l0);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l1);
             appendPointer += 16;
         } else {
+            putLong(l0);
             putLong(l1);
-            putLong(l2);
         }
     }
 
@@ -625,6 +620,7 @@ public class MemoryPARWImpl implements MemoryARW {
         Numbers.appendLong256(a, b, c, d, sink);
     }
 
+    @Override
     public void getLong256(long offset, Long256Acceptor sink) {
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
             sink.setAll(
@@ -687,11 +683,6 @@ public class MemoryPARWImpl implements MemoryARW {
         return (int) (offset >> extendSegmentMsb);
     }
 
-    @Override
-    public long getGrownLength() {
-        throw new UnsupportedOperationException();
-    }
-
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
         if (len == TableUtils.NULL_LEN) {
@@ -748,6 +739,10 @@ public class MemoryPARWImpl implements MemoryARW {
     private long computeHotPage(int page) {
         long pageAddress = getPageAddress(page);
         assert pageAddress > 0;
+        return computeHotPage(page, pageAddress);
+    }
+
+    private long computeHotPage(int page, long pageAddress) {
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + getPageSize() + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
@@ -896,22 +891,16 @@ public class MemoryPARWImpl implements MemoryARW {
         return value;
     }
 
-    private void jumpTo0(long offset) {
+    private long jumpTo0(long offset) {
         int page = pageIndex(offset);
-        pageLo = mapWritePage(page, offset);
+        long pageAddress = pageLo = mapWritePage(page, offset);
+
         pageHi = pageLo + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         appendPointer = pageLo + offsetInPage(offset);
         pageLo--;
-    }
 
-    private long mapRandomWritePage(long offset) {
-        int page = pageIndex(offset);
-        long pageAddress = mapWritePage(page, offset);
-        assert pageAddress != 0;
-        roOffsetLo = pageOffset(page) - 1;
-        roOffsetHi = roOffsetLo + getPageSize() + 1;
-        absolutePointer = pageAddress - roOffsetLo - 1;
+        computeHotPage(page, pageAddress);
         return pageAddress;
     }
 
@@ -973,7 +962,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     private void putByteRnd(long offset, byte value) {
-        Unsafe.getUnsafe().putByte(mapRandomWritePage(offset) + offsetInPage(offset), value);
+        Unsafe.getUnsafe().putByte(jumpTo0(offset) + offsetInPage(offset), value);
     }
 
     void putCharBytes(char value) {
@@ -1087,7 +1076,7 @@ public class MemoryPARWImpl implements MemoryARW {
                 offset += 2;
                 half++;
             } else {
-                mapRandomWritePage(offset);
+                jumpTo0(offset);
             }
 
             len -= half;
@@ -1222,11 +1211,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
-            try {
-                decode(hexString, start, end, inPageLong256Decoder);
-            } catch (NumericException e) {
-                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
-            }
+            decode(hexString, start, end, inPageLong256Decoder);
             appendPointer += Long256.BYTES;
         }
     }
@@ -1253,11 +1238,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
-            try {
-                decode(hexString, start, end, this);
-            } catch (NumericException e) {
-                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
-            }
+            decode(hexString, start, end, this);
         }
     }
 }

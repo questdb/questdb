@@ -24,13 +24,11 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 
 class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain chain;
@@ -38,18 +36,24 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain.TreeCursor chainCursor;
     private RecordCursor base;
     private Record baseRecord;
+    private boolean isOpen;
 
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
         this.comparator = comparator;
         // assign it once, it's the same instance anyway
         this.chainCursor = chain.getCursor();
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        chain.clear();
-        base.close();
+        if (isOpen) {
+            isOpen = false;
+            Misc.free(chain);
+            base = Misc.free(base);
+            baseRecord = null;
+        }
     }
 
     @Override
@@ -65,6 +69,11 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return base.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -93,14 +102,18 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
+        if (!isOpen) {
+            chain.reopen();
+            isOpen = true;
+        }
+
         this.base = base;
         this.baseRecord = base.getRecord();
         final Record placeHolderRecord = base.getRecordB();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
-        chain.clear();
         while (base.hasNext()) {
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
             // Tree chain is liable to re-position record to
             // other rows to do record comparison. We must use our
             // own record instance in case base cursor keeps

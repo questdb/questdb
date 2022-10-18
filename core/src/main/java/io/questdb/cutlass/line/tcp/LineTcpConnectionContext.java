@@ -29,18 +29,15 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
+import io.questdb.network.AbstractMutableIOContext;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.FloatingDirectCharSink;
 
-class LineTcpConnectionContext implements IOContext, Mutable {
+class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
@@ -49,10 +46,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser;
-    private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
     private final boolean disconnectOnError;
-    protected long fd;
-    protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
     protected long recvBufEnd;
     protected long recvBufPos;
@@ -67,8 +61,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.scheduler = scheduler;
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
-        this.parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
-        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
+        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
+        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
     }
@@ -83,24 +77,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     @Override
     public void close() {
         this.fd = -1;
-        Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
-        recvBufStart = recvBufEnd = recvBufPos = 0;
-        floatingDirectCharSink.close();
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public boolean invalid() {
-        return fd == -1;
-    }
-
-    @Override
-    public IODispatcher<LineTcpConnectionContext> getDispatcher() {
-        return dispatcher;
+        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -162,13 +139,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return parseMeasurements(netIoJob);
     }
 
-    LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
-        this.fd = clientFd;
-        this.dispatcher = dispatcher;
-        clear();
-        return this;
-    }
-
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
@@ -176,7 +146,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(netIoJob, parser, floatingDirectCharSink)) {
+                            if (scheduler.scheduleEvent(netIoJob, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();
@@ -184,11 +154,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                                 return IOContextResult.QUEUE_FULL;
                             }
                         } else {
-                            int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
-                            assert position >= 0;
-                            LOG.error().$('[').$(fd).$("] could not parse measurement, ").$(parser.getErrorCode()).$(" at ").$(position)
-                                    .$(", line (may be mangled due to partial parsing): '")
-                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'").$();
+                            logParseError();
                             goodMeasurement = true;
                         }
 
@@ -199,6 +165,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
                     case ERROR: {
                         if (disconnectOnError) {
+                            logParseError();
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
                         goodMeasurement = false;
@@ -221,25 +188,38 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
                 }
             } catch (CairoException ex) {
-                LOG.error().
-                        $('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                LOG.error()
+                        .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {
+                    logParseError();
                     return IOContextResult.NEEDS_DISCONNECT;
                 }
                 goodMeasurement = false;
             } catch (Throwable ex) {
-                LOG.error().
-                        $('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).
-                        $(", ex=").$(ex)
+                LOG.critical()
+                        .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                        .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
-                metrics.healthCheck().incrementUnhandledErrors();
+                metrics.health().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
+    }
+
+    private void logParseError() {
+        int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
+        assert position >= 0;
+        LOG.error()
+                .$('[').$(fd)
+                .$("] could not parse measurement, ").$(parser.getErrorCode())
+                .$(" at ").$(position)
+                .$(", line (may be mangled due to partial parsing): '")
+                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'")
+                .$();
     }
 
     private void startNewMeasurement() {

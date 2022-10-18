@@ -27,9 +27,9 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 
 /**
  * SortedLightRecordCursor implementing LIMIT clause .
@@ -47,20 +47,31 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final long skipFirst; //skip first N rows
     private final long skipLast;  //skip last N rows
     private long rowsLeft;
+    private boolean isOpen;
 
-    public LimitedSizeSortedLightRecordCursor(LimitedSizeLongTreeChain chain, RecordComparator comparator, long limit, long skipFirst, long skipLast) {
+    public LimitedSizeSortedLightRecordCursor(
+            LimitedSizeLongTreeChain chain,
+            RecordComparator comparator,
+            long limit,
+            long skipFirst,
+            long skipLast
+    ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
         this.limit = limit;
         this.skipFirst = skipFirst;
         this.skipLast = skipLast;
+        this.isOpen = true;
     }
 
     @Override
     public void close() {
-        chain.clear();
-        base.close();
+        if (isOpen) {
+            Misc.free(chain);
+            Misc.free(base);
+            isOpen = false;
+        }
     }
 
     @Override
@@ -76,6 +87,11 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return base.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -111,6 +127,10 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        if (!isOpen) {
+            chain.reopen();
+            isOpen = true;
+        }
         this.base = base;
         this.baseRecord = base.getRecord();
         final Record placeHolderRecord = base.getRecordB();
@@ -119,7 +139,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         chain.clear();
         if (limit != 0) {
             while (base.hasNext()) {
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 // Tree chain is liable to re-position record to
                 // other rows to do record comparison. We must use our
                 // own record instance in case base cursor keeps

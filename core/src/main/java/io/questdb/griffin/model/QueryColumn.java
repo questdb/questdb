@@ -27,10 +27,13 @@ package io.questdb.griffin.model;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
+import java.util.Objects;
+
 public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
     private ExpressionNode ast;
+    private boolean includeIntoWildcard = true;
 
     protected QueryColumn() {
     }
@@ -39,10 +42,15 @@ public class QueryColumn implements Mutable {
     public void clear() {
         alias = null;
         ast = null;
+        includeIntoWildcard = true;
     }
 
     public CharSequence getAlias() {
         return alias;
+    }
+
+    public void setAlias(CharSequence alias) {
+        this.alias = alias;
     }
 
     public ExpressionNode getAst() {
@@ -53,13 +61,31 @@ public class QueryColumn implements Mutable {
         return alias != null ? alias : ast.token;
     }
 
+    public boolean isIncludeIntoWildcard() {
+        return includeIntoWildcard;
+    }
+
     public QueryColumn of(CharSequence alias, ExpressionNode ast) {
+        return of(alias, ast, true);
+    }
+
+    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
         this.alias = alias;
         this.ast = ast;
+        this.includeIntoWildcard = includeIntoWildcard;
         return this;
     }
 
-    public void setAlias(CharSequence alias) {
-        this.alias = alias;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QueryColumn that = (QueryColumn) o;
+        return includeIntoWildcard == that.includeIntoWildcard && Objects.equals(alias, that.alias) && Objects.equals(ast, that.ast);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(alias, ast, includeIntoWildcard);
     }
 }

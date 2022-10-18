@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -51,10 +52,20 @@ public class DoubleColumn extends DoubleFunction implements ScalarFunction {
         return rec.getDouble(columnIndex);
     }
 
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
             COLUMNS.setQuick(i, new DoubleColumn(i));
         }
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("DoubleColumn(").put(columnIndex).put(')');
     }
 }

@@ -31,6 +31,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
 abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final DataFrameCursorFactory dataFrameCursorFactory;
@@ -41,8 +44,18 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    protected void _close() {
+        Misc.free(dataFrameCursorFactory);
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return dataFrameCursorFactory.supportTableRowId(tableName);
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
         try {
             return getCursorInstance(dataFrameCursor, executionContext);
         } catch (Throwable e) {

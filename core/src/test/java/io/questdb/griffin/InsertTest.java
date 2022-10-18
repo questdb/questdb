@@ -36,15 +36,9 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class InsertTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        bindVariableService.clear();
-    }
 
     @Test
     public void testGeoHash() throws Exception {
@@ -74,7 +68,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 for (int i = 0; i < 10_000; i++) {
                     bindVariableService.setGeoHash(0, rnd.nextGeoHashByte(6), ColumnType.getGeoHashTypeWithBits(6));
@@ -95,7 +89,7 @@ public class InsertTest extends AbstractGriffinTest {
                 while (cursor.hasNext()) {
                     Assert.assertEquals(rnd.nextGeoHashByte(6), record.getGeoByte(0));
                     Assert.assertEquals(rnd.nextGeoHashShort(12), record.getGeoShort(1));
-                    Assert.assertEquals(ColumnType.truncateGeoHashBits(rnd.nextGeoHashInt(29), 29, 27), record.getGeoInt(2));
+                    Assert.assertEquals(GeoHashes.widen(rnd.nextGeoHashInt(29), 29, 27), record.getGeoInt(2));
                     Assert.assertEquals(rnd.nextGeoHashLong(44), record.getGeoLong(3));
                 }
             }
@@ -253,9 +247,10 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
         assertInsertTimestamp(
-                "Invalid timestamp: 123456",
+                "seq\tts\n" +
+                        "1\t1970-01-01T00:00:00.123456Z\n",
                 "insert into tab select 1, '123456'",
-                "io.questdb.cairo.CairoException",
+                null,
                 false
         );
     }
@@ -267,9 +262,9 @@ public class InsertTest extends AbstractGriffinTest {
             sqlExecutionContext.getBindVariableService().setDouble("bal", 150.4);
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insertStatement = cq.getInsertStatement();
+            InsertOperation insertOperation = cq.getInsertOperation();
 
-            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
+            try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
             }
@@ -284,12 +279,12 @@ public class InsertTest extends AbstractGriffinTest {
 
             bindVariableService.setDouble("bal", 56.4);
 
-            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
+            try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
             }
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertOperation.getTableName())) {
                 TestUtils.assertReader("cust_id\tccy\tbalance\n" +
                         "1\tGBP\t150.4\n" +
                         "1\tGBP\t56.4\n", reader, sink);
@@ -304,11 +299,11 @@ public class InsertTest extends AbstractGriffinTest {
             try {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertStatement insertStatement = cq.getInsertStatement();
+                InsertOperation insertOperation = cq.getInsertOperation();
 
                 compile("alter table balances drop column ccy", sqlExecutionContext);
 
-                insertStatement.createMethod(sqlExecutionContext);
+                insertOperation.createMethod(sqlExecutionContext);
                 Assert.fail();
             } catch (WriterOutOfDateException ignored) {
             }
@@ -321,7 +316,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)", sqlExecutionContext);
             CompiledQuery cq = compiler.compile("INSERT INTO TS(field, value, timestamp) values('X',123.33, to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'))", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
@@ -374,9 +369,9 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColum2() throws Exception {
+    public void testInsertISOMilliWithTzDateStringTimestampColumn2() throws Exception {
         final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:30:00.000000Z\n";
+                "1\t2021-01-03T03:30:00.000000Z\n";
 
         assertInsertTimestamp(
                 expected,
@@ -387,11 +382,11 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
+    public void testInsertISOMilliWithTzDateStringTimestampColumnFails() throws Exception {
         assertInsertTimestamp(
-                "Invalid timestamp",
+                "inconvertible value: `2021-01-03T02:00:00-:30` [STRING -> TIMESTAMP]",
                 "insert into tab values (1, '2021-01-03T02:00:00-:30')",
-                "io.questdb.cairo.CairoException",
+                ImplicitCastException.class,
                 true
         );
     }
@@ -399,7 +394,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" +
-                "1\t2021-01-03T01:00:00.000000Z\n";
+                "1\t2021-01-02T23:00:00.000000Z\n";
 
         assertInsertTimestamp(
                 expected,
@@ -428,7 +423,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)", sqlExecutionContext);
             CompiledQuery cq = compiler.compile("INSERT INTO TS values(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'),'X',123.33d)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
@@ -458,9 +453,9 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertInvalidDateStringTimestampColumn() throws Exception {
         assertInsertTimestamp(
-                "Invalid timestamp: 2021-23-03T00:00:00Z",
+                "inconvertible value: `2021-23-03T00:00:00Z` [STRING -> TIMESTAMP]",
                 "insert into tab values (1, '2021-23-03T00:00:00Z')",
-                "io.questdb.cairo.CairoException",
+                ImplicitCastException.class,
                 true
         );
     }
@@ -485,7 +480,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
@@ -595,7 +590,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table ww (id int, sym symbol)", sqlExecutionContext);
             CompiledQuery cq = compiler.compile("insert into ww VALUES ( 2, 'A')", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
@@ -714,20 +709,20 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertWithWrongNominatedColumn() throws Exception {
+    public void testInsertWithWrongDesignatedColumn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "nominated column of existing table");
+                TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp of existing table");
             }
         });
     }
 
     @Test
-    public void testInsertWithoutNominatedTimestamp() throws Exception {
+    public void testInsertWithoutDesignatedTimestamp() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t1970-01-01T00:00:00.000000Z\n" +
                 "2\t1970-01-01T00:00:00.000001Z\n" +
@@ -754,7 +749,7 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertWithoutNominatedTimestampAndTypeDoesNotMatch() throws Exception {
+    public void testInsertWithoutDesignatedTimestampAndTypeDoesNotMatch() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
@@ -926,7 +921,7 @@ public class InsertTest extends AbstractGriffinTest {
             final String sql = "insert into trades VALUES (1262599200000000, $1), (3262599300000000, $2);";
             final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 bindVariableService.setStr(0, "USDJPY");
                 bindVariableService.setStr(1, "USDFJD");
@@ -947,7 +942,7 @@ public class InsertTest extends AbstractGriffinTest {
             final String sql = "insert into t VALUES (1262599200000000, $1), (3262599300000000, $2);";
             final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 bindVariableService.setInt(0, 1);
                 method.execute();
@@ -959,8 +954,51 @@ public class InsertTest extends AbstractGriffinTest {
             assertReader(expected, "t");
         });
     }
+
+    @Test
+    public void testInsertAsSelectTimestampNoOrder() throws Exception {
+        testInsertAsSelectWithOrderBy("");
+    }
+
+    @Test
+    public void testInsertAsSelectTimestampAscOrder() throws Exception {
+        testInsertAsSelectWithOrderBy("order by ts asc");
+    }
+
+    @Test
+    public void testInsertAsSelectTimestampDescOrder() throws Exception {
+        testInsertAsSelectWithOrderBy("order by ts desc");
+    }
+
+    private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
+            executeInsert("insert into src values (0, 0);");
+            executeInsert("insert into src values (10000, 1);");
+            executeInsert("insert into src values (20000, 2);");
+            executeInsert("insert into src values (30000, 3);");
+            executeInsert("insert into src values (40000, 4);");
+
+            compiler.compile("create table dest (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            compiler.compile("insert into dest select * from src where v % 2 = 0 " + orderByClause + ";", sqlExecutionContext);
+
+            String expected = "ts\tv\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\n" +
+                    "1970-01-01T00:00:00.020000Z\t2\n" +
+                    "1970-01-01T00:00:00.040000Z\t4\n";
+
+            assertQuery(
+                    expected,
+                    "dest",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
     
-    private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
+    private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert) throws Exception {
         if (commitInsert) {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
             try {
@@ -969,10 +1007,12 @@ public class InsertTest extends AbstractGriffinTest {
                     Assert.fail("SqlException expected");
                 }
                 assertSql("tab", expected);
-            } catch (CairoException e) {
-                if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
-                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+            } catch (Throwable e) {
+                if (exceptionType == null) {
+                    throw e;
+                }
+                Assert.assertSame(exceptionType, e.getClass());
+                TestUtils.assertContains(e.getMessage(), expected);
             }
         } else {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
@@ -982,10 +1022,10 @@ public class InsertTest extends AbstractGriffinTest {
                     Assert.fail("SqlException expected");
                 }
                 assertSql("tab", expected);
-            } catch (CairoException e) {
+            } catch (Throwable e) {
                 if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
-                TestUtils.assertContains(e.getFlyweightMessage(), expected);
+                Assert.assertSame(exceptionType, e.getClass());
+                TestUtils.assertContains(e.getMessage(), expected);
             }
         }
 
@@ -1001,7 +1041,7 @@ public class InsertTest extends AbstractGriffinTest {
                 assertSql("tab", expected);
             } catch (Throwable e) {
                 if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
+                Assert.assertSame(exceptionType, e.getClass());
                 TestUtils.assertContains(e.getMessage(), expected);
             }
         } else {
@@ -1013,8 +1053,9 @@ public class InsertTest extends AbstractGriffinTest {
                 }
                 assertSql("tab", expected);
             } catch (Throwable e) {
+                e.printStackTrace();
                 if (exceptionType == null) throw e;
-                Assert.assertEquals(exceptionType, e.getClass().getName());
+                Assert.assertSame(exceptionType, e.getClass());
                 TestUtils.assertContains(e.getMessage(), expected);
             }
         }
@@ -1105,7 +1146,7 @@ public class InsertTest extends AbstractGriffinTest {
             final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
 
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
+            InsertOperation insert = cq.getInsertOperation();
             try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                 for (int i = 0; i < 10_000; i++) {
                     bindVariableService.setInt(0, rnd.nextInt());

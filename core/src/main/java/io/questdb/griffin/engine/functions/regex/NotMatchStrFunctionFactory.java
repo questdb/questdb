@@ -88,5 +88,10 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
             CharSequence cs = getArg().getStr(rec);
             return cs == null || !matcher.reset(cs).find();
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
     }
 }

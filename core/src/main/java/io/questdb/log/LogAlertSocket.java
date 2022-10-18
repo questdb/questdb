@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -61,7 +60,7 @@ public class LogAlertSocket implements Closeable {
     private long inBufferPtr;
     private int alertHostsCount;
     private int alertHostIdx;
-    private long fdSocketAddress = -1; // tcp/ip host:port address
+    private long fdAddressInfo = -1; // tcp/ip host:port address
     private long fdSocket = -1;
     private String alertTargets; // host[:port](,host[:port])*
 
@@ -96,9 +95,9 @@ public class LogAlertSocket implements Closeable {
         this.defaultPort = defaultPort;
         parseAlertTargets();
         this.inBufferSize = inBufferSize;
-        this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_LOGGER);
         this.outBufferSize = outBufferSize;
-        this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);
         this.reconnectDelay = reconnectDelay;
     }
 
@@ -106,26 +105,30 @@ public class LogAlertSocket implements Closeable {
     public void close() {
         freeSocketAndAddress();
         if (outBufferPtr != 0) {
-            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_LOGGER);
             outBufferPtr = 0;
         }
         if (inBufferPtr != 0) {
-            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_LOGGER);
             inBufferPtr = 0;
         }
     }
 
     public void connect() {
-        fdSocketAddress = nf.sockaddr(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
-        fdSocket = nf.socketTcp(true);
-        if (fdSocket > -1) {
-            if (nf.connect(fdSocket, fdSocketAddress) != 0) {
-                logNetworkConnectError("Could not connect with");
+        fdAddressInfo = nf.getAddrInfo(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
+        if (fdAddressInfo == -1) {
+            logNetworkConnectError("Could not connect with");
+        } else {
+            fdSocket = nf.socketTcp(true);
+            if (fdSocket > -1) {
+                if (nf.connectAddrInfo(fdSocket, fdAddressInfo) != 0) {
+                    logNetworkConnectError("Could not connect with");
+                    freeSocketAndAddress();
+                }
+            } else {
+                logNetworkConnectError("Could create TCP socket with");
                 freeSocketAndAddress();
             }
-        } else {
-            logNetworkConnectError("Could create TCP socket with");
-            freeSocketAndAddress();
         }
     }
 
@@ -254,12 +257,12 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void freeSocketAndAddress() {
-        if (fdSocketAddress != -1) {
-            Net.freeSockAddr(fdSocketAddress);
-            fdSocketAddress = -1;
+        if (fdAddressInfo != -1) {
+            nf.freeAddrInfo(fdAddressInfo);
+            fdAddressInfo = -1;
         }
         if (fdSocket != -1) {
-            Net.close(fdSocket);
+            nf.close(fdSocket);
             fdSocket = -1;
         }
     }

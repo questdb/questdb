@@ -16,7 +16,8 @@ steps:
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      options: "compile -DskipTests -P build-web-console -Dhttp.keepAlive=false"
+      options:
+        "compile -DskipTests -P build-web-console  -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     condition:
       or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
@@ -59,7 +60,7 @@ steps:
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - bash: |
-      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_GRASH_LOG)"' \;
+      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/core/
     condition: failed()
@@ -67,7 +68,7 @@ steps:
     displayName: "Tests failed -- Upload crash logs"
     condition: failed()
     inputs:
-      pathToPublish: $(ARCHIVED_GRASH_LOG)
+      pathToPublish: $(ARCHIVED_CRASH_LOG)
       artifactName: CrashDump
   - task: ArchiveFiles@2
     displayName: "Tests failed -- Compress logs"

@@ -37,7 +37,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.charFileName;
+import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapWriter implements Closeable, MapWriter {
     public static final int HEADER_SIZE = 64;
@@ -73,14 +74,14 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             offsetFileName(path.trimTo(plen), name, columnNameTxn);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
-                throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
+                throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
             long len = ff.length(path);
             if (len < HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
-                throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
+                throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
 
             // open "offset" memory and make sure we start appending from where
@@ -124,7 +125,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // we use index hash maximum equals to half of symbol capacity, which
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
-            this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
+            this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
 
             if (useCache) {
                 this.cache = new CharSequenceIntHashMap(symbolCapacity);
@@ -175,7 +176,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     @Override
     public int put(CharSequence symbol) {
+        return put(symbol, valueCountCollector);
+    }
 
+    @Override
+    public int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector) {
         if (symbol == null) {
             if (!nullValue) {
                 nullValue = true;
@@ -186,9 +191,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
         if (cache != null) {
             int index = cache.keyIndex(symbol);
-            return index < 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol);
+            return index < 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol, valueCountCollector);
         }
-        return lookupAndPut(symbol);
+        return lookupAndPut(symbol, valueCountCollector);
     }
 
     @Override
@@ -214,7 +219,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
         offsetMem.putBool(HEADER_CACHE_ENABLED, isCached());
         nullValue = false;
-        updateNullFlag(nullValue);
+        updateNullFlag(false);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
         charMem.truncate();
         indexWriter.truncate();
@@ -244,7 +249,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
     }
 
-    private int lookupAndPut(CharSequence symbol) {
+    private int lookupAndPut(CharSequence symbol, SymbolValueCountCollector countCollector) {
         int hash = Hash.boundedHash(symbol, maxHash);
         RowCursor cursor = indexWriter.getCursor(hash);
         while (cursor.hasNext()) {
@@ -253,27 +258,51 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 return offsetToKey(offsetOffset);
             }
         }
-        return put0(symbol, hash);
+        return put0(symbol, hash, countCollector);
     }
 
-    private int lookupPutAndCache(int index, CharSequence symbol) {
+    private int lookupPutAndCache(int index, CharSequence symbol, SymbolValueCountCollector countCollector) {
         int result;
-        result = lookupAndPut(symbol);
+        result = lookupAndPut(symbol, countCollector);
         cache.putAt(index, symbol.toString(), result);
         return result;
     }
 
-    private int put0(CharSequence symbol, int hash) {
+    private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector) {
         long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         final int symIndex = offsetToKey(offsetOffset);
-        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
+        countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
     }
 
     @Override
     public void updateNullFlag(boolean flag) {
         offsetMem.putBool(HEADER_NULL_FLAG, flag);
+    }
+
+    public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
+        boolean remapped = false;
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            if (dst.put(src.valueOf(srcId)) != srcId) {
+                remapped = true;
+            }
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+        return remapped;
+    }
+
+    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
+        map.jumpTo(0);
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            map.putInt(dst.put(src.valueOf(srcId)));
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+    }
+
+    @Override
+    public boolean getNullFlag() {
+        return offsetMem.getBool(HEADER_NULL_FLAG);
     }
 }

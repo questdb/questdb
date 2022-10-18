@@ -25,15 +25,14 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -71,13 +70,19 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     @Override
     public void close() {
-        base.close();
+        Misc.free(base);
+        Misc.clearObjList(groupByFunctions);
         circuitBreaker = null;
     }
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return (SymbolTable) recordFunctions.getQuick(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
     }
 
     @Override
@@ -108,7 +113,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             tzOffset = rules.getOffset(timestamp);
             nextDstUTC = rules.getNextDST(timestamp);
         }
-
 
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
@@ -194,7 +198,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             if (timestamp < next) {
                 adjustDSTInFlight(timestamp - tzOffset);
                 GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
@@ -222,6 +226,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         @Override
         public long getTimestamp(Record rec) {
             return sampleLocalEpoch - tzOffset;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

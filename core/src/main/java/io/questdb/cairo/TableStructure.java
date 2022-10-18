@@ -27,17 +27,17 @@ package io.questdb.cairo;
 public interface TableStructure {
     int getColumnCount();
 
+    long getColumnHash(int columnIndex);
+
     CharSequence getColumnName(int columnIndex);
 
     int getColumnType(int columnIndex);
 
-    long getColumnHash(int columnIndex);
+    long getCommitLag();
 
     int getIndexBlockCapacity(int columnIndex);
 
-    boolean isIndexed(int columnIndex);
-
-    boolean isSequential(int columnIndex);
+    int getMaxUncommittedRows();
 
     int getPartitionBy();
 
@@ -49,7 +49,9 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
-    int getMaxUncommittedRows();
+    boolean isWallEnabled();
 
-    long getCommitLag();
+    boolean isIndexed(int columnIndex);
+
+    boolean isSequential(int columnIndex);
 }

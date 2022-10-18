@@ -110,6 +110,16 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
+    public long getLong128Hi(int col) {
+        return getFunction(col).getLong128Hi(base);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return getFunction(col).getLong128Lo(base);
+    }
+
+    @Override
     public Record getRecord(int col) {
         return getFunction(col).getRecord(base);
     }

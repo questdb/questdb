@@ -29,7 +29,10 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -57,11 +60,9 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
-    public void close() {
-        super.close();
-        if (filter != null) {
-            filter.close();
-        }
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
     }
 
     @Override

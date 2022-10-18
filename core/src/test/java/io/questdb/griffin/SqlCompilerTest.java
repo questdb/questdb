@@ -29,11 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
-import io.questdb.std.str.LPSZ;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -89,9 +85,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCannotCreateTable() throws Exception {
         assertFailure(
                 new FilesFacadeImpl() {
+                    int mkDirCount = 0;
+
                     @Override
-                    public int mkdirs(LPSZ path1, int mode) {
-                        return -1;
+                    public int mkdirs(Path path, int mode) {
+                        if (mkDirCount++ > 0) {
+                            return -1;
+                        }
+                        return super.mkdirs(path, mode);
                     }
                 },
                 "create table x (a int)",
@@ -283,28 +284,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastDateByte() throws SqlException {
-        assertCastDate("a\n" +
-                        "11\n" +
-                        "0\n" +
-                        "121\n" +
-                        "-2\n" +
-                        "0\n" +
-                        "-43\n" +
-                        "-124\n" +
-                        "100\n" +
-                        "0\n" +
-                        "124\n" +
-                        "0\n" +
-                        "-45\n" +
-                        "0\n" +
-                        "24\n" +
-                        "-16\n" +
-                        "58\n" +
-                        "0\n" +
-                        "-6\n" +
-                        "73\n" +
-                        "125\n",
-                ColumnType.BYTE);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.BYTE) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select cast(rnd_byte() as date) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.BYTE) + ")";
+
+        assertCast("a\n" +
+                        "76\n" +
+                        "102\n" +
+                        "27\n" +
+                        "87\n" +
+                        "79\n" +
+                        "79\n" +
+                        "122\n" +
+                        "83\n" +
+                        "90\n" +
+                        "76\n" +
+                        "84\n" +
+                        "84\n" +
+                        "74\n" +
+                        "55\n" +
+                        "83\n" +
+                        "88\n" +
+                        "32\n" +
+                        "21\n" +
+                        "91\n" +
+                        "74\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -361,28 +370,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastDateInt() throws SqlException {
-        assertCastDate("a\n" +
-                        "368100107\n" +
-                        "0\n" +
-                        "-1322920583\n" +
-                        "315036158\n" +
-                        "0\n" +
-                        "925824213\n" +
-                        "848878212\n" +
-                        "1466216804\n" +
-                        "0\n" +
-                        "74798204\n" +
-                        "0\n" +
-                        "779467987\n" +
-                        "0\n" +
-                        "-222350568\n" +
-                        "-747511056\n" +
-                        "-2058822342\n" +
-                        "0\n" +
-                        "480456698\n" +
-                        "2102580553\n" +
-                        "637210493\n",
-                ColumnType.INT);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.INT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select cast(rnd_int() as date) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
+
+        assertCast("a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -413,54 +430,65 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastDateShort() throws SqlException {
-        assertCastDate("a\n" +
-                        "-15605\n" +
-                        "0\n" +
-                        "-10887\n" +
-                        "4606\n" +
-                        "0\n" +
-                        "-2859\n" +
-                        "-9596\n" +
-                        "-20124\n" +
-                        "0\n" +
-                        "21628\n" +
-                        "0\n" +
-                        "-17197\n" +
-                        "0\n" +
-                        "13080\n" +
-                        "-7440\n" +
-                        "-8902\n" +
-                        "0\n" +
-                        "12282\n" +
-                        "-10935\n" +
-                        "3965\n",
-                ColumnType.SHORT);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.SHORT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select cast(rnd_short() as date) a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.SHORT) + ")";
+
+        assertCast(
+                "a\n" +
+                        "-27056\n" +
+                        "24814\n" +
+                        "-11455\n" +
+                        "-13027\n" +
+                        "-21227\n" +
+                        "-22955\n" +
+                        "-1398\n" +
+                        "21015\n" +
+                        "30202\n" +
+                        "-19496\n" +
+                        "-14644\n" +
+                        "-5356\n" +
+                        "-4914\n" +
+                        "-24335\n" +
+                        "-32679\n" +
+                        "-19832\n" +
+                        "-31548\n" +
+                        "11665\n" +
+                        "7739\n" +
+                        "23922\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
     public void testCastDateTimestamp() throws SqlException {
-        assertCastDate("a\n" +
-                        "1970-01-17T12:11:37.242379Z\n" +
+        assertCastDate(
+                "a\n" +
+                        "2015-03-14T01:40:42.379000Z\n" +
                         "\n" +
-                        "1970-01-17T17:41:21.058169Z\n" +
-                        "1970-01-17T14:33:54.113022Z\n" +
+                        "2015-10-29T01:10:58.169000Z\n" +
+                        "2015-06-20T21:01:53.022000Z\n" +
                         "\n" +
-                        "1970-01-17T15:55:39.868373Z\n" +
-                        "1970-01-17T17:05:57.889668Z\n" +
-                        "1970-01-17T16:04:40.260964Z\n" +
+                        "2015-08-16T15:44:28.373000Z\n" +
+                        "2015-10-04T11:24:49.668000Z\n" +
+                        "2015-08-22T21:51:00.964000Z\n" +
                         "\n" +
-                        "1970-01-17T16:53:03.809660Z\n" +
+                        "2015-09-25T12:23:29.660000Z\n" +
                         "\n" +
-                        "1970-01-17T14:41:38.544851Z\n" +
+                        "2015-06-26T06:02:24.851000Z\n" +
                         "\n" +
-                        "1970-01-17T17:59:41.628184Z\n" +
-                        "1970-01-17T16:39:21.500400Z\n" +
-                        "1970-01-17T12:42:45.287226Z\n" +
+                        "2015-11-10T18:53:48.184000Z\n" +
+                        "2015-09-15T23:58:20.400000Z\n" +
+                        "2015-04-04T16:34:47.226000Z\n" +
                         "\n" +
-                        "1970-01-17T14:36:39.533562Z\n" +
-                        "1970-01-17T11:28:56.755529Z\n" +
-                        "1970-01-17T12:16:06.352765Z\n",
-                ColumnType.TIMESTAMP);
+                        "2015-06-22T18:58:53.562000Z\n" +
+                        "2015-02-12T10:25:55.529000Z\n" +
+                        "2015-03-17T04:25:52.765000Z\n",
+                ColumnType.TIMESTAMP
+        );
     }
 
     @Test
@@ -501,14 +529,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.034Z\n" +
                         "1970-01-01T00:00:00.076Z\n" +
                         "1970-01-01T00:00:00.042Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.072Z\n" +
                         "1970-01-01T00:00:00.042Z\n" +
                         "1970-01-01T00:00:00.070Z\n" +
                         "1970-01-01T00:00:00.038Z\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.032Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.097Z\n" +
                         "1970-01-01T00:00:00.024Z\n" +
                         "1970-01-01T00:00:00.063Z\n",
@@ -553,14 +581,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "34\n" +
                         "76\n" +
                         "42\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "42\n" +
                         "70\n" +
                         "38\n" +
                         "0\n" +
                         "32\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "97\n" +
                         "24\n" +
                         "63\n",
@@ -579,18 +607,19 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "34\n" +
                         "76\n" +
                         "42\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "42\n" +
                         "70\n" +
                         "38\n" +
                         "0\n" +
                         "32\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "97\n" +
                         "24\n" +
                         "63\n",
-                ColumnType.LONG);
+                ColumnType.LONG
+        );
     }
 
     @Test
@@ -631,14 +660,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000034Z\n" +
                         "1970-01-01T00:00:00.000076Z\n" +
                         "1970-01-01T00:00:00.000042Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000072Z\n" +
                         "1970-01-01T00:00:00.000042Z\n" +
                         "1970-01-01T00:00:00.000070Z\n" +
                         "1970-01-01T00:00:00.000038Z\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000032Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000097Z\n" +
                         "1970-01-01T00:00:00.000024Z\n" +
                         "1970-01-01T00:00:00.000063Z\n",
@@ -675,22 +704,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatDate() throws SqlException {
         assertCastFloat("a\n" +
                         "1970-01-01T00:00:00.080Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.008Z\n" +
                         "1970-01-01T00:00:00.029Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.093Z\n" +
                         "1970-01-01T00:00:00.013Z\n" +
                         "1970-01-01T00:00:00.079Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.022Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.034Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.076Z\n" +
                         "1970-01-01T00:00:00.052Z\n" +
                         "1970-01-01T00:00:00.055Z\n" +
-                        "1970-01-01T00:00:00.000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.072Z\n" +
                         "1970-01-01T00:00:00.062Z\n" +
                         "1970-01-01T00:00:00.066Z\n",
@@ -727,22 +756,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatInt() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "8\n" +
                         "29\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "93\n" +
                         "13\n" +
                         "79\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "22\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "34\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "76\n" +
                         "52\n" +
                         "55\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "62\n" +
                         "66\n",
@@ -753,22 +782,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatLong() throws SqlException {
         assertCastFloat("a\n" +
                         "80\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "8\n" +
                         "29\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "93\n" +
                         "13\n" +
                         "79\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "22\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "34\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "76\n" +
                         "52\n" +
                         "55\n" +
-                        "0\n" +
+                        "NaN\n" +
                         "72\n" +
                         "62\n" +
                         "66\n",
@@ -805,22 +834,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastFloatTimestamp() throws SqlException {
         assertCastFloat("a\n" +
                         "1970-01-01T00:00:00.000080Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
                         "1970-01-01T00:00:00.000029Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000093Z\n" +
                         "1970-01-01T00:00:00.000013Z\n" +
                         "1970-01-01T00:00:00.000079Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000022Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000034Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000076Z\n" +
                         "1970-01-01T00:00:00.000052Z\n" +
                         "1970-01-01T00:00:00.000055Z\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000072Z\n" +
                         "1970-01-01T00:00:00.000062Z\n" +
                         "1970-01-01T00:00:00.000066Z\n",
@@ -1422,28 +1451,37 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastTimestampByte() throws SqlException {
-        assertCastTimestamp("a\n" +
-                        "89\n" +
-                        "0\n" +
-                        "-19\n" +
-                        "-99\n" +
-                        "0\n" +
-                        "-102\n" +
-                        "86\n" +
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.BYTE) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select rnd_byte()::timestamp a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.BYTE) + ")";
+
+        assertCast(
+                "a\n" +
+                        "76\n" +
+                        "102\n" +
+                        "27\n" +
+                        "87\n" +
+                        "79\n" +
+                        "79\n" +
+                        "122\n" +
                         "83\n" +
-                        "0\n" +
-                        "30\n" +
-                        "0\n" +
-                        "-128\n" +
-                        "0\n" +
-                        "-115\n" +
-                        "-106\n" +
-                        "-76\n" +
-                        "0\n" +
-                        "25\n" +
-                        "30\n" +
-                        "-69\n",
-                ColumnType.BYTE);
+                        "90\n" +
+                        "76\n" +
+                        "84\n" +
+                        "84\n" +
+                        "74\n" +
+                        "55\n" +
+                        "83\n" +
+                        "88\n" +
+                        "32\n" +
+                        "21\n" +
+                        "91\n" +
+                        "74\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -1526,28 +1564,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastTimestampInt() throws SqlException {
-        assertCastTimestamp("a\n" +
-                        "1929150553\n" +
-                        "0\n" +
-                        "-1662833171\n" +
-                        "-1181550947\n" +
-                        "0\n" +
-                        "1427946650\n" +
-                        "-1020695722\n" +
-                        "1860812627\n" +
-                        "0\n" +
-                        "1532714782\n" +
-                        "0\n" +
-                        "-1596883072\n" +
-                        "0\n" +
-                        "2141839757\n" +
-                        "765393046\n" +
-                        "-264666444\n" +
-                        "0\n" +
-                        "333923609\n" +
-                        "-959951586\n" +
-                        "237646267\n",
-                ColumnType.INT);
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.INT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select rnd_int()::timestamp a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.INT) + ")";
+
+        assertCast("a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -1578,28 +1624,37 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCastTimestampShort() throws SqlException {
-        assertCastTimestamp("a\n" +
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(ColumnType.SHORT) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from (select rnd_short()::timestamp a from long_sequence(20))" +
+                "), cast(a as " + ColumnType.nameOf(ColumnType.SHORT) + ")";
+
+        assertCast(
+                "a\n" +
+                        "-27056\n" +
+                        "24814\n" +
+                        "-11455\n" +
+                        "-13027\n" +
+                        "-21227\n" +
+                        "-22955\n" +
+                        "-1398\n" +
+                        "21015\n" +
+                        "30202\n" +
+                        "-19496\n" +
+                        "-14644\n" +
+                        "-5356\n" +
+                        "-4914\n" +
+                        "-24335\n" +
                         "-32679\n" +
-                        "0\n" +
-                        "11757\n" +
-                        "-2403\n" +
-                        "0\n" +
-                        "-17254\n" +
-                        "27478\n" +
-                        "-16557\n" +
-                        "0\n" +
-                        "24350\n" +
-                        "0\n" +
-                        "32640\n" +
-                        "0\n" +
-                        "-7795\n" +
-                        "-1898\n" +
-                        "-32076\n" +
-                        "0\n" +
-                        "17689\n" +
-                        "19742\n" +
-                        "12731\n",
-                ColumnType.SHORT);
+                        "-19832\n" +
+                        "-31548\n" +
+                        "11665\n" +
+                        "7739\n" +
+                        "23922\n",
+                expectedMeta,
+                sql
+        );
     }
 
     @Test
@@ -1681,9 +1736,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCompileStatementsBatch() throws Exception {
         String query = "SELECT pg_advisory_unlock_all(); CLOSE ALL;";
 
-        assertMemoryLeak(()-> {
-            compiler.compileBatch(query, sqlExecutionContext, null);
-        });
+        assertMemoryLeak(() -> compiler.compileBatch(query, sqlExecutionContext, null));
     }
 
     @Test
@@ -1886,18 +1939,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table geohash (geohash geohash(1c))",
                 null,
                 "insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
                 "geohash\n" +
                         "q\n" +
-                        "\n" +
-                        "\n" +
+                        "q\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
                         "e\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n",
+                        "q\n" +
+                        "u\n",
                 true,
                 true,
                 true
@@ -1912,18 +1965,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table geohash (geohash geohash(4b))",
                 null,
                 "insert into geohash " +
-                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
                 "geohash\n" +
                         "1011\n" +
-                        "\n" +
-                        "\n" +
+                        "1011\n" +
                         "1101\n" +
-                        "1101\n" +
-                        "\n" +
+                        "0110\n" +
+                        "0110\n" +
+                        "0110\n" +
                         "0110\n" +
                         "1101\n" +
-                        "1101\n" +
-                        "\n",
+                        "1011\n" +
+                        "1101\n",
                 true,
                 true,
                 true
@@ -1960,18 +2013,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table geohash (geohash geohash(1c))",
                 null,
                 "insert into geohash " +
-                        "select rnd_str('q','u','e','o','l') from long_sequence(10)",
+                        "select rnd_str('q','u','e') from long_sequence(10)",
                 "geohash\n" +
                         "q\n" +
-                        "\n" +
-                        "\n" +
+                        "q\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
                         "e\n" +
                         "u\n" +
-                        "u\n" +
-                        "\n",
+                        "q\n" +
+                        "u\n",
                 true,
                 true,
                 true
@@ -2148,7 +2201,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
-                if (mapCount++ > 2) {
+                if (mapCount++ > 6) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -2617,6 +2670,56 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             assertSql("select * from x where \"#0101a\" = '#1234'", "#0101a\n" +
                     "#1234\n" +
                     "#1234\n");
+        });
+    }
+
+    @Test
+    public void testRebuildIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)", sqlExecutionContext);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            compile("reindex table rebuild_index column sym lock exclusive");
+            assertSql("select * from rebuild_index where sym = '1'", "sym\tx\n" +
+                    "1\t1\n" +
+                    "1\t10\n" +
+                    "1\t11\n" +
+                    "1\t12\n");
+        });
+    }
+
+    @Test
+    public void testRebuildIndexWritersLock() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)", sqlExecutionContext);
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (TableWriter ignore = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "rebuild_index", "test")) {
+                compile("reindex table rebuild_index column sym lock exclusive");
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot lock table");
+            }
+        });
+    }
+
+    @Test
+    public void testRebuildIndexInPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (" +
+                    "select rnd_symbol('1', '2', '33', '44') sym, x, timestamp_sequence(0, 12*60*60*1000000L) ts " +
+                    "from long_sequence(15)" +
+                    "), index(sym) timestamp(ts)", sqlExecutionContext);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
+            assertSql("select * from rebuild_index where sym = '1'",
+                    "sym\tx\tts\n" +
+                    "1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "1\t10\t1970-01-05T12:00:00.000000Z\n" +
+                    "1\t11\t1970-01-06T00:00:00.000000Z\n" +
+                    "1\t12\t1970-01-06T12:00:00.000000Z\n");
         });
     }
 
@@ -3098,6 +3201,76 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectDuplicateColumn() throws Exception {
+        compiler.compile(
+                "CREATE TABLE tab (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+
+        engine.releaseAllWriters();
+
+        assertFailure(21, "Duplicate column [name=X]",
+                "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )");
+    }
+
+    @Test
+    public void testInsertAsSelectDuplicateColumnNonAscii() throws Exception {
+        compiler.compile(
+                "CREATE TABLE tabula (" +
+                        "  ts TIMESTAMP, " +
+                        "  龜 INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+
+        engine.releaseAllWriters();
+
+        assertFailure(24, "Duplicate column [name=龜]",
+                "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )");
+    }
+
+    @Test
+    public void testJoinWithDuplicateColumns() throws Exception {
+        compiler.compile(
+                "CREATE TABLE t1 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        compiler.compile(
+                "CREATE TABLE t2 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        compiler.compile("INSERT INTO t1(ts, x) VALUES (1, 1)", sqlExecutionContext);
+        compiler.compile("INSERT INTO t2(ts, x) VALUES (1, 2)", sqlExecutionContext);
+        engine.releaseInactive();
+
+        // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
+        // 2.- then it finds column t1.ts with no explicit alias, so it attempts to give it what it finds after the dot,
+        //     but alas that alias is taken, so it fabricates alias ts1
+        // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
+        //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
+        assertFailure(35, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+
+        // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
+        // t2.ts as ts1 which produces the error
+        assertFailure(29, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*,  t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertFailure(29, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*,  t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertFailure(29, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*,  t2.ts ts1 from t1 asof join (select * from t2) t2;");
+    }
+
+    @Test
     public void testInsertAsSelectConvertibleList2() throws Exception {
         testInsertAsSelect("a\tb\tn\n" +
                         "SBEOUOJSH\t-2144581835\t\n" +
@@ -3139,12 +3312,27 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "x");
     }
 
-    public void testInsertAsSelectError(CharSequence ddl, CharSequence insert, int errorPosition, CharSequence errorMessage) throws Exception {
+    public void testInsertAsSelectError(
+            CharSequence ddl,
+            CharSequence insert,
+            int errorPosition,
+            CharSequence errorMessage
+    ) throws Exception {
+        testInsertAsSelectError(ddl, insert, errorPosition, errorMessage, SqlException.class);
+    }
+
+    public void testInsertAsSelectError(
+            CharSequence ddl,
+            CharSequence insert,
+            int errorPosition,
+            CharSequence errorMessage,
+            Class<?> exception
+    ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
-            assertFailure0(errorPosition, errorMessage, insert);
+            assertFailure0(errorPosition, errorMessage, insert, exception);
         });
     }
 
@@ -3173,12 +3361,17 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertible2() throws Exception {
-        testInsertAsSelectError("create table x (a INT, b BYTE)",
+        testInsertAsSelectError(
+                "create table x (a INT, b BYTE)",
                 "insert into x " +
                         "select" +
                         " rnd_int()," +
                         " rnd_char()" +
-                        " from long_sequence(30)", 32, "inconvertible types");
+                        " from long_sequence(30)",
+                -1,
+                "inconvertible value: T [CHAR -> BYTE]",
+                ImplicitCastException.class
+        );
     }
 
     @Test
@@ -3193,22 +3386,32 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList2() throws Exception {
-        testInsertAsSelectError("create table x (a BYTE, b INT, n TIMESTAMP)",
+        testInsertAsSelectError(
+                "create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
                         " rnd_char()" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)",
+                -1,
+                "inconvertible value: T [CHAR -> BYTE]",
+                ImplicitCastException.class
+        );
     }
 
     @Test
     public void testInsertAsSelectInconvertibleList3() throws Exception {
-        testInsertAsSelectError("create table x (a BYTE, b INT, n TIMESTAMP)",
+        testInsertAsSelectError(
+                "create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
                         " rnd_char()" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)",
+                -1,
+                "inconvertible value: T [CHAR -> BYTE]",
+                ImplicitCastException.class
+        );
     }
 
     @Test
@@ -3223,12 +3426,17 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList5() throws Exception {
-        testInsertAsSelectError("create table x (a FLOAT, b INT, n TIMESTAMP)",
+        testInsertAsSelectError(
+                "create table x (a FLOAT, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
                         " rnd_str(5,5,0)" +
-                        " from long_sequence(30)", 17, "inconvertible types");
+                        " from long_sequence(30)",
+                -1,
+                "inconvertible value: `JWCPS` [STRING -> FLOAT]",
+                ImplicitCastException.class
+        );
     }
 
     @Test
@@ -3255,7 +3463,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ > 12) {
+                if (inError.get() && pageCount++ > 14) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -3314,11 +3522,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                     compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
                     compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
-                    compiler.compile("insert into x select * from y", sqlExecutionContext);
+                    // we need to pass the engine here, so the global test context won't do
+                    compiler.compile("insert into x select * from y", AllowAllSqlSecurityContext.instance(engine));
 
                     TestUtils.assertSql(
                             compiler,
-                            sqlExecutionContext,
+                            // we need to pass the engine here, so the global test context won't do
+                            AllowAllSqlSecurityContext.instance(engine),
                             "select * from x",
                             sink,
                             expected
@@ -3336,7 +3546,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "select" +
                 " rnd_double(2)," +
                 " timestamp_sequence(0, 1000000000)" +
-                " from long_sequence(30)", 12, "table 'x' does not exist");
+                " from long_sequence(30)", 12, "table does not exist [table=x]");
     }
 
     @Test
@@ -3353,7 +3563,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ == 13) {
+                if (inError.get() && pageCount++ == 15) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -3516,8 +3726,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid timestamp:");
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `2020-01-10T18:00:01.800Zz` [STRING -> TIMESTAMP]");
             }
 
             assertSql(
@@ -3664,6 +3874,85 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testReindexSyntaxError() throws Exception {
+        assertFailure(
+                "REINDEX TABLE xxx",
+                "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2)",
+                "REINDEX TABLE xxx".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx COLUMN sym2",
+                null,
+                "REINDEX TABLE xxx COLUMN sym2".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx LOCK",
+                null,
+                "REINDEX TABLE xxx LOCK".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx PARTITION '1234''",
+                null,
+                "REINDEX TABLE xxx PARTITION '1234''".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX xxx PARTITION '1234''",
+                null,
+                "REINDEX ".length(),
+                "TABLE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE ",
+                null,
+                "REINDEX TABLE ".length(),
+                "table name expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice",
+                null,
+                "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice".length(),
+                "EOF expecte"
+        );
+    }
+
+    @Test
+    public void testReindexSyntaxCheckSemicolon() throws Exception {
+        assertMemoryLeak(() -> {
+                    compile(
+                            "create table xxx as (" +
+                                    "select " +
+                                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                                    "rnd_symbol(4,4,4,2) as sym2," +
+                                    "x," +
+                                    "timestamp_sequence(0, 100000000) ts " +
+                                    "from long_sequence(10000)" +
+                                    "), index(sym1), index(sym2)");
+
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    compile("REINDEX TABLE \"xxx\" Lock exclusive;");
+                }
+        );
+    }
+
+    @Test
     public void testRndSymbolEmptyArgs() throws Exception {
         assertFailure(7, "function rnd_symbol expects arguments but has none",
                 "select rnd_symbol() from long_sequence(1)");
@@ -3763,6 +4052,32 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testDeallocateMissingStatementName() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("DEALLOCATE", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(10, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "statement name expected");
+            }
+        });
+    }
+
+    @Test
+    public void testDeallocateMultipleStatementNames() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("deallocate foo bar", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(15, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bar]");
+            }
+        });
     }
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException {
@@ -4034,16 +4349,24 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     protected void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) throws Exception {
-        assertMemoryLeak(() -> assertFailure0(position, expectedMessage, sql));
+        assertMemoryLeak(() -> assertFailure0(position, expectedMessage, sql, SqlException.class));
     }
 
-    private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql) {
+    private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql, Class<?> exception) {
         try {
             compiler.compile(sql, sqlExecutionContext);
             Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        } catch (Throwable e) {
+            Assert.assertSame(exception, e.getClass());
+            if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer)e).getFlyweightMessage(), expectedMessage);
+                if (position != -1) {
+                    Assert.assertSame(SqlException.class, e.getClass());
+                    Assert.assertEquals(position, ((SqlException)e).getPosition());
+                }
+            } else {
+                Assert.fail();
+            }
         }
     }
 

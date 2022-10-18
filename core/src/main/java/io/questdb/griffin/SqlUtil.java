@@ -24,14 +24,45 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.fastdouble.FastFloatParser;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
+    private static final DateFormat[] DATE_FORMATS;
+    private static final int DATE_FORMATS_SIZE;
+    private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
+    private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
+
+    public static void addSelectStar(
+            QueryModel model,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) throws SqlException {
+        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
+        model.setArtificialStar(true);
+    }
+
+    // used by Copier assembler
+    @SuppressWarnings("unused")
+    public static long dateToTimestamp(long millis) {
+        return millis != Numbers.LONG_NaN ? millis * 1000L : millis;
+    }
 
     /**
      * Fetches next non-whitespace token that's not part of single or multiline comment.
@@ -72,6 +103,399 @@ public class SqlUtil {
             }
         }
         return null;
+    }
+
+    public static byte implicitCastAsByte(long value, int fromType) {
+        if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
+            return (byte) value;
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.BYTE);
+    }
+
+    public static char implicitCastAsChar(long value, int fromType) {
+        if (value >= 0 && value <= 9) {
+            return (char) (value + '0');
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.CHAR);
+    }
+
+    public static float implicitCastAsFloat(double value, int fromType) {
+        if ((value >= Float.MIN_VALUE && value <= Float.MAX_VALUE) || Double.isNaN(value)) {
+            return (float) value;
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.FLOAT);
+    }
+
+    public static int implicitCastAsInt(long value, int fromType) {
+        if (value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
+            return (int) value;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.INT);
+    }
+
+    public static short implicitCastAsShort(long value, int fromType) {
+        if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
+            return (short) value;
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.SHORT);
+    }
+
+    // used by bytecode assembler
+    @SuppressWarnings("unused")
+    public static byte implicitCastCharAsByte(char value, int toType) {
+        return implicitCastCharAsType(value, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // used by copier bytecode assembler
+    public static byte implicitCastCharAsGeoHash(char value, int toType) {
+        int v;
+        // '0' .. '9' and 'A-Z', excl 'A', 'I', 'L', 'O'
+        if ((value >= '0' && value <= '9') || ((v = value | 32) > 'a' && v <= 'z' && v != 'i' && v != 'l' && v != 'o')) {
+            int toBits = ColumnType.getGeoHashBits(toType);
+            if (toBits < 5) {
+                // widening
+                return (byte) GeoHashes.widen(GeoHashes.encodeChar(value), 5, toBits);
+            }
+
+            if (toBits == 5) {
+                return GeoHashes.encodeChar(value);
+            }
+        }
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);
+    }
+
+    public static byte implicitCastCharAsType(char value, int toType) {
+        byte v = (byte) (value - '0');
+        if (v > -1 && v < 10) {
+            return v;
+        }
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastDoubleAsByte(double value) {
+        if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
+            return (byte) value;
+        }
+
+        if (Double.isNaN(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastDoubleAsFloat(double value) {
+        final double d = Math.abs(value);
+        if ((d >= Float.MIN_VALUE && d <= Float.MAX_VALUE) || (Double.isNaN(value) || Double.isInfinite(value) || d == 0.0)) {
+            return (float) value;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.FLOAT);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static int implicitCastDoubleAsInt(double value) {
+        if (Double.isNaN(value)) {
+            return Numbers.INT_NaN;
+        }
+        return implicitCastAsInt((long) value, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastDoubleAsLong(double value) {
+        if (value > Long.MIN_VALUE && value <= Long.MAX_VALUE) {
+            return (long) value;
+        }
+
+        if (Double.isNaN(value)) {
+            return Numbers.LONG_NaN;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastDoubleAsShort(double value) {
+        if (Double.isNaN(value)) {
+            return 0;
+        }
+        return implicitCastAsShort((long) value, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastFloatAsByte(float value) {
+        if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
+            return (byte) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static int implicitCastFloatAsInt(float value) {
+        if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
+            return (int) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return Numbers.INT_NaN;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.INT);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastFloatAsLong(float value) {
+        if (value > Long.MIN_VALUE && value <= Long.MAX_VALUE) {
+            return (long) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return Numbers.LONG_NaN;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.LONG);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastFloatAsShort(float value) {
+        if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
+            return (short) value;
+        }
+
+        if (Float.isNaN(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.SHORT);
+    }
+
+    public static long implicitCastGeoHashAsGeoHash(long value, int fromType, int toType) {
+        final int fromBits = ColumnType.getGeoHashBits(fromType);
+        final int toBits = ColumnType.getGeoHashBits(toType);
+        assert fromBits >= toBits;
+        return GeoHashes.widen(value, fromBits, toBits);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastIntAsByte(int value) {
+        if (value != Numbers.INT_NaN) {
+            return implicitCastAsByte(value, ColumnType.INT);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastIntAsShort(int value) {
+        if (value != Numbers.INT_NaN) {
+            return implicitCastAsShort(value, ColumnType.INT);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastLongAsByte(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return implicitCastAsByte(value, ColumnType.LONG);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static int implicitCastLongAsInt(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return implicitCastAsInt(value, ColumnType.LONG);
+        }
+        return Numbers.INT_NaN;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static short implicitCastLongAsShort(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return implicitCastAsShort(value, ColumnType.LONG);
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static byte implicitCastShortAsByte(short value) {
+        return implicitCastAsByte(value, ColumnType.SHORT);
+    }
+
+    public static byte implicitCastStrAsByte(CharSequence value) {
+        if (value != null) {
+            try {
+                int res = Numbers.parseInt(value);
+                if (res >= Byte.MIN_VALUE && res <= Byte.MAX_VALUE) {
+                    return (byte) res;
+                }
+            } catch (NumericException ignore) {
+            }
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.BYTE);
+        }
+        return 0;
+    }
+
+    public static char implicitCastStrAsChar(CharSequence value) {
+        if (value == null || value.length() == 0) {
+            return 0;
+        }
+
+        if (value.length() == 1) {
+            return value.charAt(0);
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);
+    }
+
+    public static long implicitCastStrAsDate(CharSequence value) {
+        if (value != null) {
+            final int hi = value.length();
+            for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
+                try {
+                    return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.enLocale);
+                } catch (NumericException ignore) {
+                }
+            }
+            try {
+                return Numbers.parseLong(value, 0, hi);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);
+            }
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    public static double implicitCastStrAsDouble(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseDouble(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DOUBLE);
+            }
+        }
+        return Double.NaN;
+    }
+
+    public static float implicitCastStrAsFloat(CharSequence value) {
+        if (value != null) {
+            try {
+                return FastFloatParser.parseFloat(value, 0, value.length(), true);
+            } catch (NumericException ignored) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.FLOAT);
+            }
+        }
+        return Float.NaN;
+    }
+
+    public static int implicitCastStrAsInt(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.INT);
+            }
+        }
+        return Numbers.INT_NaN;
+    }
+
+    public static long implicitCastStrAsLong(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.LONG);
+            }
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
+        if (value != null) {
+            Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+        } else {
+            long256Acceptor.setAll(
+                    Long256Impl.NULL_LONG256.getLong0(),
+                    Long256Impl.NULL_LONG256.getLong1(),
+                    Long256Impl.NULL_LONG256.getLong2(),
+                    Long256Impl.NULL_LONG256.getLong3()
+            );
+        }
+    }
+
+    public static short implicitCastStrAsShort(@Nullable CharSequence value) {
+        try {
+            return value != null ? Numbers.parseShort(value) : 0;
+        } catch (NumericException ignore) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.SHORT);
+        }
+    }
+
+    public static long implicitCastStrAsTimestamp(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException ignore) {
+            }
+
+            // Parse as ISO with variable length.
+            try {
+                return IntervalUtils.parseFloorPartialTimestamp(value);
+            } catch (NumericException ignore) {
+            }
+
+            final int hi = value.length();
+            for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
+                try {
+                    //
+                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, enLocale) * 1000L;
+                } catch (NumericException ignore) {
+                }
+            }
+
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.TIMESTAMP);
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    /**
+     * Parses partial representation of timestamp with time zone.
+     *
+     * @param value      the characters representing timestamp
+     * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
+     * @param columnType the target column type, which might be different from timestamp
+     * @return epoch offset
+     * @throws ImplicitCastException inconvertible type error.
+     */
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
+        }
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
@@ -116,7 +540,6 @@ public class SqlUtil {
                 characterStoreEntry.put(base, indexOfDot + 1, base.length());
             }
         }
-
 
         int len = characterStoreEntry.length();
         int sequence = 0;
@@ -216,5 +639,27 @@ public class SqlUtil {
         for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
             SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
         }
+
+        final DateFormatCompiler milliCompiler = new DateFormatCompiler();
+        final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
+
+        DATE_FORMATS = new DateFormat[]{
+                pgDateTimeFormat,
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                UTC_FORMAT
+        };
+
+        DATE_FORMATS_SIZE = DATE_FORMATS.length;
+
+        // we are using "millis" compiler deliberately because clients encode millis into strings
+        DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                pgDateTimeFormat
+        };
+
+        DATE_FORMATS_FOR_TIMESTAMP_SIZE = DATE_FORMATS_FOR_TIMESTAMP.length;
+
     }
 }

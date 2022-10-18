@@ -192,6 +192,12 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $hexPadded(long value) {
+        Numbers.appendHex(sink(), value, true);
+        return this;
+    }
+
+    @Override
     public boolean isEnabled() {
         return true;
     }
@@ -268,11 +274,6 @@ public class SyncLogger implements LogRecord, Log {
         return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
     }
 
-    @Override
-    public boolean isDebugEnabled() {
-        return debugSeq != null;
-    }
-
     public LogRecord xerror() {
         return next(errorSeq, errorRing, LogLevel.ERROR);
     }
@@ -312,6 +313,11 @@ public class SyncLogger implements LogRecord, Log {
     public LogRecord put(char c) {
         sink().put(c);
         return this;
+    }
+
+    @Override
+    public Sequence getCriticalSequence() {
+        return criticalSeq;
     }
 
     public LogRecord xAdvisoryW() {

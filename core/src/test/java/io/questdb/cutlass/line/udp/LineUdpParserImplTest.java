@@ -25,10 +25,10 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
@@ -60,8 +60,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     private void testAddColumnInteger(short colType, String nullValue) throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
                 "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "woopsie\tdaisy\t127\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "444\td555\t110\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
+                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
                 "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
 
         final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
@@ -94,8 +94,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testAddColumnDefaultDouble() throws Exception {
         testAddColumnFloat(ColumnType.DOUBLE, "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
                 "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "woopsie\tdaisy\t127\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "444\td555\t110\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
+                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
                 "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n");
     }
 
@@ -287,7 +287,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\tNaN\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -309,7 +309,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -353,7 +353,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\tNaN\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -375,7 +375,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -397,7 +397,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -418,7 +418,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -439,7 +439,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:00:01.234000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -497,7 +497,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             boolean called = false;
 
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.endsWith(path, "x" + Files.SEPARATOR)) {
                     called = true;
                     return -1;
@@ -547,7 +547,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testCreateAndAppend() throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\n" +
                 "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n" +
-                "woopsie\tdaisy\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\n";
+                "woopsie\tdaisy\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\n";
 
         final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
                 "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
@@ -562,7 +562,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
                 "\t0.9\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -620,7 +620,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
                 "\tNaN\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -641,7 +641,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -662,7 +662,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -683,7 +683,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
@@ -704,7 +704,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym1\tdouble\tint\tbool\tstr\ttimestamp\n" +
                 "abc\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.000000Z\n" +
                 "row3\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\n" +
-                "row4\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\n";
+                "row4\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
@@ -724,7 +724,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testAddTag() throws Exception {
         final String expected = "tag\ttag3\tfield\tf4\tfield2\tfx\ttimestamp\ttag2\n" +
                 "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t\n" +
-                "woopsie\t\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
+                "woopsie\t\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
         final String lines = "tab,tag=abc,tag3=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
                 "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
         assertThat(expected, lines, "tab");
@@ -755,6 +755,191 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertThat(expected, lines, "t_ilp21");
     }
 
+    @Test
+    public void testCannotAutoCreateColumnWhenDisabledInConfiguration() throws Exception {
+        try {
+            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewColumns() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new columns is disabled [table=t_ilp21]");
+        }
+    }
+
+    @Test
+    public void testCannotAutoCreateTableWhenDisabledInConfiguration() throws Exception {
+        try {
+            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewTables() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new tables is disabled [table=t_ilp21]");
+        }
+    }
+
+    @Test
+    public void testExistingTableRemovedColumn() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+            writer.removeColumn("event");
+        }
+        engine.releaseInactive();
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        assertThat(expected, lines, "t_ilp21");
+    }
+
+    @Test
+    public void testExistingTableRemovedColumnAndAddedBack() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+            writer.removeColumn("event");
+            writer.addColumn("event", ColumnType.SHORT);
+        }
+        engine.releaseInactive();
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        assertThat(expected, lines, "t_ilp21");
+    }
+
+    @Test
+    public void testExistingTableWhenAddingNewTablesAndColumnsDisabled() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+        assertThat(expected, lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public boolean getAutoCreateNewColumns() {
+                return false;
+            }
+
+            @Override
+            public boolean getAutoCreateNewTables() {
+                return false;
+            }
+        });
+    }
+
+    @Test
+    public void testFailsToAddAColumnWhenAutoColumnAddDisabled() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        try {
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewColumns() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "column does not exist, creating new columns is disabled [table=t_ilp21, columnName=byte1]");
+        }
+    }
+
+    @Test
+    public void testFailsToAddColumnWithInvalidName() throws Exception {
+        String lines = "t_ilp21 ..event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+        assertThat(
+                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                lines,
+                "t_ilp21",
+                configuration
+        );
+    }
+
+    @Test
+    public void testInvalidTableName() throws Exception {
+        String lines = "..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+        assertThat(
+                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                lines,
+                "t_ilp21",
+                configuration
+        );
+    }
+
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
@@ -762,7 +947,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 try {
                     return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
-                    throw CairoException.instance(0).put("numeric");
+                    throw CairoException.critical(0).put("numeric");
                 }
             }
         };

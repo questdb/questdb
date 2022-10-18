@@ -39,22 +39,6 @@ import org.junit.Test;
 public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
     @Test
-    public void testColumnNameInvalid() throws Exception {
-        final String[] names = new String[]{"a", "b", "c", "d", "e", "f"};
-        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
-
-        assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                5,
-                "File is too small, column names are missing 356",
-                4906,
-                356
-        );
-    }
-
-    @Test
     public void testColumnNameMissing() throws Exception {
         final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
@@ -124,9 +108,9 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 5,
-                "File is too small, column length for column 3 is missing",
+                "File is too small, size=341, required=342",
                 4906,
-                342
+                341
         );
     }
 
@@ -140,7 +124,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length - 1,
                 -1,
-                "Column name length of 0 is invalid at offset 308",
+                "String length of 0 is invalid at offset 308",
                 4906,
                 342
         );
@@ -261,7 +245,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 path.of(root).concat("x");
                 final int rootLen = path.length();
                 if (FilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
-                    throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
+                    throw CairoException.critical(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
                 try (MemoryMA mem = Vm.getMAInstance()) {
@@ -329,6 +313,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
                     try {
                         metadata.createTransitionIndex(0);
+                        Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
                     }

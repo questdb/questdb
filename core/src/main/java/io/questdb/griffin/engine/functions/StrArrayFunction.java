@@ -100,6 +100,16 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
+    public long getLong128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -169,6 +179,7 @@ public abstract class StrArrayFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    // array type is not yet supported, this is a stub type to implement pg_* views
     @Override
     public final int getType() {
         return ColumnType.STRING;

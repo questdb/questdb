@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -67,11 +68,11 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
         }
     }
 
@@ -91,8 +92,8 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMaxLongMerge(pRostiA, pRostiB, valueOffset);
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntMaxLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -102,8 +103,8 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
     }
 
     @Override
@@ -114,5 +115,15 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     @Override
     public long getLong(Record rec) {
         return max.longValue();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MaxLongVector(").put(columnIndex).put(')');
     }
 }

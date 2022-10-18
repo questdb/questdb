@@ -49,5 +49,5 @@ public interface SymbolMapReader extends StaticSymbolTable {
      */
     void updateSymbolCount(int count);
 
-    long symbolCharsAddressOf(int symbolIndex);
+    StaticSymbolTable newSymbolTableView();
 }

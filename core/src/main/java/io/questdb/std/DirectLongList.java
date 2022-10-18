@@ -24,22 +24,23 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class DirectLongList implements Mutable, Closeable {
+public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
-
+    private final int memoryTag;
+    private final long initialCapacity;
     private long pos;
     private long start;
     private long limit;
     private long address;
     private long capacity;
-    private final int memoryTag;
 
     public DirectLongList(long capacity, int memoryTag) {
         this.memoryTag = memoryTag;
@@ -47,6 +48,7 @@ public class DirectLongList implements Mutable, Closeable {
         this.address = Unsafe.malloc(this.capacity, memoryTag);
         this.start = this.pos = address;
         this.limit = pos + this.capacity;
+        this.initialCapacity = this.capacity;
     }
 
     public void add(long x) {
@@ -59,7 +61,7 @@ public class DirectLongList implements Mutable, Closeable {
     public final void add(DirectLongList that) {
         long thatSize = that.pos - that.start;
         if (limit - pos < thatSize) {
-            extendBytes(this.capacity + thatSize - (limit - pos));
+            setCapacityBytes(this.capacity + thatSize - (limit - pos));
         }
         Vect.memcpy(this.pos, that.start, thatSize);
         this.pos += thatSize;
@@ -88,12 +90,11 @@ public class DirectLongList implements Mutable, Closeable {
         if (address != 0) {
             Unsafe.free(address, capacity, memoryTag);
             address = 0;
+            start = 0;
+            limit = 0;
+            pos = 0;
+            capacity = 0;
         }
-    }
-
-    // desired capacity in LONGs (not count of bytes)
-    public void extend(long capacity) {
-        extendBytes(capacity * Long.BYTES);
     }
 
     public long get(long p) {
@@ -108,6 +109,29 @@ public class DirectLongList implements Mutable, Closeable {
     // capacity in LONGs
     public long getCapacity() {
         return capacity / Long.BYTES;
+    }
+
+    @Override
+    public void reopen() {
+        if (address == 0) {
+            resetCapacity();
+        }
+    }
+
+    // desired capacity in LONGs (not count of bytes)
+    public void setCapacity(long capacity) {
+        setCapacityBytes(capacity * Long.BYTES);
+    }
+
+    public void resetCapacity() {
+        setCapacityBytes(initialCapacity);
+    }
+
+    public void shrink(long newCapacity) {
+        // deallocates memory but keeps reusable
+        if (newCapacity < capacity) {
+            setCapacityBytes(newCapacity << 3);
+        }
     }
 
     public long scanSearch(long v, long low, long high) {
@@ -167,18 +191,20 @@ public class DirectLongList implements Mutable, Closeable {
         if (this.pos < limit) {
             return;
         }
-        extendBytes(this.capacity * 2);
+        setCapacityBytes(this.capacity * 2);
     }
 
     // desired capacity in bytes (not count of LONG values)
-    private void extendBytes(long capacity) {
-        final long oldCapacity = this.capacity;
-        this.capacity = capacity;
-        long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-        this.pos = address + (this.pos - this.start);
-        this.address = address;
-        this.start = address;
-        this.limit = address + capacity;
-        LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+    private void setCapacityBytes(long capacity) {
+        if (this.capacity != capacity) {
+            final long oldCapacity = this.capacity;
+            this.capacity = capacity;
+            long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            this.pos = address + (this.pos - this.start);
+            this.address = address;
+            this.start = address;
+            this.limit = address + capacity;
+            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+        }
     }
 }

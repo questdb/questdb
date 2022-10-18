@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -34,22 +33,23 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.number.OrderingComparison;
 import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3Test extends AbstractO3Test {
     private static final Log LOG = LogFactory.getLog(O3Test.class);
@@ -785,6 +785,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testPartitionedOOONullStrSetters() throws Exception {
+        executeVanilla(O3Test::testPartitionedOOONullStrSetters0);
+    }
+
+    @Test
     public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
         executeVanilla(O3Test::testPartitionedOOPrefixesExistingPartitions0);
     }
@@ -813,6 +818,28 @@ public class O3Test extends AbstractO3Test {
     public void testPartitionedOOTopAndBottomParallel() throws Exception {
         executeWithPool(4, O3Test::testPartitionedOOTopAndBottom0);
     }
+
+    @Test
+    public void testRebuildIndexLastPartitionWithColumnTop() throws Exception {
+        executeWithPool(0, O3Test::testRebuildIndexLastPartitionWithColumnTop);
+    }
+
+    @Test
+    public void testRebuildIndexLastPartitionWithColumnTopParallel() throws Exception {
+        executeWithPool(0, O3Test::testRebuildIndexLastPartitionWithColumnTop);
+    }
+
+
+    @Test
+    public void testRebuildIndexWithColumnTopPrevPartitionParallel() throws Exception {
+        executeWithPool(4, O3Test::testRebuildIndexWithColumnTopPrevPartition);
+    }
+
+    @Test
+    public void testRebuildIndexWithColumnTopPrevPartitionParallelContended() throws Exception {
+        executeWithPool(0, O3Test::testRebuildIndexWithColumnTopPrevPartition);
+    }
+
 
     @Test
     public void testRepeatedIngest() throws Exception {
@@ -857,6 +884,57 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVanillaCommitLagSinglePartitionParallel() throws Exception {
         executeWithPool(4, O3Test::testVanillaCommitLagSinglePartition0);
+    }
+
+    @Test
+    public void testVarColumnCopyLargePrefix() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    String strColVal =
+                            "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, directIoFlag=true]";
+                    int len = getStorageLength(strColVal);
+                    int records = Integer.MAX_VALUE / len + 5;
+
+                    // String
+                    String tableName = name.getMethodName();
+                    compiler.compile("create table " + tableName + " as ( " +
+                            "select " +
+                            "'" + strColVal + "' as str, " +
+                            " timestamp_sequence('2022-02-24', 1000) ts" +
+                            " from long_sequence(" + records + ")" +
+                            ") timestamp (ts) partition by DAY", sqlExecutionContext);
+
+                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
+                    CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
+                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+
+                    // Check that there was an attempt to write a file bigger than 2GB
+                    long max = 0;
+                    for (Long wLen : writeLen) {
+                        if (wLen > max) {
+                            max = wLen;
+                        }
+                    }
+                    MatcherAssert.assertThat(max, OrderingComparison.greaterThan(2L << 30));
+
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "select * from " + tableName + " limit -5,5", sink, "str\tts\n" +
+                            strColVal + "\t2022-02-24T00:51:34.357000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.358000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.359000Z\n" +
+                            "abcd\t2022-02-24T00:51:34.359000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.360000Z\n");
+                }, new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long address, long len, long offset) {
+                        writeLen.add(len);
+                        return super.write(fd, address, len, offset);
+                    }
+                });
     }
 
     @Test
@@ -922,6 +1000,203 @@ public class O3Test extends AbstractO3Test {
     public void testWriterOpensUnmappedPage() throws Exception {
         executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
     }
+
+    private static void testRebuildIndexLastPartitionWithColumnTop(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+
+        compiler.compile(
+                "CREATE TABLE monthly_col_top(" +
+                        "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
+                        ") timestamp(ts) partition by MONTH",
+                sqlExecutionContext);
+
+        compiler.compile(
+                "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
+                        "('2022-06-08T01:40:00.000000Z', '1', 'true', '2')," +
+                        "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
+                        "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
+                        "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
+                sqlExecutionContext).execute(null).await();
+
+        compiler.compile("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
+                .execute(null).await();
+
+        compiler.compile("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
+                        "('2022-06-08T02:50:00.000000Z', '5', '3')," +
+                        "('2022-06-08T02:50:00.000000Z', '6', '3')," +
+                        "('2022-06-08T02:50:00.000000Z', '7', '1')," +
+                        "('2022-06-08T02:50:00.000000Z', '8', '1')," +
+                        "('2022-06-08T02:50:00.000000Z', '9', '2')," +
+                        "('2022-06-08T02:50:00.000000Z', '10', '2')," +
+                        "('2022-06-08T03:50:00.000000Z', '11', '2')," +
+                        "('2022-06-08T03:50:00.000000Z', '12', '2')," +
+                        "('2022-06-08T04:50:00.000000Z', '13', '2')," +
+                        "('2022-06-08T04:50:00.000000Z', '14', '2')",
+                sqlExecutionContext).execute(null).await();
+
+        // OOO in the middle
+        compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+                        "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
+                        "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
+                sqlExecutionContext).execute(null).await();
+
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
+                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                        "2022-06-08T02:50:00.000000Z\t9\t\t\t2\n" +
+                        "2022-06-08T02:50:00.000000Z\t10\t\t\t2\n" +
+                        "2022-06-08T03:50:00.000000Z\t11\t\t\t2\n" +
+                        "2022-06-08T03:50:00.000000Z\t12\t\t\t2\n" +
+                        "2022-06-08T04:50:00.000000Z\t13\t\t\t2\n" +
+                        "2022-06-08T04:50:00.000000Z\t14\t\t\t2\n");
+
+        // OOO appends to last partition
+        compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+                        "('2022-06-08T05:30:00.000000Z', '17', '4', '3')," +
+                        "('2022-06-08T04:50:00.000000Z', '18', '4', '3')",
+                sqlExecutionContext).execute(null).await();
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                        "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                        "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
+                        "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
+                        "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n");
+
+        // OOO merges and appends to last partition
+        compiler.compile("INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+                        "('2022-06-08T05:30:00.000000Z', '19', '4', '3')," +
+                        "('2022-06-08T02:50:00.000000Z', '20', '4', '3')," +
+                        "('2022-06-08T02:50:00.000000Z', '21', '4', '3')",
+                sqlExecutionContext).execute(null).await();
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                        "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                        "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
+                        "2022-06-08T02:50:00.000000Z\t20\t\t4\t3\n" +
+                        "2022-06-08T02:50:00.000000Z\t21\t\t4\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
+                        "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
+                        "2022-06-08T05:30:00.000000Z\t19\t\t4\t3\n" +
+                        "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n");
+    }
+
+    private static void testRebuildIndexWithColumnTopPrevPartition(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+
+        compiler.compile(
+                "CREATE TABLE monthly_col_top(" +
+                        "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
+                        ") timestamp(ts) partition by DAY",
+                sqlExecutionContext);
+
+        compiler.compile(
+                "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
+                        "('2022-06-08T01:40:00.000000Z', '1', 'true', '2')," +
+                        "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
+                        "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
+                        "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
+                sqlExecutionContext).execute(null).await();
+
+        compiler.compile("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
+                .execute(null).await();
+
+        compiler.compile("INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
+                        "('2022-06-08T02:50:00.000000Z', '5', '3')," +
+                        "('2022-06-08T02:55:00.000000Z', '6', '3')," +
+                        "('2022-06-08T02:59:00.000000Z', '7', '1')",
+                sqlExecutionContext).execute(null).await();
+
+        compiler.compile("INSERT batch 6 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+                        "('2022-06-09T02:50:00.000000Z', '9', '2')," +
+                        "('2022-06-09T02:50:00.000000Z', '10', '2')," +
+                        "('2022-06-09T03:50:00.000000Z', '11', '2')," +
+                        "('2022-06-09T03:50:00.000000Z', '12', '2')," +
+                        "('2022-06-09T04:50:00.000000Z', '13', '2')," +
+                        "('2022-06-09T04:50:00.000000Z', '14', '2')",
+                sqlExecutionContext).execute(null).await();
+
+        // OOO append prev partition
+        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
+                        "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
+                        "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
+                sqlExecutionContext).execute(null).await();
+
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                        "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                        "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n");
+
+        // OOO insert mid prev partition
+        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+                        "('2022-06-08T02:54:00.000000Z', '17', '3')," +
+                        "('2022-06-08T02:56:00.000000Z', '18', '3')",
+                sqlExecutionContext).execute(null).await();
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                        "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                        "2022-06-08T02:54:00.000000Z\t17\t\t\t3\n" +
+                        "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
+                        "2022-06-08T02:56:00.000000Z\t18\t\t\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n");
+
+        // OOO insert overlaps prev partition and adds new rows at the end
+        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+                        "('2022-06-08T03:15:00.000000Z', '19', '3')," +
+                        "('2022-06-08T04:30:00.000000Z', '20', '3')," +
+                        "('2022-06-08T04:31:00.000000Z', '21', '3')",
+                sqlExecutionContext).execute(null).await();
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                        "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                        "2022-06-08T02:54:00.000000Z\t17\t\t\t3\n" +
+                        "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
+                        "2022-06-08T02:56:00.000000Z\t18\t\t\t3\n" +
+                        "2022-06-08T03:15:00.000000Z\t19\t\t\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
+                        "2022-06-08T04:30:00.000000Z\t20\t\t\t3\n" +
+                        "2022-06-08T04:31:00.000000Z\t21\t\t\t3\n");
+
+        // OOO insert overlaps prev partition and adds new rows at the top
+        compiler.compile("INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
+                        "('2022-06-08T03:15:00.000000Z', '22', '3')," +
+                        "('2022-06-08T03:15:00.000000Z', '23', '3')," +
+                        "('2022-06-08T00:40:00.000000Z', '24', '3')",
+                sqlExecutionContext).execute(null).await();
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+                "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
+                        "2022-06-08T00:40:00.000000Z\t24\t\t\t3\n" +
+                        "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
+                        "2022-06-08T02:54:00.000000Z\t17\t\t\t3\n" +
+                        "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
+                        "2022-06-08T02:56:00.000000Z\t18\t\t\t3\n" +
+                        "2022-06-08T03:15:00.000000Z\t22\t\t\t3\n" +
+                        "2022-06-08T03:15:00.000000Z\t19\t\t\t3\n" +
+                        "2022-06-08T03:15:00.000000Z\t23\t\t\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
+                        "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
+                        "2022-06-08T04:30:00.000000Z\t20\t\t\t3\n" +
+                        "2022-06-08T04:31:00.000000Z\t21\t\t\t3\n");
+    }
+
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
             CairoEngine engine,
@@ -1029,27 +1304,7 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-
-                @Override
-                public boolean isEnabled() {
-                    return true;
-                }
-            }, Metrics.disabled());
+            WorkerPool pool1 = new WorkerPool(() -> 1);
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1071,24 +1326,8 @@ public class O3Test extends AbstractO3Test {
                     return false;
                 }
             });
-            pool1.assignCleaner(Path.CLEANER);
 
-            final WorkerPool pool2 = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool pool2 = new TestWorkerPool(1);
 
             pool2.assign(new Job() {
                 private boolean toRun = true;
@@ -1111,10 +1350,8 @@ public class O3Test extends AbstractO3Test {
                 }
             });
 
-            pool2.assignCleaner(Path.CLEANER);
-
-            pool1.start(null);
-            pool2.start(null);
+            pool1.start();
+            pool2.start();
 
             haltLatch.await();
 
@@ -1165,6 +1402,43 @@ public class O3Test extends AbstractO3Test {
                 "NaN\tNaN\t20\t2013-02-10T00:06:00.000000Z\n" +
                 "NaN\tNaN\t30\t2013-02-10T00:10:00.000000Z\n" +
                 "NaN\tNaN\t40\t2013-02-10T00:11:00.000000Z\n";
+
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    private static void testPartitionedOOONullStrSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
+            throws SqlException {
+        final int commits = 4;
+        final int rows = 1_000;
+        compiler.compile("create table x (s string, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+            TableWriter.Row r;
+
+            // Here we're trying to make sure that null setters write to the currently active O3 memory.
+            long ts = engine.getConfiguration().getMicrosecondClock().getTicks();
+            for (int i = 0; i < commits; i++) {
+                for (int j = 0; j < rows; j++) {
+                    r = w.newRow(ts);
+                    if (j % 2 == 0) {
+                        r.putStr(0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
+                    }
+                    r.append();
+                    if (j % 100 == 0) {
+                        ts -= 1_000;
+                    } else {
+                        ts += 1;
+                    }
+                }
+                // Setting the lag is important since we want some rows to remain pending after each commit.
+                w.commitWithLag(1_000L);
+            }
+            // Commit pending O3 rows.
+            w.commit();
+        }
+
+        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
+
+        final String expected = "count\n" + (commits * rows) + "\n";
 
         TestUtils.assertEquals(expected, sink);
     }
@@ -7234,7 +7508,7 @@ public class O3Test extends AbstractO3Test {
             long pageSize = configuration.getMiscAppendPageSize();
             Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
 
-            long start = IntervalUtils.parseFloorPartialDate("2021-10-09T10:00:00");
+            long start = IntervalUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
             String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
 
             // Add 2 batches

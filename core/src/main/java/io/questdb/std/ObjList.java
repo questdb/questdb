@@ -29,7 +29,7 @@ import io.questdb.std.str.CharSink;
 import java.util.Arrays;
 import java.util.Comparator;
 
-public class ObjList<T> implements Mutable, Sinkable {
+public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private T[] buffer;
     private int pos = 0;
@@ -40,10 +40,17 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     @SuppressWarnings("unchecked")
-    public ObjList(ObjList<T> other) {
+    public ObjList(ObjList<? extends T> other) {
         this.buffer = (T[]) new Object[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
         setPos(other.size());
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
+    }
+
+    @SuppressWarnings("unchecked")
+    public ObjList(T... other) {
+        this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
+        setPos(other.length);
+        System.arraycopy(other, 0, this.buffer, 0, pos);
     }
 
     @SuppressWarnings("unchecked")
@@ -77,6 +84,18 @@ public class ObjList<T> implements Mutable, Sinkable {
         pos = 0;
     }
 
+    public boolean contains(T value) {
+        for (int i = 0, n = pos; i < n; i++) {
+            T o = getQuick(i);
+            if ((value == null && o == null) ||
+                    (value != null && value.equals(o))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     @SuppressWarnings("unchecked")
     public void ensureCapacity(int capacity) {
         int l = buffer.length;
@@ -104,6 +123,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     /**
      * {@inheritDoc}
      */
+    @Override
     public T get(int index) {
         if (index < pos) {
             return buffer[index];
@@ -123,6 +143,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      *
      * @return last element of the list
      */
+    @Override
     public T getLast() {
         if (pos > 0) {
             return buffer[pos - 1];
@@ -139,6 +160,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @param index of the element
      * @return element at the specified position.
      */
+    @Override
     public T getQuick(int index) {
         assert index < pos;
         return buffer[index];
@@ -152,6 +174,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @param index position of element
      * @return element at the specified position.
      */
+    @Override
     public T getQuiet(int index) {
         if (index < pos) {
             return buffer[index];
@@ -202,6 +225,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int indexOf(Object o) {
         if (o == null) {
             return indexOfNull();
@@ -215,11 +239,12 @@ public class ObjList<T> implements Mutable, Sinkable {
         }
     }
 
-    public void insert(int index, int length) {
+    public void insert(int index, int length, T defaultValue) {
         ensureCapacity(pos + length);
         if (pos > index) {
             System.arraycopy(buffer, index, buffer, index + length, pos - index);
         }
+        Arrays.fill(buffer, index, index + length, defaultValue);
         pos += length;
     }
 
@@ -283,6 +308,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int size() {
         return pos;
     }
@@ -319,11 +345,15 @@ public class ObjList<T> implements Mutable, Sinkable {
             for (int i = 0, n = pos; i < n; i++) {
                 Object lhs = this.getQuick(i);
                 if (lhs == null) {
-                    return that.getQuick(i) == null;
-                } else if (lhs.equals(that.getQuick(i))) {
-                    return true;
+                    if (that.getQuick(i) != null) {
+                        return false;
+                    }
+                } else if (!lhs.equals(that.getQuick(i))) {
+                    return false;
                 }
             }
+
+            return true;
         }
         return false;
     }

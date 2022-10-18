@@ -29,8 +29,10 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -57,7 +59,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private final SCSequence scSequence = new SCSequence();
     private SqlException sqlException;
-    private volatile QueryFuture alterCommandQueryFuture;
+    private volatile OperationFuture alterOperationFuture;
 
     @Test
     public void testAlterCommandAddColumn() throws Exception {
@@ -97,8 +99,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandDropPartition() throws Exception {
         long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;
-        long day3 = IntervalUtils.parseFloorPartialDate("1970-03-03") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
+        long day3 = IntervalUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
         runInContext((server) -> {
                     String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
                     send(server, lineData);
@@ -298,7 +300,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "ALTER TABLE plug DROP COLUMN label");
 
             Assert.assertNotNull(exception);
-            TestUtils.assertEquals("ALTER TABLE cannot change table structure while Writer is busy", exception.getFlyweightMessage());
+            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
             exception = sendWithAlterStatement(
                     server,
                     lineData,
@@ -307,10 +309,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             );
 
             Assert.assertNotNull(exception);
-            TestUtils.assertEquals(
-                    "ALTER TABLE cannot change table structure while Writer is busy",
-                    exception.getFlyweightMessage()
-            );
+            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
                     "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
@@ -335,7 +334,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandSequenceReleased() throws Exception {
         long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
         runInContext((server) -> {
                     String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
                     send(server, lineData);
@@ -446,7 +445,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertTable(expected, "plug");
     }
 
-    private QueryFuture executeAlterSql(String sql) throws SqlException {
+    private OperationFuture executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
         LOG.info().$("Started waiting for writer ASYNC event").$();
         try (SqlCompiler compiler = new SqlCompiler(engine);
@@ -460,8 +459,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                      )
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-            AlterStatement alterStatement = cc.getAlterStatement();
-            assert alterStatement != null;
+            AlterOperation alterOperation = cc.getAlterOperation();
+            assert alterOperation != null;
 
             return cc.execute(scSequence);
         }
@@ -488,8 +487,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 // Wait in parallel thread
                 try {
                     startBarrier.await();
-                    LOG.info().$("Busy waiting for writer ASYNC event ").$(alterCommandQueryFuture).$();
-                    alterCommandQueryFuture.await(10_000_000);
+                    LOG.info().$("Busy waiting for writer ASYNC event ").$(alterOperationFuture).$();
+                    alterOperationFuture.await(10 * Timestamps.SECOND_MILLIS);
                 } catch (SqlException exception) {
                     sqlException = exception;
                 } catch (Throwable e) {
@@ -499,7 +498,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     releaseLatch.countDown();
                     LOG.info().$("Stopped waiting for writer ASYNC event").$();
                     // If subscribed to global writer event queue, unsubscribe here
-                    alterCommandQueryFuture.close();
+                    alterOperationFuture.close();
                 }
             }).start();
         }
@@ -520,7 +519,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     if (alterTableCommand != null) {
                                         try {
                                             // Execute ALTER in parallel thread
-                                            alterCommandQueryFuture = executeAlterSql(alterTableCommand);
+                                            alterOperationFuture = executeAlterSql(alterTableCommand);
                                             startBarrier.await();
                                         } catch (BrokenBarrierException | InterruptedException e) {
                                             e.printStackTrace();

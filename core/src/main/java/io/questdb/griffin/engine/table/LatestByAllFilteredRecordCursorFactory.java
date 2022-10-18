@@ -38,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-    private final Map map;
 
     public LatestByAllFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -50,7 +49,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        this.map = MapFactory.createMap(configuration, columnTypes);
+        Map map = MapFactory.createMap(configuration, columnTypes);
         if (filter == null) {
             this.cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
         } else {
@@ -59,9 +58,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     }
 
     @Override
-    public void close() {
-        super.close();
-        map.close();
+    protected void _close() {
+        this.cursor.close();
+        super._close();
     }
 
     @Override

@@ -46,6 +46,8 @@ class LineTcpMeasurementEvent implements Closeable {
     private final DefaultColumnTypes defaultColumnTypes;
     private final boolean stringToCharCastAllowed;
     private final boolean symbolAsFieldSupported;
+    private final int maxColumnNameLength;
+    private final boolean autoCreateNewColumns;
     private int writerWorkerId;
     private TableUpdateDetails tableUpdateDetails;
     private boolean commitOnWriterClose;
@@ -57,8 +59,12 @@ class LineTcpMeasurementEvent implements Closeable {
             LineProtoTimestampAdapter timestampAdapter,
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
-            boolean symbolAsFieldSupported
+            boolean symbolAsFieldSupported,
+            int maxColumnNameLength,
+            boolean autoCreateNewColumns
     ) {
+        this.maxColumnNameLength = maxColumnNameLength;
+        this.autoCreateNewColumns = autoCreateNewColumns;
         this.buffer = new LineTcpEventBuffer(bufLo, bufSize);
         this.clock = clock;
         this.timestampAdapter = timestampAdapter;
@@ -223,7 +229,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     private CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
-        return CairoException.instance(0)
+        return CairoException.critical(0)
                 .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
                 .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
                 .put(", value=").put(entityValue)
@@ -231,7 +237,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     private CairoException castError(String ilpType, int columnWriterIndex, int colType) {
-        return CairoException.instance(0)
+        return CairoException.critical(0)
                 .put("cast error for line protocol ").put(ilpType)
                 .put(" [columnWriterIndex=").put(columnWriterIndex)
                 .put(", columnType=").put(ColumnType.nameOf(colType))
@@ -271,12 +277,14 @@ class LineTcpMeasurementEvent implements Closeable {
                 colType = localDetails.getColumnType(columnWriterIndex);
             } else if (columnWriterIndex == COLUMN_NOT_FOUND) {
                 // send column by name
-                CharSequence colName = localDetails.getColName();
-                if (TableUtils.isValidColumnName(colName)) {
-                    offset = buffer.addColumnName(offset, colName);
-                    colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                final String columnName = localDetails.getColName();
+                if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxColumnNameLength)) {
+                    offset = buffer.addColumnName(offset, columnName);
+                    colType = localDetails.getColumnType(columnName, entityType);
+                } else if (!autoCreateNewColumns) {
+                    throw newColumnsNotAllowed(columnName);
                 } else {
-                    throw invalidColNameError(colName);
+                    throw invalidColNameError(columnName);
                 }
             } else {
                 // duplicate column, skip
@@ -496,6 +504,13 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = tableUpdateDetails.getWriterThreadId();
     }
 
+    private CairoException newColumnsNotAllowed(String colName) {
+        return CairoException.critical(0)
+                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
+    }
+
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER;
         this.tableUpdateDetails = tableUpdateDetails;
@@ -503,7 +518,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     private CairoException invalidColNameError(CharSequence colName) {
-        return CairoException.instance(0)
+        return CairoException.critical(0)
                 .put("invalid column name [table=").put(tableUpdateDetails.getTableNameUtf16())
                 .put(", columnName=").put(colName)
                 .put(']');

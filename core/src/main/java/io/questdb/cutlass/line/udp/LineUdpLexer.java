@@ -29,6 +29,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -53,13 +54,14 @@ public class LineUdpLexer implements Mutable, Closeable {
     private boolean unquoted = true;
 
     public LineUdpLexer(int bufferSize) {
-        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_ILP_RSS);
         bufferHi = buffer + bufferSize;
         charSequenceCache = address -> {
             floatingCharSequence.lo = buffer + Numbers.decodeHighInt(address);
             floatingCharSequence.hi = buffer + Numbers.decodeLowInt(address) - 2;
             assert floatingCharSequence.hi < bufferHi;
             assert floatingCharSequence.lo >= buffer;
+            assert floatingCharSequence.lo <= floatingCharSequence.hi;
             return floatingCharSequence;
         };
         clear();
@@ -79,7 +81,7 @@ public class LineUdpLexer implements Mutable, Closeable {
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferHi - buffer, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(buffer, bufferHi - buffer, MemoryTag.NATIVE_ILP_RSS);
     }
 
     /**
@@ -371,6 +373,14 @@ public class LineUdpLexer implements Mutable, Closeable {
         public char charAt(int index) {
             return Unsafe.getUnsafe().getChar(lo + index * 2L);
         }
+
+        @Override
+        public @NotNull CharSequence subSequence(int start, int end) {
+            FloatingCharSequence fcs = new FloatingCharSequence();
+            fcs.lo = this.lo + start * 2L;
+            fcs.hi = this.lo + end * 2L;
+            return fcs;
+        }
     }
 
     private class ArrayBackedCharSink extends AbstractCharSink {
@@ -390,7 +400,7 @@ public class LineUdpLexer implements Mutable, Closeable {
                 // can't realistically reach this in test :(
                 throw LineProtoException.INSTANCE;
             }
-            long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity, MemoryTag.NATIVE_DEFAULT);
+            long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity, MemoryTag.NATIVE_ILP_RSS);
             long offset = dstTop - buffer;
             bufferHi = buf + capacity;
             buffer = buf;

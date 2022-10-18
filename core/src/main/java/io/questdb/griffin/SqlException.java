@@ -27,9 +27,11 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.ThreadLocal;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
 
@@ -39,7 +41,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private final StringSink message = new StringSink();
     private int position;
 
-    private SqlException() {
+    protected SqlException() {
     }
 
     public static SqlException $(int position, CharSequence message) {
@@ -54,6 +56,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Ambiguous column name");
     }
 
+    public static SqlException duplicateColumn(int position, CharSequence colName) {
+        return duplicateColumn(position, colName, null);
+    }
+
+    public static SqlException duplicateColumn(int position, CharSequence colName, CharSequence additionalMessage) {
+        SqlException exception = SqlException.$(position, "Duplicate column [name=").put(colName).put(']');
+        if (additionalMessage != null) {
+            exception.put(' ').put(additionalMessage);
+        }
+        return exception;
+    }
+
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
         return $(position, "inconvertible types: ")
                 .put(ColumnType.nameOf(fromType))
@@ -63,36 +77,24 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", to=").put(toName).put(']');
     }
 
-    public static SqlException inconvertibleValue(int columnNumber, double value, int fromType, int toType) {
-        return $(-1, "inconvertible value: ")
-                .put(value)
-                .put(" [")
-                .put(ColumnType.nameOf(fromType))
-                .put(" -> ")
-                .put(ColumnType.nameOf(toType))
-                .put(']')
-                .put(" in target column number: ")
-                .put(columnNumber);
-    }
-
-    public static SqlException inconvertibleValue(int columnNumber, long value, int fromType, int toType) {
-        return $(-1, "inconvertible value: ")
-                .put(value)
-                .put(" [")
-                .put(ColumnType.nameOf(fromType))
-                .put(" -> ")
-                .put(ColumnType.nameOf(toType))
-                .put(']')
-                .put(" in target column number: ")
-                .put(columnNumber);
-    }
-
     public static SqlException invalidColumn(int position, CharSequence column) {
         return position(position).put("Invalid column: ").put(column);
     }
 
     public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
+    }
+
+    public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
+        return tok == null ?
+                SqlException.$(position, msg)
+                :
+                SqlException.$(position, "found [tok='")
+                        .put(tok)
+                        .put("', len=")
+                        .put(tok.length())
+                        .put("] ")
+                        .put(msg);
     }
 
     public static SqlException position(int position) {
@@ -104,16 +106,16 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return ex;
     }
 
-    @Override
-    public StackTraceElement[] getStackTrace() {
-        StackTraceElement[] result = EMPTY_STACK_TRACE;
-        // This is to have correct stack trace reported in CI 
-        assert (result = super.getStackTrace()) != null;
-        return result;
-    }
-
     public static SqlException unexpectedToken(int position, CharSequence token) {
         return position(position).put("unexpected token: ").put(token);
+    }
+
+    public static SqlException unsupportedCast(int position, CharSequence columnName, int fromType, int toType) {
+        return SqlException.$(position, "unsupported cast [column=").put(columnName)
+                .put(", from=").put(ColumnType.nameOf(fromType))
+                .put(", to=").put(ColumnType.nameOf(toType))
+                .put(']');
+
     }
 
     @Override
@@ -124,6 +126,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     @Override
     public String getMessage() {
         return "[" + position + "] " + message;
+    }
+
+    @Override
+    public StackTraceElement[] getStackTrace() {
+        StackTraceElement[] result = EMPTY_STACK_TRACE;
+        // This is to have correct stack trace reported in CI
+        assert (result = super.getStackTrace()) != null;
+        return result;
     }
 
     public int getPosition() {

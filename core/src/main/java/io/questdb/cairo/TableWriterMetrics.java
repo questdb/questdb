@@ -35,11 +35,43 @@ public class TableWriterMetrics {
     private final Counter committedRowCounter;
     private final Counter rollbackCounter;
 
+    // For write amplification metric, `physicallyWrittenRowCounter / committedRowCounter`.
+    private final Counter physicallyWrittenRowCounter;
+
     public TableWriterMetrics(MetricsRegistry metricsRegistry) {
         this.commitCounter = metricsRegistry.newCounter("commits");
         this.o3CommitCounter = metricsRegistry.newCounter("o3_commits");
         this.committedRowCounter = metricsRegistry.newCounter("committed_rows");
         this.rollbackCounter = metricsRegistry.newCounter("rollbacks");
+        this.physicallyWrittenRowCounter = metricsRegistry.newCounter("physically_written_rows");
+    }
+
+    public void addCommittedRows(long rows) {
+        committedRowCounter.add(rows);
+    }
+
+    public void addPhysicallyWrittenRows(long rows) {
+        physicallyWrittenRowCounter.add(rows);
+    }
+
+    public long getCommitCount() {
+        return commitCounter.getValue();
+    }
+
+    public long getO3CommitCount() {
+        return o3CommitCounter.getValue();
+    }
+
+    public long getCommittedRows() {
+        return committedRowCounter.getValue();
+    }
+
+    public long getRollbackCount() {
+        return rollbackCounter.getValue();
+    }
+
+    public long getPhysicallyWrittenRows() {
+        return physicallyWrittenRowCounter.getValue();
     }
 
     public void incrementCommits() {
@@ -48,10 +80,6 @@ public class TableWriterMetrics {
 
     public void incrementO3Commits() {
         o3CommitCounter.inc();
-    }
-
-    public void addCommittedRows(long rows) {
-        committedRowCounter.add(rows);
     }
 
     public void incrementRollbacks() {

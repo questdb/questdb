@@ -24,21 +24,28 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
+
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class HttpFlushQueryCacheTest {
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     private static final String JSON_DDL_RESPONSE = "0d\r\n" +
             "{\"ddl\":\"OK\"}\n\r\n" +
@@ -50,7 +57,8 @@ public class HttpFlushQueryCacheTest {
 
     @Test
     public void testJsonQueryFlushQueryCache() throws Exception {
-        testJsonQuery(2, engine -> {
+        Metrics metrics = Metrics.enabled();
+        testJsonQuery(2, metrics, engine -> {
             // create tables
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
@@ -61,9 +69,9 @@ public class HttpFlushQueryCacheTest {
                     "TIMESTAMP(ts)\n" +
                     "PARTITION BY DAY");
 
-            // execute a SELECT query that uses native memory
-            long memInitial = Unsafe.getMemUsed();
+            Assert.assertEquals(0, metrics.jsonQuery().cachedQueriesGauge().getValue());
 
+            // execute a SELECT query
             String sql = "SELECT *\n" +
                     "FROM test t1 JOIN test t2 \n" +
                     "ON t1.id = t2.id\n" +
@@ -74,8 +82,8 @@ public class HttpFlushQueryCacheTest {
                     "00\r\n" +
                     "\r\n");
 
-            long memAfterJoin = Unsafe.getMemUsed();
-            Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+            // The query might not be returned to cache immediately, so we need to try a few times.
+            assertEventually(() -> Assert.assertEquals(1, metrics.jsonQuery().cachedQueriesGauge().getValue()));
 
             // flush query cache and verify that the memory gets released
             sql = "SELECT flush_query_cache()";
@@ -87,17 +95,18 @@ public class HttpFlushQueryCacheTest {
 
             // We need to wait until HTTP workers process the message. To do so, we simply try to
             // publish another query flush event. Since we set the queue size to 1, we're able to
-            // publish only when all consumers (PG Wire workers) have processed the previous event.
+            // publish only when all consumers (HTTP workers) have processed the previous event.
             Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
             final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
             pubSeq.waitForNext();
 
-            long memAfterFlush = Unsafe.getMemUsed();
-            Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
+            // Sequence set to done before actual flush performed. We might have to try it a few times,
+            // before memory usage drop is measured.
+            assertEventually(() -> Assert.assertEquals(0, metrics.jsonQuery().cachedQueriesGauge().getValue()));
         });
     }
 
-    private void testJsonQuery(int workerCount, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
+    private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         final String baseDir = temp.getRoot().getAbsolutePath();
         CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
             @Override
@@ -109,6 +118,7 @@ public class HttpFlushQueryCacheTest {
                 .withWorkerCount(workerCount)
                 .withTempFolder(temp)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withMetrics(metrics)
                 .run(configuration, code);
     }
 
@@ -122,7 +132,7 @@ public class HttpFlushQueryCacheTest {
 
     private static void sendAndReceiveDdl(String rawDdl) throws InterruptedException {
         sendAndReceive(
-                "GET /query?query=" + urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
+                "GET /query?query=" + HttpUtils.urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -147,7 +157,7 @@ public class HttpFlushQueryCacheTest {
 
     private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) throws InterruptedException {
         sendAndReceive(
-                "GET /query?query=" + urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
+                "GET /query?query=" + HttpUtils.urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -167,13 +177,5 @@ public class HttpFlushQueryCacheTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         expectedBody
         );
-    }
-
-    private static String urlEncodeQuery(String query) {
-        try {
-            return URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
     }
 }

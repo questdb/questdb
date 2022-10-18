@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -39,11 +40,6 @@ public class GeoByteColumn extends GeoByteFunction {
     public GeoByteColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        return rec.getGeoByte(columnIndex);
     }
 
     public static GeoByteColumn newInstance(int columnIndex, int columnType) {
@@ -59,6 +55,21 @@ public class GeoByteColumn extends GeoByteFunction {
         return new GeoByteColumn(columnIndex, columnType);
     }
 
+    @Override
+    public byte getGeoByte(Record rec) {
+        return rec.getGeoByte(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     static {
         int bits = ColumnType.GEOBYTE_MAX_BITS - ColumnType.GEOBYTE_MIN_BITS + 1;
         COLUMNS = new GeoByteColumn[STATIC_COLUMN_COUNT * bits];
@@ -70,8 +81,9 @@ public class GeoByteColumn extends GeoByteFunction {
         }
     }
 
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("GeoByteColumn(").put(columnIndex).put(')');
     }
+
 }

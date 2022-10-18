@@ -24,8 +24,12 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
@@ -53,15 +57,19 @@ import java.io.Closeable;
  * }
  *
  */
-public interface RecordCursorFactory extends Closeable, Sinkable {
+public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     @Override
     default void close() {
     }
 
     /**
-     * True if record cusor factory followed order by advice and doesn't require sorting .
+     * True if record cursor factory followed order by advice and doesn't require sorting .
      */
     default boolean followedOrderByAdvice() {
+        return false;
+    }
+
+    default boolean followedLimitAdvice() {
         return false;
     }
 
@@ -76,7 +84,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      * @return instance of cursor
      * @throws SqlException when cursor cannot be produced due a deferred SQL syntax error
      */
-    RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
+    default RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Metadata of the SQL result. It includes column names, indexes and types.
@@ -85,7 +95,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      */
     RecordMetadata getMetadata();
 
-    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        return null;
+    }
+
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return null;
     }
 
@@ -104,7 +118,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     }
 
     default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 
     default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
@@ -119,5 +133,20 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
 
     default boolean hasDescendingOrder() {
         return false;
+    }
+
+    // Factories, such as union all do not conform to the assumption
+    // that key read from symbol column map to symbol values unambiguously.
+    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
+    // key 1 at row 100 it might map to 'BBB'.
+    // Such factories cannot be used in multi-threaded execution and cannot be tested
+    // via `testSymbolAPI()` call.
+    default boolean fragmentedSymbolTables() {
+        return false;
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        sink.type(getClass().getName());
     }
 }

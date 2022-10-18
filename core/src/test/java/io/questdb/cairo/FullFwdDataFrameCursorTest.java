@@ -199,17 +199,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailAtRuntimeByYear1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -459,17 +459,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -1034,8 +1034,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 public boolean wasCalled() {
                     return invoked;
                 }
-
-
             };
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -1052,6 +1050,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             eRnd.syncWith(rnd);
 
             long timestamp = 0;
+            boolean closeFailed = false;
             try (TableWriter writer = new TableWriter(configuration, "ABC", metrics)) {
                 for (int i = 0; i < (long) N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += increment);
@@ -1065,7 +1064,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 // closing should fail
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "remove");
+                closeFailed = true;
             }
+            Assert.assertTrue(closeFailed);
 
             new TableWriter(AbstractCairoTest.configuration, "ABC", metrics).close();
 
@@ -1385,22 +1386,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
                 final WorkerPool workerPool;
                 if (subSeq != null) {
-                    workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                        @Override
-                        public int[] getWorkerAffinity() {
-                            return new int[]{-1, -1};
-                        }
-
-                        @Override
-                        public int getWorkerCount() {
-                            return 2;
-                        }
-
-                        @Override
-                        public boolean haltOnError() {
-                            return false;
-                        }
-                    }, metrics);
+                    workerPool = new TestWorkerPool(2, metrics);
                     workerPool.assign(new ColumnIndexerJob(workScheduler));
                     workerPool.start(LOG);
                 } else {
@@ -1523,22 +1509,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
-                final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return new int[]{-1, -1};
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return 2;
-                    }
-
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-                }, metrics);
+                WorkerPool workerPool = new TestWorkerPool(2, metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
                 try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {
@@ -2472,7 +2443,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         private final RingQueue<ColumnIndexerTask> queue = new RingQueue<>(ColumnIndexerTask::new, 1024);
         private final Sequence pubSeq;
         private final Sequence subSeq;
-
 
         public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
 

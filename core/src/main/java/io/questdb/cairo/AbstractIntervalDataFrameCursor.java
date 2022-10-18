@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,9 +38,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     static final int SCAN_UP = -1;
     static final int SCAN_DOWN = 1;
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
-    protected LongList intervals;
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final int timestampIndex;
+    protected LongList intervals;
     protected TableReader reader;
     protected int intervalsLo;
     protected int intervalsHi;
@@ -100,10 +101,20 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return reader.getSymbolMapReader(columnIndex);
     }
 
-    public void of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
+    @Override
+    public StaticSymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndex);
+    }
+
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    public AbstractIntervalDataFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
         this.reader = reader;
         this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
         calculateRanges(intervals);
+        return this;
     }
 
     protected static long search(MemoryR column, long value, long low, long high, int increment) {

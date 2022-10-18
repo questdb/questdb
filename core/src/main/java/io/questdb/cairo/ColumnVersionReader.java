@@ -31,7 +31,7 @@ import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -47,9 +47,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
     public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
+    // PARTITION_TIMESTAMP_OFFSET = 0;
+    public static final int COLUMN_INDEX_OFFSET = 1;
+    public static final int COLUMN_NAME_TXN_OFFSET = 2;
+    public static final int COLUMN_TOP_OFFSET = 3;
 
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
-    private final LongList cachedList = new LongList();
+    protected final LongList cachedList = new LongList();
     private MemoryCMR mem;
     private boolean ownMem;
     private long version;
@@ -80,9 +84,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         while (p < lim) {
             mem.putLong(p, cachedList.getQuick(i));
-            mem.putLong(p + Long.BYTES, cachedList.getQuick(i + 1));
-            mem.putLong(p + 2 * Long.BYTES, cachedList.getQuick(i + 2));
-            mem.putLong(p + 3 * Long.BYTES, cachedList.getQuick(i + 3));
+            mem.putLong(p + COLUMN_INDEX_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_INDEX_OFFSET));
+            mem.putLong(p + COLUMN_NAME_TXN_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_NAME_TXN_OFFSET));
+            mem.putLong(p + COLUMN_TOP_OFFSET * Long.BYTES, cachedList.getQuick(i + COLUMN_TOP_OFFSET));
             i += BLOCK_SIZE;
             p += BLOCK_SIZE_BYTES;
         }
@@ -94,22 +98,60 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
         int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : getDefaultColumnNameTxn(columnIndex);
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);
     }
 
     public long getColumnNameTxnByIndex(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : -1L;
     }
 
+    /**
+     * Checks that column exists in the partition and returns the column top
+     * @param partitionTimestamp timestamp of the partition
+     * @param columnIndex column index
+     * @return column top in the partition or -1 if column does not exist in the partition
+     */
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
+        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex > -1L) {
+            return cachedList.getQuick(recordIndex + COLUMN_TOP_OFFSET);
+        }
+
+        // Check if column has been already added before this partition
+        long columnTopDefaultPartition = getColumnTopPartitionTimestamp(columnIndex);
+        if (columnTopDefaultPartition <= partitionTimestamp) {
+            return 0;
+        }
+
+        // This column does not exist in the partition
+        return -1L;
+    }
+
+    /**
+     * Returns the column top without checking that column exists in the partition
+     * @param partitionTimestamp timestamp of the partition
+     * @param columnIndex column index
+     * @return column top in the partition or 0 if column does not exist in the partition or column exists with no column top
+     */
+    public long getColumnTopQuick(long partitionTimestamp, int columnIndex) {
         int index = getRecordIndex(partitionTimestamp, columnIndex);
         return getColumnTopByIndex(index);
     }
 
     public long getColumnTopByIndex(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 3) : 0L;
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_TOP_OFFSET) : 0L;
     }
 
+    /**
+     * Get partition when the column was added first into the table.
+     * All partitions before that one should not have any data in the column
+     * All partitions after that will have 0 column top (column fully exists)
+     * Exception is when O3 commit can overwrite column top for any partition where the column did not exist
+     * with concrete column top value
+     * @param columnIndex column index
+     * @return the partition timestamp where column added or Long.MIN_VALUE if column was present from table creation
+     */
     public long getColumnTopPartitionTimestamp(int columnIndex) {
         int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
         return index > -1 ? getColumnTopByIndex(index) : Long.MIN_VALUE;
@@ -125,7 +167,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         if (index > -1) {
             final int sz = cachedList.size();
             for (; index < sz && cachedList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
-                final long thisIndex = cachedList.getQuick(index + 1);
+                final long thisIndex = cachedList.getQuick(index + COLUMN_INDEX_OFFSET);
 
                 if (thisIndex == columnIndex) {
                     return index;
@@ -153,7 +195,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return this;
     }
 
-    public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
+    public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {
             long version = unsafeGetVersion();
@@ -187,9 +229,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 }
             }
 
-            if (microsecondClock.getTicks() - tick > spinLockTimeoutUs) {
-                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
-                throw CairoException.instance(0).put("Column Version read timeout");
+            if (microsecondClock.getTicks() - tick > spinLockTimeout) {
+                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
+                throw CairoException.critical(0).put("Column Version read timeout");
             }
             Os.pause();
             LOG.debug().$("read dirty version ").$(version).$(", retrying").$();
@@ -197,10 +239,10 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {
-        mem.extend(offset + areaSize);
+        long lim = offset + areaSize;
+        mem.extend(lim);
         int i = 0;
         long p = offset;
-        long lim = offset + areaSize;
 
         assert areaSize % BLOCK_SIZE_BYTES == 0;
 
@@ -208,9 +250,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         while (p < lim) {
             cachedList.setQuick(i, mem.getLong(p));
-            cachedList.setQuick(i + 1, mem.getLong(p + Long.BYTES));
-            cachedList.setQuick(i + 2, mem.getLong(p + 2 * Long.BYTES));
-            cachedList.setQuick(i + 3, mem.getLong(p + 3 * Long.BYTES));
+            cachedList.setQuick(i + COLUMN_INDEX_OFFSET, mem.getLong(p + COLUMN_INDEX_OFFSET * Long.BYTES));
+            cachedList.setQuick(i + COLUMN_NAME_TXN_OFFSET, mem.getLong(p + COLUMN_NAME_TXN_OFFSET * Long.BYTES));
+            cachedList.setQuick(i + COLUMN_TOP_OFFSET, mem.getLong(p + COLUMN_TOP_OFFSET * Long.BYTES));
             i += BLOCK_SIZE;
             p += BLOCK_SIZE_BYTES;
         }

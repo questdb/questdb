@@ -62,6 +62,38 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     }
 
     @Test
+    public void testCastNullStringAsBoolean() throws SqlException {
+        Function function = parseFunction("cast('' as BOOLEAN)", metadata, functionParser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.isConstant());
+        Assert.assertFalse(function.getBool(null));
+    }
+
+    @Test
+    public void testCastTrueStringAsBoolean() throws SqlException {
+        Function function = parseFunction("cast('tRuE' as BOOLEAN)", metadata, functionParser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.isConstant());
+        Assert.assertTrue(function.getBool(null));
+    }
+
+    @Test
+    public void testCastStringAsBoolean() throws SqlException {
+        Function function = parseFunction("cast('bongos' as BOOLEAN)", metadata, functionParser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.isConstant());
+        Assert.assertFalse(function.getBool(null));
+    }
+
+    @Test
+    public void testCastFalseStringAsBoolean() throws SqlException {
+        Function function = parseFunction("cast('FalSE' as BOOLEAN)", metadata, functionParser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.isConstant());
+        Assert.assertFalse(function.getBool(null));
+    }
+
+    @Test
     public void testCastNullGeoLongChars() throws SqlException {
         Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
@@ -138,7 +170,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         assertFailure("cast(null as GEOHASH)",
                 null,
                 13,
-                "invalid type");
+                "unsupported cast");
     }
 
     @Test
@@ -176,11 +208,12 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
             new CastFloatToFloatFunctionFactory(),
             new CastDoubleToDoubleFunctionFactory(),
             new CastStrToStrFunctionFactory(),
+            new CastStrToBooleanFunctionFactory(),
             new CastSymbolToSymbolFunctionFactory(),
             new CastLong256ToLong256FunctionFactory(),
             new CastStrToGeoHashFunctionFactory(),
             new CastGeoHashToGeoHashFunctionFactory(),
-            new CastNullFunctionFactory(),
+            new CastNullTypeFunctionFactory(),
     };
 
     private static final CharSequenceIntHashMap typeNameToId = new CharSequenceIntHashMap();

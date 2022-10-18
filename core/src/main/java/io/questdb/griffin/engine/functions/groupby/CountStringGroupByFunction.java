@@ -31,12 +31,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CountStringGroupByFunction extends LongFunction implements GroupByFunction {
+public class CountStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final ObjList<CharSequenceHashSet> sets = new ObjList<>();
     private int valueIndex;
@@ -47,6 +48,17 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public void clear() {
+        sets.clear();
+        setIndex = 0;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final CharSequenceHashSet set;
         if (sets.size() <= setIndex) {
@@ -54,9 +66,15 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
         } else {
             set = sets.getQuick(setIndex);
         }
+
         set.clear();
-        set.add(Chars.toString(arg.getStr(record)));
-        mapValue.putLong(valueIndex, 1L);
+        final CharSequence val = arg.getStr(record);
+        if (val != null) {
+            set.add(Chars.toString(val));
+            mapValue.putLong(valueIndex, 1L);
+        } else {
+            mapValue.putLong(valueIndex, 0L);
+        }
         mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
@@ -64,12 +82,14 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     public void computeNext(MapValue mapValue, Record record) {
         final CharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final CharSequence val = arg.getStr(record);
-        final int index = set.keyIndex(val);
-        if (index < 0) {
-            return;
+        if (val != null) {
+            final int index = set.keyIndex(val);
+            if (index < 0) {
+                return;
+            }
+            set.addAt(index, Chars.toString(val));
+            mapValue.addLong(valueIndex, 1);
         }
-        set.addAt(index, Chars.toString(val));
-        mapValue.addLong(valueIndex, 1);
     }
 
     @Override
@@ -77,6 +97,11 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
         columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override
@@ -90,11 +115,6 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
-    }
-
-    @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
     }
@@ -105,7 +125,13 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void toTop() {
+        UnaryFunction.super.toTop();
         setIndex = 0;
     }
 }

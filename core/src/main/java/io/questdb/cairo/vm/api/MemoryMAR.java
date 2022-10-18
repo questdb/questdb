@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+//mapped appendable readable
 public interface MemoryMAR extends MemoryMA, MemoryMR, MemoryR {
 
     @Override

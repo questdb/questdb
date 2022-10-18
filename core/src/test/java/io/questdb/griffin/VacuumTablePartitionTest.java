@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.O3PurgeDiscoveryJob;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -48,7 +48,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
             }
 
             // cleanup
-            try (O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(engine.getMessageBus(), 1)) {
+            try (O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
                 //noinspection StatementWithEmptyBody
                 while (purgeDiscoveryJob.run(0)) {
 
@@ -77,7 +77,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
                 compiler.compile("vacuum partitions asdfad", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "table 'asdfad' does not exist");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist [table=asdfad]");
                 Assert.assertEquals("vacuum partitions ".length(), ex.getPosition());
             }
         });

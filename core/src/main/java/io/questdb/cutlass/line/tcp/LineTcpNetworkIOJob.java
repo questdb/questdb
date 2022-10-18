@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
@@ -37,7 +36,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
 
-class LineTcpNetworkIOJob implements NetworkIOJob, Job {
+class LineTcpNetworkIOJob implements NetworkIOJob {
     private final static Log LOG = LogFactory.getLog(LineTcpNetworkIOJob.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final int workerId;
@@ -54,7 +53,9 @@ class LineTcpNetworkIOJob implements NetworkIOJob, Job {
     LineTcpNetworkIOJob(
             LineTcpReceiverConfiguration configuration,
             LineTcpMeasurementScheduler scheduler,
-            IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+            IODispatcher<LineTcpConnectionContext> dispatcher,
+            int workerId
+    ) {
         this.millisecondClock = configuration.getMillisecondClock();
         this.maintenanceInterval = configuration.getMaintenanceInterval();
         this.scheduler = scheduler;

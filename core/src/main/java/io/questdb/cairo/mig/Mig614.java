@@ -32,7 +32,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 final class Mig614 {
     private static final long TX_OFFSET_STRUCT_VERSION = 40;
@@ -65,11 +66,11 @@ final class Mig614 {
         long fileLen = ff.length(path);
 
         if (fileLen < 0) {
-            throw CairoException.instance(ff.errno()).put("cannot read file length: ").put(path);
+            throw CairoException.critical(ff.errno()).put("cannot read file length: ").put(path);
         }
 
         if (fileLen < readOffset + Long.BYTES) {
-            throw CairoException.instance(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
+            throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
         }
 
         metaMem.of(
@@ -77,6 +78,7 @@ final class Mig614 {
                 path,
                 ff.getPageSize(),
                 fileLen,
-                MemoryTag.NATIVE_DEFAULT);
+                MemoryTag.NATIVE_MIG_MMAP
+        );
     }
 }
