@@ -640,7 +640,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(tableName);
+        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName);
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachPartitionSuffix()).slash$();
         int detachedRootLen = detachedPath.length();
@@ -1955,6 +1955,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 walColumnMemoryPool.push(mappedColumnMem);
             }
         }
+        walEventReader.close();
     }
 
     public long size() {
