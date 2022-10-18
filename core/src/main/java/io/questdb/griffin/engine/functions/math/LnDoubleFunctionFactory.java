@@ -34,10 +34,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class LogDoubleFunctionFactory implements FunctionFactory {
+public class LnDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "log(D)";
+        return "ln(D)";
     }
 
     @Override
@@ -46,13 +46,13 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
             IntList argPositions, CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LogFunction(args.getQuick(0));
+        return new LnFunction(args.getQuick(0));
     }
 
-    private static class LogFunction extends DoubleFunction implements UnaryFunction {
+    private static class LnFunction extends DoubleFunction implements UnaryFunction {
         final Function function;
 
-        public LogFunction(Function function) {
+        public LnFunction(Function function) {
             this.function = function;
         }
 
@@ -64,7 +64,7 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double value = function.getDouble(rec);
-            return Math.log10(value);
+            return Math.log(value);
         }
     }
 }
