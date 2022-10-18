@@ -684,7 +684,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
-            this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREAT_AS_SELECT_RETRY_COUNT, 5);
+            this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultMapType = getString(properties, env, PropertyKey.CAIRO_DEFAULT_MAP_TYPE, "fast");
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
@@ -3478,6 +3478,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         registerObsolete(
                 "pg.timestamp.locale",
                 PropertyKey.PG_DATE_LOCALE);
+        registerObsolete(
+                "cairo.sql.append.page.size",
+                PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE);
 
         registerDeprecated(
                 PropertyKey.HTTP_MIN_BIND_TO,
