@@ -84,12 +84,13 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
             double low = centerLeft.getDouble(rec);
             double high = centerRight.getDouble(rec);
             int count = rightEnd.getInt(rec);
-            if (operand < low)
+            if (operand < low) {
                 return 0;
-            else if (operand > high)
+            } else if (operand > high) {
                 return (count + 1);
-            else
+            } else {
                 return (int) ((operand - low) / (high - low) * count) + 1;
+            }
         }
     }
 }
