@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.*;
 
@@ -56,26 +57,10 @@ public class RankFunctionFactory implements FunctionFactory {
             arrayColumnTypes.add(ColumnType.LONG); // offset
             Map map = MapFactory.createMap(configuration, analyticContext.getPartitionByKeyTypes(), arrayColumnTypes);
             return new RankFunction(map, analyticContext.getPartitionByRecord(), analyticContext.getPartitionBySink());
-        }
-        return new SequenceRankFunction();
-    }
-
-    private static class SequenceRankFunction extends LongFunction implements ScalarFunction {
-        private long next = 1;
-
-        @Override
-        public long getLong(Record rec) {
-            return next;
-        }
-
-        @Override
-        public void toTop() {
-            next = 1;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            toTop();
+        } else if (analyticContext.isOrdered()) {
+            return new OrderRankFunction();
+        } else {
+            return LongConstant.newInstance(1);
         }
     }
 
@@ -141,7 +126,7 @@ public class RankFunctionFactory implements FunctionFactory {
                 long currentIndex = mapValue.getLong(VAL_CURRENT_INDEX);
                 long offset = mapValue.getLong(VAL_OFFSET);
                 if (currentIndex == 0) {
-                    mapValue.putLong(VAL_CURRENT_INDEX, currentIndex + 1);
+                    mapValue.putLong(VAL_CURRENT_INDEX, 1);
                     mapValue.putLong(VAL_OFFSET, recordOffset);
                 } else {
                     // compare with prev record
@@ -172,6 +157,85 @@ public class RankFunctionFactory implements FunctionFactory {
         @Override
         public void reset() {
             map.close();
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+    }
+
+    private static class OrderRankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+
+        private long maxIndex = 0;
+        private long currentIndex = 0;
+        private long offset = 0;
+        private int columnIndex;
+        private RecordComparator recordComparator;
+
+        public OrderRankFunction() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // not called
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+            this.recordComparator = recordComparatorCompiler.compile(chainTypes, order);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            if (recordComparator == null) {
+                // order dismiss
+                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
+            } else {
+                if (currentIndex == 0) {
+                    currentIndex = 1;
+                    offset = recordOffset;
+                } else {
+                    // compare with prev record
+                    recordComparator.setLeft(record);
+                    if (recordComparator.compare(spi.getRecordAt(offset)) != 0) {
+                        currentIndex = maxIndex + 1;
+                        offset = recordOffset;
+                    }
+                }
+                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndex);
+            }
+            maxIndex++;
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void reopen() {
+            reset();
+        }
+
+        @Override
+        public void reset() {
+            maxIndex = 0;
+            currentIndex = 0;
+            offset = 0;
         }
 
         @Override

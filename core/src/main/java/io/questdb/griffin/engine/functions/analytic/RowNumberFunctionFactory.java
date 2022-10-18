@@ -123,6 +123,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
         }
+
         @Override
         public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             partitionByRecord.of(record);
