@@ -29,13 +29,11 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.*;
 
@@ -60,7 +58,7 @@ public class RankFunctionFactory implements FunctionFactory {
         } else if (analyticContext.isOrdered()) {
             return new OrderRankFunction();
         } else {
-            return LongConstant.newInstance(1);
+            return new SequenceRowNumberFunction();
         }
     }
 
@@ -236,6 +234,59 @@ public class RankFunctionFactory implements FunctionFactory {
             maxIndex = 0;
             currentIndex = 0;
             offset = 0;
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+    }
+
+    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+
+        private int columnIndex;
+
+        public SequenceRowNumberFunction() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // not called
+            return 1;
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), 1);
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void reopen() {
+        }
+
+        @Override
+        public void reset() {
         }
 
         @Override
