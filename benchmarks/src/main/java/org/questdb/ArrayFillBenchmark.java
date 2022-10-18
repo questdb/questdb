@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.std.DirectLongList;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -35,40 +36,53 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class DoubleBenchmark {
+public class ArrayFillBenchmark {
 
-    private static final long EXP_BIT_MASK = 0x7FF0000000000000L;
-    private static final double x = Double.NaN;
+    private static DirectLongList list;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(DoubleBenchmark.class.getSimpleName())
+                .include(ArrayFillBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(5)
-                .addProfiler("gc")
                 .forks(1)
                 .build();
 
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public long testToLong() {
-        return Double.doubleToLongBits(x);
+    @Setup(Level.Iteration)
+    public void reset() {
+        list = new DirectLongList(5_000_000, 0);
+        list.setPos(5_000_000);
     }
 
     @Benchmark
-    public double testStraight() {
-        return x;
+    public long testBaseline() {
+        long sum = 0;
+        for (long i = 0, n = list.size(); i < n; i++) {
+            sum += list.get(i);
+        }
+        return sum;
     }
 
     @Benchmark
-    public boolean testIsFinite() {
-        return Double.isFinite(x);
+    public long testFillNeg() {
+        list.zero(-1);
+        long sum = 0;
+        for (long i = 0, n = list.size(); i < n; i++) {
+            sum += list.get(i);
+        }
+        return sum;
     }
 
     @Benchmark
-    public boolean testBitFiddle() {
-        return (Double.doubleToLongBits(x) & EXP_BIT_MASK) == EXP_BIT_MASK;
+    public long testFillZero() {
+        list.zero(0);
+        long sum = 0;
+        for (long i = 0, n = ArrayFillBenchmark.list.size(); i < n; i++) {
+            sum += list.get(i);
+        }
+        return sum;
     }
 }
