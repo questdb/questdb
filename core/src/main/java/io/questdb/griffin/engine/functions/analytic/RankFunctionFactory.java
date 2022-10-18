@@ -58,7 +58,7 @@ public class RankFunctionFactory implements FunctionFactory {
         } else if (analyticContext.isOrdered()) {
             return new OrderRankFunction();
         } else {
-            return new SequenceRowNumberFunction();
+            return new SequenceRankFunction();
         }
     }
 
@@ -242,11 +242,11 @@ public class RankFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+    private static class SequenceRankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
 
         private int columnIndex;
 
-        public SequenceRowNumberFunction() {
+        public SequenceRankFunction() {
         }
 
         @Override
