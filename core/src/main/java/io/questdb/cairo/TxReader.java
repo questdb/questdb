@@ -94,16 +94,16 @@ public class TxReader implements Closeable, Mutable {
         mem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
 
         mem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
-        mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
         mem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
         mem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         mem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
-        mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
+        mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
+        mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -285,7 +285,6 @@ public class TxReader implements Closeable, Mutable {
                 return false;
             }
 
-            this.seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
             this.transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
             this.fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
             this.minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
@@ -297,6 +296,7 @@ public class TxReader implements Closeable, Mutable {
             final long prevColumnVersion = this.columnVersion;
             this.columnVersion = unsafeReadColumnVersion();
             this.truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
+            this.seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
             this.symbolColumnCount = this.symbolsSize / 8;
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);

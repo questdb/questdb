@@ -202,8 +202,12 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
 
     @Test
     public void createWalAndDropPartitionsWithWhere27() throws Exception {
-        createWalAndDropPartitionsWithWhere(27, 4, 2, "x\tsym\tts\tsym2\n" +
-                    "13\tAB\t2022-02-26T00:00:00.000000Z\tDE\n");
+        createWalAndDropPartitionsWithWhere(27, 5, 2, "x\tsym\tts\tsym2\n");
+    }
+
+    @Test
+    public void createWalAndDropPartitionsWithWhere28() throws Exception {
+        createWalAndDropPartitionsWithWhere(27, 5, 2, "x\tsym\tts\tsym2\n");
     }
 
     private void createWalAndDropPartitionsWithWhere(int day, long expectedTxn, long expectedSeqTxn, String expected) throws Exception {

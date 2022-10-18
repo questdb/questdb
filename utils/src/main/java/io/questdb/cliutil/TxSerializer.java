@@ -123,17 +123,17 @@ public class TxSerializer {
 
                 rwTxMem.setTruncateSize(fileSize);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_TXN, tx.TX_OFFSET_TXN);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN, tx.TX_OFFSET_SEQ_TXN);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT, tx.TX_OFFSET_FIXED_ROW_COUNT);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP, tx.TX_OFFSET_MIN_TIMESTAMP);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP, tx.TX_OFFSET_MAX_TIMESTAMP);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION, tx.TX_OFFSET_DATA_VERSION);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION, tx.TX_OFFSET_STRUCT_VERSION);
-                rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT, tx.TX_OFFSET_MAP_WRITER_COUNT);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION, tx.TX_OFFSET_PARTITION_TABLE_VERSION);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, tx.TX_OFFSET_COLUMN_VERSION);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION, tx.TX_OFFSET_TRUNCATE_VERSION);
+                rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN, tx.TX_OFFSET_SEQ_TXN);
+                rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT, tx.TX_OFFSET_MAP_WRITER_COUNT);
 
                 if (tx.TX_OFFSET_MAP_WRITER_COUNT != 0) {
                     int isym = 0;
@@ -177,7 +177,6 @@ public class TxSerializer {
                 boolean isA = (version & 1L) == 0L;
                 long baseOffset = isA ? roTxMem.getInt(TX_BASE_OFFSET_A_32) : roTxMem.getInt(TX_BASE_OFFSET_B_32);
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN);
-                tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN);
                 tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT);
                 tx.TX_OFFSET_FIXED_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT);
                 tx.TX_OFFSET_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP);
@@ -188,6 +187,7 @@ public class TxSerializer {
                 tx.TX_OFFSET_PARTITION_TABLE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION);
                 tx.TX_OFFSET_COLUMN_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64);
                 tx.TX_OFFSET_TRUNCATE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION);
+                tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN);
 
                 int symbolsCount = tx.TX_OFFSET_MAP_WRITER_COUNT;
                 tx.SYMBOLS = new ArrayList<>();

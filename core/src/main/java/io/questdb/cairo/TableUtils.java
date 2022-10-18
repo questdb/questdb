@@ -96,8 +96,7 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
     public static final long TX_OFFSET_TXN_64 = 0;
-    public static final long TX_OFFSET_SEQ_TXN_64 = TX_OFFSET_TXN_64 + 8;
-    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_SEQ_TXN_64 + 8;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
     public static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT_64 + 8;
     public static final long TX_OFFSET_MIN_TIMESTAMP_64 = TX_OFFSET_FIXED_ROW_COUNT_64 + 8;
     public static final long TX_OFFSET_MAX_TIMESTAMP_64 = TX_OFFSET_MIN_TIMESTAMP_64 + 8;
@@ -106,6 +105,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_PARTITION_TABLE_VERSION_64 = TX_OFFSET_DATA_VERSION_64 + 8;
     public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
     public static final long TX_OFFSET_TRUNCATE_VERSION_64 = TX_OFFSET_COLUMN_VERSION_64 + 8;
+    public static final long TX_OFFSET_SEQ_TXN_64 = TX_OFFSET_TRUNCATE_VERSION_64 + 8;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final long COLUMN_NAME_TXN_NONE = -1L;
@@ -810,8 +810,6 @@ public final class TableUtils {
         // txn to let readers know table is being reset
         txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
 
-        // sequencer txn
-        txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
         // transient row count
         txMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, 0);
         // fixed row count
@@ -830,6 +828,8 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         // truncate version
         txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
+        // sequencer txn
+        txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {

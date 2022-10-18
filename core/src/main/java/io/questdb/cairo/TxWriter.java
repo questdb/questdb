@@ -393,17 +393,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset(writeAreaSize);
         putLong(TX_OFFSET_TXN_64, ++txn);
-        putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
         putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
         putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
-        putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
+        putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
-        putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
         putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
+        putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
+        putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         // store symbol counts
         storeSymbolCounts(symbolCountProviders);
