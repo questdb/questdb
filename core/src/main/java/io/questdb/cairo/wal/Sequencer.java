@@ -34,7 +34,7 @@ public interface Sequencer extends Closeable {
 
     long NO_TXN = Long.MIN_VALUE;
 
-    void copyMetadataTo(SequencerMetadata metadata);
+    void copyMetadataTo(SequencerMetadata metadata, String tableName);
 
     SequencerStructureChangeCursor getStructureChangeCursor(
             @Nullable SequencerStructureChangeCursor reusableCursor,

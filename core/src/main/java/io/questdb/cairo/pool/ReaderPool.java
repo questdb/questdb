@@ -98,7 +98,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                                     .$("open '").utf8(name)
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .$(']').$();
-                            r = new R(this, e, i, name, messageBus);
+                            String tableName = engine.getTableNameBySystemName(name);
+                            r = new R(this, e, i, name, tableName, messageBus);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -387,8 +388,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         private ReaderPool pool;
         private Entry entry;
 
-        public R(ReaderPool pool, Entry entry, int index, CharSequence systemTableName, MessageBus messageBus) {
-            super(pool.getConfiguration(), systemTableName, messageBus);
+        public R(ReaderPool pool, Entry entry, int index, CharSequence systemTableName, CharSequence tableName, MessageBus messageBus) {
+            super(pool.getConfiguration(), tableName, systemTableName, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

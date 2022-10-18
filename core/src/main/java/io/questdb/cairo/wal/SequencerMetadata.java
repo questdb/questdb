@@ -94,8 +94,8 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         columnCount = columnMetadata.size();
     }
 
-    public void copyFrom(SequencerMetadata metadata) {
-        copyFrom(metadata, metadata.getTableName(), metadata.getTableId(), metadata.getStructureVersion());
+    public void copyFrom(SequencerMetadata metadata, String tableName) {
+        copyFrom(metadata, tableName, metadata.getTableId(), metadata.getStructureVersion());
     }
 
     public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {

@@ -99,7 +99,7 @@ public class TableReaderReloadBenchmark {
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-09T00:00:00.000000Z"));
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z"));
         writer.commit();
-        reader = new TableReader(configuration, "test");
+        reader = new TableReader(configuration, "test", "test");
 
         // ensure reader opens all partitions and maps all data
         RecordCursor cursor = reader.getCursor();

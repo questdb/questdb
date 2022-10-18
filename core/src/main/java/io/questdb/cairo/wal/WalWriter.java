@@ -121,7 +121,7 @@ public class WalWriter implements TableWriterFrontend {
             mkWalDir();
 
             metadata = new SequencerMetadata(ff);
-            tableRegistry.copyMetadataTo(systemTableName, metadata);
+            tableRegistry.copyMetadataTo(tableName, systemTableName, metadata);
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);

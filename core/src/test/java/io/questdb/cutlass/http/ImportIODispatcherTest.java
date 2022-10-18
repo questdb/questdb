@@ -387,7 +387,7 @@ public class ImportIODispatcherTest {
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms", "syms")) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(2, meta.getTimestampIndex());
@@ -669,7 +669,7 @@ public class ImportIODispatcherTest {
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms", "syms")) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));

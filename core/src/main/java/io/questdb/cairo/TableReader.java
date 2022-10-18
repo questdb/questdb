@@ -82,11 +82,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean txnAcquired = false;
     private final MillisecondClock clock;
 
-    public TableReader(CairoConfiguration configuration, CharSequence systemTableName) {
-        this(configuration, systemTableName, null);
+    public TableReader(CairoConfiguration configuration, CharSequence tableName, CharSequence systemTableName) {
+        this(configuration, tableName, systemTableName, null);
     }
 
     public TableReader(CairoConfiguration configuration,
+                       CharSequence tableName,
                        CharSequence systemTableNameSequence,
                        @Nullable MessageBus messageBus
     ) {
@@ -94,7 +95,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.clock = configuration.getMillisecondClock();
         this.ff = configuration.getFilesFacade();
         this.systemTableName = Chars.toString(systemTableNameSequence);
-        this.tableName = TableUtils.toTableNameFromSystemName(this.systemTableName);
+        this.tableName = Chars.toString(tableName);
         this.messageBus = messageBus;
         this.path = new Path();
         this.path.of(configuration.getRoot()).concat(this.systemTableName);

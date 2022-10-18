@@ -72,20 +72,9 @@ public class TableRegistry extends AbstractPool {
         tableNameMemory.close(true);
     }
 
-    public void dropTable(String tableName, String systemTableName) {
-        if (tableNameRegistry.remove(tableName, systemTableName)) {
-            removeEntry(tableName);
-            reverseTableNameRegistry.remove(systemTableName);
-
-            try (Sequencer seq = seqRegistry.get(systemTableName)) {
-                seq.nextTxn(0, TxnCatalog.DROP_TABLE_WALID, 0, 0);
-            }
-
-            final WalWriterPool pool = walRegistry.get(systemTableName);
-            if (pool != null) {
-                pool.releaseAll(Long.MAX_VALUE);
-                walRegistry.remove(systemTableName);
-            }
+    public void copyMetadataTo(final String tableName, final CharSequence systemTableName, final SequencerMetadata metadata) {
+        try (Sequencer sequencer = openSequencer(systemTableName)) {
+            sequencer.copyMetadataTo(metadata, tableName);
         }
     }
 
@@ -187,9 +176,24 @@ public class TableRegistry extends AbstractPool {
         void onTable(int tableId, final CharSequence tableName, long lastTxn);
     }
 
-    public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
-        try (Sequencer sequencer = openSequencer(tableName)) {
-            sequencer.copyMetadataTo(metadata);
+    public void dropTable(String tableName, String systemTableName) {
+        if (tableNameRegistry.remove(tableName, systemTableName)) {
+            removeEntry(tableName);
+            reverseTableNameRegistry.remove(systemTableName);
+
+            try (Sequencer seq = seqRegistry.get(systemTableName)) {
+                if (seq != null) {
+                    seq.nextTxn(0, TxnCatalog.DROP_TABLE_WALID, 0, 0);
+                } else {
+                    return;
+                }
+            }
+
+            final WalWriterPool pool = walRegistry.get(systemTableName);
+            if (pool != null) {
+                pool.releaseAll(Long.MAX_VALUE);
+                walRegistry.remove(systemTableName);
+            }
         }
     }
 

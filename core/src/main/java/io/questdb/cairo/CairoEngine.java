@@ -242,7 +242,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         if (walSystemTableName != null) {
             // This is WAL table because sequencer exists
             final SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
-            tableRegistry.copyMetadataTo(walSystemTableName, sequencerMetadata);
+            tableRegistry.copyMetadataTo(Chars.toString(tableName), walSystemTableName, sequencerMetadata);
             return sequencerMetadata;
         }
 

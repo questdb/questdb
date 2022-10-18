@@ -29,7 +29,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
@@ -86,10 +85,10 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public void copyMetadataTo(@NotNull SequencerMetadata copyTo) {
+    public void copyMetadataTo(@NotNull SequencerMetadata copyTo, String tableName) {
         schemaLock.readLock().lock();
         try {
-            copyTo.copyFrom(metadata);
+            copyTo.copyFrom(metadata, tableName);
         } finally {
             schemaLock.readLock().unlock();
         }
@@ -124,10 +123,6 @@ public class SequencerImpl implements Sequencer {
     @Override
     public int getNextWalId() {
         return (int) walIdGenerator.getNextId();
-    }
-
-    public String getTableName() {
-        return systemTableName;
     }
 
     @Override
@@ -185,6 +180,17 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
+    public SequencerCursor getCursor(long lastCommittedTxn) {
+        schemaLock.writeLock().lock();
+        try {
+            checkDistressed();
+            return catalog.getCursor(lastCommittedTxn);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
+    }
+
+    @Override
     public void close() {
         schemaLock.writeLock().lock();
         try {
@@ -192,6 +198,10 @@ public class SequencerImpl implements Sequencer {
         } finally {
             schemaLock.writeLock().unlock();
         }
+    }
+
+    public String getTableName() {
+        return systemTableName;
     }
 
     public boolean isDistressed() {
@@ -215,7 +225,7 @@ public class SequencerImpl implements Sequencer {
         schemaLock.writeLock().lock();
         try {
             walIdGenerator.open(path);
-            metadata.open(TableUtils.toTableNameFromSystemName(systemTableName), path, rootLen);
+            metadata.open(systemTableName, path, rootLen);
             catalog.open(path);
             open = true;
         } catch (Throwable th) {
@@ -249,7 +259,7 @@ public class SequencerImpl implements Sequencer {
         schemaLock.writeLock().lock();
         try {
             createSequencerDir(ff, mkDirMode);
-            metadata.create(model, Chars.toString(model.getTableName()), path, rootLen, tableId);
+            metadata.create(model, systemTableName, path, rootLen, tableId);
         } finally {
             schemaLock.writeLock().unlock();
         }

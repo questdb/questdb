@@ -31,8 +31,8 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
@@ -628,27 +628,6 @@ public abstract class AbstractCairoTest {
         });
     }
 
-    protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        TestUtils.assertCursor(expected, cursor, metadata, header, sink);
-    }
-
-    protected void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
-        assertCursor(expected, cursor, metadata, true);
-        cursor.toTop();
-        assertCursor(expected, cursor, metadata, true);
-    }
-
-    private static class X implements MicrosecondClock {
-        @Override
-        public long getTicks() {
-            return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-        }
-    }
-
-    protected static CharSequence fsTableName(CharSequence tableName) {
-        return engine.getSystemTableName(tableName);
-    }
-
     protected static void dumpMemoryUsage() {
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
             LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
@@ -660,86 +639,11 @@ public abstract class AbstractCairoTest {
     }
 
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(configuration, engine.getSystemTableName(tableName));
+        return new TableReader(configuration, tableName, engine.getSystemTableName(tableName));
     }
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
         return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), messageBus, metrics);
-    }
-
-    @TestOnly
-    public static void printMemoryUsage() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            System.err.print(MemoryTag.nameOf(i));
-            System.err.print(":");
-            System.err.println(Unsafe.getMemUsedByTag(i));
-        }
-    }
-
-    @TestOnly
-    public static void snapshotMemoryUsage() {
-        memoryUsage = getMemUsedByFactories();
-
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
-        }
-    }
-
-    @TestOnly
-    public static void printMemoryUsageDiff() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
-
-            if (value != 0L) {
-                System.err.print(MemoryTag.nameOf(i));
-                System.err.print(":");
-                System.err.println(value);
-            }
-        }
-    }
-
-    @TestOnly
-    public static void printFactoryMemoryUsageDiff() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (!FACTORY_TAGS[i]) {
-                continue;
-            }
-
-            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
-
-            if (value != 0L) {
-                System.out.println(MemoryTag.nameOf(i) + ":" + value);
-            }
-        }
-    }
-
-    //ignores:
-    // o3, mmap - because they're usually linked with table readers that are kept in pool
-    // join map memory - because it's usually a small and can't really be released until factory is closed
-    // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
-    @TestOnly
-    public static long getMemUsedByFactories() {
-        long memUsed = 0;
-
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (FACTORY_TAGS[i]) {
-                memUsed += Unsafe.getMemUsedByTag(i);
-            }
-        }
-
-        return memUsed;
-    }
-
-    @TestOnly
-    public static long getMemUsedExcept(long tagsToIgnore) {
-        long memUsed = 0;
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if ((tagsToIgnore & 1L << i) == 0) {
-                memUsed += Unsafe.getMemUsedByTag(i);
-            }
-        }
-
-        return memUsed;
     }
 
     protected static void drainWalQueue() {
