@@ -5661,6 +5661,7 @@ public class TableWriter implements Closeable {
         if (o3PartitionUpdateSink == null) {
             o3PartitionUpdateSink = new DirectLongList(size, MemoryTag.NATIVE_O3);
         }
+        o3PartitionUpdateSink.setCapacity(size);
         o3PartitionUpdateSink.setPos(size);
         o3PartitionUpdateSink.zero(-1);
         o3PartitionUpdateSink.set(0, partitionFloorMethod.floor(o3TimestampMin));
