@@ -63,6 +63,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private long yData;
 
     public SampleByInterpolateRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
@@ -71,7 +72,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             @NotNull TimestampSampler timestampSampler,
             @Transient @NotNull QueryModel model,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull EntityColumnFilter entityColumnFilter,

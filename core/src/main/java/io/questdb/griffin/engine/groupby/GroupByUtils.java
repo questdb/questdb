@@ -25,9 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -260,24 +258,6 @@ public class GroupByUtils {
         }
     }
 
-    public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).computeNext(value, record);
-        }
-    }
-
-    public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).computeFirst(value, record);
-        }
-    }
-
-    public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).setEmpty(value);
-        }
-    }
-
     public static void validateGroupByColumns(@NotNull QueryModel model, int inferredKeyColumnCount) throws SqlException {
         final ObjList<ExpressionNode> groupByColumns = model.getGroupBy();
         int explicitKeyColumnCount = groupByColumns.size();
@@ -355,21 +335,11 @@ public class GroupByUtils {
                     break;
                 default:
                     throw SqlException.$(key.position, "unsupported type of expression");
-
             }
         }
 
-
         if (explicitKeyColumnCount < inferredKeyColumnCount) {
             throw SqlException.$(model.getModelPosition(), "not enough columns in group by");
-        }
-    }
-
-    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        if (value.isNew()) {
-            updateNew(groupByFunctions, n, value, record);
-        } else {
-            updateExisting(groupByFunctions, n, value, record);
         }
     }
 }

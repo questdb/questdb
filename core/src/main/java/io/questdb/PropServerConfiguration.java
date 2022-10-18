@@ -222,7 +222,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3PartitionQueueCapacity;
     private final int o3OpenColumnQueueCapacity;
     private final int o3CopyQueueCapacity;
-    private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int maxUncommittedRows;
@@ -842,7 +841,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
-            this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY, 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
             this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
@@ -2170,11 +2168,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3PartitionQueueCapacity() {
             return o3PartitionQueueCapacity;
-        }
-
-        @Override
-        public int getO3PartitionUpdateQueueCapacity() {
-            return o3UpdPartitionSizeQueueCapacity;
         }
 
         @Override

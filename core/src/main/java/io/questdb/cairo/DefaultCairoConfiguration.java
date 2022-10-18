@@ -404,11 +404,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return 1024;
     }
