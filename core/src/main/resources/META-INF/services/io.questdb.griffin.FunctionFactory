@@ -119,6 +119,7 @@ io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory
 io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory
 
 # 'log'
+io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory
 
 # 'sqrt'
@@ -592,6 +593,9 @@ io.questdb.griffin.engine.functions.str.RightFunctionFactory
 
 # substring()
 io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
+
+#starts_with()
+io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory
 
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory

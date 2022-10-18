@@ -137,7 +137,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                 x = value.getLong(0);
             }
             value.putLong(0, x + 1);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), x);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), x + 1);
         }
 
         @Override

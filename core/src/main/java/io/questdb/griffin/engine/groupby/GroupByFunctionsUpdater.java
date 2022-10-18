@@ -22,13 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
-/**
- * Postgres-compatibility ceiling() alias for the ceil() function.
- */
-public class CeilingFloatFunctionFactory extends CeilFloatFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "ceiling(F)";
-    }
+package io.questdb.griffin.engine.groupby;
+
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+
+public interface GroupByFunctionsUpdater {
+
+    void updateNew(MapValue value, Record record);
+
+    void updateExisting(MapValue value, Record record);
+
+    void updateEmpty(MapValue value);
 }
