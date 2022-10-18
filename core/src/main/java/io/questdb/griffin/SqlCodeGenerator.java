@@ -2249,6 +2249,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
 
                     return new SampleByInterpolateRecordCursorFactory(
+                            asm,
                             configuration,
                             factory,
                             groupByMetadata,
@@ -2257,7 +2258,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timestampSampler,
                             model,
                             listColumnFilterA,
-                            asm,
                             keyTypes,
                             valueTypes,
                             entityColumnFilter,
@@ -2324,6 +2324,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                     if (keyTypes.getColumnCount() == 0) {
                         return new SampleByFillPrevNotKeyedRecordCursorFactory(
+                                asm,
                                 factory,
                                 timestampSampler,
                                 groupByMetadata,
@@ -2339,11 +2340,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     return new SampleByFillPrevRecordCursorFactory(
+                            asm,
                             configuration,
                             factory,
                             timestampSampler,
                             listColumnFilterA,
-                            asm,
                             keyTypes,
                             valueTypes,
                             groupByMetadata,
@@ -2362,6 +2363,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (keyTypes.getColumnCount() == 0) {
                         // this sample by is not keyed
                         return new SampleByFillNoneNotKeyedRecordCursorFactory(
+                                asm,
                                 factory,
                                 timestampSampler,
                                 groupByMetadata,
@@ -2377,6 +2379,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     return new SampleByFillNoneRecordCursorFactory(
+                            asm,
                             configuration,
                             factory,
                             groupByMetadata,
@@ -2384,7 +2387,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             recordFunctions,
                             timestampSampler,
                             listColumnFilterA,
-                            asm,
                             keyTypes,
                             valueTypes,
                             timestampIndex,
@@ -2398,6 +2400,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (fillCount == 1 && isNullKeyword(sampleByFill.getQuick(0).token)) {
                     if (keyTypes.getColumnCount() == 0) {
                         return new SampleByFillNullNotKeyedRecordCursorFactory(
+                                asm,
                                 factory,
                                 timestampSampler,
                                 groupByMetadata,
@@ -2414,11 +2417,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     return new SampleByFillNullRecordCursorFactory(
+                            asm,
                             configuration,
                             factory,
                             timestampSampler,
                             listColumnFilterA,
-                            asm,
                             keyTypes,
                             valueTypes,
                             groupByMetadata,
@@ -2437,6 +2440,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (keyTypes.getColumnCount() == 0) {
                     return new SampleByFillValueNotKeyedRecordCursorFactory(
+                            asm,
                             factory,
                             timestampSampler,
                             sampleByFill,
@@ -2454,11 +2458,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 return new SampleByFillValueRecordCursorFactory(
+                        asm,
                         configuration,
                         factory,
                         timestampSampler,
                         listColumnFilterA,
-                        asm,
                         sampleByFill,
                         keyTypes,
                         valueTypes,
@@ -3148,6 +3152,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (keyTypes.getColumnCount() == 0) {
                 return new GroupByNotKeyedRecordCursorFactory(
+                        asm,
                         factory,
                         groupByMetadata,
                         groupByFunctions,
@@ -3157,10 +3162,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             return new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
+                    asm,
                     configuration,
                     factory,
                     listColumnFilterA,
-                    asm,
                     keyTypes,
                     valueTypes,
                     groupByMetadata,
