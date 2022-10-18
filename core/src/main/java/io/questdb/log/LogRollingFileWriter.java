@@ -35,6 +35,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.nio.file.Paths;
 
 public class LogRollingFileWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -53,6 +54,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long _wptr;
     private int nBufferSize;
     private long nRollSize;
+    private long nLifeDuration;
     private final TemplateParser locationParser = new TemplateParser();
     // can be set via reflection
     private String location;
@@ -64,8 +66,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String rollEvery;
     private long idleSpinCount = 0;
     private long rollDeadline;
+    private String lifeDuration;
     private NextDeadline rollDeadlineFunction;
     private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
+    private final FindVisitor removeOldLogsVisitor = this::removeOldLogsVisitor;
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
@@ -106,6 +110,15 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             }
         } else {
             nRollSize = Long.MAX_VALUE;
+        }
+
+        if(this.lifeDuration != null){
+            try {
+                nLifeDuration = Numbers.parseLongSize(this.lifeDuration);
+            }
+            catch (NumericException e){
+                throw new LogError("Invalid value for lifeDuration");
+            }
         }
 
         if (spinBeforeFlush != null) {
@@ -230,6 +243,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         long ticks = Long.MIN_VALUE;
         if (currentSize > nRollSize || (ticks = clock.getTicks()) > rollDeadline) {
             ff.close(fd);
+            removeOldLogs();
             if (ticks > rollDeadline) {
                 rollDeadline = rollDeadlineFunction.getDeadline();
                 locationParser.setDateValue(ticks);
@@ -245,6 +259,20 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         _wptr = buf;
     }
 
+    private void removeOldLogs(){
+        ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeOldLogsVisitor);
+    }
+    private void removeOldLogsVisitor(long filePointer, int type){
+        int errno;
+        path.trimTo(LogFactory.LOG_DIR.length());
+        path.concat(filePointer).$();
+        if(!Files.isDir(filePointer, type) && !Files.isDots(""+path.charAt(path.length()-1))) {
+            System.out.println(path);
+        }
+        /*if ((errno = ff.rmdir(path)) != 0) {
+            throw new LogError("cannot remove: "+path.$()+" errno: "+errno);
+        }*/
+    }
     private long getInfiniteDeadline() {
         return Long.MAX_VALUE;
     }
