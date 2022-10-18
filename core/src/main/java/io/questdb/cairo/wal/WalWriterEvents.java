@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -48,6 +50,8 @@ class WalWriterEvents implements Closeable {
     private long txn = 0;
     private long startOffset = 0;
 
+    private static final Log LOG = LogFactory.getLog(WalEventReader.class);
+
     WalWriterEvents(FilesFacade ff) {
         this.ff = ff;
     }
@@ -59,6 +63,7 @@ class WalWriterEvents implements Closeable {
 
     @Override
     public void close() {
+        LOG.info().$("TEST_DEBUGGING :: WalWriterEvents.close :: (A) closed fd: ").$(eventMem.getFd()).$(".").$();
         eventMem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
@@ -72,6 +77,7 @@ class WalWriterEvents implements Closeable {
             close();
         }
         openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        LOG.info().$("TEST_DEBUGGING :: WalWriterEvents.openEventFile :: (A) Opened `").$(path).$("`, fd: ").$(eventMem.getFd()).$(".").$();
         init();
     }
 

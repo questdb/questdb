@@ -27,6 +27,8 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -39,6 +41,8 @@ public class WalEventReader implements Closeable {
     private final MemoryMR eventMem;
     private final WalEventCursor eventCursor;
 
+    private static final Log LOG = LogFactory.getLog(WalEventReader.class);
+
     public WalEventReader(FilesFacade ff) {
         this.ff = ff;
         eventMem = Vm.getMRInstance();
@@ -48,12 +52,14 @@ public class WalEventReader implements Closeable {
     @Override
     public void close() {
         // WalEventReader is re-usable after close, don't assign nulls
+        LOG.info().$("TEST_DEBUGGING :: WalEventCursor.close :: (A) closed fd: ").$(eventMem.getFd()).$(".").$();
         Misc.free(eventMem);
     }
 
     public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
         try {
             openSmallFile(ff, path, path.length(), eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
+            LOG.info().$("TEST_DEBUGGING :: WalEventCursor.of :: (A) Opened `").$(path).$("`, fd: ").$(eventMem.getFd()).$(".").$();
 
             // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
             checkMemSize(eventMem, Integer.BYTES + Long.BYTES);

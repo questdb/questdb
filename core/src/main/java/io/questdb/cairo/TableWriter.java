@@ -1323,6 +1323,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
                 walColumnMemoryPool.push(mappedColumnMem);
             }
         }
+        walEventReader.close();
     }
 
     public void processWalCommit(@Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
