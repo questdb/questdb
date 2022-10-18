@@ -31,13 +31,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TouchTableFunctionTest extends AbstractGriffinTest {
-    final static String ddl = "create table x as " +
+
+    private static final String DDL = "create table x as " +
             "(" +
-            "select" +
-            " rnd_geohash(40) g," +
-            " rnd_double(0)*100 a," +
-            " rnd_symbol(5,4,4,1) b," +
-            " timestamp_sequence(0, 100000000000) k" +
+            "  select" +
+            "    rnd_geohash(40) g," +
+            "    rnd_double(0)*100 a," +
+            "    rnd_symbol(5,4,4,1) b," +
+            "    timestamp_sequence(0, 100000000000) k" +
             " from long_sequence(20)" +
             "), index(b) timestamp(k) partition by DAY";
 
@@ -46,7 +47,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String query = "select touch(select g,a,b from x where k in '1970-01-22')";
             try {
-                execQuery(ddl, query);
+                execQuery(DDL, query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
             }
@@ -58,7 +59,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String query = "select touch(select * from x where k in '1970-01-22' and a > 100.0)";
             try {
-                execQuery(ddl, query);
+                execQuery(DDL, query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
             }
@@ -70,7 +71,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String query = "select touch(select * from x where k in '1970-01-22')";
             try {
-                execQuery(ddl, query);
+                execQuery(DDL, query);
             } catch (SqlException ex) {
                 Assert.fail(ex.getMessage());
             }
@@ -82,7 +83,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String query = "select touch(select * from x where k > '1970-01-18T00:00:00.000000Z')";
             try {
-                execQuery(ddl, query);
+                execQuery(DDL, query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
             }
@@ -105,7 +106,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
                     ") timestamp (t)";
 
             try {
-                execQuery(ddl, query);
+                execQuery(DDL, query);
                 execQuery(ddl2, query);
             } catch (SqlException ex) {
                 Assert.fail(ex.getMessage());
