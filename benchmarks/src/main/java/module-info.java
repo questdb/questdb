@@ -7,5 +7,5 @@ module io.questdb.benchmarks {
     requires simpleclient;
     requires simpleclient.common;
 
-    exports org.questdb.generated;
+    exports org.questdb.jmh_generated;
 }
