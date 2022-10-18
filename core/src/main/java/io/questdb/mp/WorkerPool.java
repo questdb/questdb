@@ -31,6 +31,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -118,6 +119,18 @@ public class WorkerPool implements Closeable {
     public void assignThreadLocalCleaner(int worker, Closeable cleaner) {
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         threadLocalCleaners.getQuick(worker).add(cleaner);
+    }
+
+    @TestOnly
+    public void pause() {
+        if (running.compareAndSet(true, false)) {
+            started.await();
+            for (int i = 0; i < workerCount; i++) {
+                workers.getQuick(i).halt();
+            }
+            halted.await();
+        }
+        workers.clear();
     }
 
     private void setupPathCleaner() {
