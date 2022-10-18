@@ -22,10 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.math;
 
-public interface AnalyticSPI {
-    long getAddress(long recordAddress, int columnIndex);
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
-    Record getRecordAt(long recordOffset);
+public class LnFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testLnDouble() throws Exception {
+        assertLog("select ln(9989.2233)", "9.209262120872339\n");
+    }
+
+    @Test
+    public void testLnDoubleNull() throws Exception {
+        assertLog("select ln(NaN)", "NaN\n");
+    }
+
+    @Test
+    public void testLnInt() throws Exception {
+        assertLog("select ln(11211)", "9.324650718153594\n");
+    }
+
+    private void assertLog(String sql, String expected) throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink,
+                "ln\n" +
+                        expected
+        ));
+    }
 }

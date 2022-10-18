@@ -271,6 +271,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
     return -1;
 }
 
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_noop
+(JNIEnv *e, jclass cl) {
+    return 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlong lpszName, jint mode) {
 
     size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
