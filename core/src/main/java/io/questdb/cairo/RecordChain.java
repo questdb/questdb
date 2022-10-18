@@ -42,13 +42,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private final MemoryARW mem;
     private final RecordChainRecord recordA = new RecordChainRecord();
     private final RecordChainRecord recordB = new RecordChainRecord();
-    private final RecordChainRecord clone = new RecordChainRecord();
     private final long varOffset;
     private final long fixOffset;
     private final RecordSink recordSink;
     private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
+    private RecordChainRecord clone;
     private SymbolTableSource symbolTableResolver;
 
     public RecordChain(
@@ -112,7 +112,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
-    public Record cloneRecord(long recordOffset) {
+    @Override
+    public Record getRecordAt(long recordOffset) {
+        if (clone == null) {
+            clone = new RecordChainRecord();
+        }
         clone.of(rowToDataOffset(recordOffset));
         return clone;
     }
