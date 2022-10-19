@@ -32,10 +32,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -43,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
 public class LPadFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "lpad(SIS)";
+        return "lpad(SI)";
     }
 
     @Override
@@ -51,22 +49,17 @@ public class LPadFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function strFunc = args.getQuick(0);
         final Function lenFunc = args.getQuick(1);
-        final Function fillTextFunc = args.getQuick(2);
-        if (fillTextFunc.isNullConstant()) {
-            return new LPadConstFillTextFunc(strFunc, lenFunc);
-        } else {
-            return new LPadFunc(strFunc, lenFunc, fillTextFunc);
-        }
+        return new LPadFunc(strFunc, lenFunc);
     }
 
-    public static class LPadConstFillTextFunc extends StrFunction implements BinaryFunction {
+    public static class LPadFunc extends StrFunction implements BinaryFunction {
         private final Function strFunc;
         private final Function lenFunc;
 
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public LPadConstFillTextFunc(Function strFunc, Function lenFunc) {
+        public LPadFunc(Function strFunc, Function lenFunc) {
             this.strFunc = strFunc;
             this.lenFunc = lenFunc;
         }
@@ -101,68 +94,10 @@ public class LPadFunctionFactory implements FunctionFactory {
             if (str != null && len != Numbers.INT_NaN && len >= 0) {
                 sink.clear();
                 if (len > str.length()) {
-                    sink.put(Chars.repeat(" ", len - str.length()).toString() + str.toString());
-                } else {
-                    sink.put(str, 0, len);
-                }
-                return sink;
-            }
-            return null;
-        }
-    }
-
-    public static class LPadFunc extends StrFunction implements TernaryFunction {
-
-        private final Function strFunc;
-        private final Function lenFunc;
-        private final Function fillTextFunc;
-
-        private final StringSink sink = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
-        public LPadFunc(Function strFunc, Function lenFunc, Function fillTexFunc) {
-            this.strFunc = strFunc;
-            this.lenFunc = lenFunc;
-            this.fillTextFunc = fillTexFunc;
-        }
-
-        @Override
-        public Function getLeft() {
-            return strFunc;
-        }
-
-        @Override
-        public Function getCenter() {
-            return lenFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return fillTextFunc;
-        }
-
-        @Override
-        public CharSequence getStr(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sink);
-        }
-
-        @Override
-        public CharSequence getStrB(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sinkB);
-        }
-
-        @Override
-        public int getStrLen(Record rec) {
-            return strFunc.getStrLen(rec);
-        }
-
-        @Nullable
-        private static StringSink lPad(CharSequence str, int len, CharSequence fillText, StringSink sink) {
-            if (str != null && len != Numbers.INT_NaN && len >= 0) {
-                sink.clear();
-                if (len > str.length()) {
-                    sink.put(Chars.repeat((String) fillText, ((len - str.length()) / fillText.length()) + 1).toString()
-                            .substring(0, len - str.length()) + str.toString());
+                    for (int i = 0; i < (len - str.length()); i++) {
+                        sink.put(' ');
+                    }
+                    sink.put(str);
                 } else {
                     sink.put(str, 0, len);
                 }
