@@ -645,7 +645,7 @@ public final class SqlParser {
         model.setMaxUncommittedRows(maxUncommittedRows);
         model.setCommitLag(commitLag);
         final boolean isWalEnabled =
-                PartitionBy.isPartitioned(model.getPartitionBy()) && (
+                configuration.isWalSupported() && PartitionBy.isPartitioned(model.getPartitionBy()) && (
                         (walSetting == walNotSet && configuration.getWalEnabledDefault()) || walSetting == walEnabled
                 );
 

@@ -491,6 +491,11 @@ public abstract class AbstractCairoTest {
             public RostiAllocFacade getRostiAllocFacade() {
                 return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
             }
+
+            @Override
+            public boolean isWalSupported() {
+                return true;
+            }
         };
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics, 2);

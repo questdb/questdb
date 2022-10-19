@@ -806,6 +806,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalSupported() {
+        return conf.isWalSupported();
+    }
+
+    @Override
     public int getSqlCopyLogRetentionDays() {
         return conf.getSqlCopyLogRetentionDays();
     }
