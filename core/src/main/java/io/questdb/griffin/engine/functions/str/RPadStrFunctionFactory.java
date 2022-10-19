@@ -113,8 +113,11 @@ public class RPadStrFunctionFactory implements FunctionFactory {
                 if (len > str.length()) {
                     sink.put(str);
                     final int fillTextLen = fillText.length();
-                    for (int i = 0; i < (len - str.length()); i++) {
-                        sink.put(fillText.charAt(i % fillTextLen));
+                    for (int i = 0, n = (len - str.length()) / fillTextLen; i < n; i++) {
+                        sink.put(fillText);
+                    }
+                    for (int i = 0, n = (len - str.length()) % fillTextLen; i < n; i++) {
+                        sink.put(fillText.charAt(i));
                     }
                 } else {
                     sink.put(str, str.length() - len, str.length());
