@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -41,9 +42,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -311,12 +310,12 @@ public class FilesTest {
 
     @Test
     public void testLastModified() throws Exception {
+        Log ignore = LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
                 assertLastModified(path, 122222212222L);
             }
-            LogFactory.closeInstance();
         });
     }
 
