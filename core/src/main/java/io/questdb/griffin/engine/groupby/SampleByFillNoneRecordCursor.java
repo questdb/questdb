@@ -45,6 +45,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             Map map,
             RecordSink keyMapSink,
             ObjList<GroupByFunction> groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
@@ -58,6 +59,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 timestampIndex,
                 timestampSampler,
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
@@ -97,20 +99,24 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // looks like we need to populate key map
         // at the start of this loop 'lastTimestamp' will be set to timestamp
         // of first record in base cursor
-        int n = groupByFunctions.size();
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 adjustDSTInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
-                GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    groupByFunctionsUpdater.updateNew(value, baseRecord);
+                } else {
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             } else {
                 // map value is conditional and only required when clock goes back
                 // we override base method for when this happens
                 // see: updateValueWhenClockMovesBack()
-                timestamp = adjustDST(timestamp, n, null, next);
+                timestamp = adjustDST(timestamp, null, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                     return createMapCursor();
@@ -134,10 +140,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
-    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+    protected void updateValueWhenClockMovesBack(MapValue value) {
         final MapKey key = map.withKey();
         keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue(), n);
+        super.updateValueWhenClockMovesBack(key.createValue());
     }
 
     private boolean createMapCursor() {

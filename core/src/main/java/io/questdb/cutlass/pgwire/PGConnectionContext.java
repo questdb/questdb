@@ -315,6 +315,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         typesAndUpdateIsCached = false;
         statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
+        circuitBreaker.unsetTimer();
     }
 
     @Override
@@ -1542,7 +1543,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             return;
         }
         switch (type) {
-            case 'P':
+            case 'P': //parse
                 sendRNQ = true;
                 processParse(
                         address,
@@ -1551,8 +1552,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         compiler
                 );
                 break;
-            case 'X':
-                // 'Terminate'
+            case 'X': // 'Terminate'
                 throw PeerDisconnectedException.INSTANCE;
             case 'C':
                 // close
@@ -1587,11 +1587,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 sendRNQ = true;
                 processDescribe(msgLo, msgLimit, compiler);
                 break;
-            case 'Q':
+            case 'Q': // simple query
                 sendRNQ = true;
                 processQuery(msgLo, msgLimit, compiler);
                 break;
-            case 'd':
+            case 'd': // COPY data 
                 break;
             default:
                 LOG.error().$("unknown message [type=").$(type).$(']').$();
@@ -1847,6 +1847,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException {
+        sqlExecutionContext.getCircuitBreaker().resetTimer();
 
         short parameterFormatCount;
         short parameterValueCount;
@@ -2077,6 +2078,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
             throws SqlException, BadProtocolException {
+        sqlExecutionContext.getCircuitBreaker().resetTimer();
 
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
         long hi = getStringLength(lo + 1, msgLimit, "bad prepared statement name length");
@@ -2112,6 +2114,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void processExec(long lo, long msgLimit, SqlCompiler compiler)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException, BadProtocolException {
+        sqlExecutionContext.getCircuitBreaker().resetTimer();
+
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
         final CharSequence portalName = getPortalName(lo, hi);
         if (portalName != null) {
@@ -2244,6 +2248,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
+        sqlExecutionContext.getCircuitBreaker().resetTimer();
+
         // make sure there are no left-over sync actions
         // we are starting a new iteration of the parse
         syncActions.clear();
@@ -2573,26 +2579,36 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
-            for (int retries = 0; recompileStale; retries++) {
-                currentFactory = typesAndSelect.getFactory();
-                try {
-                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
-                    recompileStale = false;
-                    // cache random if it was replaced
-                    this.rnd = sqlExecutionContext.getRandom();
-                } catch (ReaderOutOfDateException e) {
-                    if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+            SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+
+            try {
+                if (!circuitBreaker.isTimerSet()) {
+                    circuitBreaker.resetTimer();
+                }
+
+                for (int retries = 0; recompileStale; retries++) {
+                    currentFactory = typesAndSelect.getFactory();
+                    try {
+                        currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                        recompileStale = false;
+                        // cache random if it was replaced
+                        this.rnd = sqlExecutionContext.getRandom();
+                    } catch (ReaderOutOfDateException e) {
+                        if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                            throw e;
+                        }
+                        LOG.info().$(e.getFlyweightMessage()).$();
+                        freeFactory();
+                        compileQuery(compiler);
+                        buildSelectColumnTypes();
+                        applyLatestBindColumnFormats();
+                    } catch (Throwable e) {
+                        freeFactory();
                         throw e;
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$();
-                    freeFactory();
-                    compileQuery(compiler);
-                    buildSelectColumnTypes();
-                    applyLatestBindColumnFormats();
-                } catch (Throwable e) {
-                    freeFactory();
-                    throw e;
                 }
+            } finally {
+                circuitBreaker.unsetTimer();
             }
         }
     }
@@ -2675,28 +2691,32 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text)
                 throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
-            PGConnectionContext.this.queryText = text;
-            LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
-            processCompiledQuery(cq);
+            try {
+                PGConnectionContext.this.queryText = text;
+                LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
+                processCompiledQuery(cq);
 
-            if (typesAndSelect != null) {
-                activeSelectColumnTypes = selectColumnTypes;
-                buildSelectColumnTypes();
-                assert queryText != null;
-                queryTag = TAG_SELECT;
-                setupFactoryAndCursor(compiler);
-                prepareRowDescription();
-                sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
-            } else if (typesAndInsert != null) {
-                executeInsert();
-            } else if (typesAndUpdate != null) {
-                executeUpdate(compiler);
-            } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
-                    cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
-                prepareCommandComplete(true);
-            } else {
-                executeTag();
-                prepareCommandComplete(false);
+                if (typesAndSelect != null) {
+                    activeSelectColumnTypes = selectColumnTypes;
+                    buildSelectColumnTypes();
+                    assert queryText != null;
+                    queryTag = TAG_SELECT;
+                    setupFactoryAndCursor(compiler);
+                    prepareRowDescription();
+                    sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
+                } else if (typesAndInsert != null) {
+                    executeInsert();
+                } else if (typesAndUpdate != null) {
+                    executeUpdate(compiler);
+                } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
+                        cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
+                    prepareCommandComplete(true);
+                } else {
+                    executeTag();
+                    prepareCommandComplete(false);
+                }
+            } finally {
+                sqlExecutionContext.getCircuitBreaker().unsetTimer();
             }
         }
 
@@ -2707,6 +2727,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             PGConnectionContext.this.typesAndInsert = null;
             PGConnectionContext.this.typesAndUpdate = null;
             PGConnectionContext.this.typesAndSelect = null;
+            circuitBreaker.resetTimer();
         }
     }
 

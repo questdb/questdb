@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.IntList;
+import io.questdb.std.Rnd;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
@@ -50,7 +51,7 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
+    public boolean apply(Rnd tempRnd, TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
         try {
             AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, tableName, tableId);
             builder.ofAddColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);

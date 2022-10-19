@@ -126,7 +126,7 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, long segmentId, long segmentTxn) {
+    public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, int segmentId, long segmentTxn) {
         try (Sequencer sequencer = openSequencer(tableName)) {
             return sequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
         }

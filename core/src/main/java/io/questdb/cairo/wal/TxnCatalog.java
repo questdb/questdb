@@ -42,12 +42,12 @@ import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 public class TxnCatalog implements Closeable {
     public final static int HEADER_RESERVED = 8 * Long.BYTES;
-    public final static int RECORD_RESERVED = 11 * Integer.BYTES;
+    public final static int RECORD_RESERVED = 15 * Integer.BYTES;
     public static final long MAX_TXN_OFFSET = Integer.BYTES;
     public static final long MAX_STRUCTURE_VERSION_OFFSET = MAX_TXN_OFFSET + Long.BYTES;
     public static final long TXN_META_SIZE_OFFSET = MAX_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     public static final long HEADER_SIZE = TXN_META_SIZE_OFFSET + Long.BYTES + HEADER_RESERVED;
-    public static final int RECORD_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES + RECORD_RESERVED;
+    public static final int RECORD_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + RECORD_RESERVED;
     public static final int METADATA_WALID = -1;
     private static final int MEMORY_TAG = MemoryTag.MMAP_SEQUENCER;
     private final FilesFacade ff;
@@ -126,9 +126,9 @@ public class TxnCatalog implements Closeable {
         }
     }
 
-    long addEntry(int walId, long segmentId, long segmentTxn) {
+    long addEntry(int walId, int segmentId, long segmentTxn) {
         txnMem.putInt(walId);
-        txnMem.putLong(segmentId);
+        txnMem.putInt(segmentId);
         txnMem.putLong(segmentTxn);
         txnMem.jumpTo(txnMem.getAppendOffset() + RECORD_RESERVED);
 
@@ -185,7 +185,7 @@ public class TxnCatalog implements Closeable {
     private static class SequencerCursorImpl implements SequencerCursor {
         private static final long WAL_ID_OFFSET = 0;
         private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
-        private static final long SEGMENT_TXN_OFFSET = SEGMENT_ID_OFFSET + Long.BYTES;
+        private static final long SEGMENT_TXN_OFFSET = SEGMENT_ID_OFFSET + Integer.BYTES;
         private final FilesFacade ff;
         private final long fd;
         private long txnOffset;

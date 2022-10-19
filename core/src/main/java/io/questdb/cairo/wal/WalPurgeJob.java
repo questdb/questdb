@@ -83,14 +83,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private final StringSink debugBuffer = new StringSink();
 
-    public WalPurgeJob(CairoEngine engine, FilesFacade ff) {
+    public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
         this.engine = engine;
         this.ff = ff;
-        this.clock = engine.getConfiguration().getMicrosecondClock();
+        this.clock = clock;
         this.checkInterval = engine.getConfiguration().getWalPurgeInterval() * 1000;
         this.txReader = new TxReader(ff);
 
         assert WalUtils.WAL_NAME_BASE.equals("wal");
+    }
+
+    public WalPurgeJob(CairoEngine engine) {
+        this(engine, engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getMicrosecondClock());
     }
 
     /**
@@ -100,10 +104,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     public void delayByHalfInterval() {
         this.last = clock.getTicks() - (checkInterval / 2);
-    }
-
-    public WalPurgeJob(CairoEngine engine) {
-        this(engine, engine.getConfiguration().getFilesFacade());
     }
 
     /** Validate equivalent of "^wal\d+$" regex. */
@@ -215,7 +215,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
         txReader.ofRO(path, PartitionBy.NONE);
-        try (txReader) {
+        try {
             final long lastAppliedTxn = txReader.unsafeReadVersion();
 
             TableRegistry tableRegistry = engine.getTableRegistry();
@@ -229,6 +229,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
+        finally {
+            txReader.close();
+        }
     }
 
     private void recursiveDelete(Path path) {
@@ -239,14 +242,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void deleteFile(Path path) {
+    private boolean deleteFile(Path path) {
         if (!ff.remove(path)) {
             final int errno = ff.errno();
             if (errno != 2) {
                 LOG.error().$("Could not delete file [path=").$(path)
                         .$(", errno=").$(errno).$(']').$();
+                return false;
             }
         }
+        return true;
     }
 
     private void mayLogDebugInfo() {
@@ -260,8 +265,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         mayLogDebugInfo();
         LOG.info().$("deleting WAL directory [table=").$(tableName)
                 .$(", walId=").$(walId).$(']').$();
-        recursiveDelete(setWalPath(tableName, walId));
-        deleteFile(setWalLockPath(tableName, walId));
+        if (deleteFile(setWalLockPath(tableName, walId))) {
+            recursiveDelete(setWalPath(tableName, walId));
+        }
     }
 
     private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
@@ -269,8 +275,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         LOG.info().$("deleting WAL segment directory [table=").$(tableName)
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
-        recursiveDelete(setSegmentPath(tableName, walId, segmentId));
-        deleteFile(setSegmentLockPath(tableName, walId, segmentId));
+        if (deleteFile(setSegmentLockPath(tableName, walId, segmentId))) {
+            recursiveDelete(setSegmentPath(tableName, walId, segmentId));
+        }
     }
 
     private void deleteClosedSegmentsIter(long pUtf8NameZ, int type) {

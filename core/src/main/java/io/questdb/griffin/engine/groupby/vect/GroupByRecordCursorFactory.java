@@ -25,12 +25,10 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,6 +63,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiRecordCursor cursor;
     private final RostiAllocFacade raf;
     private final AtomicInteger oomCounter = new AtomicInteger();
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;//used to signal cancellation to workers
 
     private final CairoConfiguration configuration;
 
@@ -90,6 +89,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         // ...
         // functions[n].type == columnTypes[n+1]
 
+        this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
         this.base = base;
         // first column is INT or SYMBOL
         this.pRosti = new long[workerCount];
@@ -178,12 +178,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
             raf.clear(pRosti[i]);
         }
 
-        oomCounter.set(0);
+        this.oomCounter.set(0);
 
         final MessageBus bus = executionContext.getMessageBus();
 
@@ -198,6 +200,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
         final Sequence pubSeq = bus.getVectorAggregatePubSeq();
 
+        this.sharedCircuitBreaker.reset();
         this.entryPool.clear();
         this.activeEntries.clear();
         int queuedCount = 0;
@@ -241,6 +244,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
                     long seq = pubSeq.next();
                     if (seq < 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         if (keyAddress == 0) {
                             vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
                         } else {
@@ -255,9 +259,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         if (keyAddress != 0 || valueAddress != 0) {
                             final VectorAggregateEntry entry = entryPool.next();
                             if (keyAddress == 0) {
-                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, null);
+                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, null, sharedCircuitBreaker);
                             } else {
-                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, raf);
+                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, raf, sharedCircuitBreaker);
                             }
                             activeEntries.add(entry);
                             queue.get(seq).entry = entry;
@@ -268,8 +272,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } catch (Throwable e) {
+            sharedCircuitBreaker.cancel();
             Misc.free(cursor);
-            resetRostiMemorySize();
             throw e;
         } finally {
             // all done? great start consuming the queue we just published
@@ -281,7 +285,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // tasks in flight.
 
             // start at the back to reduce chance of clashing
-            reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
+            reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG, circuitBreaker, sharedCircuitBreaker);
+            //we can't reallocate rosti until tasks are complete because some other thread could be using it
+            if (sharedCircuitBreaker.isCanceled()) {
+                resetRostiMemorySize();
+            }
         }
 
         if (oomCounter.get() > 0) {
@@ -294,61 +302,76 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         // merge maps only when cursor was fetched successfully
         // otherwise assume error and save CPU cycles
         long pRostiBig = pRosti[0];
+        try {
+            if (pRosti.length > 1) {
+                LOG.debug().$("merging").$();
 
-        if (pRosti.length > 1) {
-            LOG.debug().$("merging").$();
-
-            //due to uneven load distribution some rostis could be much bigger and some empty
-            long size = raf.getSize(pRostiBig);
-            for (int i = 1, n = pRosti.length; i < n; i++) {
-                long curSize = raf.getSize(pRosti[i]);
-                if (curSize > size) {
-                    size = curSize;
-                    pRostiBig = pRosti[i];
-                }
-            }
-
-            for (int j = 0; j < vafCount; j++) {
-                final VectorAggregateFunction vaf = vafList.getQuick(j);
-                for (int i = 0, n = pRosti.length; i < n; i++) {
-                    if (pRostiBig == pRosti[i] ||
-                            raf.getSize(pRosti[i]) < 1) {
-                        continue;
+                //due to uneven load distribution some rostis could be much bigger and some empty
+                long size = raf.getSize(pRostiBig);
+                for (int i = 1, n = pRosti.length; i < n; i++) {
+                    long curSize = raf.getSize(pRosti[i]);
+                    if (curSize > size) {
+                        size = curSize;
+                        pRostiBig = pRosti[i];
                     }
+                }
+
+                for (int j = 0; j < vafCount; j++) {
+                    final VectorAggregateFunction vaf = vafList.getQuick(j);
+                    for (int i = 0, n = pRosti.length; i < n; i++) {
+                        if (pRostiBig == pRosti[i] ||
+                                raf.getSize(pRosti[i]) < 1) {
+                            continue;
+                        }
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        long oldSize = Rosti.getAllocMemory(pRostiBig);
+                        if (!vaf.merge(pRostiBig, pRosti[i])) {
+                            Misc.free(cursor);
+                            resetRostiMemorySize();
+                            throw new OutOfMemoryError();
+                        }
+                        raf.updateMemoryUsage(pRostiBig, oldSize);
+                    }
+
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
+                    //some wrapUp() methods can increase rosti size  
                     long oldSize = Rosti.getAllocMemory(pRostiBig);
-                    if (!vaf.merge(pRostiBig, pRosti[i])) {
+                    if (!vaf.wrapUp(pRostiBig)) {
                         Misc.free(cursor);
                         resetRostiMemorySize();
                         throw new OutOfMemoryError();
                     }
                     raf.updateMemoryUsage(pRostiBig, oldSize);
                 }
-                if (!vaf.wrapUp(pRostiBig)) {
-                    Misc.free(cursor);
-                    resetRostiMemorySize();
-                    throw new OutOfMemoryError();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                for (int i = 0, n = pRosti.length; i < n; i++) {
+                    if (pRostiBig == pRosti[i]) {
+                        continue;
+                    }
+
+                    if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
+                        LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
+                    }
+                }
+
+            } else {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                for (int j = 0; j < vafCount; j++) {
+                    if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
+                        Misc.free(cursor);
+                        resetRostiMemorySize();
+                        throw new OutOfMemoryError();
+                    }
                 }
             }
+        } catch (Throwable t) {
+            Misc.free(cursor);
+            resetRostiMemorySize();
 
-            for (int i = 0, n = pRosti.length; i < n; i++) {
-                if (pRostiBig == pRosti[i]) {
-                    continue;
-                }
-
-                if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
-                    LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
-                }
-            }
-
-        } else {
-            for (int j = 0; j < vafCount; j++) {
-                if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
-                    Misc.free(cursor);
-                    resetRostiMemorySize();
-                    throw new OutOfMemoryError();
-                }
-            }
+            throw t;
         }
+
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
         return this.cursor.of(pRostiBig, cursor);
     }

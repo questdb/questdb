@@ -58,6 +58,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected static BindVariableService bindVariableService;
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
+    protected static SqlExecutionCircuitBreaker circuitBreaker;
 
     protected final SCSequence eventSubSequence = new SCSequence();
 
@@ -277,7 +278,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        circuitBreaker);
         bindVariableService.clear();
     }
 
@@ -285,6 +286,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     public static void tearDownStatic() {
         AbstractCairoTest.tearDownStatic();
         compiler.close();
+        circuitBreaker = null;
     }
 
     @Override
