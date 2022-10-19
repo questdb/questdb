@@ -100,7 +100,7 @@ public class RPadStrFunctionFactory implements FunctionFactory {
 
         @Nullable
         private static StringSink rPadStr(CharSequence str, int len, CharSequence fillText, StringSink sink) {
-            if (str != null && len != Numbers.INT_NaN && len >= 0) {
+            if (str != null && len != Numbers.INT_NaN && len >= 0 && fillText != null && fillText.length() > 0) {
                 sink.clear();
                 if (len > str.length()) {
                     sink.put(str);

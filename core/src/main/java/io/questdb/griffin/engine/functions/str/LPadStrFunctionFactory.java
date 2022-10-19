@@ -100,7 +100,7 @@ public class LPadStrFunctionFactory implements FunctionFactory {
 
         @Nullable
         private static StringSink lPadStr(CharSequence str, int len, CharSequence fillText, StringSink sink) {
-            if (str != null && len != Numbers.INT_NaN && len >= 0) {
+            if (str != null && len != Numbers.INT_NaN && len >= 0 && fillText != null && fillText.length() > 0) {
                 sink.clear();
                 if (len > str.length()) {
                     final int fillTextLen = fillText.length();
