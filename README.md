@@ -139,8 +139,6 @@ The following table shows query execution time of a billion rows run on a
   questions, and meet other users!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or
   issues with QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propose
-  new features or show what you've built.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for
   common troubleshooting solutions.
 
