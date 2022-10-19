@@ -84,6 +84,11 @@ You can interact with QuestDB using the following interfaces:
 
 ## How QuestDB compares to other open source TSDBs
 
+You can refer to
+[our comparison article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
+to have an overview of QuestDB and other open source timesereis databases on  
+functionality, maturity, and performance.
+
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
 results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
