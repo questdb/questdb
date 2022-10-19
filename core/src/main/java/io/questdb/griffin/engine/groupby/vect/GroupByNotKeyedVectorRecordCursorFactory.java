@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,6 +57,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final ObjList<VectorAggregateEntry> activeEntries;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final GroupByNotKeyedVectorRecordCursor cursor;
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
             CairoConfiguration configuration,
@@ -69,6 +72,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         this.vafList = new ObjList<>(vafList.size());
         this.vafList.addAll(vafList);
         this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
+        this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
     }
 
     @Override
@@ -79,6 +83,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
         final MessageBus bus = executionContext.getMessageBus();
 
         final PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
@@ -92,6 +98,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
         final Sequence pubSeq = bus.getVectorAggregatePubSeq();
 
+        this.sharedCircuitBreaker.reset();
         this.entryPool.clear();
         this.activeEntries.clear();
         int queuedCount = 0;
@@ -110,49 +117,58 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             workerId = 0;
         }
 
-        PageFrame frame;
-        while ((frame = cursor.next()) != null) {
-            for (int i = 0; i < vafCount; i++) {
-                final VectorAggregateFunction vaf = vafList.getQuick(i);
-                final int columnIndex = vaf.getColumnIndex();
-                // for functions like `count()`, that do not have arguments we are required to provide
-                // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
-                // this code used column 0. Assumption here that column 0 is fixed size.
-                // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
-                // the algorithm that forces page frame to provide only columns required by the select. At the time
-                // of writing this code there is no way to return variable length column out of non-keyed aggregation
-                // query. This might change if we introduce something like `first(string)`. When this happens we will
-                // need to rethink our way of computing size for the count. This would be either type checking column
-                // 0 and working out size differently or finding any fixed-size column and using that.
-                final long pageAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
-                final long pageSize = columnIndex > -1 ? frame.getPageSize(columnIndex) : frame.getPageSize(0);
-                final int colSizeShr = columnIndex > -1 ? frame.getColumnShiftBits(columnIndex) : frame.getColumnShiftBits(0);
-                long seq = pubSeq.next();
-                if (seq < 0) {
-                    // diy the func
-                    // vaf need to know which column it is hitting in the frame and will need to
-                    // aggregate between frames until done
-                    vaf.aggregate(pageAddress, pageSize, colSizeShr, workerId);
-                    ownCount++;
-                } else {
-                    final VectorAggregateEntry entry = entryPool.next();
-                    // null pRosti means that we do not need keyed aggregation
-                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, colSizeShr, doneLatch, null, null);
-                    activeEntries.add(entry);
-                    queue.get(seq).entry = entry;
-                    pubSeq.done(seq);
+        try {
+            PageFrame frame;
+            while ((frame = cursor.next()) != null) {
+                for (int i = 0; i < vafCount; i++) {
+                    final VectorAggregateFunction vaf = vafList.getQuick(i);
+                    final int columnIndex = vaf.getColumnIndex();
+                    // for functions like `count()`, that do not have arguments we are required to provide
+                    // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
+                    // this code used column 0. Assumption here that column 0 is fixed size.
+                    // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
+                    // the algorithm that forces page frame to provide only columns required by the select. At the time
+                    // of writing this code there is no way to return variable length column out of non-keyed aggregation
+                    // query. This might change if we introduce something like `first(string)`. When this happens we will
+                    // need to rethink our way of computing size for the count. This would be either type checking column
+                    // 0 and working out size differently or finding any fixed-size column and using that.
+                    final long pageAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
+                    final long pageSize = columnIndex > -1 ? frame.getPageSize(columnIndex) : frame.getPageSize(0);
+                    final int colSizeShr = columnIndex > -1 ? frame.getColumnShiftBits(columnIndex) : frame.getColumnShiftBits(0);
+                    long seq = pubSeq.next();
+                    if (seq < 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        // diy the func
+                        // vaf need to know which column it is hitting in the frame and will need to
+                        // aggregate between frames until done
+                        vaf.aggregate(pageAddress, pageSize, colSizeShr, workerId);
+                        ownCount++;
+                    } else {
+                        final VectorAggregateEntry entry = entryPool.next();
+                        // null pRosti means that we do not need keyed aggregation
+                        entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, colSizeShr, doneLatch, null, null, sharedCircuitBreaker);
+                        activeEntries.add(entry);
+                        queue.get(seq).entry = entry;
+                        pubSeq.done(seq);
+                    }
+                    total++;
                 }
-                total++;
             }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        } catch (CairoException ce) {
+            sharedCircuitBreaker.cancel();
+            Misc.free(cursor);
+            throw ce;
+        } finally {
+            // all done? great start consuming the queue we just published
+            // how do we get to the end? If we consume our own queue there is chance we will be consuming
+            // aggregation tasks not related to this execution (we work in concurrent environment)
+            // To deal with that we need to have our own checklist.
+
+            // start at the back to reduce chance of clashing
+            reclaimed = getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG, circuitBreaker, sharedCircuitBreaker);
         }
-
-        // all done? great start consuming the queue we just published
-        // how do we get to the end? If we consume our own queue there is chance we will be consuming
-        // aggregation tasks not related to this execution (we work in concurrent environment)
-        // To deal with that we need to have our own checklist.
-
-        // start at the back to reduce chance of clashing
-        reclaimed = getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
 
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
         return this.cursor.of(cursor);
@@ -168,8 +184,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         return base.usesCompiledFilter();
     }
 
-    static int getRunWhatsLeft(int queuedCount, int reclaimed, int workerId, ObjList<VectorAggregateEntry> activeEntries, SOUnboundedCountDownLatch doneLatch, Log log) {
+    static int getRunWhatsLeft(int queuedCount, int reclaimed, int workerId, ObjList<VectorAggregateEntry> activeEntries, SOUnboundedCountDownLatch doneLatch, Log log, SqlExecutionCircuitBreaker circuitBreaker, AtomicBooleanCircuitBreaker sharedCB) {
         for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
+            if (circuitBreaker.checkIfTripped()) {
+                sharedCB.cancel();
+            }
             if (activeEntries.getQuick(i).run(workerId)) {
                 reclaimed++;
             }
