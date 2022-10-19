@@ -214,23 +214,29 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
-        txReader.ofRO(path, PartitionBy.NONE);
-        try {
-            final long lastAppliedTxn = txReader.unsafeReadVersion();
+        if (!engine.isTableDropped(tableName)) {
+            try {
+                txReader.ofRO(path, PartitionBy.NONE);
+                final long lastAppliedTxn = txReader.unsafeReadVersion();
 
-            TableRegistry tableRegistry = engine.getTableRegistry();
-            try (SequencerCursor sequencerCursor = tableRegistry.getCursor(tableName, lastAppliedTxn)) {
-                while (sequencerCursor.hasNext() && (discoveredWalIds.size() > 0)) {
-                    final int walId = sequencerCursor.getWalId();
-                    if (discoveredWalIds.contains(walId)) {
-                        walInfoDataFrame.add(walId, sequencerCursor.getSegmentId());
-                        discoveredWalIds.remove(walId);
+                TableRegistry tableRegistry = engine.getTableRegistry();
+                try (SequencerCursor sequencerCursor = tableRegistry.getCursor(tableName, lastAppliedTxn)) {
+                    while (sequencerCursor.hasNext() && (discoveredWalIds.size() > 0)) {
+                        final int walId = sequencerCursor.getWalId();
+                        if (discoveredWalIds.contains(walId)) {
+                            walInfoDataFrame.add(walId, sequencerCursor.getSegmentId());
+                            discoveredWalIds.remove(walId);
+                        }
                     }
                 }
+            } finally {
+                txReader.close();
             }
-        }
-        finally {
-            txReader.close();
+        } else {
+            // Table is dropped, all wals can be deleted.
+            for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
+                walInfoDataFrame.add(it.nextInt(), Integer.MAX_VALUE);
+            }
         }
     }
 

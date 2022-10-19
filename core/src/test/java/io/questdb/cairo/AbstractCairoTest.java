@@ -590,6 +590,7 @@ public abstract class AbstractCairoTest {
         memoryUsage = -1;
         dataAppendPageSize = -1;
         isO3QuickSortEnabled = 0;
+        clearWalQueue();
     }
 
     protected static void assertFactoryMemoryUsage() {
@@ -691,6 +692,13 @@ public abstract class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
+    }
+
+    private void clearWalQueue() {
+        long seq;
+        while ((seq = engine.getMessageBus().getWalTxnNotificationSubSequence().next()) > -1) {
+            engine.getMessageBus().getWalTxnNotificationSubSequence().done(seq);
+        }
     }
 
     private static class X implements MicrosecondClock {

@@ -127,7 +127,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TableRegistry tableRegistry = engine.getTableRegistry();
         long lastCommitted = writer.getTxn();
 
-        if (tableRegistry.getTableNameBySystemName(systemTableName) == null) {
+        if (engine.isTableDropped(systemTableName)) {
             LOG.info().$("table '").utf8(systemTableName).$("' is dropped, skipping WAL application").$();
             tryDestroyDroppedTable(systemTableName, writer, engine);
             return reusableStructureChangeCursor;

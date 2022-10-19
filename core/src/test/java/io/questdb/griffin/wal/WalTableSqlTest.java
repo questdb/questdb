@@ -30,6 +30,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
@@ -282,6 +284,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             checkTableFilesDropped(sysTableName1, "2022-02-24", "x.d");
+            checkWalFilesRemoved(sysTableName1);
 
             assertSql(tableName, "x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n");
@@ -302,12 +305,13 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
+            String sysTableName1;
             try (
                     WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
                     WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
                     WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
-                String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+                sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
                 compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
 
                 compile("drop table " + tableName);
@@ -363,25 +367,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 drainWalQueue();
 
                 checkTableFilesDropped(sysTableName1, "2022-02-24", "x.d");
-
-                assertSql(tableName, "x\tts\n" +
-                        "1\t2022-02-24T00:00:00.000000Z\n");
             }
+            checkWalFilesRemoved(sysTableName1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n");
         });
-    }
-
-    private void checkTableFilesDropped(String sysTableName1, String partition, String fileName) {
-        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(TXN_FILE_NAME);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
-
-        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(COLUMN_VERSION_FILE_NAME);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
-
-        sysPath.of(configuration.getRoot()).concat(sysTableName1).concat("sym.c");
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
-
-        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(partition).concat(fileName);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
     }
 
     @Test
@@ -577,5 +568,31 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n");
 
         });
+    }
+
+    private void checkTableFilesDropped(String sysTableName, String partition, String fileName) {
+        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(COLUMN_VERSION_FILE_NAME);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+        sysPath.of(configuration.getRoot()).concat(sysTableName).concat("sym.c");
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(partition).concat(fileName);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+    }
+
+    private void checkWalFilesRemoved(String sysTableName) {
+        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(true));
+
+        try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade())) {
+            job.run(0);
+        }
+
+        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
     }
 }

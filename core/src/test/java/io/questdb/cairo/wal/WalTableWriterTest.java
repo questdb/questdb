@@ -463,7 +463,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
+    public void testUpdateViaWalCopyIntoDeletedColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -476,13 +476,13 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             }
 
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                TableWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow(0);
                 row.putInt(0, 10);
                 row.append();
-                row = walWriter.newRow();
+                row = walWriter.newRow(0);
                 row.putInt(0, 11);
                 row.append();
-                row = walWriter.newRow();
+                row = walWriter.newRow(0);
                 row.putInt(0, 12);
                 row.append();
                 walWriter.commit();
@@ -491,7 +491,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
                 executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
                 fail("Expected exception is missing");
-            } catch (Exception e) {
+            } catch (SqlException e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.endsWith("Invalid column: b"));
             }
         });

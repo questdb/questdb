@@ -237,6 +237,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return TableUtils.toTableNameFromSystemName(Chars.toString(systemTableName));
     }
 
+    public boolean isTableDropped(CharSequence systemTableName) {
+        return tableRegistry.getTableNameBySystemName(systemTableName) == null;
+    }
+
     public boolean isWalTable(final CharSequence tableName) {
         return getTableRegistry().getSystemTableName(tableName) != null;
     }

@@ -148,36 +148,37 @@ public class WalWriter implements TableWriterFrontend {
         if (operation.isStructureChange()) {
             long txn;
 
-            try {
-                do {
-                    try {
-                        alterOperationValidationBackend.startAlterValidation();
-                        operation.apply(alterOperationValidationBackend, true);
-                        if (alterOperationValidationBackend.structureVersion != metadata.getStructureVersion() + 1) {
-                            throw CairoException.nonCritical().put("table structure change did not contain 1 transaction [table=").put(tableName)
-                                    .put(", oldStructureVersion=").put(metadata.getStructureVersion())
-                                    .put(", newStructureVersion=").put(alterOperationValidationBackend.structureVersion).put(']');
-                        }
-                    } catch (SqlException e) {
-                        // Table schema (metadata) changed and this Alter is not valid anymore.
-                        // Try to update WAL metadata to latest and repeat one more time.
-                        goActive();
-                        try {
-                            operation.apply(alterOperationValidationBackend, true);
-                        } catch (SqlException e2) {
-                            throw CairoException.nonCritical().put(e2.getFlyweightMessage());
-                        }
-                    }
 
+            do {
+                try {
+                    alterOperationValidationBackend.startAlterValidation();
+                    operation.apply(alterOperationValidationBackend, true);
+                    if (alterOperationValidationBackend.structureVersion != metadata.getStructureVersion() + 1) {
+                        throw CairoException.nonCritical().put("table structure change did not contain 1 transaction [table=").put(tableName)
+                                .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                                .put(", newStructureVersion=").put(alterOperationValidationBackend.structureVersion).put(']');
+                    }
+                } catch (SqlException e) {
+                    // Table schema (metadata) changed and this Alter is not valid anymore.
+                    // Try to update WAL metadata to latest and repeat one more time.
+                    goActive();
+                    try {
+                        operation.apply(alterOperationValidationBackend, true);
+                    } catch (SqlException e2) {
+                        throw CairoException.nonCritical().put(e2.getFlyweightMessage());
+                    }
+                }
+
+                try {
                     txn = tableRegistry.nextStructureTxn(systemTableName, getStructureVersion(), operation);
                     if (txn == NO_TXN) {
                         applyStructureChanges(Long.MAX_VALUE);
                     }
-                } while (txn == NO_TXN);
-            } catch (CairoException e) {
-                distressed = true;
-                throw e;
-            }
+                } catch (CairoException e) {
+                    distressed = true;
+                    throw e;
+                }
+            } while (txn == NO_TXN);
 
             // Apply to itself.
             try {
