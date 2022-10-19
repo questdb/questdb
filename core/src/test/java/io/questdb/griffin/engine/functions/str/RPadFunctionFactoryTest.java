@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.str;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.std.Numbers;
 
 import org.junit.Test;
 
@@ -60,6 +61,12 @@ public class RPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testNullStr() throws SqlException {
         call(null, 3).andAssert(null);
         call(null, 4).andAssert(null);
+    }
+
+    @Test
+    public void testNaNLength() throws SqlException {
+        call("abc", Numbers.INT_NaN).andAssert(null);
+        call("pqrs", Numbers.INT_NaN).andAssert(null);
     }
 
     @Override
