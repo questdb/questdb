@@ -2658,6 +2658,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (osz > 0 && !dismissOrder) {
                     IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
+                    // init comparator if we need
+                    analyticFunction.initRecordComparator(recordComparatorCompiler, chainTypes, order);
                     ObjList<AnalyticFunction> funcs = groupedAnalytic.get(order);
                     if (funcs == null) {
                         groupedAnalytic.put(order, funcs = new ObjList<>());

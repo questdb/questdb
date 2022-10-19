@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -70,6 +71,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
     protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         filter.init(this, executionContext);
 
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
         int keyCount = symbolKeys.size();
         if (deferredSymbolKeys != null) {
             keyCount += deferredSymbolKeys.size();
@@ -80,6 +83,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
