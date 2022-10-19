@@ -183,7 +183,7 @@ public class TableRegistry extends AbstractPool {
 
             try (Sequencer seq = seqRegistry.get(systemTableName)) {
                 if (seq != null) {
-                    seq.nextTxn(0, TxnCatalog.DROP_TABLE_WALID, 0, 0);
+                    seq.dropTable();
                 } else {
                     return;
                 }

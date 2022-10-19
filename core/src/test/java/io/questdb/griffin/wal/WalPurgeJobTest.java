@@ -30,8 +30,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
@@ -495,12 +493,6 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Chars.toString(path), expectLocked, !could);
         }
-    }
-
-    static void addColumn(TableWriterFrontend writer, String columnName, int columnType) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        writer.applyAlter(addColumnC.build(), true);
     }
 
     private void assertWalLockExistence(boolean expectExists, String tableName, int walId) {

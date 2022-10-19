@@ -22,39 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.griffin.engine.ops.AlterOperation;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.ThreadLocal;
 
-import java.io.Closeable;
+public class TableDroppedException extends CairoException {
+    private static final ThreadLocal<TableDroppedException> tlException = new ThreadLocal<>(TableDroppedException::new);
 
-public interface Sequencer extends Closeable {
-    String SEQ_DIR = "txn_seq";
-
-    long NO_TXN = Long.MIN_VALUE;
-
-    void copyMetadataTo(SequencerMetadata metadata, String tableName);
-
-    void dropTable();
-
-    SequencerStructureChangeCursor getStructureChangeCursor(
-            @Nullable SequencerStructureChangeCursor reusableCursor,
-            long fromSchemaVersion
-    );
-
-    int getTableId();
-
-    int getNextWalId();
-
-    long nextStructureTxn(long structureVersion, AlterOperation operation);
-
-    // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn);
-
-    // return txn cursor to apply transaction from given point
-    SequencerCursor getCursor(long lastCommittedTxn);
-
-    @Override
-    void close();
+    public static TableDroppedException instance() {
+        TableDroppedException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new TableDroppedException()) != null;
+        return ex;
+    }
 }

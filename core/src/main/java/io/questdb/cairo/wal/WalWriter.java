@@ -147,31 +147,37 @@ public class WalWriter implements TableWriterFrontend {
         }
         if (operation.isStructureChange()) {
             long txn;
-            do {
-                try {
-                    alterOperationValidationBackend.startAlterValidation();
-                    operation.apply(alterOperationValidationBackend, true);
-                    if (alterOperationValidationBackend.structureVersion != metadata.getStructureVersion() + 1) {
-                        throw CairoException.nonCritical().put("table structure change did not contain 1 transaction [table=").put(tableName)
-                                .put(", oldStructureVersion=").put(metadata.getStructureVersion())
-                                .put(", newStructureVersion=").put(alterOperationValidationBackend.structureVersion).put(']');
-                    }
-                } catch (SqlException e) {
-                    // Table schema (metadata) changed and this Alter is not valid anymore.
-                    // Try to update WAL metadata to latest and repeat one more time.
-                    goActive();
-                    try {
-                        operation.apply(alterOperationValidationBackend, true);
-                    } catch (SqlException e2) {
-                        throw CairoException.nonCritical().put(e2.getFlyweightMessage());
-                    }
-                }
 
-                txn = tableRegistry.nextStructureTxn(systemTableName, getStructureVersion(), operation);
-                if (txn == NO_TXN) {
-                    applyStructureChanges(Long.MAX_VALUE);
-                }
-            } while (txn == NO_TXN);
+            try {
+                do {
+                    try {
+                        alterOperationValidationBackend.startAlterValidation();
+                        operation.apply(alterOperationValidationBackend, true);
+                        if (alterOperationValidationBackend.structureVersion != metadata.getStructureVersion() + 1) {
+                            throw CairoException.nonCritical().put("table structure change did not contain 1 transaction [table=").put(tableName)
+                                    .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                                    .put(", newStructureVersion=").put(alterOperationValidationBackend.structureVersion).put(']');
+                        }
+                    } catch (SqlException e) {
+                        // Table schema (metadata) changed and this Alter is not valid anymore.
+                        // Try to update WAL metadata to latest and repeat one more time.
+                        goActive();
+                        try {
+                            operation.apply(alterOperationValidationBackend, true);
+                        } catch (SqlException e2) {
+                            throw CairoException.nonCritical().put(e2.getFlyweightMessage());
+                        }
+                    }
+
+                    txn = tableRegistry.nextStructureTxn(systemTableName, getStructureVersion(), operation);
+                    if (txn == NO_TXN) {
+                        applyStructureChanges(Long.MAX_VALUE);
+                    }
+                } while (txn == NO_TXN);
+            } catch (CairoException e) {
+                distressed = true;
+                throw e;
+            }
 
             // Apply to itself.
             try {
@@ -242,6 +248,9 @@ public class WalWriter implements TableWriterFrontend {
                 resetDataTxnProperties();
                 return tableTxn;
             }
+        } catch (CairoException ex) {
+            distressed = true;
+            throw ex;
         } catch (Throwable th) {
             if (!isDistressed()) {
                 // If distressed, not point to rollback, WalWriter will be not re-used anymore.
@@ -276,7 +285,8 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     public TableWriter.Row newRow() {
-        return newRow(0L);
+        // Only partitioned tables with timestamps are supported atm.
+        throw new UnsupportedOperationException();
     }
 
     public TableWriter.Row newRow(long timestamp) {
@@ -871,12 +881,17 @@ public class WalWriter implements TableWriterFrontend {
 
     private long getTableTxn() {
         long txn;
-        do {
-            txn = tableRegistry.nextTxn(systemTableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
-            if (txn == NO_TXN) {
-                applyStructureChanges(Long.MAX_VALUE);
-            }
-        } while (txn == NO_TXN);
+        try {
+            do {
+                txn = tableRegistry.nextTxn(systemTableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+                if (txn == NO_TXN) {
+                    applyStructureChanges(Long.MAX_VALUE);
+                }
+            } while (txn == NO_TXN);
+        } catch (CairoException ex) {
+            distressed = true;
+            throw ex;
+        }
         return txn;
     }
 

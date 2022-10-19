@@ -35,6 +35,8 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -42,7 +44,8 @@ import org.junit.Test;
 import java.io.Closeable;
 import java.io.IOException;
 
-import static io.questdb.cairo.wal.WalWriterTest.*;
+import static io.questdb.cairo.wal.WalWriterTest.createTable;
+import static io.questdb.cairo.wal.WalWriterTest.removeColumn;
 import static org.junit.Assert.*;
 
 public class WalTableWriterTest extends AbstractGriffinTest {
@@ -460,7 +463,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateViaWal_CopyIntoNewColumn() throws Exception {
+    public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -472,15 +475,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 createTable(model);
             }
 
-            final int tableId;
-            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-                tableId = tableWriter.getMetadata().getId();
-            }
-
-            try (
-                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 TableWriter.Row row = walWriter.newRow();
                 row.putInt(0, 10);
                 row.append();
@@ -492,17 +487,13 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 row.append();
                 walWriter.commit();
 
-                addColumn(walWriter, "c", ColumnType.INT);
+                removeColumn(walWriter, "b");
 
                 executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
-                executeOperation("UPDATE " + tableName + " SET c = a", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(walWriter.getSystemTableName(), tableId, engine, sqlToOperation);
+                fail("Expected exception is missing");
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.endsWith("Invalid column: b"));
             }
-
-            assertSql(tableName, "a\tb\tts\tc\n" +
-                    "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
-                    "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
-                    "12\t12\t1970-01-01T00:00:00.000000Z\t12\n");
         });
     }
 
@@ -715,7 +706,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
+    public void testUpdateViaWal_CopyIntoNewColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -727,25 +718,37 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 createTable(model);
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                TableWriter.Row row = walWriter.newRow();
+            final int tableId;
+            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                tableId = tableWriter.getMetadata().getId();
+            }
+
+            try (
+                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+                TableWriter.Row row = walWriter.newRow(0);
                 row.putInt(0, 10);
                 row.append();
-                row = walWriter.newRow();
+                row = walWriter.newRow(0);
                 row.putInt(0, 11);
                 row.append();
-                row = walWriter.newRow();
+                row = walWriter.newRow(0);
                 row.putInt(0, 12);
                 row.append();
                 walWriter.commit();
 
-                removeColumn(walWriter, "b");
+                addColumn(walWriter, "c", ColumnType.INT);
 
                 executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
-                fail("Expected exception is missing");
-            } catch (Exception e) {
-                assertTrue(e.getMessage().endsWith("Invalid column: b"));
+                executeOperation("UPDATE " + tableName + " SET c = a", CompiledQuery.UPDATE);
+                ApplyWal2TableJob.processWalTxnNotification(walWriter.getSystemTableName(), tableId, engine, sqlToOperation);
             }
+
+            assertSql(tableName, "a\tb\tts\tc\n" +
+                    "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
+                    "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
+                    "12\t12\t1970-01-01T00:00:00.000000Z\t12\n");
         });
     }
 

@@ -585,19 +585,19 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                TableWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
                 walWriter.commit();
 
                 addColumn(walWriter, "c", ColumnType.INT);
-                row = walWriter.newRow();
+                row = walWriter.newRow(0);
                 row.putByte(0, (byte) 10);
                 row.append();
                 walWriter.commit();
 
                 addColumn(walWriter, "d", ColumnType.SHORT);
-                row = walWriter.newRow();
+                row = walWriter.newRow(0);
                 row.putByte(0, (byte) 100);
                 row.putShort(3, (short) 1000);
                 row.append();
@@ -2001,7 +2001,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                TableWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
                 walWriter.commit();
@@ -2911,12 +2911,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertWalFileExist(path, tableName, walName, "d.v");
             }
         });
-    }
-
-    static void addColumn(TableWriterFrontend writer, String columnName, int columnType) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        writer.applyAlter(addColumnC.build(), true);
     }
 
     static void removeColumn(TableWriterFrontend writer, String columnName) throws SqlException {

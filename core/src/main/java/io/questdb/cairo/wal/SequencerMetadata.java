@@ -103,6 +103,15 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         switchTo(path, pathLen);
     }
 
+    public void dropTable() {
+        this.structureVersion = DROP_TABLE_STRUCTURE_VERSION;
+        syncToMetaFile();
+    }
+
+    public boolean isDropped() {
+        return structureVersion == DROP_TABLE_STRUCTURE_VERSION;
+    }
+
     public void switchTo(Path path, int pathLen) {
         if (metaMem.getFd() > -1) {
             metaMem.close(true, Vm.TRUNCATE_TO_POINTER);

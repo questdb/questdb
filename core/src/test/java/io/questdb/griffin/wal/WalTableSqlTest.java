@@ -24,17 +24,26 @@
 
 package io.questdb.griffin.wal;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableDroppedException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
+import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
@@ -272,21 +281,107 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             engine.releaseAllReaders();
             drainWalQueue();
 
-            Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(TXN_FILE_NAME);
-            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
-
-            sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(COLUMN_VERSION_FILE_NAME);
-            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
-
-            sysPath.of(configuration.getRoot()).concat(sysTableName1).concat("sym.c");
-            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
-
-            sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat("2022-02-24").concat("x.d");
-            MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+            checkTableFilesDropped(sysTableName1, "2022-02-24", "x.d");
 
             assertSql(tableName, "x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n");
+
+
         });
+    }
+
+    @Test
+    public void testCreateDropWalReuseCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+                String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+                compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
+
+                compile("drop table " + tableName);
+                try {
+                    compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "able does not exist");
+                }
+
+                TableWriter.Row row = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T01"));
+                row.putLong(1, 1);
+                row.append();
+
+                try {
+                    walWriter1.commit();
+                    Assert.fail();
+                } catch (TableDroppedException e) {
+                }
+                MatcherAssert.assertThat(walWriter1.isDistressed(), Matchers.is(true));
+
+                // Structural change
+                try {
+                    addColumn(walWriter2, "sym3", ColumnType.SYMBOL);
+                    Assert.fail();
+                } catch (TableDroppedException e) {
+                }
+                MatcherAssert.assertThat(walWriter2.isDistressed(), Matchers.is(true));
+
+                // Nonstructural change
+                try {
+                    AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableName, 0);
+                    dropPartition.ofPartition(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
+                    AlterOperation dropAlter = dropPartition.build();
+                    dropAlter.withContext(sqlExecutionContext);
+                    walWriter3.applyAlter(dropAlter, true);
+                    Assert.fail();
+                } catch (TableDroppedException e) {
+                }
+                MatcherAssert.assertThat(walWriter3.isDistressed(), Matchers.is(true));
+
+                compile("create table " + tableName + " as (" +
+                        "select x, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                        " from long_sequence(1)" +
+                        ") timestamp(ts) partition by DAY WAL"
+                );
+
+                String sysTableName2 = Chars.toString(engine.getSystemTableName(tableName));
+                MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
+
+                engine.releaseAllReaders();
+                drainWalQueue();
+
+                checkTableFilesDropped(sysTableName1, "2022-02-24", "x.d");
+
+                assertSql(tableName, "x\tts\n" +
+                        "1\t2022-02-24T00:00:00.000000Z\n");
+            }
+        });
+    }
+
+    private void checkTableFilesDropped(String sysTableName1, String partition, String fileName) {
+        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(TXN_FILE_NAME);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(COLUMN_VERSION_FILE_NAME);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+        sysPath.of(configuration.getRoot()).concat(sysTableName1).concat("sym.c");
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName1).concat(partition).concat(fileName);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
     }
 
     @Test

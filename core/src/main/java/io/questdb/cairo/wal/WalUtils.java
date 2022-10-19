@@ -39,4 +39,9 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = SEQ_META_OFFSET_COLUMN_COUNT + Integer.BYTES;
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_TABLE_ID + Integer.BYTES;
+    public static final int METADATA_WALID = -1;
+    public static final int DROP_TABLE_WALID = -2;
+    public static final int RENAME_TABLE_WALID = -3;
+    public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
+
 }

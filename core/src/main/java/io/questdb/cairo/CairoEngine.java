@@ -211,6 +211,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    public void releaseReadersBySystemName(CharSequence systemTableName) {
+        // TODO: release readers at the same time
+        readerPool.unlock(systemTableName);
+    }
+
     ClosableInstance<SqlCompiler> getAdhocSqlCompiler() {
         return sqlCompilerPool.get();
     }

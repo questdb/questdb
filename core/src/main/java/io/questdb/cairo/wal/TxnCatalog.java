@@ -48,9 +48,6 @@ public class TxnCatalog implements Closeable {
     public static final long TXN_META_SIZE_OFFSET = MAX_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     public static final long HEADER_SIZE = TXN_META_SIZE_OFFSET + Long.BYTES + HEADER_RESERVED;
     public static final int RECORD_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + RECORD_RESERVED;
-    public static final int METADATA_WALID = -1;
-    public static final int DROP_TABLE_WALID = -2;
-    public static final int RENAME_TABLE_WALID = -3;
     private static final int MEMORY_TAG = MemoryTag.MMAP_SEQUENCER;
     private final FilesFacade ff;
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();

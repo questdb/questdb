@@ -88,7 +88,22 @@ public class SequencerImpl implements Sequencer {
     public void copyMetadataTo(@NotNull SequencerMetadata copyTo, String tableName) {
         schemaLock.readLock().lock();
         try {
+            checkDistressed();
+            checkDropped();
             copyTo.copyFrom(metadata, tableName);
+        } finally {
+            schemaLock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public void dropTable() {
+        schemaLock.readLock().lock();
+        try {
+            checkDistressed();
+            checkDropped();
+            catalog.addEntry(WalUtils.DROP_TABLE_WALID, 0, 0);
+            metadata.dropTable();
         } finally {
             schemaLock.readLock().unlock();
         }
@@ -102,6 +117,7 @@ public class SequencerImpl implements Sequencer {
         schemaLock.readLock().lock();
         try {
             checkDistressed();
+            checkDropped();
             if (metadata.getStructureVersion() == fromSchemaVersion) {
                 // Nothing to do.
                 if (reusableCursor != null) {
@@ -132,6 +148,7 @@ public class SequencerImpl implements Sequencer {
         long txn;
         try {
             checkDistressed();
+            checkDropped();
             if (metadata.getStructureVersion() == expectedSchemaVersion) {
                 long offset = catalog.beginMetadataChangeEntry(expectedSchemaVersion + 1, alterCommandWalFormatter, operation);
 
@@ -167,6 +184,7 @@ public class SequencerImpl implements Sequencer {
         long txn;
         try {
             checkDistressed();
+            checkDropped();
             if (metadata.getStructureVersion() == expectedSchemaVersion) {
                 txn = nextTxn(walId, segmentId, segmentTxn);
             } else {
@@ -177,6 +195,12 @@ public class SequencerImpl implements Sequencer {
         }
         engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, txn);
         return txn;
+    }
+
+    private void checkDropped() {
+        if (metadata.isDropped()) {
+            throw TableDroppedException.instance().put("table is dropped [table=").put(metadata.getTableName()).put(']');
+        }
     }
 
     @Override

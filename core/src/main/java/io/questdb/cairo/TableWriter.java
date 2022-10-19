@@ -956,7 +956,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         return AttachDetachStatus.OK;
     }
 
-    public void dropAllData() {
+    public void destroy() {
         LOG.info().$("dropping table [name=").utf8(tableName).$(", systemName=").utf8(systemTableName).I$();
         path.trimTo(rootLen).concat(META_FILE_NAME).$();
         ff.remove(path);

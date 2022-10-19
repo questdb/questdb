@@ -37,7 +37,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
@@ -62,12 +62,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         SequencerStructureChangeCursor cursor = reusableStructureChangeCursor.get();
         long lastTxn;
         long lastCommittedTxn = -1;
+        Path tempPath = Path.PATH.get();
+
         do {
+            if (TableUtils.exists(engine.getConfiguration().getFilesFacade(), tempPath, engine.getConfiguration().getRoot(), systemTableName) != TableUtils.TABLE_EXISTS) {
+                LOG.info().$("table '").utf8(systemTableName).$("' does not exist, skipping WAL application").$();
+                return Long.MAX_VALUE;
+            }
+
             // This is work steeling, security context is checked on writing to the WAL
             // and can be ignored here
             try (TableWriter writer = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, systemTableName, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getId() == tableId;
-                cursor = applyOutstandingWalTransactions(systemTableName, writer, engine, sqlToOperation, cursor);
+                cursor = applyOutstandingWalTransactions(systemTableName, writer, engine, sqlToOperation, cursor, tempPath);
                 lastCommittedTxn = writer.getTxn();
             } catch (EntryUnavailableException tableBusy) {
                 // This is all good, someone else will apply the data
@@ -114,13 +121,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             TableWriter writer,
             CairoEngine engine,
             SqlToOperation sqlToOperation,
-            @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor
+            @Nullable SequencerStructureChangeCursor reusableStructureChangeCursor,
+            Path tempPath
     ) {
         TableRegistry tableRegistry = engine.getTableRegistry();
         long lastCommitted = writer.getTxn();
 
+        if (tableRegistry.getTableNameBySystemName(systemTableName) == null) {
+            LOG.info().$("table '").utf8(systemTableName).$("' is dropped, skipping WAL application").$();
+            tryDestroyDroppedTable(systemTableName, writer, engine);
+            return reusableStructureChangeCursor;
+        }
+
         try (SequencerCursor sequencerCursor = tableRegistry.getCursor(systemTableName, lastCommitted)) {
-            Path tempPath = Path.PATH.get();
 
             while (sequencerCursor.hasNext()) {
                 int walId = sequencerCursor.getWalId();
@@ -135,7 +148,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // Always set full path when using thread static path
                 tempPath.of(engine.getConfiguration().getRoot()).concat(systemTableName).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                 switch (walId) {
-                    case TxnCatalog.METADATA_WALID:
+                    case METADATA_WALID:
                         // This is metadata change
                         // to be taken from Sequencer directly
                         // This may look odd, but on metadata change record, segment ID means structure version.
@@ -171,16 +184,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     .put(']');
                         }
                         break;
-                    case TxnCatalog.DROP_TABLE_WALID:
-                        if (engine.lockReadersBySystemName(systemTableName)) {
-                            try {
-                                writer.dropAllData(); // release fs space now. delete this table later
-                            } finally {
-                                engine.unlockReaders(systemTableName);
-                            }
-                        }
-                        break;
-                    case TxnCatalog.RENAME_TABLE_WALID:
+                    case DROP_TABLE_WALID:
+                        tryDestroyDroppedTable(systemTableName, writer, engine);
+                        return reusableStructureChangeCursor;
+
+                    case RENAME_TABLE_WALID:
                         break;
                     default:
                         writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
@@ -192,6 +200,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
         }
         return reusableStructureChangeCursor;
+    }
+
+    private static void tryDestroyDroppedTable(CharSequence systemTableName, TableWriter writer, CairoEngine engine) {
+        if (engine.lockReadersBySystemName(systemTableName)) {
+            try {
+                writer.destroy();
+            } finally {
+                engine.releaseReadersBySystemName(systemTableName);
+            }
+        } else {
+            LOG.info().$("table '").utf8(systemTableName)
+                    .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
+            engine.notifyWalTxnFailed();
+        }
     }
 
     @Override
