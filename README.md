@@ -100,7 +100,7 @@ We offer official InfluxDB line protocol client libraries for several programmin
 
 You can refer to
 [our comparison article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-to have an overview of QuestDB and other open source timesereis databases on
+to have an overview of QuestDB and other open source time series databases on
 functionality, maturity, and performance.
 
 Here are high-cardinality
