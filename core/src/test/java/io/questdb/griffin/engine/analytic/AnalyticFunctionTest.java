@@ -207,6 +207,35 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRowNumberWithNoPartitionAndNoOrderInSubQuery() throws Exception {
+        assertQuery("symbol\trn\n" +
+                        "CC\t2\n" +
+                        "BB\t3\n" +
+                        "CC\t4\n" +
+                        "AA\t5\n" +
+                        "BB\t6\n" +
+                        "CC\t7\n" +
+                        "BB\t8\n" +
+                        "BB\t9\n" +
+                        "BB\t10\n" +
+                        "BB\t11\n",
+                "select symbol, rn + 1 as rn from (select symbol, row_number() over() as rn from trades)",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testRowNumberFailsInNonAnalyticContext() throws Exception {
         assertFailure(
                 "select row_number(), * from trades",
