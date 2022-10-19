@@ -229,6 +229,36 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
+    private long totalColumnByteCount() {
+        long size = 0;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (columnType > 0) {  // Column not deleted.
+                final MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
+                assert primaryColumn != null;
+                final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
+                size += primaryColumn.getAppendOffset();
+                if (secondaryColumn != null) {
+                    size += secondaryColumn.getAppendOffset();
+                }
+            }
+        }
+        return size;
+    }
+
+    private void mayRollSegmentOnNextRow() {
+        if (rollSegmentOnNextRow)
+            return;
+
+        // TODO [amunra]: Devise some throttling behaviour
+        // to avoid looping through all columns continuously.
+        // Maybe every nth commit? Or rowCount since last recalculated?
+
+        if (totalColumnByteCount() >= SEGMENT_ROLLOVER_SIZE_WATERMARK) {
+            rollSegmentOnNextRow = true;
+        }
+    }
+
     // Returns table transaction number.
     public long commit() {
         checkDistressed();
@@ -240,6 +270,8 @@ public class WalWriter implements TableWriterFrontend {
                 resetDataTxnProperties();
                 return tableTxn;
             }
+
+            mayRollSegmentOnNextRow();
         } catch (Throwable th) {
             if (!isDistressed()) {
                 // If distressed, not point to rollback, WalWriter will be not re-used anymore.
@@ -1079,13 +1111,6 @@ public class WalWriter implements TableWriterFrontend {
         }
 
         rowCount++;
-        if (segmentSize() >= SEGMENT_ROLLOVER_SIZE_WATERMARK) {
-            rollSegmentOnNextRow = true;
-        }
-    }
-
-    private long segmentSize() {
-        return rowCount * rowSize;
     }
 
     private void setAppendPosition(final long segmentRowCount) {
