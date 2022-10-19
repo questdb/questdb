@@ -173,12 +173,13 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             IntList tempList = new IntList();
             TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
             int transactionSize = transactions.size();
+            Rnd rnd = new Rnd();
             for (int i = 0; i < transactionSize; i++) {
                 FuzzTransaction transaction = transactions.getQuick(i);
                 int size = transaction.operationList.size();
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                    operation.apply(writer, tableName, 1, tempList, tempBinarySequence);
+                    operation.apply(rnd, writer, tableName, 1, tempList, tempBinarySequence);
                 }
 
                 if (transaction.rollback) {
@@ -218,6 +219,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
                     try {
                         latch.countDown();
+                        Rnd rnd2 = new Rnd();
                         while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.size() == 0) {
                             FuzzTransaction transaction = transactions.getQuick(opIndex);
 
@@ -237,7 +239,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                             boolean increment = false;
                             for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                                 FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                                increment |= operation.apply(walWriter, tableName, 1, tempList, tempBinarySequence);
+                                increment |= operation.apply(rnd2, walWriter, tableName, 1, tempList, tempBinarySequence);
                             }
 
                             if (transaction.rollback) {
@@ -263,9 +265,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         ObjList<Thread> applyThreads = new ObjList<>();
         int applyThreadCount = Math.max(1, fuzzTransactions.size() - 1);
         for (int thread = 0; thread < applyThreadCount; thread++) {
-            Thread applyThread = new Thread(() -> {
-                runApplyThread(done, errors);
-            });
+            Thread applyThread = new Thread(() -> runApplyThread(done, errors));
             applyThread.start();
             applyThreads.add(applyThread);
         }
@@ -303,13 +303,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         IntList tempList = new IntList();
         TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
         Rnd writerRnd = new Rnd();
+        Rnd tempRnd = new Rnd();
         for (int i = 0, n = transactions.size(); i < n; i++) {
             WalWriter writer = writers.getQuick(writerRnd.nextPositiveInt() % walWriterCount);
             writer.goActive();
             FuzzTransaction transaction = transactions.getQuick(i);
             for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                 FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                operation.apply(writer, tableName, 1, tempList, tempBinarySequence);
+                operation.apply(tempRnd, writer, tableName, 1, tempList, tempBinarySequence);
             }
 
             if (transaction.rollback) {
@@ -344,6 +345,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
                 try {
                     latch.countDown();
+                    Rnd tempRnd = new Rnd();
                     while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.size() == 0) {
                         FuzzTransaction transaction = transactions.getQuick(opIndex);
 
@@ -363,7 +365,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         boolean increment = false;
                         for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                             FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                            increment |= operation.apply(walWriter, tableName, 1, tempList, tempBinarySequence);
+                            increment |= operation.apply(tempRnd, walWriter, tableName, 1, tempList, tempBinarySequence);
                         }
 
                         if (transaction.rollback) {
@@ -385,9 +387,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             thread.start();
         }
 
-        Thread applyThread = new Thread(() -> {
-            runApplyThread(done, errors);
-        });
+        Thread applyThread = new Thread(() -> runApplyThread(done, errors));
         applyThread.start();
 
         for (int i = 0; i < threads.length; i++) {

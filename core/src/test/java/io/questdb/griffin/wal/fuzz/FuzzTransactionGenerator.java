@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -190,7 +192,9 @@ public class FuzzTransactionGenerator {
             } else {
                 timestamp = timestamp + (maxTimestamp - minTimestamp) / rowCount;
             }
-            transaction.operationList.add(new FuzzInsertOperation(rnd, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
+            // Use stable random seeds which depends on the transaction index and timestamp
+            // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
+            transaction.operationList.add(new FuzzInsertOperation(seed, timestamp, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
         transaction.rollback = getZeroToOneDouble(rnd) < rollback;

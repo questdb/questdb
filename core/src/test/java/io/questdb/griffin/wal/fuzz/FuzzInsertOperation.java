@@ -62,7 +62,6 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final double nullSet;
     private final long timestamp;
     private final double notSet;
-    private final Rnd rnd = new Rnd();
     private final RecordMetadata metadata;
     private final double cancelRows;
     private final int strLen;
@@ -70,12 +69,12 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final long s0;
     private final long s1;
 
-    public FuzzInsertOperation(Rnd rnd, RecordMetadata metadata, long timestamp, double notSet, double nullSet, double cancelRows, int strLen, String[] symbols) {
+    public FuzzInsertOperation(long seed1, long seed2, RecordMetadata metadata, long timestamp, double notSet, double nullSet, double cancelRows, int strLen, String[] symbols) {
         this.cancelRows = cancelRows;
         this.strLen = strLen;
         this.symbols = symbols;
-        this.s0 = rnd.nextLong();
-        this.s1 = rnd.nextLong();
+        this.s0 = seed1;
+        this.s1 = seed2;
         this.metadata = metadata;
         this.timestamp = timestamp;
         this.notSet = notSet;
@@ -83,7 +82,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
+    public boolean apply(Rnd rnd, TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
         rnd.reset(this.s0, this.s1);
         TableWriter.Row row = tableWriter.newRow(timestamp);
 
