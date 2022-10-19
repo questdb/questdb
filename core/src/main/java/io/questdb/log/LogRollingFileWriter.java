@@ -121,8 +121,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             } catch (NumericException e) {
                 throw new LogError("Invalid value for sizeLimit");
             }
-        } else{
-            nSizeLimit = Long.MAX_VALUE;
         }
 
         if(this.lifeDuration != null){
@@ -273,9 +271,13 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private void removeOldLogs(){
-        ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExpiredLogsVisitor);
-        currentLogSizeSum = 0;
-        ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExcessiveLogsVisitor);
+        if(this.lifeDuration != null) {
+            ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExpiredLogsVisitor);
+        }
+        if(this.sizeLimit != null) {
+            currentLogSizeSum = 0;
+            ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExcessiveLogsVisitor);
+        }
     }
     private void removeOldLogsVisitor(long filePointer, int type){
         path.trimTo(LogFactory.LOG_DIR.length());
