@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
@@ -929,6 +930,94 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
+    }
+
+    public static long parseLongDuration(CharSequence sequence) throws NumericException {
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+        if(negative){
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        long r;
+        EX:
+        for (int i = 0; i < lim; i++) {
+            int c = sequence.charAt(i);
+            if (c < '0' || c > '9') {
+                if (i == lim - 1) {
+                    switch (c) {
+                        case 's':
+                            r = val * Timestamps.SECOND_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'm':
+                            r = val * Timestamps.MINUTE_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'h':
+                            r = val * Timestamps.HOUR_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'd':
+                            r = val * Timestamps.DAY_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'w':
+                            r = val * Timestamps.WEEK_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'M':
+                            r = val * Timestamps.DAY_MICROS*30;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'y':
+                            r = val * Timestamps.DAY_MICROS*365;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        default:
+                            break;
+                    }
+                }
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return -val;
     }
 
     public static short parseShort(CharSequence sequence) throws NumericException {

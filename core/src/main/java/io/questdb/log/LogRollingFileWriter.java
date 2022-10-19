@@ -35,7 +35,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.nio.file.Paths;
 
 public class LogRollingFileWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -54,22 +53,26 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long _wptr;
     private int nBufferSize;
     private long nRollSize;
+    private long nSizeLimit;
     private long nLifeDuration;
     private final TemplateParser locationParser = new TemplateParser();
     // can be set via reflection
     private String location;
     private String bufferSize;
     private String rollSize;
+    private String sizeLimit;
+    private String lifeDuration;
     private String spinBeforeFlush;
     private long nSpinBeforeFlush;
     private long currentSize;
     private String rollEvery;
     private long idleSpinCount = 0;
     private long rollDeadline;
-    private String lifeDuration;
+    private long currentLogSizeSum;
     private NextDeadline rollDeadlineFunction;
     private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
-    private final FindVisitor removeOldLogsVisitor = this::removeOldLogsVisitor;
+    private final FindVisitor removeExpiredLogsVisitor = this::removeOldLogsVisitor;
+    private final FindVisitor removeExcessiveLogsVisitor = this::removeExcessiveLogsVisitor;
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
@@ -112,9 +115,19 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             nRollSize = Long.MAX_VALUE;
         }
 
+        if(this.sizeLimit != null) {
+            try {
+                nSizeLimit = Numbers.parseLongSize(this.sizeLimit);
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for sizeLimit");
+            }
+        } else{
+            nSizeLimit = Long.MAX_VALUE;
+        }
+
         if(this.lifeDuration != null){
             try {
-                nLifeDuration = Numbers.parseLongSize(this.lifeDuration);
+                nLifeDuration = Numbers.parseLongDuration(lifeDuration);
             }
             catch (NumericException e){
                 throw new LogError("Invalid value for lifeDuration");
@@ -260,18 +273,30 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private void removeOldLogs(){
-        ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeOldLogsVisitor);
+        ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExpiredLogsVisitor);
+        currentLogSizeSum = 0;
+        ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExcessiveLogsVisitor);
     }
     private void removeOldLogsVisitor(long filePointer, int type){
-        int errno;
         path.trimTo(LogFactory.LOG_DIR.length());
         path.concat(filePointer).$();
-        if(!Files.isDir(filePointer, type) && !Files.isDots(""+path.charAt(path.length()-1))) {
-            System.out.println(path);
+        //System.out.println(path +" "+ Files.length(path));
+        if (!Files.isDir(filePointer, type) && !Files.isDots(""+path.charAt(path.length()-1))
+            && clock.getTicks() - ff.getLastModified(path.$())*Timestamps.MILLI_MICROS > nLifeDuration) {
+            if(!ff.remove(path)) {
+                throw new LogError("cannot remove: " + path.$());
+            }
         }
-        /*if ((errno = ff.rmdir(path)) != 0) {
-            throw new LogError("cannot remove: "+path.$()+" errno: "+errno);
-        }*/
+    }
+
+    private void removeExcessiveLogsVisitor(long filePointer, int type){
+        path.trimTo(LogFactory.LOG_DIR.length());
+        path.concat(filePointer).$();
+        if (!Files.isDir(filePointer, type) && !Files.isDots(""+path.charAt(path.length()-1)) && (currentLogSizeSum += Files.length(path)) > nSizeLimit){
+            if(!ff.remove(path)){
+                throw new LogError("cannot remove: "+ path.$());
+            }
+        }
     }
     private long getInfiniteDeadline() {
         return Long.MAX_VALUE;
