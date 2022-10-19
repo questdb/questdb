@@ -22,10 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.groupby;
 
-public interface AnalyticSPI {
-    long getAddress(long recordAddress, int columnIndex);
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
 
-    Record getRecordAt(long recordOffset);
+public interface GroupByFunctionsUpdater {
+
+    void updateNew(MapValue value, Record record);
+
+    void updateExisting(MapValue value, Record record);
+
+    void updateEmpty(MapValue value);
 }
