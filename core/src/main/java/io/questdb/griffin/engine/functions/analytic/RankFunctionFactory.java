@@ -45,7 +45,13 @@ public class RankFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
 
         if (analyticContext.getPartitionByRecord() != null) {
@@ -57,9 +63,8 @@ public class RankFunctionFactory implements FunctionFactory {
             return new RankFunction(map, analyticContext.getPartitionByRecord(), analyticContext.getPartitionBySink());
         } else if (analyticContext.isOrdered()) {
             return new OrderRankFunction();
-        } else {
-            return new SequenceRankFunction();
         }
+        return new SequenceRankFunction();
     }
 
     private static class RankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -255,7 +260,7 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            // not called
+            // called when the function is used in non-analytic context (no OVER clause)
             return 1;
         }
 

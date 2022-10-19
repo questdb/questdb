@@ -27,10 +27,11 @@ package io.questdb.griffin.engine.analytic;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public class AnalyticContextImpl implements AnalyticContext {
+public class AnalyticContextImpl implements AnalyticContext, Mutable {
     private VirtualRecord partitionByRecord;
     private RecordSink partitionBySink;
     private ColumnTypes partitionByKeyTypes;
@@ -60,6 +61,15 @@ public class AnalyticContextImpl implements AnalyticContext {
     @Override
     public boolean baseSupportsRandomAccess() {
         return baseSupportsRandomAccess;
+    }
+
+    @Override
+    public void clear() {
+        this.partitionByRecord = null;
+        this.partitionBySink = null;
+        this.partitionByKeyTypes = null;
+        this.ordered = false;
+        this.baseSupportsRandomAccess = false;
     }
 
     public void of(
