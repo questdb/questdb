@@ -68,8 +68,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     analyticContext.getPartitionByRecord(),
                     analyticContext.getPartitionBySink()
             );
+        } else if (analyticContext.isOrdered()) {
+            return new OrderRowNumberFunction();
+        } else {
+            return new SequenceRowNumberFunction();
         }
-        return new SequenceRowNumberFunction();
     }
 
     private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -191,6 +194,62 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void reset() {
             map.close();
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+    }
+
+    private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+        private long next = 1;
+        private int columnIndex;
+
+        public OrderRowNumberFunction() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // not called
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
+            next++;
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void reopen() {
+            reset();
+        }
+
+        @Override
+        public void reset() {
+            next = 1;
         }
 
         @Override
