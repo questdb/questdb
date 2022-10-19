@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
@@ -60,6 +61,7 @@ public class WalWriter implements TableWriterFrontend {
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final IntList initialSymbolCounts = new IntList();
+    private final BoolList symbolNullValues = new BoolList();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final MillisecondClock millisecondClock;
     private final Path path;
@@ -128,7 +130,7 @@ public class WalWriter implements TableWriterFrontend {
             nullSetters = new ObjList<>(columnCount);
 
             events = new WalWriterEvents(ff);
-            events.of(symbolMaps, initialSymbolCounts);
+            events.of(symbolMaps, symbolNullValues, initialSymbolCounts);
 
             configureColumns();
             openNewSegment();
@@ -292,6 +294,9 @@ public class WalWriter implements TableWriterFrontend {
 
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
+        if (timestamp < Timestamps.O3_MIN_TS) {
+            throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
+        }
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
@@ -664,6 +669,7 @@ public class WalWriter implements TableWriterFrontend {
     private void configureEmptySymbol(int columnWriterIndex) {
         symbolMapReaders.extendAndSet(columnWriterIndex, EmptySymbolMapReader.INSTANCE);
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
+        symbolNullValues.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
@@ -747,6 +753,7 @@ public class WalWriter implements TableWriterFrontend {
         );
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
+        symbolNullValues.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.add(symbolCount);
     }
@@ -762,6 +769,7 @@ public class WalWriter implements TableWriterFrontend {
                     // maintain sparse list of symbol writers
                     symbolMapReaders.extendAndSet(i, null);
                     initialSymbolCounts.extendAndSet(i, -1);
+                    symbolNullValues.extendAndSet(i, false);
                     symbolMaps.extendAndSet(i, null);
                 } else {
                     if (txReader == null) {
@@ -1004,6 +1012,7 @@ public class WalWriter implements TableWriterFrontend {
                     if (type == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.setQuick(i, reader.getSymbolCount());
+                        symbolNullValues.extendAndSet(i, false);
                         CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
                         symbolMap.clear();
                     }
@@ -1392,25 +1401,33 @@ public class WalWriter implements TableWriterFrontend {
             SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
             if (symbolMapReader != null) {
                 int key = symbolMapReader.keyOf(value);
-                if (key == SymbolTable.VALUE_NOT_FOUND) {
-                    if (value != null) {
-                        // Add it to in-memory symbol map
-                        int initialSymCount = initialSymbolCounts.get(columnIndex);
-                        CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
-                        key = symbolMap.get(value);
-                        if (key == SymbolTable.VALUE_NOT_FOUND) {
-                            key = initialSymCount + symbolMap.size();
-                            symbolMap.put(value, key);
-                        }
-                    } else {
-                        key = SymbolTable.VALUE_IS_NULL;
-                    }
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    putSym0(columnIndex, value);
+                    return;
                 }
-                getPrimaryColumn(columnIndex).putInt(key);
-                setRowValueNotNull(columnIndex);
+                putSym0(columnIndex, value);
             } else {
                 throw new UnsupportedOperationException();
             }
+        }
+
+        private void putSym0(int columnIndex, CharSequence value) {
+            int key;
+            if (value != null) {
+                // Add it to in-memory symbol map
+                CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
+                key = symbolMap.get(value);
+                if (key == SymbolTable.VALUE_NOT_FOUND) {
+                    int initialSymCount = initialSymbolCounts.get(columnIndex);
+                    key = initialSymCount + symbolMap.size();
+                    symbolMap.put(value, key);
+                }
+            } else {
+                key = SymbolTable.VALUE_IS_NULL;
+                symbolNullValues.set(columnIndex, true);
+            }
+            getPrimaryColumn(columnIndex).putInt(key);
+            setRowValueNotNull(columnIndex);
         }
 
         @Override

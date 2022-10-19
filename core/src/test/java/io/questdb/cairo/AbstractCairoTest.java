@@ -542,6 +542,7 @@ public abstract class AbstractCairoTest {
     @After
     public void tearDown() {
         tearDown(true);
+        LogFactory.getInstance().flushJobs();
     }
 
     public void tearDown(boolean removeDir) {

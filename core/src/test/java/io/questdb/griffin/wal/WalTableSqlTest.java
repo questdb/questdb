@@ -289,7 +289,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             assertSql(tableName, "x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n");
 
-
         });
     }
 
@@ -418,6 +417,28 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+        });
+    }
+
+    @Test
+    public void testQueryNullSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select " +
+                    " cast(case when x % 2 = 0 then null else 'abc' end as symbol) sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    "), index(sym) timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            assertSql(
+                    "select * from " + tableName + " where sym != 'abc'",
+                    "sym\tts\n" +
+                            "\t2022-02-24T00:00:01.000000Z\n" +
+                            "\t2022-02-24T00:00:03.000000Z\n"
+            );
         });
     }
 

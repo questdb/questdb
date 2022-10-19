@@ -48,14 +48,16 @@ class WalWriterEvents implements Closeable {
     private IntList initialSymbolCounts;
     private long txn = 0;
     private long startOffset = 0;
+    private BoolList symbolNullValues;
 
     WalWriterEvents(FilesFacade ff) {
         this.ff = ff;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, IntList initialSymbolCounts) {
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, BoolList symbolNullValues, IntList initialSymbolCounts) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
+        this.symbolNullValues = symbolNullValues;
     }
 
     @Override
@@ -88,6 +90,7 @@ class WalWriterEvents implements Closeable {
 
                     final int size = symbolMap.size();
                     eventMem.putInt(size);
+                    eventMem.putInt(symbolNullValues.get(i) ? 1 : 0);
 
                     for (int j = 0; j < size; j++) {
                         final CharSequence symbol = symbolMap.keys().getQuick(j);

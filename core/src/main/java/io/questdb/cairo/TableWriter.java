@@ -2954,6 +2954,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
         boolean identical = true;
 
+        if (symbolMapDiff.hasNullValue()) {
+            mapWriter.updateNullFlag(true);
+        }
+
         SymbolMapDiffEntry entry;
         while ((entry = symbolMapDiff.nextEntry()) != null) {
             final CharSequence symbolValue = entry.getSymbol();

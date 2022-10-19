@@ -407,8 +407,9 @@ public class WalEventCursor {
         }
         final int cleanTableSymbolCount = readInt();
         final int size = readInt();
+        final boolean hasNullValue = readInt() != 0;
 
-        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size);
+        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, hasNullValue, size);
         return symbolMapDiff;
     }
 
