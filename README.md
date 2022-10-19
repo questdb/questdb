@@ -84,7 +84,7 @@ You can interact with QuestDB using the following interfaces:
 - [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
   high-throughput ingestion on port `9009`
 
-### Ingest data
+### Insert data
 
 We offer official InfluxDB line protocol client libraries for several programming languages:
 
