@@ -1547,7 +1547,7 @@ public class SqlCompiler implements Closeable {
             if (rdrMetadata.getTimestampIndex() != -1) {
                 model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
             }
-            model.setWalEnabled(rdrMetadata.isWalEnabled());
+            model.setWalEnabled(configuration.isWalSupported() && rdrMetadata.isWalEnabled());
         }
         model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
     }

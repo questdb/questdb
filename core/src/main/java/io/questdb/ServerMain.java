@@ -85,6 +85,7 @@ public class ServerMain implements Closeable {
         );
 
         // create the worker pool manager, and configure the shared pool
+        boolean walSupported = config.getCairoConfiguration().isWalSupported();
         workerPoolManager = new WorkerPoolManager(config, metrics.health()) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
@@ -102,18 +103,22 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new ColumnIndexerJob(messageBus));
                     sharedPool.assign(new GroupByJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
-                    sharedPool.assign(new CheckWalTransactionsJob(engine));
+                    if (walSupported) {
+                        sharedPool.assign(new CheckWalTransactionsJob(engine));
+                    }
 
-                    if (!config.getWalApplyPoolConfiguration().isEnabled()) {
+                    if (walSupported && !config.getWalApplyPoolConfiguration().isEnabled()) {
                         final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
                         sharedPool.assign(applyWal2TableJob);
                         sharedPool.freeOnExit(applyWal2TableJob);
                     }
 
-                    final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
-                    walPurgeJob.delayByHalfInterval();
-                    sharedPool.assign(walPurgeJob);
-                    sharedPool.freeOnExit(walPurgeJob);
+                    if (walSupported) {
+                        final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                        walPurgeJob.delayByHalfInterval();
+                        sharedPool.assign(walPurgeJob);
+                        sharedPool.freeOnExit(walPurgeJob);
+                    }
 
                     // text import
                     TextImportJob.assignToPool(messageBus, sharedPool);
@@ -142,7 +147,7 @@ public class ServerMain implements Closeable {
             }
         };
 
-        if (config.getWalApplyPoolConfiguration().isEnabled()) {
+        if (walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
             WorkerPool workerPool = workerPoolManager.getInstance(
                     config.getWalApplyPoolConfiguration(),
                     metrics.health(),
