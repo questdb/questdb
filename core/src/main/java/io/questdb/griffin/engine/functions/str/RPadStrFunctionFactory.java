@@ -30,18 +30,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-public class RPadFunctionFactory implements FunctionFactory {
+public class RPadStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rpad(SI)";
+        return "rpad(SIS)";
     }
 
     @Override
@@ -49,19 +49,23 @@ public class RPadFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function strFunc = args.getQuick(0);
         final Function lenFunc = args.getQuick(1);
-        return new RPadFunc(strFunc, lenFunc);
+        final Function fillTextFunc = args.getQuick(2);
+        return new RPadStrFunc(strFunc, lenFunc, fillTextFunc);
     }
 
-    public static class RPadFunc extends StrFunction implements BinaryFunction {
+    public static class RPadStrFunc extends StrFunction implements TernaryFunction {
+
         private final Function strFunc;
         private final Function lenFunc;
+        private final Function fillTextFunc;
 
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public RPadFunc(Function strFunc, Function lenFunc) {
+        public RPadStrFunc(Function strFunc, Function lenFunc, Function fillTexFunc) {
             this.strFunc = strFunc;
             this.lenFunc = lenFunc;
+            this.fillTextFunc = fillTexFunc;
         }
 
         @Override
@@ -70,8 +74,23 @@ public class RPadFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
+        public Function getCenter() {
             return lenFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return fillTextFunc;
+        }
+
+        @Override
+        public CharSequence getStr(final Record rec) {
+            return rPadStr(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sink);
+        }
+
+        @Override
+        public CharSequence getStrB(final Record rec) {
+            return rPadStr(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sinkB);
         }
 
         @Override
@@ -79,24 +98,15 @@ public class RPadFunctionFactory implements FunctionFactory {
             return strFunc.getStrLen(rec);
         }
 
-        @Override
-        public CharSequence getStr(final Record rec) {
-            return rPad(strFunc.getStr(rec), lenFunc.getInt(rec), sink);
-        }
-
-        @Override
-        public CharSequence getStrB(final Record rec) {
-            return rPad(strFunc.getStr(rec), lenFunc.getInt(rec), sinkB);
-        }
-
         @Nullable
-        private static StringSink rPad(CharSequence str, int len, StringSink sink) {
+        private static StringSink rPadStr(CharSequence str, int len, CharSequence fillText, StringSink sink) {
             if (str != null && len != Numbers.INT_NaN && len >= 0) {
                 sink.clear();
                 if (len > str.length()) {
                     sink.put(str);
+                    final int fillTextLen = fillText.length();
                     for (int i = 0; i < (len - str.length()); i++) {
-                        sink.put(' ');
+                        sink.put(fillText.charAt(i % fillTextLen));
                     }
                 } else {
                     sink.put(str, str.length() - len, str.length());

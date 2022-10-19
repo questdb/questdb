@@ -629,7 +629,9 @@ io.questdb.griffin.engine.functions.str.UpperFunctionFactory
 
 # Pad string
 io.questdb.griffin.engine.functions.str.LPadFunctionFactory
+io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory
 io.questdb.griffin.engine.functions.str.RPadFunctionFactory
+io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory
 
 # analytic functions
 io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
