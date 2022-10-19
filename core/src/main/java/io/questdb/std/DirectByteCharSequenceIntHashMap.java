@@ -28,7 +28,15 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 import java.util.Arrays;
 
-
+/**
+ * A copy implementation of CharSequenceIntHashMap. It is there to work with concrete classes
+ * and avoid incurring performance penalty of megamorphic virtual calls. These calls originate
+ * from calling charAt() on CharSequence interface. C2 compiler cannot inline these calls due to
+ * multiple implementations of charAt(). It resorts to a virtual method call via itable. ILP is the
+ * main victim of itable, suffering from non-deterministic performance loss. With this specific
+ * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
+ * no longer present in the async profiler.
+ */
 public class DirectByteCharSequenceIntHashMap implements Mutable {
     public static final int NO_ENTRY_VALUE = -1;
     protected static final int MIN_INITIAL_CAPACITY = 16;
@@ -58,7 +66,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
         this.keys = new String[len];
-        DirectByteCharSequenceIntHashMap.this.mask = len - 1;
+        this.mask = len - 1;
         this.noEntryValue = noEntryValue;
         this.list = new ObjList<>(capacity);
         values = new int[keys.length];
