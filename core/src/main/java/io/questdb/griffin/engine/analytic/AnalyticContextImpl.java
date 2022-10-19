@@ -35,8 +35,14 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
     private VirtualRecord partitionByRecord;
     private RecordSink partitionBySink;
     private ColumnTypes partitionByKeyTypes;
+    private boolean empty = true;
     private boolean ordered;
     private boolean baseSupportsRandomAccess;
+
+    @Override
+    public boolean isEmpty() {
+        return empty;
+    }
 
     @Override
     public VirtualRecord getPartitionByRecord() {
@@ -65,6 +71,7 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
 
     @Override
     public void clear() {
+        this.empty = true;
         this.partitionByRecord = null;
         this.partitionBySink = null;
         this.partitionByKeyTypes = null;
@@ -79,6 +86,7 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
             boolean ordered,
             boolean baseSupportsRandomAccess
     ) {
+        this.empty = false;
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
         this.partitionByKeyTypes = partitionByKeyTypes;

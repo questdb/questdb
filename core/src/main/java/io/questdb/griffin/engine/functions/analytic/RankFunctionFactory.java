@@ -29,6 +29,7 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
@@ -51,8 +52,11 @@ public class RankFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
+        if (analyticContext.isEmpty()) {
+            throw SqlException.$(position, "analytic function called in non-analytic context, make sure to add OVER clause");
+        }
 
         if (analyticContext.getPartitionByRecord() != null) {
             ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
@@ -61,7 +65,8 @@ public class RankFunctionFactory implements FunctionFactory {
             arrayColumnTypes.add(ColumnType.LONG); // offset
             Map map = MapFactory.createMap(configuration, analyticContext.getPartitionByKeyTypes(), arrayColumnTypes);
             return new RankFunction(map, analyticContext.getPartitionByRecord(), analyticContext.getPartitionBySink());
-        } else if (analyticContext.isOrdered()) {
+        }
+        if (analyticContext.isOrdered()) {
             return new OrderRankFunction();
         }
         return new SequenceRankFunction();
@@ -260,8 +265,8 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            // called when the function is used in non-analytic context (no OVER clause)
-            return 1;
+            // not called
+            throw new UnsupportedOperationException();
         }
 
         @Override

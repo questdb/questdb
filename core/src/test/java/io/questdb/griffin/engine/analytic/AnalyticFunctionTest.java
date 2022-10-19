@@ -25,12 +25,15 @@
 package io.questdb.griffin.engine.analytic;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class AnalyticFunctionTest extends AbstractGriffinTest {
 
     @Test
-    public void testAnalyticFunctionWithPartitionAndOrderByNonSymbol() throws Exception {
+    public void testRowNumberWithPartitionAndOrderByNonSymbol() throws Exception {
         assertQuery("row_number\tprice\tts\n" +
                         "1\t42\t1970-01-01T00:00:00.000000Z\n" +
                         "2\t42\t1970-01-02T03:46:40.000000Z\n" +
@@ -59,7 +62,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
+    public void testRowNumberWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
         assertQuery("row_number\n" +
                         "3\n" +
                         "6\n" +
@@ -88,7 +91,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
+    public void testRowNumberWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
         assertQuery("price\tsymbol\tts\trow_number\n" +
                         "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t3\n" +
                         "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t6\n" +
@@ -117,7 +120,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
+    public void testRowNumberWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery("row_number\tprice\tsymbol\tts\n" +
                         "3\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "6\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
@@ -146,7 +149,82 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticFunctionWithFilter() throws Exception {
+    public void testRowNumberWithNoPartitionAndOrderBySymbolWildcardLast() throws Exception {
+        assertQuery("row_number\tprice\tsymbol\tts\n" +
+                        "10\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
+                        "7\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
+                        "9\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
+                        "1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
+                        "6\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "8\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
+                        "5\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "4\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
+                        "3\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
+                        "2\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
+                "select row_number() over (order by symbol), * from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testRowNumberWithNoPartitionAndNoOrderWildcardLast() throws Exception {
+        assertQuery("row_number\tprice\tsymbol\tts\n" +
+                        "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
+                        "3\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
+                        "4\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
+                        "5\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
+                        "6\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
+                        "7\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
+                        "8\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
+                        "9\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
+                        "10\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
+                "select row_number() over (), * from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testRowNumberFailsInNonAnalyticContext() throws Exception {
+        assertFailure(
+                "select row_number(), * from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                7,
+                "analytic function called in non-analytic context, make sure to add OVER clause"
+        );
+    }
+
+    @Test
+    public void testRowNumberWithFilter() throws Exception {
         assertQuery("author\tsym\tcommits\trk\n" +
                         "user2\tETH\t3\t2\n" +
                         "user1\tETH\t3\t1\n",
@@ -176,7 +254,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionAndOrderByNonSymbol() throws Exception {
+    public void testRankWithPartitionAndOrderByNonSymbol() throws Exception {
         assertQuery("rank\tprice\tts\n" +
                         "1\t42\t1970-01-01T00:00:00.000000Z\n" +
                         "2\t42\t1970-01-02T03:46:40.000000Z\n" +
@@ -205,7 +283,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
+    public void testRankWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
         assertQuery("rank\n" +
                         "1\n" +
                         "1\n" +
@@ -234,7 +312,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
+    public void testRankWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
         assertQuery("price\tsymbol\tts\trank\n" +
                         "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1\n" +
                         "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t1\n" +
@@ -263,7 +341,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
+    public void testRankWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
@@ -292,7 +370,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionBySymbolAndOrderByPriceWildcardLast() throws Exception {
+    public void testRankWithPartitionBySymbolAndOrderByPriceWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
@@ -321,7 +399,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionBySymbolAndOrderByIntPriceWildcardLast() throws Exception {
+    public void testRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
@@ -350,7 +428,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast() throws Exception {
+    public void testRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
@@ -379,7 +457,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionBySymbolAndNoOrderWildcardLast() throws Exception {
+    public void testRankWithPartitionBySymbolAndNoOrderWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
@@ -408,7 +486,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithPartitionBySymbolAndMultiOrderWildcardLast() throws Exception {
+    public void testRankWithPartitionBySymbolAndMultiOrderWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "4\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
@@ -437,7 +515,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithNoPartitionByAndOrderBySymbolWildcardLast() throws Exception {
+    public void testRankWithNoPartitionByAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "3\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "7\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
@@ -466,7 +544,7 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionWithNoPartitionByAndNoOrderByWildcardLast() throws Exception {
+    public void testRankWithNoPartitionByAndNoOrderByWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
                         "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
@@ -495,18 +573,8 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticRankFunctionNonAnalyticContext() throws Exception {
-        assertQuery("rank\tprice\tsymbol\tts\n" +
-                        "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t2\tCC\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t2\tAA\t1970-01-03T07:33:20.000000Z\n" +
-                        "1\t1\tCC\t1970-01-04T11:20:00.000000Z\n" +
-                        "1\t2\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t1\tBB\t1970-01-06T18:53:20.000000Z\n" +
-                        "1\t1\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "1\t1\tCC\t1970-01-09T02:26:40.000000Z\n" +
-                        "1\t1\tCC\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t2\tAA\t1970-01-11T10:00:00.000000Z\n",
+    public void testRankFailsInNonAnalyticContext() throws Exception {
+        assertFailure(
                 "select rank(), * from trades",
                 "create table trades as " +
                         "(" +
@@ -516,10 +584,41 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
                         " timestamp_sequence(0, 100000000000) ts" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
-                "ts",
-                true,
-                true,
-                true
+                7,
+                "analytic function called in non-analytic context, make sure to add OVER clause"
         );
+    }
+
+    @Test
+    public void testAnalyticContextCleanup() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades as " +
+                    "(" +
+                    "select" +
+                    " rnd_int(1,2,3) price," +
+                    " rnd_symbol('AA','BB','CC') symbol," +
+                    " timestamp_sequence(0, 100000000000) ts" +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by day", sqlExecutionContext);
+
+            final String query = "select symbol, price, rank() over (partition by symbol order by price) from trades";
+            final String expected = "symbol\tprice\trank\n" +
+                    "BB\t1\t1\n" +
+                    "CC\t2\t2\n" +
+                    "AA\t2\t1\n" +
+                    "CC\t1\t1\n" +
+                    "BB\t2\t2\n";
+            assertSql(query, expected);
+
+            // AnalyticContext should be properly clean up when we try to execute the next query.
+
+            try {
+                compile("select rank() from trades", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(7, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "analytic function called in non-analytic context, make sure to add OVER clause");
+            }
+        });
     }
 }
