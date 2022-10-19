@@ -838,41 +838,47 @@ public class FilesTest {
 
             try (
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
-                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$()
+                    Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
+                    Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
+                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$();
             ) {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 
-                // perform the soft link
+                // create the soft link
+                Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
                 Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
 
-                // check content are the same
+                // check contents are the same
                 assertEqualsFileContent(softLinkFilePath, fileContent);
 
                 // delete soft link
                 Assert.assertTrue(Files.remove(softLinkFilePath));
 
-                // check original file still exists and content are the same
+                // check original file still exists and contents are the same
                 assertEqualsFileContent(srcFilePath, fileContent);
 
-                // perform the soft link again
+                // create the soft link again
                 Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
 
-                // check content are the same
-                assertEqualsFileContent(softLinkFilePath, fileContent);
+                // rename the link
+                Assert.assertEquals(0, Files.rename(softLinkFilePath, softLinkRenamedFilePath));
 
-                // delete file
+                // check contents are the same
+                assertEqualsFileContent(softLinkRenamedFilePath, fileContent);
+
+                // delete original file
                 Assert.assertTrue(Files.remove(srcFilePath));
 
-                // check that when listing it we can actually find it
-                File link = new File(softLinkFilePath.toString());
+                // check that when listing the folder where the link is, we can actually find it
+                File link = new File(softLinkRenamedFilePath.toString());
                 List<File> files = Arrays.asList(link.getParentFile().listFiles());
-                Assert.assertEquals(fileName + ".1", files.get(0).getName());
+                Assert.assertEquals(fileName, files.get(0).getName());
 
-                // however
+                // however, OS checks do check the existence of the file pointed to
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
                 Assert.assertEquals(-1, Files.openRO(softLinkFilePath));
-                Assert.assertTrue(Files.remove(softLinkFilePath));
+                Assert.assertTrue(Files.remove(softLinkRenamedFilePath));
             }
         });
     }
