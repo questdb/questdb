@@ -9,14 +9,12 @@ const allowedTypes = [
   "refactor",
   "perf",
   "test",
-  "build",
   "ci",
   "chore",
   "revert",
 ];
 
 const allowedSubTypes = [
-  "build",
   "sql",
   "log",
   "mig",
