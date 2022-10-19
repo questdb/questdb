@@ -1094,7 +1094,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkedLocation() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+
             try (TableModel src = new TableModel(configuration, "src48", PartitionBy.DAY)) {
                 createPopulateTable(
                         1,
@@ -1105,34 +1106,59 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2022-10-17",
                         2);
 
+                assertSql("select min(ts), max(ts), count() from " + src.getName(), "min\tmax\tcount\n" +
+                        "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+
                 compile("ALTER TABLE " + src.getName() + " DETACH PARTITION LIST '2022-10-17'", sqlExecutionContext);
 
-                // copy the .detached folder to a different location and create a soft link .attachable
-                // in preparation for reattaching the partition
-                final CharSequence s3Buckets = temp.newFolder("S3").getAbsolutePath();
-                try (Path link = new Path()) {
-                    String partitionName = "2022-10-17" + TableUtils.DETACHED_DIR_MARKER;
-                    path.of(configuration.getRoot())
-                            .concat(src.getName())
-                            .concat(partitionName)
-                            .$();
-                    other.of(s3Buckets)
-                            .concat(src.getName())
-                            .concat(partitionName)
-                            .$();
-                    TestUtils.copyDirectory(path, other, DIR_MODE);
+                assertSql("select min(ts), max(ts), count() from " + src.getName(), "min\tmax\tcount\n" +
+                        "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
 
-                    link.of(configuration.getRoot())
+                // different location, another volume potentially
+                final CharSequence s3Buckets = temp.newFolder("S3").getAbsolutePath();
+                final String detachedPartitionName = "2022-10-17" + TableUtils.DETACHED_DIR_MARKER;
+                try (Path attachablePartitionLink = new Path()) {
+
+                    // copy .detached folder to the different location
+                    TestUtils.copyDirectory(
+                            path.of(configuration.getRoot())
+                                    .concat(src.getName())
+                                    .concat(detachedPartitionName)
+                                    .$(),
+                            other.of(s3Buckets)
+                                    .concat(src.getName())
+                                    .concat(detachedPartitionName)
+                                    .$(), DIR_MODE);
+
+                    // remove original .detached partition folder
+                    Assert.assertEquals(0, Files.rmdir(path.of(configuration.getRoot())
+                            .concat(src.getName())
+                            .concat(detachedPartitionName)
+                            .slash$()));
+
+                    // create the .attachable link in the table's data folder with target the .detached folder in the different location
+                    attachablePartitionLink.of(configuration.getRoot())
                             .concat(src.getName())
                             .concat("2022-10-17")
                             .put(configuration.getAttachPartitionSuffix())
                             .$();
+                    Assert.assertEquals(0, ff.softLinkDirRecursive(other, attachablePartitionLink, 509));
+                    Assert.assertTrue(new File(attachablePartitionLink.toString()).exists());
 
-                    // TODO: this has to be recursive, implement missing methods in Files.java
-                    Assert.assertEquals(0, Files.softLink(other, link));
-                    Assert.assertTrue(new File(link.toString()).exists());
-
+                    // attach the partition via soft links
                     compile("ALTER TABLE " + src.getName() + " ATTACH PARTITION LIST '2022-10-17'", sqlExecutionContext);
+
+                    assertSql("select min(ts), max(ts), count() from " + src.getName(), "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+
+                    assertSql("SELECT * FROM " + src.getName() + " WHERE ts in '2022-10-17' LIMIT -5",
+                            "l\ti\tts\n" +
+                                    "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
+                                    "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
+                                    "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
+                                    "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
+                                    "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
+                    );
                 }
             }
         });

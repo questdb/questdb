@@ -76,6 +76,8 @@ public interface FilesFacade {
 
     int softLink(LPSZ src, LPSZ softLink);
 
+    int softLinkDirRecursive(Path src, Path dst, int dirMode);
+
     boolean isCrossDeviceCopyError(int errno);
 
     boolean isRestrictedFileSystem();

@@ -35,6 +35,7 @@ public class FilesFacadeImpl implements FilesFacade {
     private long mapPageSize = 0;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
+    private final FsOperation softLinkFsOperation = this::softLink;
 
     @Override
     public boolean allocate(long fd, long size) {
@@ -171,6 +172,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int softLink(LPSZ src, LPSZ softLink) {
         return Files.softLink(src, softLink);
+    }
+
+    @Override
+    public int softLinkDirRecursive(Path src, Path dst, int dirMode) {
+        return runRecursive(src, dst, dirMode, softLinkFsOperation);
     }
 
     @Override
