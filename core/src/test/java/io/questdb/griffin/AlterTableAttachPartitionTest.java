@@ -1137,12 +1137,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                             .slash$()));
 
                     // create the .attachable link in the table's data folder with target the .detached folder in the different location
-                    attachablePartitionLink.of(configuration.getRoot())
-                            .concat(src.getName())
-                            .concat("2022-10-17")
-                            .put(configuration.getAttachPartitionSuffix())
-                            .$();
-                    Assert.assertEquals(0, ff.softLinkDirRecursive(other, attachablePartitionLink, 509));
+                    Assert.assertEquals(0, ff.softLink(
+                            other.of(s3Buckets)
+                                    .concat(src.getName())
+                                    .concat(detachedPartitionName)
+                                    .slash$(),
+                            attachablePartitionLink.of(configuration.getRoot())
+                                    .concat(src.getName())
+                                    .concat("2022-10-17")
+                                    .put(configuration.getAttachPartitionSuffix())
+                                    .$()
+                    ));
                     Assert.assertTrue(new File(attachablePartitionLink.toString()).exists());
 
                     // attach the partition via soft links
