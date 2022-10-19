@@ -15,6 +15,7 @@ const allowedTypes = [
 ];
 
 const allowedSubTypes = [
+  "build",
   "sql",
   "log",
   "mig",
