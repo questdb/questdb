@@ -262,7 +262,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
 
         try {
-            return metadataFactory.openTableReaderMetadata(tableName);
+            return metadataFactory.openTableReaderMetadata(tableNameStr);
         } catch (CairoException e) {
             try (TableReader reader = tryGetReaderRepairWithWriter(securityContext, tableName, e)) {
                 return metadataFactory.openTableReaderMetadata(reader);
