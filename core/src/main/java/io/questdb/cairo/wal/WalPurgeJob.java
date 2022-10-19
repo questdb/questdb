@@ -83,14 +83,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private final StringSink debugBuffer = new StringSink();
 
-    public WalPurgeJob(CairoEngine engine, FilesFacade ff) {
+    public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
         this.engine = engine;
         this.ff = ff;
-        this.clock = engine.getConfiguration().getMicrosecondClock();
+        this.clock = clock;
         this.checkInterval = engine.getConfiguration().getWalPurgeInterval() * 1000;
         this.txReader = new TxReader(ff);
 
         assert WalUtils.WAL_NAME_BASE.equals("wal");
+    }
+
+    public WalPurgeJob(CairoEngine engine) {
+        this(engine, engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getMicrosecondClock());
     }
 
     /**
@@ -100,10 +104,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     public void delayByHalfInterval() {
         this.last = clock.getTicks() - (checkInterval / 2);
-    }
-
-    public WalPurgeJob(CairoEngine engine) {
-        this(engine, engine.getConfiguration().getFilesFacade());
     }
 
     /** Validate equivalent of "^wal\d+$" regex. */

@@ -643,7 +643,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void runWalPurgeJob(FilesFacade ff) {
-        WalPurgeJob job = new WalPurgeJob(engine, ff);
+        WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
         while (job.run(0)) {
             // run until empty
         }

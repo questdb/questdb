@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -36,6 +37,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -542,5 +544,53 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
         assertSql(tableName, "x\tts\ti1\n" +
                 "1\t2022-02-24T00:00:00.000000Z\tNaN\n");
         assertWalExistence(false, tableName, 1);
+    }
+
+    static class MicrosecondClockMock implements MicrosecondClock {
+        public long timestamp = 0;
+
+        @Override
+        public long getTicks() {
+            return timestamp;
+        }
+    }
+
+    static class TracingFilesFacade extends FilesFacadeImpl {
+        public static long iterateDirCount = 0;
+
+        @Override
+        public void iterateDir(LPSZ path, FindVisitor func) {
+            ++iterateDirCount;
+            super.iterateDir(path, func);
+        }
+    }
+
+    @Test
+    public void testInterval() throws Exception {
+        TracingFilesFacade ff = new TracingFilesFacade();
+
+        MicrosecondClockMock clock = new MicrosecondClockMock();
+        final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
+        clock.timestamp = interval + 1;  // Set to some point in time that's not 0.
+
+        try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, clock)) {
+            walPurgeJob.delayByHalfInterval();
+            walPurgeJob.run(0);
+            Assert.assertEquals(0, ff.iterateDirCount);
+            clock.timestamp += interval / 2 + 1;
+            walPurgeJob.run(0);
+            Assert.assertEquals(1, ff.iterateDirCount);
+            clock.timestamp += interval / 2 + 1;
+            walPurgeJob.run(0);
+            walPurgeJob.run(0);
+            walPurgeJob.run(0);
+            Assert.assertEquals(1, ff.iterateDirCount);
+            clock.timestamp += interval;
+            walPurgeJob.run(0);
+            Assert.assertEquals(2, ff.iterateDirCount);
+            clock.timestamp += 10 * interval;
+            walPurgeJob.run(0);
+            Assert.assertEquals(3, ff.iterateDirCount);
+        }
     }
 }
