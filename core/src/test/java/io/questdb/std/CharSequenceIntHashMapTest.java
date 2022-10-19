@@ -237,6 +237,4 @@ public class CharSequenceIntHashMapTest {
             Assert.assertFalse(map.excludes(cs, 1, 9));
         }
     }
-
-
 }
