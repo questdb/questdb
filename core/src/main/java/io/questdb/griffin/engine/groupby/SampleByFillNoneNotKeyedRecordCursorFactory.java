@@ -28,13 +28,16 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
             RecordMetadata groupByMetadata,
@@ -49,9 +52,11 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
     ) {
         super(base, groupByMetadata, recordFunctions);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
+        final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
         this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
                 simpleMapValue,
                 groupByFunctions,
+                updater,
                 recordFunctions,
                 timestampIndex,
                 timestampSampler,

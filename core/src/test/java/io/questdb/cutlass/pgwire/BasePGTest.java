@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.*;
 import io.questdb.mp.TestWorkerPool;
@@ -35,6 +36,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -110,6 +112,18 @@ public class BasePGTest extends AbstractGriffinTest {
             @Override
             public long getTimeout() {
                 return maxQueryTime;
+            }
+
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK) ? 0 : super.getCircuitBreakerThrottle();//fail on first check
+            }
+
+            //should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because 
+            //Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
+            @Override
+            public MillisecondClock getClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
             }
         };
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
@@ -57,7 +58,9 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
         hasNext = !empty;
     }
 
-    private void findRecord() {
+    private void findRecord(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
         empty = true;
         DataFrame frame;
         OUT:
@@ -67,6 +70,7 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
             recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (key == symbolKey) {
@@ -87,7 +91,7 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
-        findRecord();
+        findRecord(executionContext);
         toTop();
     }
 }
