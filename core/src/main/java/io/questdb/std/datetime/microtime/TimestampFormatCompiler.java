@@ -599,10 +599,8 @@ public class TimestampFormatCompiler {
                         asm.pop();
                     }
                     break;
-
             }
         }
-
 
         asm.return_();
         asm.endMethodCode();

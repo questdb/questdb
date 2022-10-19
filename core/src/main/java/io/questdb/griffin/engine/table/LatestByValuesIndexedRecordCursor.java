@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -64,7 +65,8 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         index = rows.size() - 1;
     }
 
-    protected void buildTreeMap() {
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         int keyCount = symbolKeys.size();
         if (deferredSymbolKeys != null) {
             keyCount += deferredSymbolKeys.size();
@@ -76,6 +78,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
@@ -112,7 +115,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
-        buildTreeMap();
+        buildTreeMap(executionContext);
     }
 
     @Override
