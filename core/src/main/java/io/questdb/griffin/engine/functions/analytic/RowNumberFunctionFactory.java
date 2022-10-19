@@ -72,8 +72,9 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         return new SequenceRowNumberFunction();
     }
 
-    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction {
+    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
         private long next = 1;
+        private int columnIndex;
 
         @Override
         public long getLong(Record rec) {
@@ -88,6 +89,40 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             toTop();
+        }
+
+        @Override
+        public void reopen() {
+            toTop();
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
+            next++;
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void reset() {
+            toTop();
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
         }
     }
 
