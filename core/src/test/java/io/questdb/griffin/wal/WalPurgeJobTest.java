@@ -32,8 +32,6 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
@@ -592,5 +590,93 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             walPurgeJob.run(0);
             Assert.assertEquals(3, ff.iterateDirCount);
         }
+    }
+
+    @Test
+    public void testRmWalDirFailure() throws Exception {
+        String tableName = testName.getMethodName();
+        compile("create table " + tableName + "("
+                + "x long,"
+                + "ts timestamp"
+                + ") timestamp(ts) partition by DAY WAL");
+
+        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+
+        drainWalQueue();
+
+        engine.releaseInactive();
+
+        FilesFacade ff = new FilesFacadeImpl() {
+            private boolean firstDelete = true;
+
+            @Override
+            public int rmdir(Path path) {
+                if (firstDelete) {
+                    firstDelete = false;
+                    return 5;  // Access denied.
+                }
+                else {
+                    return super.rmdir(path);
+                }
+            }
+        };
+
+        runWalPurgeJob(ff);
+
+        assertWalExistence(true, tableName, 1);
+
+        runWalPurgeJob(ff);
+
+        assertWalExistence(false, tableName, 1);
+    }
+
+    @Test
+    public void testRemoveWalLockFailure() throws Exception {
+        String tableName = testName.getMethodName();
+        compile("create table " + tableName + "("
+                + "x long,"
+                + "ts timestamp"
+                + ") timestamp(ts) partition by DAY WAL");
+
+        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+
+        drainWalQueue();
+
+        engine.releaseInactive();
+
+        FilesFacade ff = new FilesFacadeImpl() {
+            private boolean firstDelete = true;
+            private boolean firstErrno = true;
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (firstDelete) {
+                    firstDelete = false;
+                    return false;
+                }
+                else {
+                    return super.remove(name);
+                }
+            }
+
+            @Override
+            public int errno() {
+                if (firstErrno) {
+                    firstErrno = false;
+                    return 5;  // Access denied.
+                }
+                else {
+                    return super.errno();
+                }
+            }
+        };
+
+        runWalPurgeJob(ff);
+
+        assertWalLockExistence(true, tableName, 1);
+
+        runWalPurgeJob(ff);
+
+        assertWalLockExistence(false, tableName, 1);
     }
 }

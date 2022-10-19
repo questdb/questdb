@@ -242,14 +242,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void deleteFile(Path path) {
+    private boolean deleteFile(Path path) {
         if (!ff.remove(path)) {
             final int errno = ff.errno();
             if (errno != 2) {
                 LOG.error().$("Could not delete file [path=").$(path)
                         .$(", errno=").$(errno).$(']').$();
+                return false;
             }
         }
+        return true;
     }
 
     private void mayLogDebugInfo() {
@@ -263,8 +265,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         mayLogDebugInfo();
         LOG.info().$("deleting WAL directory [table=").$(tableName)
                 .$(", walId=").$(walId).$(']').$();
-        recursiveDelete(setWalPath(tableName, walId));
-        deleteFile(setWalLockPath(tableName, walId));
+        if (deleteFile(setWalLockPath(tableName, walId))) {
+            recursiveDelete(setWalPath(tableName, walId));
+        }
     }
 
     private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
@@ -272,8 +275,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         LOG.info().$("deleting WAL segment directory [table=").$(tableName)
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
-        recursiveDelete(setSegmentPath(tableName, walId, segmentId));
-        deleteFile(setSegmentLockPath(tableName, walId, segmentId));
+        if (deleteFile(setSegmentLockPath(tableName, walId, segmentId))) {
+            recursiveDelete(setSegmentPath(tableName, walId, segmentId));
+        }
     }
 
     private void deleteClosedSegmentsIter(long pUtf8NameZ, int type) {
